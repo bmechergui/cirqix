@@ -1,54 +1,9 @@
-import { Zap, Eye, Cpu, Package, Coins, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-
-const features = [
-  {
-    icon: Zap,
-    label: 'AGENT_CORE',
-    title: 'Autonomous Agent',
-    desc: 'Describe your circuit. Layrix plans, routes, fixes DRC violations and delivers Gerbers — no human intervention.',
-    accent: 'primary',
-  },
-  {
-    icon: Eye,
-    label: 'VIEWER_2D3D',
-    title: '2D / 3D Viewer',
-    desc: 'Inspect every layer in real-time at 60 FPS. Switch to 3D with realistic FR4 and copper materials.',
-    accent: 'primary',
-  },
-  {
-    icon: Cpu,
-    label: 'FOOTPRINT_AI',
-    title: 'Auto Footprint',
-    desc: 'Missing footprint? Layrix searches SnapMagic, reads the datasheet with Vision AI and generates it automatically.',
-    accent: 'copper',
-  },
-  {
-    icon: Package,
-    label: 'JLCPCB_INT',
-    title: 'JLCPCB Ready',
-    desc: 'BOM, CPL, Gerbers — perfectly formatted. One click to request a quote and order fabrication.',
-    accent: 'copper',
-  },
-  {
-    icon: Coins,
-    label: 'CREDIT_SYS',
-    title: 'Pay as you go',
-    desc: 'Free tier included. Maker and Pro plans for professionals. Credits never expire.',
-    accent: 'primary',
-  },
-  {
-    icon: Activity,
-    label: 'SPICE_SIM',
-    title: 'SPICE Simulation',
-    desc: 'Run transient, AC and DC analysis before ordering. Powered by ngspice. Pro plan feature.',
-    accent: 'copper',
-  },
-];
+import { FEATURES } from '@/lib/marketing-content';
 
 export function Features() {
   return (
-    <section id="features" className="py-24 px-6 border-t border-border">
+    <section id="features" className="py-24 px-6 border-t border-border scroll-mt-14">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-16">
           <p className="pcb-label text-muted-foreground/60 mb-3">CAPABILITIES</p>
@@ -62,7 +17,7 @@ export function Features() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {features.map(({ icon: Icon, label, title, desc, accent }) => (
+          {FEATURES.map(({ icon: Icon, label, title, desc, accent }) => (
             <Card
               key={title}
               className="group hover:border-primary/30 transition-all duration-300 hover:bg-[#0f0f0f] circuit-corners"
