@@ -1,10 +1,5 @@
 import { Separator } from '@/components/ui/separator';
-
-const links = {
-  Product: ['Features', 'Pricing', 'Changelog', 'Roadmap'],
-  Resources: ['Docs', 'API Reference', 'Blog', 'Status'],
-  Company: ['About', 'Careers', 'Privacy', 'Terms'],
-};
+import { FOOTER_LINKS } from '@/lib/marketing-content';
 
 export function Footer() {
   return (
@@ -18,11 +13,11 @@ export function Footer() {
               <span className="w-1.5 h-1.5 rounded-full bg-primary" />
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Every layer, perfectly designed by AI.
+              AI PCB Design Agent — From idea to manufacturable PCB, autonomously.
             </p>
           </div>
 
-          {Object.entries(links).map(([group, items]) => (
+          {Object.entries(FOOTER_LINKS).map(([group, items]) => (
             <div key={group}>
               <h4 className="text-xs font-semibold text-foreground uppercase tracking-widest mb-4">
                 {group}

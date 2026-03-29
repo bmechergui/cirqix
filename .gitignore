@@ -54,3 +54,10 @@ dist/
 # Misc
 *.tsbuildinfo
 next-env.d.ts
+
+# Debug screenshots
+*.png
+*.jpg.bak
+
+# Playwright MCP cache
+.playwright-mcp/

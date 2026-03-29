@@ -1,6 +1,7 @@
 ---
 name: layrix-viewer
-description: Viewer PCB PixiJS 2D et Three.js 3D — couleurs layers, zoom/pan, sélection composants, markers DRC, matériaux PCB réalistes
+description: This skill should be used when the user asks to "implémenter le viewer PCB", "afficher les layers PixiJS", "ajouter le viewer 3D", "zoomer/panner le PCB", "sélectionner un composant dans le viewer", "afficher les markers DRC" or mentions PixiJS, Three.js, STEP, layers, mmToPx, rendu PCB.
+version: 0.1.0
 ---
 
 # Layrix — Viewer PCB

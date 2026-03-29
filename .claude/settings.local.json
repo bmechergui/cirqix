@@ -31,7 +31,60 @@
       "Bash(powershell -Command \"Stop-Process -Id 34800 -Force -ErrorAction SilentlyContinue; Write-Host done\")",
       "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3333 -ErrorAction SilentlyContinue | Select-Object OwningProcess\")",
       "Bash(powershell -Command \"Remove-Item -Recurse -Force 'C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\landing' -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force 'C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\dashboard' -ErrorAction SilentlyContinue; Write-Host done\")",
-      "Bash(cmd /c \"rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\landing\"\" && rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\dashboard\"\"\")"
+      "Bash(cmd /c \"rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\landing\"\" && rd /s /q \"\"C:\\\\Users\\\\Mechegui\\\\Desktop\\\\dev\\\\layrix\\\\apps\\\\dashboard\"\"\")",
+      "Bash(powershell -Command \"Get-ChildItem -Recurse -Name ''package.json'' | Where-Object { $_ -notmatch ''node_modules'' } | ForEach-Object { \\(Get-Content $_\\) -replace ''workspace:\\\\*'', ''*'' | Set-Content $_ }; Write-Host ''done''\")",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/Mechegui/Desktop/dev/layrix/**)",
+      "Bash(done)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(__NEW_LINE_320cf674053e286d__ mkdir:*)",
+      "Bash(mkdir -p \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-credits/examples\")",
+      "Bash(mkdir -p \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-drc/references\")",
+      "Bash(mkdir -p \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-drc/examples\")",
+      "Bash(mkdir -p \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-footprint/references\")",
+      "Bash(__NEW_LINE_719f1a95dfe78735__ cp:*)",
+      "Bash(cp \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-drc.md\" \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-drc/SKILL.md\")",
+      "Bash(cp \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-footprint.md\" \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-footprint/SKILL.md\")",
+      "Bash(cp \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-kicad-service.md\" \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-kicad-service/SKILL.md\")",
+      "Bash(cp \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-viewer.md\" \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-viewer/SKILL.md\")",
+      "Bash(__NEW_LINE_f0557682a68f1fb3__ rm:*)",
+      "Bash(rm \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-drc.md\")",
+      "Bash(rm \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-footprint.md\")",
+      "Bash(rm \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-kicad-service.md\")",
+      "Bash(rm \"/c/Users/Mechegui/Desktop/dev/layrix/.claude/skills/layrix-viewer.md\")",
+      "Bash(npx eslint:*)",
+      "Bash(ls .eslintrc* eslint.config*)",
+      "Bash(cat next.config*)",
+      "Bash(ls \"C:/Users/Mechegui/Desktop/dev/layrix/apps/web/.eslintrc\"*)",
+      "Bash(ls \"C:/Users/Mechegui/Desktop/dev/layrix/apps/web/eslint.config\"*)",
+      "Bash(ls \"C:/Users/Mechegui/Desktop/dev/layrix/.eslintrc\"*)",
+      "Bash(ls \"C:/Users/Mechegui/Desktop/dev/layrix/eslint.config\"*)",
+      "Bash(node_modules/.bin/next lint:*)",
+      "Bash(pnpm tsc:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3333)",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__resize_page",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__evaluate_script",
+      "Skill(commit-commands:commit-push-pr)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"⚠️ WORKFLOW OBLIGATOIRE\\n1. Invoquer le Skill tool layrix-prompt-improver AVANT toute action\\n2. Annoncer le skill choisi\\n3. Coder seulement après\"}'",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

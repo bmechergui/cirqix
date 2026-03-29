@@ -24,6 +24,7 @@ export function ViewerPanel() {
       <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <div className="flex items-center gap-1 bg-[#141414] rounded-lg p-1">
           <button
+            type="button"
             onClick={() => setMode('2d')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               mode === '2d' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'
@@ -33,6 +34,7 @@ export function ViewerPanel() {
             2D
           </button>
           <button
+            type="button"
             onClick={() => setMode('3d')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               mode === '3d' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'
@@ -44,10 +46,10 @@ export function ViewerPanel() {
         </div>
 
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7">
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom in" disabled>
             <ZoomIn size={13} />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7">
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom out" disabled>
             <ZoomOut size={13} />
           </Button>
           <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 
 export function Navbar() {
@@ -22,14 +23,15 @@ export function Navbar() {
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
 
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5 group">
-          {/* Via dot */}
-          <span className="w-6 h-6 rounded-full border border-primary/50 flex items-center justify-center group-hover:border-primary transition-colors">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse-slow" />
-          </span>
-          <span className="font-display text-lg font-bold tracking-tight">
-            Lay<span className="text-primary">rix</span>
-          </span>
+        <Link href="/" className="flex items-center">
+          <Image
+            src="/logo.jpg"
+            alt="Layrix"
+            width={110}
+            height={32}
+            className="h-8 w-auto object-contain mix-blend-screen"
+            priority
+          />
         </Link>
 
         {/* Nav links */}

@@ -1,6 +1,7 @@
 ---
 name: layrix-credits
-description: Système de crédits Layrix — déduction, vérification solde, plans, top-ups, middleware API, table Supabase
+description: This skill should be used when the user asks to "gérer les crédits", "déduire des crédits", "vérifier le solde", "implémenter le système de crédits", "créer la table credits Supabase", "ajouter un top-up", "configurer les plans Free/Maker/Pro" or mentions credits, balance, plans, or middleware de crédits.
+version: 0.1.0
 ---
 
 # Layrix — Système de Crédits

@@ -109,19 +109,20 @@ function PCBPreview() {
 
 export function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden pcb-grid scan-overlay">
-      {/* Radial glow — deep cyan centre */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-[700px] h-[700px] rounded-full bg-primary/4 blur-[120px]" />
+    <section className="relative min-h-screen flex items-center justify-center pcb-grid scan-overlay">
+      {/* Background glows — isolated overflow-hidden wrapper so text is never clipped */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-[700px] h-[700px] rounded-full bg-primary/4 blur-[120px]" />
+        </div>
+        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full bg-accent/3 blur-[100px]" />
       </div>
-      {/* Copper accent glow bottom-right */}
-      <div className="absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full bg-accent/3 blur-[100px] pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-6xl mx-auto px-6 pt-28 pb-16">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
+        <div className="grid xl:grid-cols-[3fr_2fr] gap-12 items-center">
 
           {/* Left — copy */}
-          <div>
+          <div className="min-w-0">
             {/* Status pill */}
             <div className="inline-flex items-center gap-2.5 border border-primary/30 bg-primary/5 text-primary text-xs uppercase tracking-[0.14em] px-3.5 py-1.5 rounded-full mb-8 font-mono">
               <span className="via animate-pulse-slow" />
@@ -129,10 +130,10 @@ export function Hero() {
             </div>
 
             {/* Headline — display font */}
-            <h1 className="font-display text-[3.5rem] leading-[1.0] font-extrabold tracking-tight mb-6 lg:text-[4.2rem]">
-              Every layer,<br />
-              perfectly<br />
-              <span className="text-gradient">designed by AI</span>
+            <h1 className="font-display text-[2rem] leading-[1.08] font-extrabold tracking-tight mb-6 sm:text-[2.6rem] md:text-[3rem] xl:text-[3rem]">
+              From idea to<br />
+              manufacturable<br />
+              <span className="text-gradient">PCB, autonomously</span>
             </h1>
 
             <p className="text-base text-muted-foreground mb-10 leading-relaxed max-w-md">
@@ -172,11 +173,11 @@ export function Hero() {
           </div>
 
           {/* Right — PCB preview */}
-          <div className="relative hidden lg:block">
+          <div className="relative hidden xl:block pt-8">
             {/* Circuit corner decoration */}
-            <div className="absolute -inset-4 circuit-corners pointer-events-none" />
+            <div className="absolute inset-0 circuit-corners pointer-events-none" />
             {/* PCB coordinate readout */}
-            <div className="absolute -top-6 right-0 flex items-center gap-3 pcb-label opacity-60">
+            <div className="absolute top-0 right-0 flex items-center gap-3 pcb-label opacity-60">
               <span>X: 240.00mm</span>
               <span>Y: 140.00mm</span>
               <span className="text-success">●</span>

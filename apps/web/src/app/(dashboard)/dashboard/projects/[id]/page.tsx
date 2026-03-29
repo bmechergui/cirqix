@@ -14,7 +14,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   if (!project) return <div className="text-muted-foreground p-6">Project not found</div>;
 
   return (
-    <div className="flex flex-col -m-6 overflow-hidden" style={{ height: 'calc(100vh - 57px)' }}>
+    <div className="flex flex-col -m-6 overflow-hidden" style={{ height: 'calc(100vh - var(--header-height, 57px))' }}>
       <AgentProgressBar step={agentStep} />
       <div className="flex flex-1 overflow-hidden">
         {/* Chat — 380px */}

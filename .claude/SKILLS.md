@@ -10,13 +10,14 @@
 
 | Skill | Fichier | Description | Invoquer quand |
 |-------|---------|-------------|----------------|
-| `layrix-prompt-improver` | `layrix-prompt-improver.md` | Améliore tout prompt avant exécution — détecte phase + contexte Layrix + skill à invoquer | **TOUJOURS en premier** |
-| `layrix-pcb-agent` | `layrix-pcb-agent.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
-| `layrix-footprint` | `layrix-footprint.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
-| `layrix-kicad-service` | `layrix-kicad-service.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
-| `layrix-viewer` | `layrix-viewer.md` | PixiJS 2D (layers, couleurs, DRC markers, zoom/pan) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / rendu / layers |
-| `layrix-credits` | `layrix-credits.md` | Déduction atomique Supabase RPC, plans Free/Maker/Pro, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
-| `layrix-drc` | `layrix-drc.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
+| `layrix-prompt-improver` | `layrix-prompt-improver/SKILL.md` | Améliore tout prompt avant exécution — détecte phase + contexte Layrix + skill à invoquer | **TOUJOURS en premier** |
+| `layrix-pcb-agent` | `layrix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
+| `layrix-footprint` | `layrix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
+| `layrix-kicad-service` | `layrix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
+| `layrix-viewer` | `layrix-viewer/SKILL.md` | PixiJS 2D (layers, couleurs, DRC markers, zoom/pan) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / rendu / layers |
+| `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Maker/Pro, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
+| `layrix-drc` | `layrix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
+| `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | Chevauchement / overlap / bug visuel / layout cassé |
 
 ---
 

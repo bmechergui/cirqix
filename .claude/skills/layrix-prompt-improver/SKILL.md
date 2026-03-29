@@ -1,6 +1,7 @@
 ---
 name: layrix-prompt-improver
-description: Reçoit un prompt brut, invoque prompt-master pour le réécrire, ajoute le contexte Layrix (phase, fichier, contraintes), détecte le skill à invoquer. SYSTÉMATIQUEMENT avant toute exécution.
+description: This skill should be used ALWAYS before any task — when the user sends any request, question, or prompt. Invoke to rewrite and improve the prompt with Layrix context (active phase, target file, constraints) and detect the right skill to use next.
+version: 0.1.0
 ---
 
 # Layrix — Prompt Improver

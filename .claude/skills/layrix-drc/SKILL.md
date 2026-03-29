@@ -1,6 +1,7 @@
 ---
 name: layrix-drc
-description: Agent DRC Layrix — vérification règles PCB, correction automatique, boucle max 3 itérations, violations cliquables dans le viewer
+description: This skill should be used when the user asks to "lancer le DRC", "vérifier les règles PCB", "corriger les violations DRC", "implémenter la boucle DRC", "afficher les erreurs DRC dans le viewer" or mentions DRC, violations, clearance, track width, règles PCB.
+version: 0.1.0
 ---
 
 # Layrix — Agent DRC (Design Rule Check)

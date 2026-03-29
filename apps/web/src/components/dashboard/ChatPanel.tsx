@@ -42,10 +42,17 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const isAgentRunning = useAppStore((s) => s.isAgentRunning);
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -55,7 +62,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     setInput('');
     setAgentRunning(true);
     // Simulate agent response
-    setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       addMessage(projectId, {
         role: 'assistant',
         content: `Processing your request: "${trimmed}". The PCB agent is analyzing the requirements…`,
@@ -120,7 +127,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             className="flex-1 h-9 text-sm"
             disabled={isAgentRunning}
           />
-          <Button type="submit" size="icon" className="h-9 w-9" disabled={isAgentRunning || !input.trim()}>
+          <Button type="submit" size="icon" className="h-9 w-9" disabled={isAgentRunning || !input.trim()} aria-label="Send message">
             <Send size={14} />
           </Button>
         </form>

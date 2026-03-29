@@ -17,10 +17,10 @@ export function Header({ title }: HeaderProps) {
 
       <div className="flex items-center gap-4 ml-auto">
         <CreditsBadge />
-        <Button variant="ghost" size="icon" className="h-8 w-8">
+        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Notifications">
           <Bell size={16} />
         </Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" aria-label="Account">
           <User size={16} />
         </Button>
       </div>

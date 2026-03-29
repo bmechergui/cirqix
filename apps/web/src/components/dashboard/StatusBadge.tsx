@@ -1,13 +1,13 @@
 import { Badge } from '@/components/ui/badge';
 import type { PCBStatus } from '@/lib/mock-data';
 
-const STATUS_CONFIG: Record<PCBStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive'; pulse?: boolean }> = {
+const STATUS_CONFIG: Record<PCBStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' | 'copper' | 'outline'; pulse?: boolean }> = {
   INITIAL: { label: 'New', variant: 'secondary' },
   SCHEMA_DONE: { label: 'Schema', variant: 'default', pulse: true },
   PLACEMENT_DONE: { label: 'Placed', variant: 'default', pulse: true },
   ROUTING_DONE: { label: 'Routed', variant: 'warning' },
   DRC_CLEAN: { label: 'Ready', variant: 'success' },
-  PCB_LIVRÉ: { label: 'Ordered', variant: 'copper' as 'success' },
+  PCB_LIVRÉ: { label: 'Ordered', variant: 'copper' },
 };
 
 interface StatusBadgeProps {

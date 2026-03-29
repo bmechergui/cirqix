@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { LayoutDashboard, FolderOpen, Settings, HelpCircle, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -19,6 +19,7 @@ const BOTTOM_NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const projects = useAppStore((s) => s.projects);
 
   return (
@@ -33,7 +34,7 @@ export function Sidebar() {
 
       {/* New project */}
       <div className="px-3 py-3">
-        <Button size="sm" className="w-full gap-2 glow-cyan-sm">
+        <Button size="sm" className="w-full gap-2 glow-cyan-sm" onClick={() => router.push('/dashboard')}>
           <Plus size={14} />
           New PCB
         </Button>

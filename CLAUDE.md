@@ -2,7 +2,7 @@
 
 ## Projet
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
-Tagline : "Every layer, perfectly designed by AI"
+Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
 
 ---
 
@@ -13,7 +13,11 @@ Tagline : "Every layer, perfectly designed by AI"
 ```
 ÉTAPE 1 → layrix-prompt-improver   (TOUJOURS, sans exception)
 ÉTAPE 2 → Sélectionner le meilleur skill parmi la liste ci-dessous
-ÉTAPE 3 → Annoncer : "[Skill choisi : X] — raison en 1 ligne"
+ÉTAPE 3 → Annoncer AVANT chaque appel :
+         "[Skill : X] — raison"
+         "[MCP : X] — raison"
+         "[Agent : X] — raison"
+         "[Plugin : X] — raison"
 ÉTAPE 4 → Coder / implémenter
 ÉTAPE 5 → pnpm type-check → 0 erreurs
 ÉTAPE 6 → git commit + push + PR (automatiquement, sans attendre)
@@ -22,8 +26,27 @@ Tagline : "Every layer, perfectly designed by AI"
 **NEVER** coder sans avoir invoqué un skill.
 **NEVER** laisser l'utilisateur faire le git commit ou le PR — Claude le fait.
 **NEVER** demander de l'aide pour des étapes que Claude peut faire seul.
+**NEVER** sauter une étape du workflow complet (voir `.claude/WORKFLOW.md`).
+**NEVER** sauter `layrix-prompt-improver`, même pour une tâche courte ou simple.
+**NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
+**NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement — écrire le nom ne compte pas, seul l'appel au tool compte.
 
-### 2. Autonomie totale
+### 2. Niveau de planification selon la complexité
+
+| Complexité | Action |
+|------------|--------|
+| Simple (1 fichier, bug fix) | Coder directement — pas de plan |
+| Moyenne (feature, 2-5 fichiers) | Annoncer les étapes avant de coder |
+| Complexe (feature multi-fichiers, archi) | `/everything-claude-code:plan` + doc avant de coder |
+| Très complexe (nouveau système, agents, DB) | `architect` agent + `/superpowers:write-plan` |
+
+Claude choisit seul le niveau selon la complexité — pas besoin que l'utilisateur le précise.
+
+**NEVER** demander à l'utilisateur quel niveau de plan utiliser — Claude décide seul.
+**NEVER** utiliser `/everything-claude-code:plan` pour une tâche simple (1 fichier, bug fix).
+**ALWAYS** invoquer `architect` agent + `/superpowers:write-plan` pour un nouveau système ou une archi complexe.
+
+### 3. Autonomie totale
 
 Claude mène le projet. L'utilisateur valide. Pas l'inverse.
 - Si une tâche bloque → proposer 2 solutions et choisir la meilleure
@@ -70,8 +93,9 @@ Cette règle s'applique à TOUS les prompts — même les courts et les clairs.
 ## Architecture frontend
 - `apps/landing` et `apps/dashboard` sont **SUPPRIMÉS** — une seule app : **`apps/web`**
 - Route groups Next.js : `(marketing)` → layrix.ai · `(dashboard)` → layrix.ai/dashboard
-- Dev server : `pnpm run dev` à la racine (Turborepo) → démarre `apps/web` sur **port 3333**
-- Commandes dev : `pnpm run dev` (root) · `cd apps/web && pnpm dev` (direct)
+- Dev server : `pnpm dev` à la racine (Turborepo) → démarre `apps/web` sur **port 3333**
+- Commandes dev : `pnpm dev` (root) · `cd apps/web && pnpm dev` (direct)
+- Package manager : **pnpm@9.0.0** — ne jamais utiliser npm ou yarn
 
 ## Stack
 - Monorepo Turborepo : `apps/web`, `apps/api`, `packages/agents`, `packages/ui`, `packages/db`, `services/kicad`

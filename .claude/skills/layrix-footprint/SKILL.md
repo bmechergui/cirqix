@@ -1,6 +1,7 @@
 ---
 name: layrix-footprint
-description: Agent Footprint Layrix — cascade 8 étapes de recherche/génération footprint KiCad, librairie communautaire, pgvector
+description: This skill should be used when the user asks to "chercher un footprint", "générer un footprint", "implémenter l'agent footprint", "cascade footprint", "ajouter un composant KiCad" or mentions footprint, kicad_mod, SnapMagic, Octopart, pad, package, pgvector embeddings.
+version: 0.1.0
 ---
 
 # Layrix — Agent Footprint

@@ -1,6 +1,7 @@
 ---
 name: layrix-pcb-agent
-description: Boucle agentique PCB Layrix — orchestration 6 agents Claude, états, streaming SSE, persistance Redis
+description: This skill should be used when the user asks to "implémenter la boucle agentique PCB", "orchestrer les agents Claude", "configurer le streaming SSE", "créer l'orchestrateur", "gérer les états du PCB" or mentions boucle agentique, orchestrateur, Sonnet/Haiku agents, SSE, Redis, machine d'états PCB.
+version: 0.1.0
 ---
 
 # Layrix — Boucle Agentique PCB

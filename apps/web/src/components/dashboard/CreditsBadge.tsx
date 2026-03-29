@@ -6,10 +6,15 @@ import { useAppStore } from '@/store/app-store';
 export function CreditsBadge() {
   const credits = useAppStore((s) => s.credits);
 
-  // For free plan, daily_limit is the cap; for paid plans, show balance
-  const limit = credits.daily_limit ?? 100;
-  const pct = (credits.balance / limit) * 100;
-  const color = pct > 50 ? 'text-primary' : pct > 20 ? 'text-amber-400' : 'text-red-400';
+  // Paid plans (null daily_limit) → always primary; free plan → color by percentage
+  const color =
+    credits.daily_limit === null || credits.daily_limit === 0
+      ? 'text-primary'
+      : credits.balance / credits.daily_limit > 0.5
+        ? 'text-primary'
+        : credits.balance / credits.daily_limit > 0.2
+          ? 'text-amber-400'
+          : 'text-red-400';
 
   return (
     <div className={`flex items-center gap-1.5 text-xs font-mono font-medium ${color}`}>

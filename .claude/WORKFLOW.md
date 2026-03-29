@@ -40,6 +40,74 @@ Prompt reçu
 
 ---
 
+## Workflow complet par tâche (prompt → PR)
+
+### 1. Recevoir le prompt
+```
+Skill: layrix-prompt-improver  ← TOUJOURS en premier
+Améliore + clarifie le prompt avant toute action.
+```
+
+### 2. Planifier
+Claude choisit seul le niveau selon la complexité :
+
+| Complexité | Action |
+|------------|--------|
+| Simple (1 fichier, bug fix) | Coder directement — pas de plan |
+| Moyenne (feature, 2-5 fichiers) | Annoncer les étapes avant de coder |
+| Complexe (feature multi-fichiers, archi) | `/everything-claude-code:plan` + doc avant de coder |
+| Très complexe (nouveau système, agents, DB) | `architect` agent + `/superpowers:write-plan` |
+
+```
+Skill: /everything-claude-code:plan  ← feature complexe
+Skill: /superpowers:brainstorm       ← si besoin d'explorer
+```
+
+### 3. Coder (TDD)
+```
+Skill: /everything-claude-code:tdd                ← écrire test d'abord
+Skill: /everything-claude-code:frontend-patterns  ← Next.js
+Skill: /everything-claude-code:backend-patterns   ← API
+```
+
+### 4. Review
+```
+Skill: /everything-claude-code:security-scan  ← sécurité
+Agent: typescript-reviewer                    ← qualité code
+Skill: /simplify                              ← nettoyer
+```
+
+### 5. Vérifier
+```
+pnpm type-check  ← 0 erreurs TypeScript
+Skill: /superpowers:verification-before-completion
+```
+
+### 6. Commit + PR
+```
+Skill: /commit-commands:commit-push-pr  ← tout en un
+```
+
+### Résumé visuel
+```
+prompt → improver → plan → TDD → code → review → type-check → commit+PR
+```
+
+### Annonce obligatoire avant chaque appel
+
+**ALWAYS** annoncer dans le texte avant d'invoquer :
+
+```
+[Skill : layrix-prompt-improver] — amélioration du prompt
+[MCP : context7] — recherche docs officielle
+[Agent : typescript-reviewer] — review qualité code
+[Plugin : X] — raison
+```
+
+**NEVER** appeler un skill, MCP, agent ou plugin sans l'annoncer d'abord.
+
+---
+
 ## Arbre de décision — trouver le bon skill
 
 ```

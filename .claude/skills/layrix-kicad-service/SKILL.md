@@ -1,6 +1,7 @@
 ---
 name: layrix-kicad-service
-description: Microservice Python FastAPI + pcbnew KiCad headless — placement, routage Freerouting, export Gerbers, Docker isolé par job BullMQ
+description: This skill should be used when the user asks to "implémenter le microservice KiCad", "configurer FastAPI pcbnew", "lancer le routage Freerouting", "exporter les Gerbers", "dockeriser KiCad" or mentions pcbnew, Freerouting, placement, routage, DSN, SES, Gerbers, Docker KiCad.
+version: 0.1.0
 ---
 
 # Layrix — Microservice KiCad (services/kicad/)
