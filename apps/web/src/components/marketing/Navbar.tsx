@@ -29,7 +29,7 @@ export function Navbar() {
             alt="Layrix"
             width={110}
             height={32}
-            className="h-8 w-auto object-contain"
+            className="h-8 w-auto object-contain mix-blend-screen"
             priority
           />
         </Link>

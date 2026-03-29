@@ -8,7 +8,7 @@ export function CreditsBadge() {
 
   // Paid plans (null daily_limit) → always primary; free plan → color by percentage
   const color =
-    credits.daily_limit === null
+    credits.daily_limit === null || credits.daily_limit === 0
       ? 'text-primary'
       : credits.balance / credits.daily_limit > 0.5
         ? 'text-primary'
