@@ -220,7 +220,11 @@ px-4 md:px-6 // horizontal padding sections
 `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `REDIS_URL`, `LEMON_SQUEEZY_API_KEY`, `KICAD_SERVICE_URL`
 
 ## Phase actuelle
-Phase 0 — Setup infra (semaine 1). Voir `PLAN.md` pour le détail complet.
+Phase 2 — Dashboard + Auth + Chat Agent MVP (semaines 3–4). Voir `PLAN.md` pour le détail complet.
+
+Phases complétées :
+- Phase 0 ✓ — Turborepo, packages, DB schema, design system
+- Phase 1 ✓ — Landing marketing responsive, waitlist, logo/favicon
 
 ---
 
