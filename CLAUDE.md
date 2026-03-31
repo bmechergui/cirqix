@@ -11,13 +11,12 @@ Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously
 ### 1. Workflow obligatoire — chaque tâche
 
 ```
-Chaîne : prompt-master-layrix → layrix-prompt-improver → plan → TDD → code →
+Chaîne : layrix-prompt-improver → plan → TDD → code →
          code-reviewer → security-scan → type-check → verify → commit+PR
 ```
 
 ```
-ÉTAPE 1  → prompt-master-layrix                        (TOUJOURS — optimise le prompt)
-ÉTAPE 2  → layrix-prompt-improver                      (TOUJOURS — contexte Layrix + skill)
+ÉTAPE 1  → layrix-prompt-improver                      (TOUJOURS — améliore le prompt + contexte Layrix + skill)
 ÉTAPE 3  → Sélectionner le skill technique
 ÉTAPE 3b → everything-claude-code:plan                 (feature complexe ≥ 2 fichiers)
 ÉTAPE 3c → everything-claude-code:tdd                  (tests AVANT le code)
@@ -32,7 +31,7 @@ Chaîne : prompt-master-layrix → layrix-prompt-improver → plan → TDD → c
 **NEVER** coder sans avoir invoqué un skill.
 **NEVER** laisser l'utilisateur faire le git commit ou le PR — Claude le fait.
 **NEVER** sauter une étape de la chaîne ci-dessus.
-**NEVER** sauter `prompt-master-layrix` ni `layrix-prompt-improver`, même pour une tâche courte.
+**NEVER** sauter `layrix-prompt-improver`, même pour une tâche courte ou simple.
 **NEVER** sauter `code-reviewer` après une implémentation.
 **NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
 **NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement.
@@ -217,9 +216,8 @@ Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 4. `/skill-creator:skill-creator` → créer si rien n'existe
 
 **Skills prioritaires Phase 2 :**
-1. `layrix-prompt-improver` — TOUJOURS en premier
-2. `prompt-master-layrix` — optimise le prompt pour Claude Code
-3. `layrix-pcb-agent` — boucle agentique PCB
+1. `layrix-prompt-improver` — TOUJOURS en premier (améliore + contexte Layrix + skill)
+2. `layrix-pcb-agent` — boucle agentique PCB
 4. `layrix-credits` — déduction crédits Supabase
 5. `layrix-viewer` — PixiJS 2D + Three.js 3D
 6. `/everything-claude-code:claude-api` — Claude SDK agents
