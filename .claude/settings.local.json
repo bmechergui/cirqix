@@ -40,7 +40,19 @@
       "mcp__plugin_playwright_playwright__browser_evaluate",
       "Skill(commit-commands:commit-push-pr)",
       "Read(//c/Users/Mechegui/.claude/skills/**)",
-      "Read(//c/Users/Mechegui/.claude/skills/prompt-master/**)"
+      "Read(//c/Users/Mechegui/.claude/skills/prompt-master/**)",
+      "mcp__supabase__list_projects",
+      "Bash(ls /c/Users/Mechegui/Desktop/dev/layrix/apps/web/src/app/\\\\\\(dashboard\\\\\\)/)",
+      "Bash(ls /c/Users/Mechegui/Desktop/dev/layrix/apps/web/src/app/\\\\\\(dashboard\\\\\\)/dashboard/)",
+      "Bash(cat /c/Users/Mechegui/Desktop/dev/layrix/apps/web/src/app/\\\\\\(marketing\\\\\\)/page.tsx)",
+      "Bash(wc -l /c/Users/Mechegui/Desktop/dev/layrix/apps/web/src/features/marketing/ui/*.tsx)",
+      "Bash(pnpm --filter @layrix/web type-check)",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__apply_migration",
+      "Bash(git add:*)",
+      "Bash(ls /c/Users/Mechegui/Desktop/dev/layrix/apps/web/src/app/\\\\\\(marketing\\\\\\)/)",
+      "Bash(git rm:*)"
     ]
   },
   "hooks": {
