@@ -17,7 +17,7 @@
 | `layrix-viewer` | `layrix-viewer/SKILL.md` | PixiJS 2D (layers, couleurs, DRC markers, zoom/pan) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / rendu / layers |
 | `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Maker/Pro, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
 | `layrix-drc` | `layrix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
-| `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | Chevauchement / overlap / bug visuel / layout cassé |
+| `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
 
 ---
 

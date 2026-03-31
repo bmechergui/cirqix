@@ -23,7 +23,7 @@
 - Badge variants : `default | secondary | success | warning | destructive | copper | outline`
 
 ## Types source de vérité
-Fichier : `apps/web/src/lib/mock-data.ts`
+Fichier : `apps/web/src/shared/lib/mock-data.ts` (migré FSD — ancien chemin : `apps/web/src/lib/mock-data.ts`)
 - `PCBStatus` = `'INITIAL' | 'SCHEMA_DONE' | 'PLACEMENT_DONE' | 'ROUTING_DONE' | 'DRC_CLEAN' | 'PCB_LIVRÉ'`
 - `Message.role` = `'user' | 'assistant'` (jamais `'agent'`)
 - `Credits` = `{ balance, plan, daily_limit }` (pas `remaining`/`total`)

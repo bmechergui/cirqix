@@ -11,23 +11,29 @@ Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously
 ### 1. Skill obligatoire AVANT chaque tâche
 
 ```
-ÉTAPE 1 → layrix-prompt-improver   (TOUJOURS, sans exception)
-ÉTAPE 2 → Sélectionner le meilleur skill parmi la liste ci-dessous
-ÉTAPE 3 → Annoncer AVANT chaque appel :
-         "[Skill : X] — raison"
-         "[MCP : X] — raison"
-         "[Agent : X] — raison"
-         "[Plugin : X] — raison"
-ÉTAPE 4 → Coder / implémenter
-ÉTAPE 5 → pnpm type-check → 0 erreurs
-ÉTAPE 6 → git commit + push + PR (automatiquement, sans attendre)
+ÉTAPE 1  → prompt-master                              (TOUJOURS — optimise le prompt brut)
+ÉTAPE 2  → layrix-prompt-improver                     (TOUJOURS — contexte Layrix + phase + skill)
+ÉTAPE 3  → Sélectionner le skill technique
+ÉTAPE 3b → everything-claude-code:plan                (si feature complexe ≥ 2 fichiers)
+ÉTAPE 3c → everything-claude-code:tdd                 (écrire les tests AVANT le code)
+ÉTAPE 4  → Annoncer AVANT chaque appel :
+           "[Skill : X] — raison"
+           "[MCP : X] — raison"
+           "[Agent : X] — raison"
+ÉTAPE 5  → Coder / implémenter
+ÉTAPE 5b → code-reviewer agent                        (APRÈS chaque implémentation)
+ÉTAPE 5c → everything-claude-code:security-scan       (si auth / paiement / API keys)
+ÉTAPE 6  → pnpm type-check → 0 erreurs
+ÉTAPE 6b → superpowers:verification-before-completion (avant PR)
+ÉTAPE 7  → git commit + push + PR (automatiquement, sans attendre)
 ```
 
 **NEVER** coder sans avoir invoqué un skill.
 **NEVER** laisser l'utilisateur faire le git commit ou le PR — Claude le fait.
 **NEVER** demander de l'aide pour des étapes que Claude peut faire seul.
 **NEVER** sauter une étape du workflow complet (voir `.claude/WORKFLOW.md`).
-**NEVER** sauter `layrix-prompt-improver`, même pour une tâche courte ou simple.
+**NEVER** sauter `prompt-master` ni `layrix-prompt-improver`, même pour une tâche courte ou simple.
+**NEVER** sauter `code-reviewer` après une implémentation.
 **NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
 **NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement — écrire le nom ne compte pas, seul l'appel au tool compte.
 

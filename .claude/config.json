@@ -1,10 +1,19 @@
 {
+  "_note": "Informatif uniquement — clés custom non lues par Claude Code runtime. Comportements réels configurés dans settings.local.json (hooks + permissions).",
   "model": "claude-sonnet-4-6",
   "temperature": 0.1,
-  "autoMode": true,
-  "respectWorkflow": true,
-  "skillsDir": ".claude/skills",
-  "alwaysStartWith": ["prompt-master", "layrix-prompt-improver"],
-  "requireTypeCheck": true,
-  "autoCommitPR": true
+  "workflow": {
+    "alwaysStartWith": ["layrix-prompt-improver"],
+    "requireTypeCheck": true,
+    "autoCommitPR": true,
+    "skillsDir": ".claude/skills"
+  },
+  "architecture": {
+    "fsd": true,
+    "sourceOfTruth": {
+      "types": "packages/types/src/index.ts",
+      "mockData": "apps/web/src/shared/lib/mock-data.ts",
+      "store": "apps/web/src/shared/store/app-store.ts"
+    }
+  }
 }

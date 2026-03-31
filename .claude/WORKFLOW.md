@@ -44,8 +44,8 @@ Prompt reçu
 
 ### 1. Recevoir le prompt
 ```
-Skill: layrix-prompt-improver  ← TOUJOURS en premier
-Améliore + clarifie le prompt avant toute action.
+Skill: prompt-master           ← TOUJOURS en premier (optimise le prompt brut)
+Skill: layrix-prompt-improver  ← TOUJOURS en second (contexte Layrix + skill)
 ```
 
 ### 2. Planifier
@@ -59,38 +59,43 @@ Claude choisit seul le niveau selon la complexité :
 | Très complexe (nouveau système, agents, DB) | `architect` agent + `/superpowers:write-plan` |
 
 ```
-Skill: /everything-claude-code:plan  ← feature complexe
+Skill: /everything-claude-code:plan  ← feature complexe (≥ 2 fichiers)
 Skill: /superpowers:brainstorm       ← si besoin d'explorer
 ```
 
-### 3. Coder (TDD)
+### 3. TDD — Écrire les tests AVANT le code
 ```
-Skill: /everything-claude-code:tdd                ← écrire test d'abord
-Skill: /everything-claude-code:frontend-patterns  ← Next.js
-Skill: /everything-claude-code:backend-patterns   ← API
+Skill: /everything-claude-code:tdd   ← TOUJOURS avant d'implémenter
 ```
 
-### 4. Review
+### 4. Coder
 ```
-Skill: /everything-claude-code:security-scan  ← sécurité
-Agent: typescript-reviewer                    ← qualité code
-Skill: /simplify                              ← nettoyer
-```
-
-### 5. Vérifier
-```
-pnpm type-check  ← 0 erreurs TypeScript
-Skill: /superpowers:verification-before-completion
+Skill: /everything-claude-code:frontend-patterns  ← Next.js / React / Tailwind
+Skill: /everything-claude-code:backend-patterns   ← API Routes
+Skill: /everything-claude-code:python-patterns    ← FastAPI / pcbnew
+Skill: /everything-claude-code:postgres-patterns  ← Supabase / migrations
 ```
 
-### 6. Commit + PR
+### 5. Review code
+```
+Agent: code-reviewer                          ← APRÈS chaque implémentation
+Skill: /everything-claude-code:security-scan  ← si auth / paiement / API keys
+```
+
+### 6. Vérifier
+```
+pnpm type-check → 0 erreurs TypeScript
+Skill: /superpowers:verification-before-completion  ← avant PR
+```
+
+### 7. Commit + PR
 ```
 Skill: /commit-commands:commit-push-pr  ← tout en un
 ```
 
 ### Résumé visuel
 ```
-prompt → improver → plan → TDD → code → review → type-check → commit+PR
+prompt-master → layrix-improver → plan → TDD → code → code-reviewer → security-scan → type-check → verify → commit+PR
 ```
 
 ### Annonce obligatoire avant chaque appel
@@ -212,6 +217,37 @@ prompt-master → layrix-prompt-improver
 
 ---
 
+## Architecture FSD — chemins actuels (post-migration Phase 2)
+
+```
+apps/web/src/
+├── features/marketing/ui/   ← composants landing (Hero, Navbar, Pricing…)
+├── features/dashboard/ui/   ← composants dashboard (ChatPanel, Sidebar…)
+├── features/auth/           ← (Phase 2 — à implémenter)
+├── shared/ui/               ← shadcn/ui components
+├── shared/lib/              ← mock-data.ts, utils.ts, marketing-content.ts
+├── shared/store/            ← Zustand app-store.ts
+├── entities/                ← (Phase 3 — modèles métier)
+├── widgets/                 ← (Phase 3 — ViewerPanel complexe)
+└── processes/               ← (Phase 3+ — boucle agentique UI)
+
+packages/
+├── @layrix/types   ← source de vérité (PCBStatus, Plan, AgentAction…)
+├── @layrix/logger  ← Pino logger
+├── @layrix/utils   ← cn() utility
+├── @layrix/db      ← Supabase client + migrations
+├── @layrix/agents  ← Orchestrateur + agents Claude SDK
+└── @layrix/ui      ← Design system composants partagés
+```
+
+**Import paths corrects :**
+- shadcn components : `@/shared/ui/button`
+- types partagés : `@layrix/types`
+- store : `@/shared/store/app-store`
+- utils : `@/shared/lib/utils`
+
+---
+
 ## Règles permanentes
 
 | Règle | Action |
@@ -222,3 +258,4 @@ prompt-master → layrix-prompt-improver
 | Skill manquant 2 fois | Créer avec `skill-creator` |
 | Instruction répétée 2 fois | Ajouter dans `CLAUDE.md` |
 | Fin de session | Invoquer `/everything-claude-code:save-session` |
+| Import d'un type partagé | Utiliser `@layrix/types`, jamais dupliquer |

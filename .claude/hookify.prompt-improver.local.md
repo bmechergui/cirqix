@@ -1,14 +1,14 @@
 ---
 name: prompt-improver-reminder
 enabled: true
-event: stop
-pattern: "layrix|pcb|agent|viewer|credits|footprint|kicad"
+event: UserPromptSubmit
 ---
 
-⚠️ RAPPEL — As-tu bien invoqué `layrix-prompt-improver` avant cette tâche ?
+⚠️ RAPPEL WORKFLOW LAYRIX — Avant toute action :
 
-1. Skill `layrix-prompt-improver` → améliorer le prompt
-2. Sélectionner le skill approprié
-3. Exécuter avec le prompt amélioré
+1. Invoquer `layrix-prompt-improver` (Skill tool)
+2. Annoncer `[Skill : X] — raison` avant chaque appel
+3. Coder seulement après confirmation du prompt amélioré
+4. `pnpm type-check` → 0 erreurs avant commit
 
-NEVER exécuter une tâche Layrix sans `layrix-prompt-improver`.
+NEVER exécuter sans avoir invoqué `layrix-prompt-improver`.
