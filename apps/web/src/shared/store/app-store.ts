@@ -19,6 +19,7 @@ interface AppState {
 
   // Actions
   fetchProjects: () => Promise<void>;
+  fetchCredits: () => Promise<void>;
   setSelectedProjectId: (id: string | null) => void;
   addProject: (project: Project) => void;
   updateProjectStatus: (id: string, status: PCBStatus) => void;
@@ -35,6 +36,21 @@ export const useAppStore = create<AppState>((set) => ({
   credits: null,
   isAgentRunning: false,
   agentStep: null,
+
+  fetchCredits: async () => {
+    const res = await fetch('/api/credits');
+    const json = await res.json() as { success: boolean; data?: { balance: number; plan: string } };
+    if (json.success && json.data) {
+      const dailyLimit: Record<string, number | null> = { free: 5, maker: null, pro: null, enterprise: null };
+      set({
+        credits: {
+          balance: json.data.balance,
+          plan: json.data.plan as Credits['plan'],
+          daily_limit: dailyLimit[json.data.plan] ?? null,
+        },
+      });
+    }
+  },
 
   fetchProjects: async () => {
     set({ projectsLoading: true });
