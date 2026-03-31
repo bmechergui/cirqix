@@ -10,7 +10,8 @@
 
 | Skill | Fichier | Description | Invoquer quand |
 |-------|---------|-------------|----------------|
-| `layrix-prompt-improver` | `layrix-prompt-improver/SKILL.md` | Améliore tout prompt avant exécution — détecte phase + contexte Layrix + skill à invoquer | **TOUJOURS en premier** |
+| `layrix-prompt-improver` | `layrix-prompt-improver/SKILL.md` | Améliore tout prompt avant exécution — détecte phase + contexte Layrix Phase 2 + skill à invoquer | **TOUJOURS en second** (après prompt-master-layrix) |
+| `prompt-master-layrix` | `prompt-master-layrix/SKILL.md` | Optimise le prompt pour Claude Code — 9D matrix, XML, signal words. Version slim Layrix (2 KB vs 22 KB) | **TOUJOURS en premier** |
 | `layrix-pcb-agent` | `layrix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
 | `layrix-footprint` | `layrix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
 | `layrix-kicad-service` | `layrix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
