@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    poolOptions: { threads: { maxThreads: 1, minThreads: 1 } },
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',
