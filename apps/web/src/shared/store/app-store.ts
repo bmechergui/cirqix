@@ -35,6 +35,7 @@ interface AppState {
   fetchUser: () => Promise<void>;
   fetchProjects: () => Promise<void>;
   fetchCredits: () => Promise<void>;
+  createProject: (name: string) => Promise<Project | null>;
   setSelectedProjectId: (id: string | null) => void;
   addProject: (project: Project) => void;
   updateProjectStatus: (id: string, status: PCBStatus) => void;
@@ -96,6 +97,18 @@ export const useAppStore = create<AppState>((set) => ({
     } finally {
       set({ projectsLoading: false });
     }
+  },
+
+  createProject: async (name) => {
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const json = await res.json() as { success: boolean; data?: Project };
+    if (!json.success || !json.data) return null;
+    set((state) => ({ projects: [json.data!, ...state.projects] }));
+    return json.data;
   },
 
   setSelectedProjectId: (id) => set({ selectedProjectId: id }),
