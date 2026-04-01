@@ -4,7 +4,9 @@
   "private": true,
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./engines/tscircuit-engine": "./src/engines/tscircuit-engine.ts",
+    "./engines/engine-router": "./src/engines/engine-router.ts"
   },
   "scripts": {
     "lint": "eslint .",

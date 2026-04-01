@@ -88,7 +88,15 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom out" disabled>
             <ZoomOut size={13} />
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" disabled={!pcbState}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            disabled={!pcbState || !projectId}
+            onClick={() => {
+              if (projectId) window.location.assign(`/api/projects/${projectId}/export`);
+            }}
+          >
             <Download size={12} />
             Gerbers
           </Button>
