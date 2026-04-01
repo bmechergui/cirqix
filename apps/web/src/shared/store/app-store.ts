@@ -39,6 +39,7 @@ interface AppState {
   setSelectedProjectId: (id: string | null) => void;
   addProject: (project: Project) => void;
   updateProjectName: (id: string, name: string) => void;
+  removeProject: (id: string) => void;
   updateProjectStatus: (id: string, status: PCBStatus) => void;
   addMessage: (projectId: string, message: Message) => void;
   setAgentRunning: (running: boolean, step?: AppState['agentStep']) => void;
@@ -122,6 +123,11 @@ export const useAppStore = create<AppState>((set) => ({
       projects: state.projects.map((p) =>
         p.id === id ? { ...p, name, updated_at: new Date().toISOString() } : p
       ),
+    })),
+
+  removeProject: (id) =>
+    set((state) => ({
+      projects: state.projects.filter((p) => p.id !== id),
     })),
 
   updateProjectStatus: (id, status) =>

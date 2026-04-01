@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PATCH } from './route';
+import { PATCH, DELETE } from './route';
 import { createSupabaseMock } from '@/test/mocks/supabase';
 
 const mockCreateClient = vi.fn();
@@ -127,6 +127,50 @@ describe('PATCH /api/projects/[id]', () => {
     mockCreateClient.mockReturnValue(mock);
 
     const res = await PATCH(makeRequest({ name: 'New name' }), { params: MOCK_PARAMS });
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('DELETE /api/projects/[id]', () => {
+  function makeDeleteRequest() {
+    return new NextRequest('http://localhost/api/projects/proj-123', { method: 'DELETE' });
+  }
+
+  it('returns 200 on successful delete', async () => {
+    const mock = createSupabaseMock();
+    mock.from = vi.fn().mockReturnValue({
+      delete: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    });
+    mockCreateClient.mockReturnValue(mock);
+
+    const res = await DELETE(makeDeleteRequest(), { params: MOCK_PARAMS });
+    expect(res.status).toBe(200);
+    const json = await res.json() as { success: boolean };
+    expect(json.success).toBe(true);
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    mockCreateClient.mockReturnValue(createSupabaseMock({ user: null }));
+    const res = await DELETE(makeDeleteRequest(), { params: MOCK_PARAMS });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 500 on DB error', async () => {
+    const mock = createSupabaseMock();
+    mock.from = vi.fn().mockReturnValue({
+      delete: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: { message: 'DB error' } }),
+        }),
+      }),
+    });
+    mockCreateClient.mockReturnValue(mock);
+
+    const res = await DELETE(makeDeleteRequest(), { params: MOCK_PARAMS });
     expect(res.status).toBe(500);
   });
 });
