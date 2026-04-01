@@ -67,6 +67,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const isAgentRunning = useAppStore((s) => s.isAgentRunning);
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
   const deductCredits = useAppStore((s) => s.deductCredits);
+  const setPcbState = useAppStore((s) => s.setPcbState);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -147,6 +148,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             if (event.type === 'text') {
               accumulated += event.delta;
               setStreamingText(accumulated);
+            } else if (event.type === 'pcb_state') {
+              setPcbState(event.projectId, event.state as Parameters<typeof setPcbState>[1]);
             } else if (event.type === 'step') {
               setAgentRunning(true, event.step as Parameters<typeof setAgentRunning>[1]);
             } else if (event.type === 'done') {
@@ -193,7 +196,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       setAgentRunning(false);
       setStreamingText('');
     }
-  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, messages]);
+  }, [input, isAgentRunning, addMessage, projectId, setAgentRunning, deductCredits, setPcbState, messages]);
 
   return (
     <div className="flex flex-col h-full">

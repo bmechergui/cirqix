@@ -27,6 +27,7 @@ export type SSEEvent =
   | { type: 'step'; step: string }
   | { type: 'tool_call'; tool: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool: string; summary: string }
+  | { type: 'pcb_state'; projectId: string; state: Record<string, unknown> }
   | { type: 'iteration'; count: number }
   | { type: 'done'; fullText: string }
   | { type: 'error'; message: string };
@@ -160,6 +161,21 @@ export async function* runOrchestrator(
         tool: tool.name,
         summary: String(result['note'] ?? resultStr.slice(0, 100)),
       };
+
+      // Emit pcb_state so the frontend viewer can update in real-time
+      const pcbStateTools = new Set([
+        'call_agent_placement',
+        'call_agent_routing',
+        'call_agent_drc',
+        'call_agent_schema',
+      ]);
+      if (pcbStateTools.has(tool.name)) {
+        yield {
+          type: 'pcb_state',
+          projectId: options.projectId,
+          state: result,
+        };
+      }
 
       toolResults.push({
         type: 'tool_result',

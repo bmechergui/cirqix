@@ -26,7 +26,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
         {/* Viewer — remaining space */}
         <div className="flex-1 overflow-hidden">
-          <ViewerPanel />
+          <ViewerPanel projectId={id} />
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Message, Credits, PCBStatus } from '@layrix/types';
+import type { Project, Message, Credits, PCBStatus, PCBState } from '@layrix/types';
 import { createSupabaseBrowserClient } from '@/shared/lib/supabase-browser';
 
 interface AuthUser {
@@ -28,6 +28,9 @@ interface AppState {
   isAgentRunning: boolean;
   agentStep: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
+  // PCB state par projet (mis à jour par les events SSE de l'agent)
+  pcbStateByProject: Record<string, PCBState>;
+
   // Actions
   fetchUser: () => Promise<void>;
   fetchProjects: () => Promise<void>;
@@ -38,6 +41,7 @@ interface AppState {
   addMessage: (projectId: string, message: Message) => void;
   setAgentRunning: (running: boolean, step?: AppState['agentStep']) => void;
   deductCredits: (amount: number) => void;
+  setPcbState: (projectId: string, state: Partial<PCBState>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -49,6 +53,7 @@ export const useAppStore = create<AppState>((set) => ({
   credits: null,
   isAgentRunning: false,
   agentStep: null,
+  pcbStateByProject: {},
 
   fetchUser: async () => {
     const supabase = createSupabaseBrowserClient();
@@ -121,5 +126,16 @@ export const useAppStore = create<AppState>((set) => ({
       credits: state.credits
         ? { ...state.credits, balance: Math.max(0, state.credits.balance - amount) }
         : null,
+    })),
+
+  setPcbState: (projectId, partial) =>
+    set((state) => ({
+      pcbStateByProject: {
+        ...state.pcbStateByProject,
+        [projectId]: {
+          ...(state.pcbStateByProject[projectId] ?? { projectId, status: 'INITIAL', iteration: 0 }),
+          ...partial,
+        },
+      },
     })),
 }));
