@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { LayrixLogo } from '@/shared/ui/layrix-logo';
-import { LayoutDashboard, FolderOpen, Settings, HelpCircle, Plus, Loader2 } from 'lucide-react';
+import { LayoutDashboard, FolderOpen, Settings, HelpCircle, Plus, Loader2, CreditCard } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 import { useAppStore } from '@/shared/store/app-store';
@@ -23,6 +23,7 @@ const NAV = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/projects', label: 'Projects', icon: FolderOpen },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
+  { href: '/dashboard/billing',  label: 'Billing',  icon: CreditCard },
 ];
 
 const BOTTOM_NAV = [
