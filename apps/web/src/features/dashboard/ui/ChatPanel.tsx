@@ -59,10 +59,12 @@ function StreamingBubble({ text }: { text: string }) {
   );
 }
 
+const EMPTY_MESSAGES: Message[] = [];
+
 export function ChatPanel({ projectId }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
-  const messages = useAppStore((s) => s.messagesByProject[projectId] ?? []);
+  const messages = useAppStore((s) => s.messagesByProject[projectId] ?? EMPTY_MESSAGES);
   const addMessage = useAppStore((s) => s.addMessage);
   const isAgentRunning = useAppStore((s) => s.isAgentRunning);
   const setAgentRunning = useAppStore((s) => s.setAgentRunning);
