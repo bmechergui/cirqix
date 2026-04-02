@@ -11,7 +11,7 @@ interface PixiCanvasProps {
   layerVisibility: Record<string, boolean>;
 }
 
-export function PixiCanvas({ pcbState }: PixiCanvasProps) {
+export function PixiCanvas({ pcbState, layerVisibility }: PixiCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<PCBRenderer | null>(null);
   const initializedRef = useRef(false);
@@ -26,7 +26,7 @@ export function PixiCanvas({ pcbState }: PixiCanvasProps) {
     void createPCBRenderer(canvasRef.current).then((r) => {
       renderer = r;
       rendererRef.current = r;
-      r.render(pcbState);
+      r.render(pcbState, layerVisibility);
     });
 
     return () => {
@@ -37,10 +37,10 @@ export function PixiCanvas({ pcbState }: PixiCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-render quand l'état PCB change
+  // Re-render quand l'état PCB ou la visibilité des layers change
   useEffect(() => {
-    rendererRef.current?.render(pcbState);
-  }, [pcbState]);
+    rendererRef.current?.render(pcbState, layerVisibility);
+  }, [pcbState, layerVisibility]);
 
   return (
     <canvas

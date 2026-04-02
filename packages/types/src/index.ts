@@ -70,6 +70,10 @@ export interface PCBState {
   routing?: Record<string, unknown>;
   drcViolations?: DRCViolation[];
   gerberPath?: string;
+  /** Circuit-json soup produced by TSCircuit engine */
+  circuit_json?: unknown[];
+  board_width_mm?: number;
+  board_height_mm?: number;
 }
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {
