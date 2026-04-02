@@ -4,6 +4,17 @@ import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { runOrchestrator } from '@layrix/agents';
 import type { SSEEvent } from '@layrix/agents';
 import { CREDIT_COSTS } from '@layrix/types';
+import type { AgentAction } from '@layrix/types';
+
+// Map tool name → AgentAction for per-step credit deduction
+const TOOL_ACTION_MAP: Record<string, AgentAction> = {
+  call_agent_schema:    'schema',
+  call_agent_placement: 'placement',
+  call_agent_routing:   'routing',
+  call_agent_drc:       'drc',
+  call_agent_export:    'export',
+  call_agent_footprint: 'footprint',
+};
 
 const bodySchema = z.object({
   projectId: z.string().uuid(),
@@ -83,7 +94,20 @@ export async function POST(req: NextRequest) {
               .eq('user_id', user.id);
           }
 
-          // Deduct credits on successful completion
+          // Deduct credits per PCB pipeline step (schema, placement, routing, drc, export)
+          if (event.type === 'tool_result') {
+            const action = TOOL_ACTION_MAP[event.tool];
+            if (action) {
+              await supabase.rpc('deduct_credits', {
+                p_user_id: user.id,
+                p_amount: CREDIT_COSTS[action],
+                p_action: action,
+                p_project_id: body.projectId,
+              });
+            }
+          }
+
+          // Deduct chat credit on completion
           if (event.type === 'done') {
             await supabase.rpc('deduct_credits', {
               p_user_id: user.id,
