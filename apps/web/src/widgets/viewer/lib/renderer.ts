@@ -55,6 +55,13 @@ export class PCBRenderer {
   private boardHpx = 0;
   private baseScale = 1;
 
+  // Pan state
+  private isPanning   = false;
+  private panStartX   = 0;
+  private panStartY   = 0;
+  private panOriginX  = 0;
+  private panOriginY  = 0;
+
   constructor(app: Application) {
     this.app = app;
     this.viewport.addChild(this.boardLayer);
@@ -62,6 +69,39 @@ export class PCBRenderer {
     this.viewport.addChild(this.drcLayer);
     this.viewport.addChild(this.labelLayer);
     app.stage.addChild(this.viewport);
+    this.initPan();
+  }
+
+  private initPan(): void {
+    const stage   = this.app.stage;
+    const canvas  = this.app.canvas as HTMLCanvasElement;
+
+    stage.eventMode = 'static';
+    stage.hitArea   = this.app.screen;
+
+    stage.on('pointerdown', (e) => {
+      this.isPanning  = true;
+      this.panStartX  = e.globalX;
+      this.panStartY  = e.globalY;
+      this.panOriginX = this.viewport.x;
+      this.panOriginY = this.viewport.y;
+      canvas.style.cursor = 'grabbing';
+    });
+
+    stage.on('pointermove', (e) => {
+      if (!this.isPanning) return;
+      this.viewport.x = this.panOriginX + (e.globalX - this.panStartX);
+      this.viewport.y = this.panOriginY + (e.globalY - this.panStartY);
+    });
+
+    const stopPan = () => {
+      this.isPanning = false;
+      canvas.style.cursor = 'grab';
+    };
+    stage.on('pointerup',        stopPan);
+    stage.on('pointerupoutside', stopPan);
+
+    canvas.style.cursor = 'grab';
   }
 
   render(state: PCBState | null, layerVisibility: Record<string, boolean> = {}): void {
