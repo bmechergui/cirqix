@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { Zap, Sparkles, Crown, Check } from 'lucide-react';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import { TransactionHistory } from '@/features/settings/ui/TransactionHistory';
 
 // ---------------------------------------------------------------------------
 // Data
@@ -238,6 +239,13 @@ export default async function BillingPage() {
             );
           })}
         </div>
+      </section>
+
+      {/* ── Transaction history ── */}
+      <section>
+        <h2 className="text-lg font-semibold text-foreground mb-1">Transaction History</h2>
+        <p className="text-sm text-muted-foreground mb-4">Last 50 credit movements on your account.</p>
+        <TransactionHistory />
       </section>
 
     </div>
