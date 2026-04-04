@@ -2,11 +2,12 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
-import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff } from 'lucide-react';
+import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, Cpu, Ruler, Activity } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
 import type { ZoomControls } from '../lib/renderer';
+import type { PCBState } from '@layrix/types';
 
 // PixiJS ne fonctionne pas côté serveur → dynamic import obligatoire
 const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas), {
@@ -29,6 +30,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
   );
+  const agentStep = useAppStore((s) => s.agentStep);
   const setPcbState = useAppStore((s) => s.setPcbState);
 
   // Load persisted PCB state from DB on mount
@@ -123,11 +125,18 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
         {mode === '2d' ? (
-          <PixiCanvas
-            pcbState={pcbState}
-            layerVisibility={layerVisibility}
-            onReady={setZoomControls}
-          />
+          <>
+            <PixiCanvas
+              pcbState={pcbState}
+              layerVisibility={layerVisibility}
+              onReady={setZoomControls}
+            />
+            {!pcbState?.placement && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d0d]/90 pointer-events-none">
+                <PCBMetadataPanel pcbState={pcbState} agentStep={agentStep} />
+              </div>
+            )}
+          </>
         ) : (
           <PCBViewer3DPlaceholder />
         )}
@@ -177,6 +186,93 @@ function PCBPlaceholder() {
   );
 }
 
+type AgentStep = 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+
+const STEP_LABELS: Record<NonNullable<AgentStep>, string> = {
+  SCHEMA:    'Generating schematic…',
+  PLACEMENT: 'Placing components…',
+  ROUTING:   'Auto-routing traces…',
+  DRC:       'Running DRC check…',
+  EXPORT:    'Exporting Gerbers…',
+};
+
+function PCBMetadataPanel({
+  pcbState,
+  agentStep,
+}: {
+  pcbState: PCBState | null;
+  agentStep: AgentStep;
+}) {
+  const placement = pcbState?.placement as { placements?: unknown[] } | undefined;
+  const componentCount = placement?.placements?.length ?? 0;
+  const boardW = pcbState?.board_width_mm;
+  const boardH = pcbState?.board_height_mm;
+  const status = pcbState?.status ?? 'INITIAL';
+  const iteration = pcbState?.iteration ?? 0;
+
+  return (
+    <div className="pointer-events-none flex flex-col items-center gap-4">
+      <div className="w-12 h-12 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
+        <Layers size={24} className="text-primary/40" />
+      </div>
+
+      <div className="bg-[#111111] border border-border rounded-lg p-4 w-56">
+        <p className="text-[10px] text-[#52525B] font-mono uppercase tracking-wider mb-3">
+          PCB Metadata
+        </p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          <div className="flex items-center gap-1.5">
+            <Ruler size={10} className="text-[#52525B] shrink-0" />
+            <span className="text-[10px] text-[#71717A]">Board</span>
+          </div>
+          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
+            {boardW && boardH ? `${boardW}×${boardH}mm` : '--'}
+          </span>
+
+          <div className="flex items-center gap-1.5">
+            <Cpu size={10} className="text-[#52525B] shrink-0" />
+            <span className="text-[10px] text-[#71717A]">Components</span>
+          </div>
+          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
+            {componentCount > 0 ? componentCount : '--'}
+          </span>
+
+          <div className="flex items-center gap-1.5">
+            <Activity size={10} className="text-[#52525B] shrink-0" />
+            <span className="text-[10px] text-[#71717A]">Status</span>
+          </div>
+          <span className="text-[10px] text-[#A1A1AA] font-mono text-right truncate">
+            {status}
+          </span>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-[#52525B]">#</span>
+            <span className="text-[10px] text-[#71717A]">Iteration</span>
+          </div>
+          <span className="text-[10px] text-[#A1A1AA] font-mono text-right">
+            {iteration}
+          </span>
+        </div>
+      </div>
+
+      {agentStep && (
+        <div className="flex items-center gap-2 bg-[#111111] border border-border rounded-full px-3 py-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+          <span className="text-[10px] text-[#A1A1AA] font-mono">
+            {STEP_LABELS[agentStep]}
+          </span>
+        </div>
+      )}
+
+      {!agentStep && status === 'INITIAL' && (
+        <p className="text-[11px] text-[#52525B] text-center max-w-[180px]">
+          Describe your circuit in the chat to start designing
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PCBViewer3DPlaceholder() {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-8">
@@ -187,6 +283,11 @@ function PCBViewer3DPlaceholder() {
         3D viewer available on{' '}
         <span className="text-amber-400 font-medium">Maker</span> plan and above.
         Generate your PCB first to preview it in 3D.
+      </p>
+      <p className="text-[10px] text-[#52525B] max-w-[220px] mt-1">
+        The 3D view renders a realistic preview of your assembled PCB — components,
+        solder mask, silkscreen, and copper layers — ready for visual inspection
+        before ordering.
       </p>
     </div>
   );
