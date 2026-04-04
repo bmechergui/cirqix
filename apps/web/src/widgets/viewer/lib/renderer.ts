@@ -264,6 +264,27 @@ export class PCBRenderer {
           break;
         }
 
+        case 'pcb_silkscreen_text': {
+          const kicad = toKicadLayer(el.layer, true);
+          if (layerVisibility[kicad] === false) break;
+          const txt = el as unknown as {
+            text: string;
+            anchor_position: { x: number; y: number };
+            font_size?: number;
+          };
+          if (!txt.text || !txt.anchor_position) break;
+          const style = new TextStyle({
+            fontSize: Math.max(mmToPx(txt.font_size ?? 0.6), 5),
+            fill: LAYER_COLORS[kicad] ?? 0xffffff,
+            fontFamily: 'monospace',
+          });
+          const label = new Text({ text: txt.text, style });
+          label.x = mmToPx(txt.anchor_position.x) - label.width / 2;
+          label.y = mmToPx(txt.anchor_position.y) - label.height / 2;
+          this.componentLayer.addChild(label);
+          break;
+        }
+
         case 'pcb_trace': {
           const kicad = toKicadLayer(el.layer);
           if (layerVisibility[kicad] === false) break;

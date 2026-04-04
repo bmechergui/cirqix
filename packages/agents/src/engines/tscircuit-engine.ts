@@ -193,6 +193,46 @@ export async function runTSCircuitEngine(
     });
   });
 
+  // --- Route generation — L-shaped traces connecting pads of the same net ----
+  if (schemaJson.nets.length > 0) {
+    // Assign pads to nets (round-robin by global pad index)
+    const netPadMap = new Map<string, Array<{ x: number; y: number }>>();
+    for (const net of schemaJson.nets) netPadMap.set(net, []);
+
+    let globalPadIdx = 0;
+    schemaJson.components.forEach((comp, idx) => {
+      const pos = positions[idx]!;
+      const dims = getFootprintDims(comp.footprint);
+      for (const pad of dims.pads) {
+        const net = schemaJson.nets[globalPadIdx % schemaJson.nets.length]!;
+        netPadMap.get(net)!.push({ x: pos.x + pad.dx, y: pos.y + pad.dy });
+        globalPadIdx++;
+      }
+    });
+
+    let traceIdx = 0;
+    for (const [, pads] of netPadMap) {
+      if (pads.length < 2) continue;
+      // Sort by x then y for deterministic routing
+      const sorted = [...pads].sort((a, b) => a.x - b.x || a.y - b.y);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const from = sorted[i]!;
+        const to   = sorted[i + 1]!;
+        soup.push({
+          type: 'pcb_trace',
+          pcb_trace_id: `trace-${traceIdx++}`,
+          route: [
+            { x: from.x, y: from.y },
+            { x: to.x,   y: from.y }, // horizontal segment
+            { x: to.x,   y: to.y   }, // vertical segment
+          ],
+          stroke_width: 0.15,
+          layer: 'top',
+        });
+      }
+    }
+  }
+
   // Generate Gerbers
   let gerbers: Record<string, string> = {};
   try {
