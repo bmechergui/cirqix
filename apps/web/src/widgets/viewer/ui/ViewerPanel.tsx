@@ -131,7 +131,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
               layerVisibility={layerVisibility}
               onReady={setZoomControls}
             />
-            {!pcbState?.placement && (
+            {!(pcbState?.circuit_json?.length) && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d0d0d]/90 pointer-events-none">
                 <PCBMetadataPanel pcbState={pcbState} agentStep={agentStep} />
               </div>

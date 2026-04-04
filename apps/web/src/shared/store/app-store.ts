@@ -156,13 +156,20 @@ export const useAppStore = create<AppState>((set) => ({
     })),
 
   setPcbState: (projectId, partial) =>
-    set((state) => ({
-      pcbStateByProject: {
-        ...state.pcbStateByProject,
-        [projectId]: {
-          ...(state.pcbStateByProject[projectId] ?? { projectId, status: 'INITIAL', iteration: 0 }),
-          ...partial,
+    set((state) => {
+      const existing = state.pcbStateByProject[projectId] ?? { projectId, status: 'INITIAL' as PCBStatus, iteration: 0 };
+      // `pcb_status` is a signal field emitted by tool stubs to carry the PCBStatus value
+      // without colliding with the tool result's own `status: 'success'` field.
+      const { pcb_status, ...rest } = partial as typeof partial & { pcb_status?: PCBStatus };
+      return {
+        pcbStateByProject: {
+          ...state.pcbStateByProject,
+          [projectId]: {
+            ...existing,
+            ...rest,
+            ...(pcb_status ? { status: pcb_status } : {}),
+          },
         },
-      },
-    })),
+      };
+    }),
 }));

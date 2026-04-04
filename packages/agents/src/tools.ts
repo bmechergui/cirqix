@@ -182,6 +182,7 @@ export async function executeToolStub(
 
       return {
         status: 'success',
+        pcb_status: 'SCHEMA_DONE',
         components: schema.components,
         nets: schema.nets,
         engine,
@@ -218,6 +219,7 @@ export async function executeToolStub(
 
       return {
         status: 'success',
+        pcb_status: 'PLACEMENT_DONE',
         placements: result.placements,
         circuit_json: result.circuitJson,
         board_width_mm: boardW,
@@ -236,6 +238,7 @@ export async function executeToolStub(
         const result = await runPCBEngine(schema, cached?.boardW, cached?.boardH);
         return {
           status: 'success',
+          pcb_status: 'ROUTING_DONE',
           routed_percent: 100,
           layers: input['layers'] ?? 2,
           via_count: Math.floor(schema.components.length * 0.5),
@@ -259,6 +262,7 @@ export async function executeToolStub(
     case 'call_agent_drc':
       return {
         status: 'success',
+        pcb_status: 'DRC_CLEAN',
         violations: [],
         warnings: [],
         drc_clean: true,
