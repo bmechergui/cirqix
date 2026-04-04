@@ -20,55 +20,58 @@ function MessageBubble({ msg }: { msg: Message }) {
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
         className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-          isUser ? 'bg-primary/20 text-primary' : 'bg-[#1a1a1a] text-muted-foreground'
+          isUser ? 'bg-primary/20 text-primary' : 'bg-[#1a1a1a] text-[#A1A1AA]'
         }`}
       >
         {isUser ? <User size={14} /> : <Bot size={14} />}
       </div>
-      <div
-        className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
-          isUser
-            ? 'bg-primary text-[#080808] font-medium rounded-tr-sm whitespace-pre-wrap'
-            : 'bg-[#161616] text-foreground border border-border rounded-tl-sm prose prose-invert prose-sm max-w-none'
-        }`}
-      >
-        {isUser ? (
-          msg.content
-        ) : (
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: ({ children }) => <h1 className="text-base font-bold mb-1">{children}</h1>,
-              h2: ({ children }) => <h2 className="text-sm font-bold mb-1">{children}</h2>,
-              h3: ({ children }) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
-              p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-              ul: ({ children }) => <ul className="list-disc pl-4 mb-1">{children}</ul>,
-              ol: ({ children }) => <ol className="list-decimal pl-4 mb-1">{children}</ol>,
-              li: ({ children }) => <li className="mb-0.5">{children}</li>,
-              code: ({ children }) => (
-                <code className="bg-[#0d0d0d] text-primary px-1 py-0.5 rounded text-xs font-mono">{children}</code>
-              ),
-              pre: ({ children }) => (
-                <pre className="bg-[#0d0d0d] p-2 rounded text-xs font-mono overflow-x-auto mb-1">{children}</pre>
-              ),
-              table: ({ children }) => (
-                <div className="overflow-x-auto mb-1">
-                  <table className="text-xs border-collapse w-full">{children}</table>
-                </div>
-              ),
-              th: ({ children }) => (
-                <th className="border border-border px-2 py-1 text-left font-semibold">{children}</th>
-              ),
-              td: ({ children }) => (
-                <td className="border border-border px-2 py-1">{children}</td>
-              ),
-              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-              em: ({ children }) => <em className="italic">{children}</em>,
-            }}
-          >
-            {msg.content}
-          </ReactMarkdown>
-        )}
+      <div className={`flex flex-col gap-0.5 max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
+        <div
+          className={`rounded-xl px-3 py-2 text-sm leading-relaxed ${
+            isUser
+              ? 'bg-primary text-[#080808] font-medium rounded-tr-sm whitespace-pre-wrap'
+              : 'bg-[#161616] text-[#E4E4E7] border border-border rounded-tl-sm prose prose-invert prose-sm max-w-none [&_p]:text-[#E4E4E7] [&_li]:text-[#E4E4E7]'
+          }`}
+        >
+          {isUser ? (
+            msg.content
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => <h1 className="text-base font-bold mb-1 text-[#F4F4F5]">{children}</h1>,
+                h2: ({ children }) => <h2 className="text-sm font-bold mb-1 text-[#F4F4F5]">{children}</h2>,
+                h3: ({ children }) => <h3 className="text-sm font-semibold mb-1 text-[#E4E4E7]">{children}</h3>,
+                p: ({ children }) => <p className="mb-1 last:mb-0 text-[#E4E4E7]">{children}</p>,
+                ul: ({ children }) => <ul className="list-disc pl-4 mb-1">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal pl-4 mb-1">{children}</ol>,
+                li: ({ children }) => <li className="mb-0.5 text-[#E4E4E7]">{children}</li>,
+                code: ({ children }) => (
+                  <code className="bg-[#0d0d0d] text-primary px-1 py-0.5 rounded text-xs font-mono">{children}</code>
+                ),
+                pre: ({ children }) => (
+                  <pre className="bg-[#0d0d0d] p-2 rounded text-xs font-mono overflow-x-auto mb-1">{children}</pre>
+                ),
+                table: ({ children }) => (
+                  <div className="overflow-x-auto mb-1">
+                    <table className="text-xs border-collapse w-full">{children}</table>
+                  </div>
+                ),
+                th: ({ children }) => (
+                  <th className="border border-border px-2 py-1 text-left font-semibold text-[#F4F4F5]">{children}</th>
+                ),
+                td: ({ children }) => (
+                  <td className="border border-border px-2 py-1 text-[#E4E4E7]">{children}</td>
+                ),
+                strong: ({ children }) => <strong className="font-semibold text-[#F4F4F5]">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+              }}
+            >
+              {msg.content}
+            </ReactMarkdown>
+          )}
+        </div>
+        <span className="text-[10px] text-[#52525B] px-1">{msg.timestamp}</span>
       </div>
     </div>
   );
@@ -78,9 +81,9 @@ function StreamingBubble({ text }: { text: string }) {
   return (
     <div className="flex gap-3">
       <div className="w-7 h-7 rounded-full bg-[#1a1a1a] flex items-center justify-center shrink-0">
-        <Bot size={14} className="text-muted-foreground" />
+        <Bot size={14} className="text-[#A1A1AA]" />
       </div>
-      <div className="max-w-[80%] rounded-xl rounded-tl-sm px-3 py-2 text-sm leading-relaxed bg-[#161616] text-foreground border border-border prose prose-invert prose-sm max-w-none">
+      <div className="max-w-[80%] rounded-xl rounded-tl-sm px-3 py-2 text-sm leading-relaxed bg-[#161616] text-[#E4E4E7] border border-border prose prose-invert prose-sm max-w-none [&_p]:text-[#E4E4E7]">
         {text ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         ) : (
@@ -95,6 +98,31 @@ function StreamingBubble({ text }: { text: string }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+const PROMPT_SUGGESTIONS = [
+  'Add a USB-C port',
+  'Check the routing',
+  'Add decoupling capacitors',
+  'Generate Gerbers',
+  'Explain the schematic',
+] as const;
+
+function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {PROMPT_SUGGESTIONS.map((suggestion) => (
+        <button
+          key={suggestion}
+          type="button"
+          onClick={() => onSelect(suggestion)}
+          className="shrink-0 px-3 py-1.5 text-xs rounded-full border border-border bg-[#141414] text-[#A1A1AA] hover:border-[#3D3D3D] hover:text-white transition-colors whitespace-nowrap"
+        >
+          {suggestion}
+        </button>
+      ))}
     </div>
   );
 }
@@ -266,7 +294,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       </div>
 
       {/* Input */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 flex flex-col gap-2">
+        {input.trim() === '' && !isAgentRunning && messages.length === 0 && (
+          <PromptSuggestions onSelect={setInput} />
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -295,3 +326,4 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     </div>
   );
 }
+
