@@ -104,31 +104,78 @@ function DeleteButton({ projectId }: { projectId: string }) {
   );
 }
 
+const MIN_CHAT_WIDTH = 280;
+const MAX_CHAT_WIDTH = 600;
+const DEFAULT_CHAT_WIDTH = 380;
+
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const project = useAppStore((s) => s.projects.find((p) => p.id === id));
   const agentStep = useAppStore((s) => s.agentStep);
   const setSelectedProjectId = useAppStore((s) => s.setSelectedProjectId);
 
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const isDragging = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     setSelectedProjectId(id);
     return () => setSelectedProjectId(null);
   }, [id, setSelectedProjectId]);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const newWidth = Math.min(Math.max(e.clientX - rect.left, MIN_CHAT_WIDTH), MAX_CHAT_WIDTH);
+      setChatWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
 
   if (!project) return <div className="text-muted-foreground p-6">Project not found</div>;
 
   return (
     <div className="flex flex-col -m-6 overflow-hidden" style={{ height: 'calc(100vh - var(--header-height, 57px))' }}>
       <AgentProgressBar step={agentStep} />
-      <div className="flex flex-1 overflow-hidden">
-        {/* Chat — 380px */}
-        <div className="w-[380px] border-r border-border flex flex-col overflow-hidden">
+      <div ref={containerRef} className="flex flex-1 overflow-hidden">
+        {/* Chat — resizable */}
+        <div
+          className="border-r border-border flex flex-col overflow-hidden shrink-0"
+          style={{ width: chatWidth }}
+        >
           <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
             <ProjectTitle projectId={id} initialName={project.name} />
             <DeleteButton projectId={id} />
           </div>
           <ChatPanel projectId={id} />
         </div>
+
+        {/* Resize handle */}
+        <div
+          onMouseDown={handleResizeMouseDown}
+          className="w-1 shrink-0 bg-border hover:bg-primary/50 active:bg-primary/70 cursor-col-resize transition-colors"
+          title="Drag to resize"
+        />
+
         {/* Viewer — remaining space */}
         <div className="flex-1 overflow-hidden">
           <ViewerPanel projectId={id} />
