@@ -27,9 +27,9 @@ function MessageBubble({ msg }: { msg: Message }) {
       </div>
       <div className={`flex flex-col gap-0.5 max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
         <div
-          className={`rounded-xl px-3 py-2 text-sm leading-relaxed ${
+          className={`rounded-xl px-3.5 py-2.5 text-sm leading-relaxed min-w-[64px] ${
             isUser
-              ? 'bg-primary text-[#080808] font-medium rounded-tr-sm whitespace-pre-wrap'
+              ? 'bg-primary/90 text-[#080808] font-medium rounded-tr-sm whitespace-pre-wrap'
               : 'bg-[#161616] text-[#E4E4E7] border border-border rounded-tl-sm prose prose-invert prose-sm max-w-none [&_p]:text-[#E4E4E7] [&_li]:text-[#E4E4E7]'
           }`}
         >
@@ -103,11 +103,11 @@ function StreamingBubble({ text }: { text: string }) {
 }
 
 const PROMPT_SUGGESTIONS = [
-  'Add a USB-C port',
-  'Check the routing',
-  'Add decoupling capacitors',
-  'Generate Gerbers',
-  'Explain the schematic',
+  'Add USB-C power input',
+  'Add 100nF decoupling on all VCC',
+  'Switch to 4-layer board',
+  'Run DRC and fix violations',
+  'Export Gerbers for JLCPCB',
 ] as const;
 
 function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
@@ -274,6 +274,15 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Context hint — shown when conversation is active */}
+      {messages.length > 0 && (
+        <div className="px-4 py-1.5 border-b border-border/40 bg-[#080808] shrink-0">
+          <p className="text-[9px] text-[#3D3D3D] font-mono">
+            Change components · resize board · iterate on routing
+          </p>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && !isAgentRunning && (
@@ -281,8 +290,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
               <Bot size={24} className="text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground max-w-xs">
-              Describe your PCB requirements and the AI agent will design it for you.
+            <p className="text-sm text-[#71717A] max-w-xs">
+              Describe your circuit. The agent generates schematic, placement, and routing.
             </p>
           </div>
         )}
@@ -295,7 +304,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
       {/* Input */}
       <div className="border-t border-border p-3 flex flex-col gap-2">
-        {input.trim() === '' && !isAgentRunning && messages.length === 0 && (
+        {input.trim() === '' && !isAgentRunning && (
           <PromptSuggestions onSelect={setInput} />
         )}
         <form

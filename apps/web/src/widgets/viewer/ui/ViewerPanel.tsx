@@ -275,20 +275,18 @@ function PCBMetadataPanel({
 
 function PCBViewer3DPlaceholder() {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-8">
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
       <div className="w-16 h-16 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
-        <Box size={32} className="text-primary/50" />
+        <Box size={32} className="text-primary/30" />
       </div>
-      <p className="text-xs text-muted-foreground max-w-xs">
-        3D viewer available on{' '}
-        <span className="text-amber-400 font-medium">Maker</span> plan and above.
-        Generate your PCB first to preview it in 3D.
-      </p>
-      <p className="text-[10px] text-[#52525B] max-w-[220px] mt-1">
-        The 3D view renders a realistic preview of your assembled PCB — components,
-        solder mask, silkscreen, and copper layers — ready for visual inspection
-        before ordering.
-      </p>
+      <div className="space-y-1.5 max-w-[240px]">
+        <p className="text-xs text-[#A1A1AA] font-medium">3D preview</p>
+        <p className="text-[11px] text-[#52525B] leading-relaxed">
+          Renders automatically after PCB completion — FR4 substrate, copper layers,
+          solder mask, silkscreen, and component bodies.
+        </p>
+      </div>
+      <p className="text-[9px] text-[#3D3D3D] font-mono">Maker plan · visual inspection before ordering</p>
     </div>
   );
 }
