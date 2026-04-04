@@ -108,6 +108,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const project = useAppStore((s) => s.projects.find((p) => p.id === id));
   const agentStep = useAppStore((s) => s.agentStep);
+  const setSelectedProjectId = useAppStore((s) => s.setSelectedProjectId);
+
+  useEffect(() => {
+    setSelectedProjectId(id);
+    return () => setSelectedProjectId(null);
+  }, [id, setSelectedProjectId]);
 
   if (!project) return <div className="text-muted-foreground p-6">Project not found</div>;
 
