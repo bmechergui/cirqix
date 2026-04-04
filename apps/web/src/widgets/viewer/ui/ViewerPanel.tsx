@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
-import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff } from 'lucide-react';
+import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, FileText } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
@@ -15,7 +15,14 @@ const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas
   loading: () => <PCBPlaceholder />,
 });
 
-type ViewMode = '2d' | '3d';
+type ViewMode = '2d' | '3d' | 'schema';
+
+interface SchemaComponent {
+  ref: string;
+  value: string;
+  footprint: string;
+  lcsc?: string;
+}
 
 interface ViewerPanelProps {
   projectId?: string;
@@ -83,6 +90,18 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
             <Box size={12} />
             3D
           </button>
+          <button
+            type="button"
+            onClick={() => setMode('schema')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              mode === 'schema'
+                ? 'bg-primary/20 text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <FileText size={12} />
+            Schema
+          </button>
         </div>
 
         <div className="flex items-center gap-1">
@@ -139,6 +158,8 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
               </div>
             )}
           </>
+        ) : mode === 'schema' ? (
+          <SchemaNetlistView pcbState={pcbState} />
         ) : (
           <PCBViewer3DPlaceholder />
         )}
@@ -309,6 +330,81 @@ function PCBViewer3DPlaceholder() {
         </p>
       </div>
       <p className="text-[9px] text-[#3D3D3D] font-mono">Maker plan · visual inspection before ordering</p>
+    </div>
+  );
+}
+
+const POWER_PREFIXES = ['GND', 'VSS', 'VCC', 'VDD', 'VIN', 'VOUT', '3V3', '5V', '12V'];
+function netClass(net: string): string {
+  const u = net.toUpperCase();
+  if (POWER_PREFIXES.some((p) => u === p || u.startsWith('GND') || u.startsWith('VSS'))) {
+    return 'border-[#1A2A1A] text-[#52A052] bg-[#0D160D]';
+  }
+  if (POWER_PREFIXES.some((p) => u.startsWith(p))) {
+    return 'border-[#2A1E0D] text-[#A07030] bg-[#160F05]';
+  }
+  return 'border-[#1E1E1E] text-[#3D3D3D] bg-[#0D0D0D]';
+}
+
+function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
+  const raw = pcbState as Record<string, unknown> | null;
+  const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
+  const nets = Array.isArray(raw?.['nets']) ? (raw['nets'] as string[]) : [];
+
+  if (!components.length) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2">
+        <FileText size={20} className="text-[#2E2E2E]" />
+        <p className="text-[10px] text-[#2E2E2E] font-mono">
+          Schematic available after agent generates the netlist
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto p-4 space-y-5 bg-[#090909]">
+      {/* Component table */}
+      <div>
+        <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
+          Components — {components.length}
+        </p>
+        <div className="space-y-px">
+          <div className="grid grid-cols-[3rem_1fr_5rem_4rem] gap-2 px-2 py-1 text-[9px] text-[#2E2E2E] font-mono uppercase tracking-wider">
+            <span>Ref</span><span>Value</span><span>Footprint</span><span>LCSC</span>
+          </div>
+          {components.map((c) => (
+            <div
+              key={c.ref}
+              className="grid grid-cols-[3rem_1fr_5rem_4rem] gap-2 px-2 py-1.5 rounded bg-[#0F0F0F] border border-[#181818] text-[10px] font-mono"
+            >
+              <span className="text-primary/60 shrink-0">{c.ref}</span>
+              <span className="text-[#A1A1AA] truncate">{c.value}</span>
+              <span className="text-[#52525B] truncate">{c.footprint}</span>
+              <span className="text-[#3D3D3D]">{c.lcsc ?? '—'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Net chips */}
+      {nets.length > 0 && (
+        <div>
+          <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
+            Nets — {nets.length}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {nets.map((net) => (
+              <span
+                key={net}
+                className={`px-2 py-0.5 rounded border text-[9px] font-mono ${netClass(net)}`}
+              >
+                {net}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

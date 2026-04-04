@@ -78,6 +78,19 @@ function getFootprintDims(footprint: string): PadDimensions {
   return FOOTPRINT_DIMS[key ?? '0402'] ?? FOOTPRINT_DIMS['0402']!;
 }
 
+// --- Net helpers ---------------------------------------------------------
+
+const POWER_NET_PREFIXES = ['GND', 'VSS', 'VCC', 'VDD', 'VIN', 'VOUT', 'VBAT', '3V3', '5V', '12V', '24V', 'PWR', 'POWER'];
+
+function isPowerNet(netName: string): boolean {
+  const u = netName.toUpperCase();
+  return POWER_NET_PREFIXES.some((p) => u === p || u.startsWith(p));
+}
+
+function traceWidth(netName: string): number {
+  return isPowerNet(netName) ? 0.3 : 0.15;
+}
+
 // --- Auto-layout ---------------------------------------------------------
 
 function autoLayout(
@@ -211,10 +224,11 @@ export async function runTSCircuitEngine(
     });
 
     let traceIdx = 0;
-    for (const [, pads] of netPadMap) {
+    for (const [net, pads] of netPadMap) {
       if (pads.length < 2) continue;
       // Sort by x then y for deterministic routing
       const sorted = [...pads].sort((a, b) => a.x - b.x || a.y - b.y);
+      const width = traceWidth(net);
       for (let i = 0; i < sorted.length - 1; i++) {
         const from = sorted[i]!;
         const to   = sorted[i + 1]!;
@@ -226,11 +240,28 @@ export async function runTSCircuitEngine(
             { x: to.x,   y: from.y }, // horizontal segment
             { x: to.x,   y: to.y   }, // vertical segment
           ],
-          stroke_width: 0.15,
+          stroke_width: width,
           layer: 'top',
         });
       }
     }
+  }
+
+  // Ground copper pour on B.Cu — 1 mm inset from board edge
+  const gndNet = schemaJson.nets.find((n) => isPowerNet(n) && n.toUpperCase().startsWith('GND'))
+    ?? schemaJson.nets.find((n) => isPowerNet(n));
+  if (gndNet) {
+    const inset = 1;
+    soup.push({
+      type: 'pcb_copper_fill',
+      pcb_copper_fill_id: 'gnd-pour',
+      layer: 'bottom',
+      net: gndNet,
+      x: inset,
+      y: inset,
+      width: boardWidthMm - inset * 2,
+      height: boardHeightMm - inset * 2,
+    });
   }
 
   // Generate Gerbers

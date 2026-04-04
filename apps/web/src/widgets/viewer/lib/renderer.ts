@@ -285,6 +285,19 @@ export class PCBRenderer {
           break;
         }
 
+        case 'pcb_copper_fill': {
+          const fill = el as unknown as { x: number; y: number; width: number; height: number; layer?: string };
+          const kicad = toKicadLayer(fill.layer ?? 'bottom');
+          if (layerVisibility[kicad] === false) break;
+          const color = LAYER_COLORS[kicad] ?? 0x4488ff;
+          const g = new Graphics();
+          g.rect(mmToPx(fill.x), mmToPx(fill.y), mmToPx(fill.width), mmToPx(fill.height))
+            .fill({ color, alpha: 0.18 })
+            .stroke({ color, width: 1, alpha: 0.35 });
+          this.boardLayer.addChild(g);
+          break;
+        }
+
         case 'pcb_trace': {
           const kicad = toKicadLayer(el.layer);
           if (layerVisibility[kicad] === false) break;
