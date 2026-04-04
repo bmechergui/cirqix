@@ -148,12 +148,27 @@ export const useAppStore = create<AppState>((set) => ({
   setAgentRunning: (running, step = null) =>
     set({ isAgentRunning: running, agentStep: running ? step : null }),
 
-  deductCredits: (amount) =>
+  deductCredits: (amount) => {
+    // Optimistic local update for immediate UI feedback
     set((state) => ({
       credits: state.credits
         ? { ...state.credits, balance: Math.max(0, state.credits.balance - amount) }
         : null,
-    })),
+    }));
+    // Re-fetch from DB to stay in sync (fire-and-forget)
+    void fetch('/api/credits')
+      .then((r) => r.json() as Promise<{ success: boolean; data?: { balance: number; plan: string } }>)
+      .then((json) => {
+        if (json.success && json.data) {
+          set((state) => ({
+            credits: state.credits
+              ? { ...state.credits, balance: json.data!.balance }
+              : null,
+          }));
+        }
+      })
+      .catch(() => { /* keep optimistic value on network error */ });
+  },
 
   setPcbState: (projectId, partial) =>
     set((state) => {
