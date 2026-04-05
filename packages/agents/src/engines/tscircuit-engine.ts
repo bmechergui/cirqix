@@ -94,7 +94,6 @@ function autoLayout(
 ): PlacedComp[] {
   const margin = 6;
   const usableW = boardW - margin * 2;
-  const usableH = boardH - margin * 2;
 
   const ics        = components.filter(c => /^U\d*/i.test(c.ref));
   const connectors = components.filter(c => /^J\d*/i.test(c.ref));

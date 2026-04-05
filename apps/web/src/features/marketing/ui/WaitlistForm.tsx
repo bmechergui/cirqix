@@ -53,7 +53,7 @@ export function WaitlistForm() {
         {state === 'success' ? (
           <div className="flex items-center justify-center gap-3 bg-[#22C55E]/10 border border-[#22C55E]/30 text-[#22C55E] rounded-xl p-4">
             <Check size={20} />
-            <span className="font-medium">You're on the list! We'll notify you when Layrix launches.</span>
+            <span className="font-medium">You&apos;re on the list! We&apos;ll notify you when Layrix launches.</span>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
