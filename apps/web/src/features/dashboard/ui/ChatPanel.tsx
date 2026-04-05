@@ -266,6 +266,7 @@ function PromptSuggestions({ onSelect }: { onSelect: (text: string) => void }) {
 }
 
 const EMPTY_MESSAGES: Message[] = [];
+const EMPTY_VIOLATIONS: DRCViolation[] = [];
 
 const PCB_STATUS_TO_STEP: Record<string, string> = {
   SCHEMA_DONE:    'SCHEMA',
@@ -287,10 +288,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const deductCredits = useAppStore((s) => s.deductCredits);
   const setPcbState = useAppStore((s) => s.setPcbState);
   const updateProjectStatus = useAppStore((s) => s.updateProjectStatus);
-  const drcViolations = useAppStore((s) => {
-    const state = s.pcbStateByProject[projectId];
-    return (state?.drcViolations ?? []) as DRCViolation[];
-  });
+  const drcViolations = useAppStore((s) => s.pcbStateByProject[projectId]?.drcViolations ?? EMPTY_VIOLATIONS);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
