@@ -2,32 +2,10 @@ import {
   convertSoupToGerberCommands,
   stringifyGerberCommandLayers,
 } from 'circuit-json-to-gerber';
+import type { SchemaComponent, SchemaPin, SchemaNet, SchemaJson } from '@layrix/types';
 
-// --- Types ---------------------------------------------------------------
-
-export interface SchemaComponent {
-  ref: string;
-  value: string;
-  lcsc?: string;
-  footprint: string;
-}
-
-export interface SchemaPin {
-  ref: string;
-  pin: number; // 1-indexed pad number
-}
-
-export interface SchemaNet {
-  name: string;
-  pins: SchemaPin[];
-}
-
-export interface SchemaJson {
-  components: SchemaComponent[];
-  nets: string[];
-  /** Netlist connectivity — maps each net to the component pins it connects */
-  connections?: SchemaNet[];
-}
+// Re-export so existing consumers of @layrix/agents keep working
+export type { SchemaComponent, SchemaPin, SchemaNet, SchemaJson };
 
 export interface TSCircuitResult {
   /** Circuit-json soup — ready for viewer + Gerber export */

@@ -7,7 +7,7 @@ import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
 import type { ZoomControls } from '../lib/renderer';
-import type { PCBState } from '@layrix/types';
+import type { PCBState, SchemaComponent, SchemaNet } from '@layrix/types';
 
 // PixiJS ne fonctionne pas côté serveur → dynamic import obligatoire
 const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas), {
@@ -16,13 +16,6 @@ const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas
 });
 
 type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
-
-interface SchemaComponent {
-  ref: string;
-  value: string;
-  footprint: string;
-  lcsc?: string;
-}
 
 interface ViewerPanelProps {
   projectId?: string;
@@ -329,11 +322,6 @@ function PCBViewer3DPlaceholder() {
   );
 }
 
-interface SchemaNetConn {
-  name: string;
-  pins: Array<{ ref: string; pin: number }>;
-}
-
 const FOOTPRINT_PAD_COUNT: Record<string, number> = {
   '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
   'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
@@ -352,10 +340,9 @@ const NET_PALETTE = [
 ];
 
 function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
-  const raw = pcbState as Record<string, unknown> | null;
-  const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
-  const connections = Array.isArray(raw?.['connections']) ? (raw['connections'] as SchemaNetConn[]) : [];
-  const nets = Array.isArray(raw?.['nets']) ? (raw['nets'] as string[]) : [];
+  const components: SchemaComponent[] = pcbState?.components ?? [];
+  const connections: SchemaNet[] = pcbState?.connections ?? [];
+  const nets: string[] = pcbState?.nets ?? [];
 
   if (!components.length) {
     return (
@@ -514,8 +501,7 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
 
 /** Components tab — BOM only (no nets) */
 function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
-  const raw = pcbState as Record<string, unknown> | null;
-  const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
+  const components: SchemaComponent[] = pcbState?.components ?? [];
 
   if (!components.length) {
     return (

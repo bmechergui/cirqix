@@ -61,10 +61,47 @@ export interface DRCViolation {
   layer?: string;
 }
 
+// --- PCB Schematic / Netlist types ---
+
+export interface SchemaComponent {
+  ref: string;
+  value: string;
+  footprint: string;
+  lcsc?: string;
+}
+
+export interface SchemaPin {
+  /** Component reference designator, e.g. "R1" */
+  ref: string;
+  /** 1-indexed pad number of the footprint */
+  pin: number;
+}
+
+export interface SchemaNet {
+  name: string;
+  pins: SchemaPin[];
+}
+
+export interface SchemaJson {
+  components: SchemaComponent[];
+  /** Net name strings, e.g. ["GND", "VCC", "NET1"] */
+  nets: string[];
+  /** Netlist connectivity — maps each net to the component pins it connects */
+  connections?: SchemaNet[];
+}
+
+// --- PCB State ---
+
 export interface PCBState {
   projectId: string;
   status: PCBStatus;
   iteration: number;
+  /** Schematic components list (from schema step) */
+  components?: SchemaComponent[];
+  /** Net names (from schema step) */
+  nets?: string[];
+  /** Netlist connectivity (from schema step) */
+  connections?: SchemaNet[];
   netlist?: Record<string, unknown>;
   placement?: Record<string, unknown>;
   routing?: Record<string, unknown>;
