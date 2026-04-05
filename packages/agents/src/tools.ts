@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { runPCBEngine, selectEngine } from './engines/engine-router';
+import { runPCBEngine, selectEngine, runCircuitSynthEngine, isCircuitSynthAvailable } from './engines/engine-router';
 import type { SchemaJson } from './engines/engine-router';
 
 type Tool = Anthropic.Tool;
@@ -180,6 +180,19 @@ export async function executeToolStub(
       const engine = selectEngine(schema);
       _pcbStateCache.set(projectId, { schema, boardW: 50, boardH: 50 });
 
+      // Run Circuit-Synth to generate native KiCad files when service is available
+      let kicad_sch_content: string | null = null;
+      let kicad_pcb_content: string | null = null;
+      if (isCircuitSynthAvailable()) {
+        try {
+          const csResult = await runCircuitSynthEngine(schema, 50, 50, projectId);
+          kicad_sch_content = csResult.kicad_sch_content;
+          kicad_pcb_content = csResult.kicad_pcb_content;
+        } catch {
+          // Non-blocking — TSCircuit fallback still works
+        }
+      }
+
       return {
         status: 'success',
         pcb_status: 'SCHEMA_DONE',
@@ -187,6 +200,8 @@ export async function executeToolStub(
         nets: schema.nets,
         connections: schema.connections ?? [],
         engine,
+        ...(kicad_sch_content !== null && { kicad_sch_content }),
+        ...(kicad_pcb_content !== null && { kicad_pcb_content }),
         note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: ${engine}.`,
       };
     }

@@ -1,6 +1,7 @@
 """
 Layrix KiCad Service — FastAPI headless
 Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step, /export/bom, /simulate
+         /circuit-synth/generate (JSON schema → .kicad_sch + .kicad_pcb natifs)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -73,6 +74,10 @@ class SimulationRequest(BaseModel):
     netlist_path: str
     sim_type: str = "transient"  # "dc" | "transient" | "ac" | "noise"
     output_dir: str
+
+# Circuit-Synth router — JSON schema → native KiCad files
+from routers.circuit_synth import router as circuit_synth_router  # noqa: E402
+app.include_router(circuit_synth_router)
 
 # ============================================================
 # Routes
