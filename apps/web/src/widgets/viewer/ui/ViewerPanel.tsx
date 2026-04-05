@@ -1,8 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useEffect } from 'react';
-import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, FileText, Cpu, Route } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
 import { LAYER_COLORS, DEFAULT_LAYER_VISIBILITY, colorToHex } from '../lib/layers';
@@ -15,7 +15,7 @@ const PixiCanvas = dynamic(() => import('./PixiCanvas').then((m) => m.PixiCanvas
   loading: () => <PCBPlaceholder />,
 });
 
-type ViewMode = '2d' | '3d' | 'schema';
+type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
 
 interface SchemaComponent {
   ref: string;
@@ -29,7 +29,7 @@ interface ViewerPanelProps {
 }
 
 export function ViewerPanel({ projectId }: ViewerPanelProps) {
-  const [mode, setMode] = useState<ViewMode>('2d');
+  const [mode, setMode] = useState<ViewMode>('routing');
   const [layerVisibility, setLayerVisibility] =
     useState<Record<string, boolean>>(DEFAULT_LAYER_VISIBILITY);
   const [zoomControls, setZoomControls] = useState<ZoomControls | null>(null);
@@ -65,77 +65,70 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
     <div className="flex flex-col h-full bg-[#0d0d0d]">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
-        <div className="flex items-center gap-1 bg-[#141414] rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setMode('2d')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              mode === '2d'
-                ? 'bg-primary/20 text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Layers size={12} />
-            2D
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('3d')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              mode === '3d'
-                ? 'bg-primary/20 text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Box size={12} />
-            3D
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('schema')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              mode === 'schema'
-                ? 'bg-primary/20 text-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <FileText size={12} />
-            Schema
-          </button>
+        {/* Tab switcher */}
+        <div className="flex items-center gap-0.5 bg-[#141414] rounded-lg p-1">
+          {(
+            [
+              { id: 'routing',    icon: <Route size={12} />,    label: 'Routing' },
+              { id: 'schematic',  icon: <FileText size={12} />, label: 'Schematic' },
+              { id: '3d',         icon: <Box size={12} />,      label: '3D' },
+              { id: 'components', icon: <Cpu size={12} />,      label: 'Components' },
+            ] as { id: ViewMode; icon: React.ReactNode; label: string }[]
+          ).map(({ id, icon, label }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setMode(id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                mode === id
+                  ? 'bg-primary/20 text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
         </div>
 
+        {/* Zoom + Gerber controls */}
         <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5 bg-[#141414] rounded-lg px-1 py-0.5">
+            <Button
+              variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom in"
+              disabled={mode !== 'routing' || !zoomControls}
+              onClick={() => zoomControls?.zoomIn()}
+              title="Zoom in"
+            >
+              <ZoomIn size={14} />
+            </Button>
+            <Button
+              variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom out"
+              disabled={mode !== 'routing' || !zoomControls}
+              onClick={() => zoomControls?.zoomOut()}
+              title="Zoom out"
+            >
+              <ZoomOut size={14} />
+            </Button>
+            <Button
+              variant="ghost" size="icon" className="h-8 w-8" aria-label="Reset zoom"
+              disabled={mode !== 'routing' || !zoomControls}
+              onClick={() => zoomControls?.resetZoom()}
+              title="Fit to screen"
+            >
+              <Maximize2 size={14} />
+            </Button>
+          </div>
           <Button
-            variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom in"
-            disabled={!zoomControls}
-            onClick={() => zoomControls?.zoomIn()}
-          >
-            <ZoomIn size={13} />
-          </Button>
-          <Button
-            variant="ghost" size="icon" className="h-7 w-7" aria-label="Zoom out"
-            disabled={!zoomControls}
-            onClick={() => zoomControls?.zoomOut()}
-          >
-            <ZoomOut size={13} />
-          </Button>
-          <Button
-            variant="ghost" size="icon" className="h-7 w-7" aria-label="Reset zoom"
-            disabled={!zoomControls}
-            onClick={() => zoomControls?.resetZoom()}
-          >
-            <Maximize2 size={13} />
-          </Button>
-          <Button
-            variant="ghost"
+            variant="default"
             size="sm"
-            className="h-7 gap-1.5 text-xs"
+            className="h-8 gap-1.5 text-xs bg-primary/90 hover:bg-primary text-black font-semibold"
             disabled={!pcbState || !projectId}
             onClick={() => {
               if (projectId) window.location.assign(`/api/projects/${projectId}/export`);
             }}
           >
-            <Download size={12} />
+            <Download size={13} />
             Gerbers
           </Button>
         </div>
@@ -143,7 +136,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
 
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
-        {mode === '2d' ? (
+        {mode === 'routing' ? (
           <>
             <PixiCanvas
               pcbState={pcbState}
@@ -158,15 +151,17 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
               </div>
             )}
           </>
-        ) : mode === 'schema' ? (
-          <SchemaNetlistView pcbState={pcbState} />
+        ) : mode === 'schematic' ? (
+          <SchemaNetlistView pcbState={pcbState} netsVisible />
+        ) : mode === 'components' ? (
+          <ComponentsBOMView pcbState={pcbState} />
         ) : (
           <PCBViewer3DPlaceholder />
         )}
       </div>
 
-      {/* Layer legend + toggles (2D only) */}
-      {mode === '2d' && (
+      {/* Layer legend + toggles (Routing only) */}
+      {mode === 'routing' && (
         <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-4 py-2 border-t border-border shrink-0">
           {Object.entries(LAYER_COLORS).map(([layer, color]) => {
             const visible = layerVisibility[layer] ?? true;
@@ -346,7 +341,7 @@ function netClass(net: string): string {
   return 'border-[#1E1E1E] text-[#3D3D3D] bg-[#0D0D0D]';
 }
 
-function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
+function SchemaNetlistView({ pcbState, netsVisible = false }: { pcbState: PCBState | null; netsVisible?: boolean }) {
   const raw = pcbState as Record<string, unknown> | null;
   const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
   const nets = Array.isArray(raw?.['nets']) ? (raw['nets'] as string[]) : [];
@@ -387,8 +382,8 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
         </div>
       </div>
 
-      {/* Net chips */}
-      {nets.length > 0 && (
+      {/* Net chips — only in Schematic mode */}
+      {netsVisible && nets.length > 0 && (
         <div>
           <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
             Nets — {nets.length}
@@ -405,6 +400,62 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Components tab — BOM only (no nets) */
+function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
+  const raw = pcbState as Record<string, unknown> | null;
+  const components = Array.isArray(raw?.['components']) ? (raw['components'] as SchemaComponent[]) : [];
+
+  if (!components.length) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2">
+        <Cpu size={20} className="text-[#2E2E2E]" />
+        <p className="text-[10px] text-[#2E2E2E] font-mono">
+          BOM available after agent generates the schematic
+        </p>
+      </div>
+    );
+  }
+
+  // Group by value+footprint for BOM summary
+  const grouped = components.reduce<Record<string, { refs: string[]; value: string; footprint: string; lcsc: string | undefined }>>(
+    (acc, c) => {
+      const key = `${c.value}||${c.footprint}`;
+      if (!acc[key]) acc[key] = { refs: [], value: c.value, footprint: c.footprint, lcsc: c.lcsc };
+      acc[key].refs.push(c.ref);
+      return acc;
+    },
+    {}
+  );
+  const bomRows = Object.values(grouped).sort((a, b) => (a.refs[0] ?? '').localeCompare(b.refs[0] ?? ''));
+
+  return (
+    <div className="h-full overflow-auto p-4 bg-[#090909]">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider">
+          Bill of Materials — {components.length} refs · {bomRows.length} unique
+        </p>
+      </div>
+      <div className="space-y-px">
+        <div className="grid grid-cols-[2rem_2fr_2fr_3rem_3rem] gap-2 px-2 py-1 text-[9px] text-[#2E2E2E] font-mono uppercase tracking-wider border-b border-[#1A1A1A]">
+          <span>Qty</span><span>Value</span><span>Footprint</span><span>LCSC</span><span>Refs</span>
+        </div>
+        {bomRows.map((row) => (
+          <div
+            key={`${row.value}-${row.footprint}`}
+            className="grid grid-cols-[2rem_2fr_2fr_3rem_3rem] gap-2 px-2 py-2 rounded bg-[#0F0F0F] border border-[#181818] text-[10px] font-mono hover:border-[#252525] transition-colors"
+          >
+            <span className="text-primary/70 font-bold">{row.refs.length}</span>
+            <span className="text-[#A1A1AA] truncate">{row.value}</span>
+            <span className="text-[#52525B] truncate">{row.footprint}</span>
+            <span className="text-[#3D3D3D]">{row.lcsc ?? '—'}</span>
+            <span className="text-[#3D3D3D] truncate">{row.refs.join(', ')}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
