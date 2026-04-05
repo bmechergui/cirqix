@@ -343,10 +343,12 @@ export async function executeToolStub(
       }
 
       const drcClean = violations.length === 0;
+      // Add id field and rename to drcViolations to match PCBState.drcViolations
+      const drcViolations = violations.map((v, i) => ({ ...v, id: `drc-${i}` }));
       return {
         status: 'success',
         pcb_status: drcClean ? 'DRC_CLEAN' : 'ROUTING_DONE',
-        violations,
+        drcViolations,
         warnings,
         drc_clean: drcClean,
         note: drcClean

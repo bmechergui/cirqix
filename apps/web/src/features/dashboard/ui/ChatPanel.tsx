@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User, Check } from 'lucide-react';
+import { Send, Bot, User, Check, AlertTriangle, AlertCircle } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { useAppStore } from '@/shared/store/app-store';
-import type { Message } from '@layrix/types';
+import type { Message, DRCViolation } from '@layrix/types';
 import type { SSEEvent } from '@layrix/agents';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -185,6 +185,39 @@ function StreamingBubble({
   );
 }
 
+function DRCPanel({ violations }: { violations: DRCViolation[] }) {
+  if (!violations.length) return null;
+  const errors = violations.filter((v) => v.severity === 'error');
+  const warnings = violations.filter((v) => v.severity === 'warning');
+  return (
+    <div className="mx-4 mb-2 rounded-lg border border-red-500/20 bg-red-500/5 p-2.5 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <AlertCircle size={11} className="text-red-400 shrink-0" />
+        <span className="text-[10px] font-mono text-red-400 font-semibold">
+          DRC — {errors.length} error{errors.length !== 1 ? 's' : ''}{warnings.length ? `, ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}` : ''}
+        </span>
+      </div>
+      <div className="space-y-0.5 max-h-24 overflow-y-auto">
+        {violations.slice(0, 8).map((v) => (
+          <div key={v.id} className="flex items-start gap-1.5">
+            {v.severity === 'error' ? (
+              <AlertCircle size={9} className="text-red-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle size={9} className="text-amber-400 shrink-0 mt-0.5" />
+            )}
+            <span className="text-[9px] font-mono text-[#A1A1AA] leading-tight">{v.message}</span>
+          </div>
+        ))}
+        {violations.length > 8 && (
+          <span className="text-[9px] font-mono text-[#52525B]">
+            +{violations.length - 8} more — see Routing tab
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const PROMPT_SUGGESTIONS: Array<{ label: string; hint: string; prompt: string }> = [
   {
     label: 'Add USB-C',
@@ -254,6 +287,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const deductCredits = useAppStore((s) => s.deductCredits);
   const setPcbState = useAppStore((s) => s.setPcbState);
   const updateProjectStatus = useAppStore((s) => s.updateProjectStatus);
+  const drcViolations = useAppStore((s) => {
+    const state = s.pcbStateByProject[projectId];
+    return (state?.drcViolations ?? []) as DRCViolation[];
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -432,6 +469,11 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* DRC violations panel — shown after agent finishes if violations exist */}
+      {!isAgentRunning && drcViolations.length > 0 && (
+        <DRCPanel violations={drcViolations} />
+      )}
 
       {/* Input */}
       <div className="border-t border-border p-3 flex flex-col gap-2">
