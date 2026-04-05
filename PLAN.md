@@ -40,7 +40,8 @@ layrix/
 | Stockage | Supabase Storage (`/storage/{userId}/{projectId}/`) |
 | Auth | Supabase Auth (email + Google OAuth) |
 | Paiement | Lemon Squeezy (MVP) → Stripe (V2) |
-| Viewer 2D | PixiJS (WebGL, 60 FPS) |
+| Viewer Schéma | KiCanvas (rendu natif .kicad_sch en browser) |
+| Viewer PCB 2D | KiCanvas (rendu natif .kicad_pcb) |
 | Viewer 3D | Three.js + STEP via occt-import-js (plan Maker+) |
 | Deploy | Vercel (landing+dashboard), Railway (api), DigitalOcean (kicad) |
 
@@ -56,9 +57,10 @@ layrix/
 
 ## Stratégie moteur PCB
 
-- `< 20 composants + 2 couches` → **TSCircuit** (Claude génère TSX nativement)
-- Sinon → **KiCad + Freerouting + pcbnew**
-- Résultat identique : fichier Gerber standard
+- **Circuit-Synth** (Python) → Claude génère du code Python → KiCad Docker → `.kicad_sch` + `.kicad_pcb` natifs
+- Sinon fallback → **KiCad + Freerouting + pcbnew** pour les PCB multi-couches Pro
+- Résultat : fichiers `.kicad_sch` + `.kicad_pcb` standard + Gerbers
+- Viewer : **KiCanvas** charge les fichiers natifs depuis Supabase Storage
 
 ---
 
@@ -502,19 +504,18 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-### Étape 2.7 — Viewer 2D PixiJS
+### Étape 2.7 — Viewer KiCanvas
 
 **Fichiers :**
-- `packages/ui/src/components/PCBViewer2D.tsx`
-- `packages/ui/src/components/PCBViewer/renderer.ts`
-- `packages/ui/src/components/PCBViewer/layers.ts`
+- `apps/web/src/widgets/viewer/ui/KiCanvasViewer.tsx`
+- `apps/web/src/widgets/viewer/ui/ViewerPanel.tsx`
 
 **Actions :**
-1. PixiJS Application (WebGL canvas) wrappé en React
-2. Parser : netlist JSON → primitives PixiJS
-3. Layers avec toggles : F.Cu (#D4820A), B.Cu (#4488FF), F.SilkS (#CCCCCC), Edge.Cuts (#FFFF00)
-4. Zoom/pan (wheel + drag), sélection composant au clic
-5. Mise à jour temps réel pendant streaming
+1. Ajouter `@kicanvas/kicanvas` (web component)
+2. Wrapper React `<KiCanvasViewer>` — charge `.kicad_sch` depuis Supabase Storage (signed URL)
+3. Onglet **Schematic** → `<kicanvas-schematic src={kicadSchUrl} />`
+4. Onglet **Routing** → `<kicanvas-board src={kicadPcbUrl} />`
+5. Chargement conditionnel : skeleton si fichier pas encore généré
 
 **Skill :** `layrix-viewer` | **Risque :** Moyen
 
@@ -641,18 +642,21 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ---
 
-### Étape 3.5 — TSCircuit (moteur PCB simple)
+### Étape 3.5 — Circuit-Synth Engine
 
 **Fichiers :**
-- `packages/agents/src/engines/engine-router.ts`
-- `packages/agents/src/engines/tscircuit-engine.ts`
+- `packages/agents/src/engines/circuit-synth-engine.ts` (CRÉER)
+- `packages/agents/src/engines/engine-router.ts` (remplacer TSCircuit)
+- `services/kicad/routers/circuit_synth.py` (CRÉER)
+- `services/kicad/requirements.txt` (ajouter circuit-synth)
 
 **Actions :**
-1. Router : `< 20 composants && couches == 2` → TSCircuit, sinon KiCad
-2. Claude génère TSX TSCircuit natif, exécute, exporte Gerber
-3. Invisible pour l'utilisateur — même résultat final
+1. Agent Schéma → génère code Python Circuit-Synth (au lieu de JSON)
+2. `circuit-synth-engine.ts` : POST `/circuit-synth/execute` → `.kicad_sch` + `.kicad_pcb`
+3. Upload fichiers → Supabase Storage → URL signée dans `pcb_state`
+4. Fallback : si service indisponible → JSON schema + circuit-json (ancien comportement)
 
-**Skill :** `tscircuit` | **Risque :** Moyen
+**Skill :** `layrix-kicad-service` | **Risque :** Moyen
 
 ---
 
@@ -849,15 +853,15 @@ L'étape **0.8** est sur le chemin critique. Si elle échoue, le MVP tourne sur 
 
 ### Phase 2
 - [ ] Login/signup Supabase Auth (email + Google)
-- [ ] Créer projet → chat → schema JSON → viewer PixiJS affiche
+- [ ] Créer projet → chat → schéma → KiCanvas affiche `.kicad_sch`
 - [ ] Streaming SSE tokens en temps réel
 - [ ] Crédits déduits à chaque action
 - [ ] Progress bar animée correctement
 
 ### Phase 3
-- [ ] Pipeline : schéma → placement → routage → DRC clean → Gerber
+- [ ] Pipeline : schéma Circuit-Synth → placement → routage → DRC clean → Gerber
 - [ ] Cascade footprint : 1 footprint généré par Vision Claude
-- [ ] TSCircuit pour PCB simples < 20 composants
+- [ ] Circuit-Synth : génère `.kicad_sch` + `.kicad_pcb` natifs
 - [ ] BullMQ : 3+ PCBs en parallèle sans collision
 
 ### Phase 4

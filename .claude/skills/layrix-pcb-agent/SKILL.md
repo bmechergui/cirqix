@@ -18,7 +18,8 @@ ERROR_BLOCKER (max 15 itérations)
 - **JAMAIS** de commande JLCPCB sans "OUI JE CONFIRME" explicite
 - Footprint manquant → appeler `call_agent_footprint` immédiatement, interrompre le flux
 - Compression contexte : après 10 tours → Haiku résume les anciens messages (-60% coûts)
-- Moteur : <20 composants + 2 couches → TSCircuit | sinon → KiCad + Freerouting
+- Moteur : **Circuit-Synth** (Python → .kicad_sch + .kicad_pcb natifs) | fallback → KiCad + Freerouting
+- Viewer : **KiCanvas** charge les fichiers KiCad depuis Supabase Storage (signed URL)
 
 ## Orchestrateur (Sonnet 4.6)
 

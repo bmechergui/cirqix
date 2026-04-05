@@ -1,161 +1,183 @@
 ---
 name: layrix-viewer
-description: This skill should be used when the user asks to "implémenter le viewer PCB", "afficher les layers PixiJS", "ajouter le viewer 3D", "zoomer/panner le PCB", "sélectionner un composant dans le viewer", "afficher les markers DRC" or mentions PixiJS, Three.js, STEP, layers, mmToPx, rendu PCB.
-version: 0.1.0
+description: This skill should be used when the user asks to "implémenter le viewer PCB", "afficher le schéma KiCanvas", "viewer KiCad dans le navigateur", "afficher le viewer 3D", "sélectionner un composant dans le viewer" or mentions KiCanvas, Three.js, STEP, .kicad_sch, .kicad_pcb, rendu PCB.
+version: 0.2.0
 ---
 
 # Layrix — Viewer PCB
 
-## Viewer 2D — PixiJS (WebGL, 60 FPS)
+## Architecture viewer
 
-### Couleurs des layers
-
-```typescript
-// packages/ui/src/viewer/layers.ts
-export const LAYER_COLORS: Record<string, number> = {
-  "F.Cu":       0xD4820A,  // cuivre avant → copper brand
-  "B.Cu":       0x4488FF,  // cuivre arrière → bleu
-  "F.SilkS":    0xCCCCCC,  // sérigraphie avant → gris clair
-  "B.SilkS":    0x999999,  // sérigraphie arrière → gris
-  "F.Mask":     0xD4820A,  // masque avant → copper (alpha 0.2)
-  "B.Mask":     0x4488FF,  // masque arrière → bleu (alpha 0.2)
-  "Edge.Cuts":  0xFFFF00,  // contour → jaune
-  "F.Courtyard":0xFFFF00,  // courtyard (alpha 0.1)
-  "DRC_ERROR":  0xEF4444,  // violation erreur → rouge (clignote)
-  "DRC_WARNING":0xF59E0B,  // violation warning → amber
-  "SELECTED":   0x00C2FF,  // composant sélectionné → cyan brand
-};
-
-export const LAYER_ORDER = [
-  "B.Cu", "B.Mask", "B.SilkS",
-  "F.Cu", "F.Mask", "F.SilkS",
-  "F.Courtyard", "Edge.Cuts",
-];
-
-// 1mm = 10px au zoom 1×
-export const MM_TO_PX = 10;
-export const mmToPx = (mm: number) => mm * MM_TO_PX;
+```
+Schéma (.kicad_sch) → KiCanvas web component → onglet Schematic
+PCB    (.kicad_pcb) → KiCanvas web component → onglet Routing
+STEP               → Three.js + occt-import-js → onglet 3D (plan Maker+)
 ```
 
-### Composant PCBViewer2D
+Les fichiers `.kicad_sch` et `.kicad_pcb` sont stockés dans Supabase Storage :
+```
+storage/{userId}/{projectId}/schema.kicad_sch
+storage/{userId}/{projectId}/board.kicad_pcb
+```
+
+---
+
+## Viewer Schéma + PCB — KiCanvas
+
+### Installation
+
+```bash
+pnpm --filter @layrix/web add @kicanvas/kicanvas
+```
+
+### Wrapper React
 
 ```typescript
-// packages/ui/src/viewer/PCBViewer2D.tsx
-"use client";
-import { useEffect, useRef } from "react";
-import * as PIXI from "pixi.js";
-import { renderPCB } from "./renderer";
+// apps/web/src/widgets/viewer/ui/KiCanvasViewer.tsx
+'use client';
+import { useEffect } from 'react';
 
-interface Props {
-  pcbJson: PCBData | null;
-  visibleLayers?: string[];
-  selectedRef?: string;
-  drcViolations?: DRCViolation[];
-  onSelectComponent?: (ref: string) => void;
+interface KiCanvasViewerProps {
+  /** URL signée Supabase Storage vers .kicad_sch ou .kicad_pcb */
+  src: string | null;
+  type: 'schematic' | 'board';
+  className?: string;
 }
 
-export function PCBViewer2D({ pcbJson, visibleLayers = [], selectedRef, drcViolations = [], onSelectComponent }: Props) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const appRef  = useRef<PIXI.Application | null>(null);
-
+export function KiCanvasViewer({ src, type, className }: KiCanvasViewerProps) {
   useEffect(() => {
-    if (!mountRef.current) return;
-    const app = new PIXI.Application({
-      resizeTo: mountRef.current,
-      backgroundColor: 0x0D0D0D,
-      antialias: true,
-      resolution: window.devicePixelRatio || 1,
-    });
-    mountRef.current.appendChild(app.canvas);
-    appRef.current = app;
-    return () => { app.destroy(true); };
+    // Import web components KiCanvas (browser-only)
+    void import('@kicanvas/kicanvas');
   }, []);
 
-  useEffect(() => {
-    if (!appRef.current || !pcbJson) return;
-    renderPCB(appRef.current, pcbJson, { visibleLayers, selectedRef, drcViolations, onSelectComponent });
-  }, [pcbJson, visibleLayers, selectedRef, drcViolations]);
-
-  return <div ref={mountRef} className="w-full h-full bg-[#0D0D0D]" />;
-}
-```
-
-### Renderer
-
-```typescript
-// packages/ui/src/viewer/renderer.ts
-import * as PIXI from "pixi.js";
-import { LAYER_COLORS, LAYER_ORDER, mmToPx } from "./layers";
-
-export function renderPCB(app: PIXI.Application, pcb: PCBData, opts: RenderOpts) {
-  const root = new PIXI.Container();
-  app.stage.removeChildren();
-  app.stage.addChild(root);
-
-  // Layers
-  for (const layer of LAYER_ORDER) {
-    if (!opts.visibleLayers.includes(layer)) continue;
-    root.addChild(renderLayer(pcb, layer));
+  if (!src) {
+    return (
+      <div className={`flex items-center justify-center bg-[#090909] ${className ?? ''}`}>
+        <p className="text-[#3D3D3D] text-xs font-mono">
+          {type === 'schematic' ? 'Schéma non encore généré' : 'PCB non encore généré'}
+        </p>
+      </div>
+    );
   }
 
-  // Composants (cliquables)
-  for (const comp of pcb.components) {
-    const fp = renderFootprint(comp, comp.ref === opts.selectedRef);
-    fp.eventMode = "static";
-    fp.cursor = "pointer";
-    fp.on("pointertap", () => opts.onSelectComponent?.(comp.ref));
-    root.addChild(fp);
+  if (type === 'schematic') {
+    return (
+      // @ts-expect-error — web component KiCanvas
+      <kicanvas-schematic
+        src={src}
+        class={`block w-full h-full ${className ?? ''}`}
+      />
+    );
   }
 
-  // Markers DRC (rouge clignotant = erreur, amber = warning)
-  for (const v of opts.drcViolations) {
-    root.addChild(renderDRCMarker(v));
-  }
-
-  // Centrer
-  const b = root.getBounds();
-  root.x = (app.screen.width  - b.width)  / 2 - b.x;
-  root.y = (app.screen.height - b.height) / 2 - b.y;
-}
-
-function renderDRCMarker(v: DRCViolation): PIXI.Graphics {
-  const g = new PIXI.Graphics();
-  const color = v.severity === "error" ? LAYER_COLORS.DRC_ERROR : LAYER_COLORS.DRC_WARNING;
-  g.circle(mmToPx(v.x_mm), mmToPx(v.y_mm), 8).fill({ color, alpha: 0.8 });
-  if (v.severity === "error") {
-    let t = 0;
-    PIXI.Ticker.shared.add(() => { g.alpha = 0.5 + 0.5 * Math.sin(t++ * 0.1); });
-  }
-  return g;
-}
-```
-
-### Toolbar layers
-
-```tsx
-// packages/ui/src/viewer/LayerToggle.tsx
-const LAYERS = [
-  { id: "F.Cu",     label: "F.Cu",  color: "#D4820A" },
-  { id: "B.Cu",     label: "B.Cu",  color: "#4488FF" },
-  { id: "F.SilkS",  label: "Silk",  color: "#CCCCCC" },
-  { id: "Edge.Cuts",label: "Edge",  color: "#FFFF00" },
-];
-
-export function LayerToggle({ visible, onToggle }: { visible: string[]; onToggle: (id: string) => void }) {
   return (
-    <div className="flex gap-1 p-2 bg-[#111111] border border-[#2E2E2E] rounded-lg">
-      {LAYERS.map(({ id, label, color }) => (
-        <button key={id} onClick={() => onToggle(id)}
-          className={`px-2 py-1 text-xs rounded font-mono border transition-all ${
-            visible.includes(id) ? "opacity-100" : "opacity-25"
-          }`}
-          style={{ borderColor: color, color }}>
-          {label}
-        </button>
-      ))}
-    </div>
+    // @ts-expect-error — web component KiCanvas
+    <kicanvas-board
+      src={src}
+      class={`block w-full h-full ${className ?? ''}`}
+    />
   );
 }
+```
+
+### Déclaration TypeScript web components
+
+```typescript
+// apps/web/src/shared/types/kicanvas.d.ts
+declare namespace JSX {
+  interface IntrinsicElements {
+    'kicanvas-schematic': React.DetailedHTMLProps<
+      React.HTMLAttributes<HTMLElement> & { src?: string },
+      HTMLElement
+    >;
+    'kicanvas-board': React.DetailedHTMLProps<
+      React.HTMLAttributes<HTMLElement> & { src?: string },
+      HTMLElement
+    >;
+  }
+}
+```
+
+### Intégration ViewerPanel
+
+```typescript
+// apps/web/src/widgets/viewer/ui/ViewerPanel.tsx
+// Import conditionnel (SSR off)
+const KiCanvasViewer = dynamic(
+  () => import('./KiCanvasViewer').then((m) => m.KiCanvasViewer),
+  { ssr: false, loading: () => <PCBPlaceholder /> }
+);
+
+// Dans le render :
+{mode === 'schematic' && (
+  <KiCanvasViewer
+    src={pcbState?.kicad_sch_url ?? null}
+    type="schematic"
+    className="h-full"
+  />
+)}
+{mode === 'routing' && (
+  <KiCanvasViewer
+    src={pcbState?.kicad_pcb_url ?? null}
+    type="board"
+    className="h-full"
+  />
+)}
+```
+
+---
+
+## Supabase Storage — Upload fichiers KiCad
+
+```typescript
+// apps/web/src/app/api/agent/route.ts — dans le handler pcb_state
+if (event.type === 'pcb_state' && event.state['kicad_sch_content']) {
+  const schContent = event.state['kicad_sch_content'] as string;
+  const pcbContent = event.state['kicad_pcb_content'] as string | undefined;
+
+  // Upload .kicad_sch
+  await supabase.storage
+    .from('kicad-files')
+    .upload(`${user.id}/${body.projectId}/schema.kicad_sch`, schContent, {
+      contentType: 'text/plain',
+      upsert: true,
+    });
+
+  // Signed URL (1h)
+  const { data: schUrl } = await supabase.storage
+    .from('kicad-files')
+    .createSignedUrl(`${user.id}/${body.projectId}/schema.kicad_sch`, 3600);
+
+  if (schUrl) {
+    event.state['kicad_sch_url'] = schUrl.signedUrl;
+  }
+
+  // Idem pour .kicad_pcb si présent
+  if (pcbContent) {
+    await supabase.storage
+      .from('kicad-files')
+      .upload(`${user.id}/${body.projectId}/board.kicad_pcb`, pcbContent, {
+        contentType: 'text/plain',
+        upsert: true,
+      });
+    const { data: pcbUrl } = await supabase.storage
+      .from('kicad-files')
+      .createSignedUrl(`${user.id}/${body.projectId}/board.kicad_pcb`, 3600);
+    if (pcbUrl) event.state['kicad_pcb_url'] = pcbUrl.signedUrl;
+  }
+}
+```
+
+### Migration Supabase — Bucket kicad-files
+
+```sql
+-- Bucket privé — accès par signed URL uniquement
+INSERT INTO storage.buckets (id, name, public) VALUES ('kicad-files', 'kicad-files', false);
+
+-- RLS : chaque user accède uniquement à son dossier
+CREATE POLICY "kicad files owner only"
+  ON storage.objects FOR ALL
+  USING (bucket_id = 'kicad-files' AND (storage.foldername(name))[1] = auth.uid()::text);
 ```
 
 ---
@@ -163,11 +185,11 @@ export function LayerToggle({ visible, onToggle }: { visible: string[]; onToggle
 ## Viewer 3D — Three.js (fichier STEP)
 
 ```typescript
-// packages/ui/src/viewer/PCBViewer3D.tsx
-"use client";
-import { useEffect, useRef } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+// apps/web/src/widgets/viewer/ui/PCBViewer3D.tsx
+'use client';
+import { useEffect, useRef } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -178,8 +200,11 @@ export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0A0A0A);
 
-    const camera = new THREE.PerspectiveCamera(45,
-      mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(
+      45,
+      mountRef.current.clientWidth / mountRef.current.clientHeight,
+      0.1, 1000
+    );
     camera.position.set(0, 80, 100);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -187,7 +212,6 @@ export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
     renderer.setPixelRatio(window.devicePixelRatio);
     mountRef.current.appendChild(renderer.domElement);
 
-    // Éclairage réaliste PCB
     scene.add(new THREE.AmbientLight(0xffffff, 0.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(50, 100, 50);
@@ -197,7 +221,7 @@ export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
     controls.enableDamping = true;
 
     // Charger STEP via occt-import-js (WebAssembly)
-    loadSTEP(stepUrl, scene, PCB_MATERIALS);
+    // loadSTEP(stepUrl, scene, PCB_MATERIALS);
 
     let rafId: number;
     const animate = () => {
@@ -210,7 +234,6 @@ export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
     return () => {
       cancelAnimationFrame(rafId);
       renderer.dispose();
-      mountRef.current?.removeChild(renderer.domElement);
     };
   }, [stepUrl]);
 
@@ -221,26 +244,22 @@ export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
 ### Matériaux PCB réalistes
 
 ```typescript
-// packages/ui/src/viewer/materials.ts
-import * as THREE from "three";
+import * as THREE from 'three';
 
 export const PCB_MATERIALS = {
-  fr4: new THREE.MeshPhysicalMaterial({
-    color: 0x2d7a2d,   // vert FR4
-    roughness: 0.8, metalness: 0.0,
-  }),
-  copper: new THREE.MeshPhysicalMaterial({
-    color: 0xd4a017,   // cuivre doré
-    roughness: 0.3, metalness: 0.9,
-  }),
-  silkscreen: new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,   // sérigraphie blanche
-    roughness: 0.9, metalness: 0.0,
-  }),
-  soldermask: new THREE.MeshPhysicalMaterial({
-    color: 0x1a5c1a,   // masque vert foncé
-    roughness: 0.5, metalness: 0.0,
-    transparent: true, opacity: 0.85,
-  }),
+  fr4:        new THREE.MeshPhysicalMaterial({ color: 0x2d7a2d, roughness: 0.8, metalness: 0.0 }),
+  copper:     new THREE.MeshPhysicalMaterial({ color: 0xd4a017, roughness: 0.3, metalness: 0.9 }),
+  silkscreen: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 }),
+  soldermask: new THREE.MeshPhysicalMaterial({ color: 0x1a5c1a, roughness: 0.5, metalness: 0.0, transparent: true, opacity: 0.85 }),
 };
 ```
+
+---
+
+## Règles importantes
+
+- `KiCanvasViewer` → `ssr: false` obligatoire (web component browser uniquement)
+- Les URLs Supabase Storage signées expirent après 1h — regénérer au rechargement
+- `kicad_sch_url` et `kicad_pcb_url` sont stockés dans `pcb_state` JSONB en DB
+- Skeleton si URL null (fichier pas encore généré par l'agent)
+- JAMAIS importer PixiJS pour le viewer schéma ou PCB (remplacé par KiCanvas)

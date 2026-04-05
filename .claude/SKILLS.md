@@ -14,7 +14,7 @@
 | `layrix-pcb-agent` | `layrix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
 | `layrix-footprint` | `layrix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
 | `layrix-kicad-service` | `layrix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
-| `layrix-viewer` | `layrix-viewer/SKILL.md` | PixiJS 2D (layers, couleurs, DRC markers, zoom/pan) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / rendu / layers |
+| `layrix-viewer` | `layrix-viewer/SKILL.md` | KiCanvas (viewer natif .kicad_sch + .kicad_pcb) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / schéma / rendu KiCanvas |
 | `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Maker/Pro, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
 | `layrix-drc` | `layrix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
 | `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
@@ -25,7 +25,7 @@
 
 | Skill | Source | Installs | Description | Invoquer quand |
 |-------|--------|----------|-------------|----------------|
-| `tscircuit` | tscircuit/skill | 313 | TSCircuit — moteur PCB React-like, génération TSX native par Claude | PCB <20 composants, 2 couches |
+| `tscircuit` | tscircuit/skill | 313 | TSCircuit — moteur PCB React-like (DÉPRÉCIÉ — remplacé par Circuit-Synth) | Fallback uniquement si Circuit-Synth indisponible |
 | `eda-pcb` | l3wi/claude-eda | 93 | EDA/PCB général — schémas, netlists, conventions électroniques | Schéma électronique, netlist |
 | `jlcpcb-component-finder` | takazudo | 28 | Recherche composants LCSC/JLCPCB — prix, stock, part numbers | Sélection composants, BOM |
 | `kicad` | aklofas/kicad-happy | 18 | KiCad patterns — conventions fichiers .kicad_pcb, .kicad_sch, pcbnew API | KiCad, fichiers PCB |
@@ -100,6 +100,18 @@ npx skills add owner/repo@skill -g -y
 # Créer dans : .claude/skills/layrix-xxx.md
 # Puis ajouter dans ce fichier + CLAUDE.md
 ```
+
+---
+
+## Historique des installations
+
+## Ajout — Circuit-Synth + KiCanvas (2026-04-05)
+
+| Skill | Changement |
+|-------|-----------|
+| `layrix-viewer` | Mis à jour : PixiJS → KiCanvas (rendu .kicad_sch + .kicad_pcb natifs) |
+| `layrix-pcb-agent` | Mis à jour : moteur TSCircuit → Circuit-Synth (Python KiCad) |
+| `tscircuit` | Déprécié — garde comme fallback uniquement |
 
 ---
 

@@ -28,25 +28,26 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 ## LE PRODUIT
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
-- Moteurs PCB : TSCircuit (simples) + KiCad (pro multi-couches)
+- Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
 - Routage auto : Freerouting (Java, dockerisé)
 - Couches : 2 à 8 couches selon le plan
-- Exports : .kicad_pcb + Gerber + BOM + PDF + STEP 3D
-- Viewer 2D : PixiJS (WebGL, 60 FPS, 100 000+ éléments)
+- Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
+- Viewer Schéma + PCB : KiCanvas (rendu natif KiCad dans le navigateur)
 - Viewer 3D : Three.js (fichier STEP, rotation libre)
 - Zéro installation requise
 
 ---
 
-## STRATÉGIE HYBRIDE TSCIRCUIT + KICAD — 100% INVISIBLE
+## STRATÉGIE CIRCUIT-SYNTH + KICAD — 100% INVISIBLE
 
 L'utilisateur ne sait jamais quel moteur tourne derrière.
-Le routeur intelligent choisit automatiquement :
+Le pipeline génère des fichiers KiCad natifs :
 
-- Composants < 20 + 2 couches → TSCircuit (Claude génère du TSX nativement, pas de microservice Python, MVP rapide)
-- Routage différentiel, 4+ couches, plan Pro → KiCad (standard industrie, Freerouting, pcbnew)
+- **Circuit-Synth** → Claude génère du code Python → KiCad Docker exécute → `.kicad_sch` + `.kicad_pcb` réels
+- Routage différentiel, 4+ couches, plan Pro → **KiCad + Freerouting + pcbnew** natif
+- **Viewer** : KiCanvas charge les fichiers `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage
 
-Résultat toujours identique pour l'utilisateur : fichier Gerber standard ✅
+Résultat : fichiers KiCad natifs + Gerbers standard ✅
 
 ---
 

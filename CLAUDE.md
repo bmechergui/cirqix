@@ -99,7 +99,7 @@ apps/web/src/
 │   ├── marketing/ui/         ← Hero, Navbar, Pricing, WaitlistForm…
 │   └── dashboard/ui/         ← ChatPanel, Sidebar, ProjectCard, StatusBadge…
 ├── widgets/
-│   └── viewer/               ← ViewerPanel (PixiJS 2D + Three.js 3D)
+│   └── viewer/               ← ViewerPanel (KiCanvas schéma+PCB + Three.js 3D)
 ├── entities/
 │   ├── project/              ← Project, PCBStatus
 │   ├── pcb/                  ← PCBState, DRCViolation, AgentStep
@@ -144,7 +144,8 @@ packages/
 - Queue : Redis + BullMQ (10 PCBs simultanés)
 - Auth : Supabase Auth (email + Google OAuth)
 - Paiement : Lemon Squeezy (MVP)
-- Viewer 2D : PixiJS · Viewer 3D : Three.js + STEP via occt-import-js
+- Viewer Schéma + PCB : KiCanvas (rendu natif .kicad_sch / .kicad_pcb depuis Supabase Storage)
+- Viewer 3D : Three.js + STEP via occt-import-js
 
 ## Règles agents Claude
 
@@ -156,8 +157,10 @@ packages/
 
 ## Stratégie moteur PCB
 
-- <20 composants + 2 couches → TSCircuit
-- Sinon → KiCad + Freerouting + pcbnew
+- **Circuit-Synth** (Python) → Claude génère code Python → KiCad Docker → `.kicad_sch` + `.kicad_pcb` natifs
+- Fallback → KiCad + Freerouting + pcbnew (PCB Pro multi-couches)
+- Viewer → **KiCanvas** charge les fichiers depuis Supabase Storage (signed URL 1h)
+- JAMAIS TSCircuit en nouveau code — déprécié depuis v0.3.0
 
 ## Système de crédits
 

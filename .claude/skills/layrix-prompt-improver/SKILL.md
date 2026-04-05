@@ -14,12 +14,13 @@ description: Améliore tout prompt avant exécution — détecte phase active, a
 
 > Pour les autres phases, lire `PLAN.md`. Mettre à jour ce skill quand la phase change.
 
-**Focus :** Supabase Auth, chat agent Claude SDK, streaming SSE, viewer PixiJS, crédits
+**Focus :** Supabase Auth, chat agent Claude SDK, streaming SSE, viewer KiCanvas, crédits, Circuit-Synth
 **Fichiers :** `apps/web/src/`, `packages/agents/src/orchestrator.ts`, `apps/api/app/api/`
 **Contraintes à toujours mentionner :**
 - Skill `layrix-pcb-agent` pour la boucle agentique
 - Skill `layrix-credits` : vérifier solde AVANT, déduire APRÈS succès
-- Skill `layrix-viewer` pour PixiJS (couleurs `LAYER_COLORS`, `mmToPx`)
+- Skill `layrix-viewer` pour KiCanvas (`.kicad_sch` / `.kicad_pcb` depuis Supabase Storage signed URL)
+- Moteur PCB : **Circuit-Synth** (Python) — JAMAIS TSCircuit en nouveau code
 - Streaming SSE : `Content-Type: text/event-stream`, event `[DONE]` en fin
 - Middleware auth déjà en place : `apps/web/src/middleware.ts` → `/dashboard/*`
 - Zustand store : `apps/web/src/shared/store/app-store.ts`
@@ -115,7 +116,8 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 ├── agent / orchestrateur / boucle / SSE / itération  → layrix-pcb-agent
 ├── footprint / kicad_mod / snapmagic / octopart       → layrix-footprint
 ├── placement / routage / freerouting / gerber         → layrix-kicad-service
-├── viewer / pixijs / layer / F.Cu / 3D / three.js     → layrix-viewer
+├── viewer / kicanvas / kicad_sch / kicad_pcb / schéma  → layrix-viewer
+├── circuit-synth / python kicad / génération kicad    → layrix-kicad-service
 ├── crédit / balance / plan / lemon squeezy / top-up   → layrix-credits
 ├── DRC / violation / clearance / track width          → layrix-drc
 ├── dashboard / composant React / UI / tailwind        → /everything-claude-code:frontend-patterns
