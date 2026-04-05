@@ -114,9 +114,20 @@ export async function POST(req: NextRequest) {
               ...(current?.pcb_state as Record<string, unknown> ?? {}),
               ...event.state,
             };
+
+            // Derive project-level status from pcb_status (e.g. 'DRC_CLEAN' → projects.status)
+            const pcbStatus = event.state['pcb_status'] as string | undefined;
+            const projectUpdate: Record<string, unknown> = {
+              pcb_state: merged,
+              updated_at: new Date().toISOString(),
+            };
+            if (pcbStatus) {
+              projectUpdate['status'] = pcbStatus;
+            }
+
             await supabase
               .from('projects')
-              .update({ pcb_state: merged, updated_at: new Date().toISOString() })
+              .update(projectUpdate)
               .eq('id', body.projectId)
               .eq('user_id', user.id);
           }
