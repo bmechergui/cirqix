@@ -99,7 +99,7 @@ apps/web/src/
 │   ├── marketing/ui/         ← Hero, Navbar, Pricing, WaitlistForm…
 │   └── dashboard/ui/         ← ChatPanel, Sidebar, ProjectCard, StatusBadge…
 ├── widgets/
-│   └── viewer/               ← ViewerPanel (KiCanvas schéma+PCB + Three.js 3D)
+│   └── viewer/               ← ViewerPanel + KiCanvasViewer + PixiCanvas + Three.js 3D
 ├── entities/
 │   ├── project/              ← Project, PCBStatus
 │   ├── pcb/                  ← PCBState, DRCViolation, AgentStep
@@ -107,7 +107,8 @@ apps/web/src/
 ├── shared/
 │   ├── ui/                   ← shadcn/ui components
 │   ├── lib/                  ← mock-data.ts, supabase-middleware.ts
-│   └── store/                ← app-store.ts (Zustand)
+│   ├── store/                ← app-store.ts (Zustand)
+│   └── types/                ← kicanvas.d.ts (web component declarations)
 ├── middleware.ts              ← Auth Supabase JWT — protège /dashboard/*
 ├── processes/                ← (Phase 3+ — boucle agentique UI)
 └── entities/                 ← (modèles métier)
@@ -180,6 +181,7 @@ packages/
 - `Message.role` = `'user' | 'assistant'` (jamais `'agent'`)
 - `Credits` = `{ balance, plan, daily_limit }` (pas `remaining`/`total`)
 - `Project` = snake_case : `updated_at`, `iteration_count`
+- `PCBState` inclut `kicad_sch_url?` + `kicad_pcb_url?` — signed URLs Supabase Storage (1h) pour KiCanvas
 
 ## Gotchas shadcn/ui
 
@@ -226,6 +228,14 @@ hidden md:block shrink-0
 
 Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 
+Phase 2 en cours — livrées :
+- Phase D ✓ — Docs + PLAN + SKILLS + skills migrated Circuit-Synth + KiCanvas
+- Phase B ✓ — `KiCanvasViewer.tsx` créé, viewer tabs utilisent KiCanvas si `kicad_sch_url`/`kicad_pcb_url`
+
+Phase 2 restant :
+- Phase C — Supabase Storage bucket `kicad-files` + upload dans `apps/web/src/app/api/agent/route.ts`
+- Phase A — Circuit-Synth engine backend (`services/kicad/` + `packages/agents/src/engines/circuit-synth-engine.ts`)
+
 ---
 
 ## Skills — sélection et création
@@ -240,7 +250,7 @@ Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 1. `layrix-prompt-improver` — TOUJOURS en premier (améliore + contexte Layrix + skill)
 2. `layrix-pcb-agent` — boucle agentique PCB
 4. `layrix-credits` — déduction crédits Supabase
-5. `layrix-viewer` — PixiJS 2D + Three.js 3D
+5. `layrix-viewer` — KiCanvas (schéma + PCB) + Three.js 3D
 6. `/everything-claude-code:claude-api` — Claude SDK agents
 7. `/everything-claude-code:frontend-patterns` — Next.js / React
 8. `/everything-claude-code:postgres-patterns` — Supabase / pgvector
@@ -255,7 +265,7 @@ Phases complétées : Phase 0 ✓ (infra) · Phase 1 ✓ (landing)
 ## Persona
 
 Architecte logiciel senior full-stack, 15 ans d'expérience, spécialisé agents IA + PCB AI.
-Maîtrise : Next.js 15 · TypeScript strict · Turborepo · Supabase · Claude SDK · Lemon Squeezy · TSCircuit · KiCad/FastAPI · Docker.
+Maîtrise : Next.js 15 · TypeScript strict · Turborepo · Supabase · Claude SDK · Lemon Squeezy · Circuit-Synth · KiCanvas · KiCad/FastAPI · Docker.
 Principes : FSD · clean architecture · atomic design · tests · sécurité · coût agentique <0.12€/PCB.
 
 Tu penses étape par étape. Tu annonces les skills avant chaque action. Tu contredis les mauvaises pratiques. Tu proposes des solutions modernes même si non demandées.
