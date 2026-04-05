@@ -137,20 +137,33 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
         {mode === 'routing' ? (
-          <>
-            <PixiCanvas
-              pcbState={pcbState}
-              layerVisibility={layerVisibility}
-              onReady={setZoomControls}
-            />
-            {pcbState?.circuit_json?.length ? (
-              <PCBInfoBadge pcbState={pcbState} />
-            ) : (
-              <div className="absolute inset-0 z-10">
-                <PCBEmptyState agentStep={agentStep} />
+          /* Split view: Schematic left | Routing right */
+          <div className="flex h-full">
+            {/* Left — Schematic panel */}
+            <div className="w-[280px] shrink-0 border-r border-border overflow-hidden flex flex-col">
+              <div className="px-3 py-1.5 border-b border-border shrink-0">
+                <span className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider">Schematic</span>
               </div>
-            )}
-          </>
+              <div className="flex-1 overflow-hidden">
+                <SchemaNetlistView pcbState={pcbState} netsVisible />
+              </div>
+            </div>
+            {/* Right — Routing canvas */}
+            <div className="flex-1 relative overflow-hidden">
+              <PixiCanvas
+                pcbState={pcbState}
+                layerVisibility={layerVisibility}
+                onReady={setZoomControls}
+              />
+              {pcbState?.circuit_json?.length ? (
+                <PCBInfoBadge pcbState={pcbState} />
+              ) : (
+                <div className="absolute inset-0 z-10">
+                  <PCBEmptyState agentStep={agentStep} />
+                </div>
+              )}
+            </div>
+          </div>
         ) : mode === 'schematic' ? (
           <SchemaNetlistView pcbState={pcbState} netsVisible />
         ) : mode === 'components' ? (
