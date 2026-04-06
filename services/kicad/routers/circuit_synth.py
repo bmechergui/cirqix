@@ -72,6 +72,27 @@ _SYMBOL_RULES: list[tuple[tuple[str, str], str]] = [
     (("SA555", ""), "Timer:NE555P"),
     (("TLC555", ""), "Timer:NE555P"),
     (("ICM7555", ""), "Timer:NE555P"),
+    # --- Voltage regulators ---
+    (("LM7805", ""), "Regulator_Linear:L7805"),
+    (("L7805", ""), "Regulator_Linear:L7805"),
+    (("LM7812", ""), "Regulator_Linear:L7812"),
+    (("LM317", ""), "Regulator_Linear:LM317_TO-220"),
+    (("LM1117", "3.3"), "Regulator_Linear:LM1117T-3.3"),
+    (("LM1117", "5"), "Regulator_Linear:LM1117T-5.0"),
+    (("LM1117", ""), "Regulator_Linear:LM1117T-3.3"),
+    # --- Op-amps ---
+    (("LM358", ""), "Amplifier_Operational:LM358"),
+    (("LM741", ""), "Amplifier_Operational:LM741"),
+    # --- Diodes ---
+    (("1N4148", ""), "Diode:1N4148"),
+    (("1N4001", ""), "Diode:1N4001"),
+    (("1N4007", ""), "Diode:1N4007"),
+    # --- Transistors ---
+    (("BC547", ""), "Transistor_BJT:BC547"),
+    (("BC557", ""), "Transistor_BJT:BC557"),
+    (("2N3904", ""), "Transistor_BJT:2N3904"),
+    (("2N3906", ""), "Transistor_BJT:2N3906"),
+    (("BC337", ""), "Transistor_BJT:BC337"),
     # --- Connectors ---
     (("", "CONN_01X01"), "Connector_Generic:Conn_01x01"),
     (("", "CONN_01X02"), "Connector_Generic:Conn_01x02"),

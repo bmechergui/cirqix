@@ -105,6 +105,17 @@ vcc = Net("VCC")              # Net en dehors du contexte = crash
 | Valeur (value) contient | Footprint contient | Symbol KiCad |
 |------------------------|-------------------|--------------|
 | NE555, LM555, NA555, SA555, TLC555, ICM7555 | — | `Timer:NE555P` |
+| LM7805 / L7805 | — | `Regulator_Linear:L7805` |
+| LM7812 | — | `Regulator_Linear:L7812` |
+| LM317 | — | `Regulator_Linear:LM317_TO-220` |
+| LM1117 (3.3V) | — | `Regulator_Linear:LM1117T-3.3` |
+| LM1117 (5V) | — | `Regulator_Linear:LM1117T-5.0` |
+| LM358 | — | `Amplifier_Operational:LM358` |
+| BC547 / BC337 | — | `Transistor_BJT:BC547` |
+| BC557 | — | `Transistor_BJT:BC557` |
+| 2N3904 | — | `Transistor_BJT:2N3904` |
+| 1N4148 | — | `Diode:1N4148` |
+| 1N4007 | — | `Diode:1N4007` |
 | — | CONN_01X01 | `Connector_Generic:Conn_01x01` |
 | — | CONN_01X02, PINHEADER_1X02 | `Connector_Generic:Conn_01x02` |
 | — | CONN_01X03, PINHEADER_1X03 | `Connector_Generic:Conn_01x03` |
