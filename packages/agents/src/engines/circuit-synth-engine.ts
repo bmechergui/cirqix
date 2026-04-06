@@ -356,26 +356,33 @@ function schPinOffset(footprint: string, pinIndex: number): { dx: number; dy: nu
 // .kicad_sch generator (KiCad 7 S-expression format)
 // ============================================================
 
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 function generateSchematic(
   components: SchemaComponent[],
   connections: SchemaNet[]
 ): string {
   const lines: string[] = [];
 
-  // Wider spacing so symbols don't overlap (50mm col × 40mm row)
-  const COLS      = Math.max(1, Math.ceil(Math.sqrt(components.length)));
+  // Max 4 columns so symbols don't crowd; spacing 50mm col × 40mm row
+  const COLS      = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(components.length))));
   const ROWS      = Math.ceil(components.length / COLS);
   const COL_STEP  = 50;
   const ROW_STEP  = 40;
-  const MARGIN    = 20;  // mm margin around content
+  const MARGIN    = 20;
   const ORIGIN_X  = MARGIN;
   const ORIGIN_Y  = MARGIN;
 
   // Custom paper size = exact content bounding box → KiCanvas fits to circuit
   const paperW = Math.max(80, COLS * COL_STEP + MARGIN * 2);
-  const paperH = Math.max(60, ROWS * ROW_STEP + MARGIN * 2 + 20); // +20 for wire stubs
+  const paperH = Math.max(60, ROWS * ROW_STEP + MARGIN * 2 + 20);
 
-  lines.push('(kicad_sch (version 20230121) (generator "layrix-circuit-synth")');
+  lines.push(`(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "${uuidv4()}")`);
   lines.push(`  (paper "User" ${paperW} ${paperH})`);
   lines.push(`  (lib_symbols${INLINE_LIB_SYMBOLS}\n  )`);
 
@@ -434,22 +441,24 @@ function generateSchematic(
   connections.forEach((conn) => {
     if (!conn.pins.length) return;
     const name = conn.name.replace(/"/g, '\\"');
-    conn.pins.forEach((pin) => {
+    conn.pins.forEach((pin, pinIdx) => {
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
       const off = schPinOffset(components[idx]!.footprint, pin.pin - 1);
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
-      // Short wire stub from component symbol pin outward
-      const stubEndX = +(px + (off.dx >= 0 ? 2.54 : -2.54)).toFixed(2);
-      const stubEndY = py;
-      if (++wireIdx <= 500) { // guard against huge schematics
+      // Alternate stub direction every other pin to spread labels
+      const goesRight = pinIdx % 2 === 0 ? off.dx >= 0 : off.dx < 0;
+      const stubEndX  = +(px + (goesRight ? 2.54 : -2.54)).toFixed(2);
+      const stubEndY  = py;
+      const angle     = goesRight ? 0 : 180;
+      const justify   = goesRight ? 'left' : 'right';
+      if (++wireIdx <= 500) {
         lines.push(`  (wire (pts (xy ${px} ${py}) (xy ${stubEndX} ${stubEndY})) (stroke (width 0) (type default)))`);
       }
-      // Net label at stub end
-      lines.push(`  (label "${name}" (at ${stubEndX} ${stubEndY} 0)`);
-      lines.push('    (effects (font (size 1.27 1.27)))');
+      lines.push(`  (label "${name}" (at ${stubEndX} ${stubEndY} ${angle})`);
+      lines.push(`    (effects (font (size 1.27 1.27)) (justify ${justify}))`);
       lines.push('  )');
     });
   });
