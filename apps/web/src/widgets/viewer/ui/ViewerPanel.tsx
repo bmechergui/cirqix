@@ -21,6 +21,7 @@ const KiCanvasViewer = dynamic(
   { ssr: false, loading: () => <PCBPlaceholder /> }
 );
 
+
 type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
 
 interface ViewerPanelProps {
