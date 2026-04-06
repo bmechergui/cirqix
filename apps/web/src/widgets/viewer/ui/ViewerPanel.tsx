@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Layers, Box, Download, ZoomIn, ZoomOut, Maximize2, Eye, EyeOff, FileText, Cpu, Route } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { useAppStore } from '@/shared/store/app-store';
@@ -354,10 +354,83 @@ const NET_PALETTE = [
   '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#EF4444',
 ];
 
+// --- SVG layout constants ---
+const BOX_W = 90;
+const BOX_H = 48;
+const GAP_X = 50;
+const GAP_Y = 70;
+const PAD_Y = BOX_H + 8;
+const ZOOM_FACTOR = 1.15;
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 5;
+
 function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
   const components: SchemaComponent[] = pcbState?.components ?? [];
   const connections: SchemaNet[] = pcbState?.connections ?? [];
   const nets: string[] = pcbState?.nets ?? [];
+
+  const COLS = Math.min(5, components.length);
+  const ROWS = Math.ceil(components.length / COLS);
+  const svgW = COLS * (BOX_W + GAP_X) + GAP_X;
+  const svgH = ROWS * (BOX_H + GAP_Y) + GAP_Y + 20;
+
+  interface ViewBox { x: number; y: number; w: number; h: number }
+
+  const [vb, setVb] = useState<ViewBox>({ x: 0, y: 0, w: svgW, h: svgH });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; vbX: number; vbY: number } | null>(null);
+
+  // Reset viewBox when components change
+  useEffect(() => { setVb({ x: 0, y: 0, w: svgW, h: svgH }); }, [svgW, svgH]);
+
+  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width;
+    const my = (e.clientY - rect.top) / rect.height;
+    setVb((prev) => {
+      const scale = e.deltaY < 0 ? 1 / ZOOM_FACTOR : ZOOM_FACTOR;
+      const nw = Math.min(svgW / MIN_SCALE, Math.max(svgW / MAX_SCALE, prev.w * scale));
+      const nh = Math.min(svgH / MIN_SCALE, Math.max(svgH / MAX_SCALE, prev.h * scale));
+      return { x: prev.x + (prev.w - nw) * mx, y: prev.y + (prev.h - nh) * my, w: nw, h: nh };
+    });
+  }, [svgW, svgH]);
+
+  const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, vbX: vb.x, vbY: vb.y };
+    e.currentTarget.style.cursor = 'grabbing';
+  }, [vb.x, vb.y]);
+
+  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (!dragRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dx = (e.clientX - dragRef.current.startX) * (vb.w / rect.width);
+    const dy = (e.clientY - dragRef.current.startY) * (vb.h / rect.height);
+    setVb((prev) => ({ ...prev, x: dragRef.current!.vbX - dx, y: dragRef.current!.vbY - dy }));
+  }, [vb.w, vb.h]);
+
+  const onMouseUp = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    dragRef.current = null;
+    e.currentTarget.style.cursor = 'grab';
+  }, []);
+
+  const resetView = () => setVb({ x: 0, y: 0, w: svgW, h: svgH });
+
+  const compPos = components.map((_, i) => ({
+    x: (i % COLS) * (BOX_W + GAP_X) + GAP_X,
+    y: Math.floor(i / COLS) * (BOX_H + GAP_Y) + GAP_Y,
+  }));
+
+  const compIdxByRef = new Map(components.map((c, i) => [c.ref, i]));
+
+  function pinPos(ref: string, pin: number): { x: number; y: number } | null {
+    const idx = compIdxByRef.get(ref);
+    if (idx === undefined) return null;
+    const pos = compPos[idx]!;
+    const total = getPadCount(components[idx]!.footprint);
+    return { x: pos.x + (pin / (total + 1)) * BOX_W, y: pos.y + PAD_Y };
+  }
 
   if (!components.length) {
     return (
@@ -370,46 +443,28 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
     );
   }
 
-  // --- SVG layout constants ---
-  const BOX_W = 90;
-  const BOX_H = 48;
-  const GAP_X = 50;
-  const GAP_Y = 70;
-  const COLS = Math.min(5, components.length);
-  const ROWS = Math.ceil(components.length / COLS);
-  const PAD_Y = BOX_H + 8; // pins drawn below the box
-
-  const svgW = COLS * (BOX_W + GAP_X) + GAP_X;
-  const svgH = ROWS * (BOX_H + GAP_Y) + GAP_Y + 20;
-
-  const compPos = components.map((_, i) => ({
-    x: (i % COLS) * (BOX_W + GAP_X) + GAP_X,
-    y: Math.floor(i / COLS) * (BOX_H + GAP_Y) + GAP_Y,
-  }));
-
-  const compIdxByRef = new Map(components.map((c, i) => [c.ref, i]));
-
-  // Pin position: evenly spaced across bottom edge of box
-  function pinPos(ref: string, pin: number): { x: number; y: number } | null {
-    const idx = compIdxByRef.get(ref);
-    if (idx === undefined) return null;
-    const pos = compPos[idx]!;
-    const total = getPadCount(components[idx]!.footprint);
-    return {
-      x: pos.x + ((pin) / (total + 1)) * BOX_W,
-      y: pos.y + PAD_Y,
-    };
-  }
-
   return (
-    <div className="h-full overflow-auto bg-[#090909] p-4">
-      {/* SVG schematic diagram */}
+    <div ref={containerRef} className="relative h-full bg-[#090909] overflow-hidden select-none">
+      {/* Reset zoom button */}
+      <button
+        type="button"
+        onClick={resetView}
+        className="absolute top-2 right-2 z-10 px-2 py-1 text-[9px] font-mono text-[#3D3D3D] border border-[#1E1E1E] rounded bg-[#0D0D0D] hover:text-[#A1A1AA] hover:border-[#2E2E2E] transition-colors"
+        title="Reset zoom"
+      >
+        fit
+      </button>
+
       <svg
-        width={svgW}
-        height={svgH}
-        viewBox={`0 0 ${svgW} ${svgH}`}
-        className="block"
-        style={{ minWidth: svgW }}
+        width="100%"
+        height="100%"
+        viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+        style={{ cursor: 'grab', display: 'block' }}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
       >
         {/* Ratsnest lines */}
         {connections.map((conn, netIdx) => {
@@ -427,10 +482,8 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
                   strokeDasharray="5 3" opacity={0.7}
                 />
               ))}
-              {/* Net label near first pin */}
               {pts[0] && (
-                <text
-                  x={pts[0].x + 3} y={pts[0].y + 11}
+                <text x={pts[0].x + 3} y={pts[0].y + 11}
                   fill={color} fontSize={7} fontFamily="monospace" opacity={0.9}
                 >
                   {conn.name}
@@ -443,73 +496,54 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
         {/* Component boxes */}
         {components.map((comp, i) => {
           const pos = compPos[i]!;
-          const padCount = getPadCount(comp.footprint);
+          const pads = getPadCount(comp.footprint);
           return (
             <g key={comp.ref}>
-              {/* Box */}
-              <rect
-                x={pos.x} y={pos.y} width={BOX_W} height={BOX_H}
+              <title>{comp.ref} — {comp.value} ({comp.footprint}){comp.lcsc ? ` · LCSC: ${comp.lcsc}` : ''}</title>
+              <rect x={pos.x} y={pos.y} width={BOX_W} height={BOX_H}
                 fill="#0F0F0F" stroke="#2E2E2E" strokeWidth={1} rx={4}
               />
-              {/* Ref */}
-              <text
-                x={pos.x + BOX_W / 2} y={pos.y + 16}
+              <text x={pos.x + BOX_W / 2} y={pos.y + 16}
                 fill="#D4820A" fontSize={10} fontFamily="monospace"
                 textAnchor="middle" fontWeight="600"
               >
                 {comp.ref}
               </text>
-              {/* Value */}
-              <text
-                x={pos.x + BOX_W / 2} y={pos.y + 29}
+              <text x={pos.x + BOX_W / 2} y={pos.y + 29}
                 fill="#A1A1AA" fontSize={8} fontFamily="monospace" textAnchor="middle"
               >
                 {comp.value.length > 12 ? comp.value.slice(0, 12) + '…' : comp.value}
               </text>
-              {/* Footprint */}
-              <text
-                x={pos.x + BOX_W / 2} y={pos.y + 40}
+              <text x={pos.x + BOX_W / 2} y={pos.y + 40}
                 fill="#3D3D3D" fontSize={7} fontFamily="monospace" textAnchor="middle"
               >
                 {comp.footprint}
               </text>
-              {/* Pin dots */}
-              {Array.from({ length: padCount }, (_, k) => {
+              {Array.from({ length: pads }, (_, k) => {
                 const p = pinPos(comp.ref, k + 1)!;
-                return (
-                  <circle key={k} cx={p.x} cy={p.y} r={2.5}
-                    fill="#1A1A1A" stroke="#3D3D3D" strokeWidth={1}
-                  />
-                );
+                return <circle key={k} cx={p.x} cy={p.y} r={2.5} fill="#1A1A1A" stroke="#3D3D3D" strokeWidth={1} />;
               })}
             </g>
           );
         })}
+
+        {/* Net chips fallback (no connections data) */}
+        {connections.length === 0 && nets.map((net, i) => (
+          <text key={net}
+            x={GAP_X + (i % COLS) * (BOX_W + GAP_X)}
+            y={svgH - 10}
+            fill={NET_PALETTE[i % NET_PALETTE.length]}
+            fontSize={7} fontFamily="monospace"
+          >
+            {net}
+          </text>
+        ))}
       </svg>
 
-      {/* Fallback: net chips when no connections data */}
-      {connections.length === 0 && nets.length > 0 && (
-        <div className="mt-4">
-          <p className="text-[9px] text-[#3D3D3D] font-mono uppercase tracking-wider mb-2">
-            Nets — {nets.length}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {nets.map((net, i) => (
-              <span
-                key={net}
-                className="px-2 py-0.5 rounded border text-[9px] font-mono"
-                style={{
-                  color: NET_PALETTE[i % NET_PALETTE.length],
-                  borderColor: `${NET_PALETTE[i % NET_PALETTE.length]}40`,
-                  backgroundColor: `${NET_PALETTE[i % NET_PALETTE.length]}10`,
-                }}
-              >
-                {net}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Zoom hint */}
+      <p className="absolute bottom-2 left-3 text-[8px] text-[#2A2A2A] font-mono pointer-events-none">
+        scroll to zoom · drag to pan
+      </p>
     </div>
   );
 }
