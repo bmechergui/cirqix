@@ -173,6 +173,7 @@ export class PCBRenderer {
   }
 
   private applyScale(s: number): void {
+    if (!this.app?.screen) return;
     this.viewport.scale.set(s);
     // Re-center around the board
     this.viewport.x = (this.app.screen.width  - this.boardWpx * s) / 2;
