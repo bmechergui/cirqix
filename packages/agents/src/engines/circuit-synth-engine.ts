@@ -18,36 +18,178 @@ export interface CircuitSynthResult {
 }
 
 // ============================================================
-// Layout helpers
+// Footprint dimensions (mm) — pad count + relative pad positions
 // ============================================================
 
-function gridPos(
-  idx: number,
-  total: number,
-  boardW: number,
-  boardH: number
-): { x: number; y: number } {
-  const cols = Math.max(1, Math.ceil(Math.sqrt(total)));
-  const rows = Math.ceil(total / cols);
-  const margin = 5;
-  const usableW = boardW - 2 * margin;
-  const usableH = boardH - 2 * margin;
-  const col = idx % cols;
-  const row = Math.floor(idx / cols);
-  return {
-    x: +( margin + (col + 0.5) * (usableW / cols)).toFixed(3),
-    y: +( margin + (row + 0.5) * (usableH / rows)).toFixed(3),
-  };
+interface PadDimensions {
+  width: number;
+  height: number;
+  pads: Array<{ dx: number; dy: number }>;
+}
+
+const FOOTPRINT_DIMS: Record<string, PadDimensions> = {
+  '0402': { width: 1.0, height: 0.5, pads: [{ dx: -0.5, dy: 0 }, { dx: 0.5, dy: 0 }] },
+  '0603': { width: 1.6, height: 0.8, pads: [{ dx: -0.8, dy: 0 }, { dx: 0.8, dy: 0 }] },
+  '0805': { width: 2.0, height: 1.25, pads: [{ dx: -1.0, dy: 0 }, { dx: 1.0, dy: 0 }] },
+  '1206': { width: 3.2, height: 1.6, pads: [{ dx: -1.6, dy: 0 }, { dx: 1.6, dy: 0 }] },
+  'SOT-23': {
+    width: 2.9, height: 1.6,
+    pads: [{ dx: -1.4, dy: -0.9 }, { dx: -1.4, dy: 0.9 }, { dx: 1.4, dy: 0 }],
+  },
+  'SOT-23-5': {
+    width: 3.0, height: 1.8,
+    pads: [
+      { dx: -1.4, dy: -0.95 }, { dx: -1.4, dy: 0 }, { dx: -1.4, dy: 0.95 },
+      { dx: 1.4, dy: -0.95 }, { dx: 1.4, dy: 0.95 },
+    ],
+  },
+  'TSSOP-8': {
+    width: 4.4, height: 3.0,
+    pads: Array.from({ length: 8 }, (_, i) => ({
+      dx: i < 4 ? -2.0 : 2.0,
+      dy: (i < 4 ? i : i - 4) * 0.65 - 0.975,
+    })),
+  },
+  'DIP-8': {
+    width: 8.0, height: 9.5,
+    pads: Array.from({ length: 8 }, (_, i) => ({
+      dx: i < 4 ? -3.8 : 3.8,
+      dy: (i < 4 ? i : 7 - i) * 2.54 - 3.81,
+    })),
+  },
+  'LED': { width: 2.0, height: 1.2, pads: [{ dx: -0.9, dy: 0 }, { dx: 0.9, dy: 0 }] },
+};
+
+function getFootprintDims(footprint: string): PadDimensions {
+  const key = Object.keys(FOOTPRINT_DIMS).find(
+    (k) => footprint.toUpperCase().includes(k.toUpperCase())
+  );
+  return FOOTPRINT_DIMS[key ?? '0402'] ?? FOOTPRINT_DIMS['0402']!;
 }
 
 function padCount(footprint: string): number {
-  const fp = footprint.toUpperCase();
-  if (fp.includes('SOT-23-5')) return 5;
-  if (fp.includes('SOT-23')) return 3;
-  if (fp.includes('DIP-14')) return 14;
-  if (fp.includes('DIP-16') || fp.includes('SOIC-16')) return 16;
-  if (fp.includes('DIP-8') || fp.includes('TSSOP-8') || fp.includes('SOIC-8')) return 8;
-  return 2; // 0402, 0603, 0805, 1206, LED, CAP…
+  return getFootprintDims(footprint).pads.length;
+}
+
+// ============================================================
+// Net helpers — power vs signal trace widths
+// ============================================================
+
+const POWER_NET_PREFIXES = ['GND', 'VSS', 'VCC', 'VDD', 'VIN', 'VOUT', 'VBAT', '3V3', '5V', '12V', '24V', 'PWR'];
+
+function isPowerNet(netName: string): boolean {
+  const u = netName.toUpperCase();
+  return POWER_NET_PREFIXES.some((p) => u === p || u.startsWith(p));
+}
+
+function traceWidth(netName: string): number {
+  return isPowerNet(netName) ? 0.3 : 0.15;
+}
+
+// ============================================================
+// Smart layout — ICs center, passives cluster, connectors left
+// ============================================================
+
+interface PlacedComp { ref: string; x: number; y: number }
+
+function autoLayout(
+  components: SchemaComponent[],
+  boardW: number,
+  boardH: number
+): PlacedComp[] {
+  const margin = 6;
+  const usableW = boardW - margin * 2;
+
+  const ics         = components.filter(c => /^U\d*/i.test(c.ref));
+  const connectors  = components.filter(c => /^J\d*/i.test(c.ref));
+  const leds        = components.filter(c => /^LED/i.test(c.ref));
+  const passives    = components.filter(c => /^[RCL]\d*/i.test(c.ref));
+  const transistors = components.filter(c => /^[QD]\d*/i.test(c.ref));
+  const rest        = components.filter(
+    c => !ics.includes(c) && !connectors.includes(c) && !leds.includes(c)
+      && !passives.includes(c) && !transistors.includes(c)
+  );
+
+  const result: PlacedComp[] = [];
+
+  // ICs: center horizontal band
+  const icCenterY = boardH * 0.48;
+  const icStep = ics.length > 1 ? usableW / (ics.length + 1) : usableW / 2;
+  ics.forEach((ic, i) => {
+    result.push({ ref: ic.ref, x: margin + icStep * (i + 1), y: icCenterY });
+  });
+
+  // Passives: two rows above / below IC band
+  const passiveGap  = 10;
+  const passiveCols = Math.max(4, Math.ceil(passives.length / 2));
+  const passiveStep = usableW / (passiveCols + 1);
+  passives.forEach((p, i) => {
+    const col      = i % passiveCols;
+    const rowAbove = Math.floor(i / passiveCols) % 2 === 0;
+    result.push({
+      ref: p.ref,
+      x: margin + passiveStep * (col + 1),
+      y: icCenterY + (rowAbove ? -passiveGap : passiveGap),
+    });
+  });
+
+  // Connectors: left edge, stacked vertically
+  connectors.forEach((conn, i) => {
+    result.push({ ref: conn.ref, x: margin + 4, y: margin + 10 + i * 14 });
+  });
+
+  // LEDs: top-right corner
+  leds.forEach((led, i) => {
+    result.push({ ref: led.ref, x: boardW - margin - 8 - i * 10, y: margin + 6 });
+  });
+
+  // Transistors/diodes: bottom band
+  const tranStep = transistors.length > 0 ? usableW / (transistors.length + 1) : 0;
+  transistors.forEach((t, i) => {
+    result.push({ ref: t.ref, x: margin + tranStep * (i + 1), y: boardH - margin - 8 });
+  });
+
+  // Anything else: bottom-right area
+  const restStep = rest.length > 0 ? usableW / (rest.length + 1) : 0;
+  rest.forEach((c, i) => {
+    result.push({ ref: c.ref, x: margin + restStep * (i + 1), y: boardH - margin - 18 });
+  });
+
+  return result;
+}
+
+// ============================================================
+// MST routing — Prim's algorithm, minimum total trace length
+// ============================================================
+
+function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function mstEdges(
+  pads: Array<{ x: number; y: number }>
+): Array<[{ x: number; y: number }, { x: number; y: number }]> {
+  if (pads.length < 2) return [];
+  const inTree = new Set<number>([0]);
+  const edges: Array<[{ x: number; y: number }, { x: number; y: number }]> = [];
+
+  while (inTree.size < pads.length) {
+    let bestDist = Infinity;
+    let bestFrom = -1;
+    let bestTo   = -1;
+    for (const fi of inTree) {
+      for (let ti = 0; ti < pads.length; ti++) {
+        if (inTree.has(ti)) continue;
+        const d = dist(pads[fi]!, pads[ti]!);
+        if (d < bestDist) { bestDist = d; bestFrom = fi; bestTo = ti; }
+      }
+    }
+    if (bestFrom === -1) break;
+    inTree.add(bestTo);
+    edges.push([pads[bestFrom]!, pads[bestTo]!]);
+  }
+
+  return edges;
 }
 
 function footprintToLibId(footprint: string): string {
@@ -163,52 +305,58 @@ function generatePCB(
     );
   });
 
-  // Footprints
+  // Footprints — smart placement
+  const placed = autoLayout(components, boardW, boardH);
   const compPositions = new Map<string, { x: number; y: number }>();
-  components.forEach((comp, i) => {
-    const pos = gridPos(i, components.length, boardW, boardH);
-    compPositions.set(comp.ref, pos);
-    const pads = padCount(comp.footprint);
-    const ref = comp.ref.replace(/"/g, '\\"');
-    const val = comp.value.replace(/"/g, '\\"');
-    const fp  = comp.footprint.replace(/"/g, '\\"');
+  const compDims      = new Map<string, PadDimensions>();
 
-    lines.push(`  (footprint "${fp}" (layer "F.Cu") (at ${pos.x} ${pos.y})`);
+  components.forEach((comp, i) => {
+    const pos  = placed[i] ?? { x: boardW / 2, y: boardH / 2 };
+    const dims = getFootprintDims(comp.footprint);
+    compPositions.set(comp.ref, { x: +pos.x.toFixed(3), y: +pos.y.toFixed(3) });
+    compDims.set(comp.ref, dims);
+
+    const pads = dims.pads.length;
+    const ref  = comp.ref.replace(/"/g, '\\"');
+    const val  = comp.value.replace(/"/g, '\\"');
+    const fp   = comp.footprint.replace(/"/g, '\\"');
+
+    lines.push(`  (footprint "${fp}" (layer "F.Cu") (at ${pos.x.toFixed(3)} ${pos.y.toFixed(3)})`);
     lines.push(`    (property "Reference" "${ref}" (at 0 -2 0) (layer "F.SilkS"))`);
     lines.push(`    (property "Value" "${val}" (at 0 2 0) (layer "F.Fab"))`);
 
-    const spacing = 1.0;
-    const startX = -((pads - 1) * spacing) / 2;
     for (let p = 0; p < pads; p++) {
-      const px = +(startX + p * spacing).toFixed(3);
+      const pad = dims.pads[p]!;
       lines.push(
-        `    (pad "${p + 1}" smd rect (at ${px} 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))`
+        `    (pad "${p + 1}" smd rect (at ${pad.dx.toFixed(3)} ${pad.dy.toFixed(3)}) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))`
       );
     }
     lines.push('  )');
   });
 
-  // Traces from connections
+  // Traces — MST routing per net with correct pad absolute positions + power trace widths
   connections.forEach((conn) => {
     const ni = netIdx.get(conn.name) ?? 0;
-    const pts: { x: number; y: number }[] = [];
+    const width = traceWidth(conn.name);
+    const pads: Array<{ x: number; y: number }> = [];
 
     conn.pins.forEach((pin) => {
-      const pos = compPositions.get(pin.ref);
-      if (!pos) return;
-      const comp = components.find((c) => c.ref === pin.ref);
-      const pads = comp ? padCount(comp.footprint) : 2;
-      const spacing = 1.0;
-      const startX = -((pads - 1) * spacing) / 2;
-      const px = +(pos.x + startX + (pin.pin - 1) * spacing).toFixed(3);
-      pts.push({ x: px, y: pos.y });
+      const pos  = compPositions.get(pin.ref);
+      const dims = compDims.get(pin.ref);
+      if (!pos || !dims) return;
+      const pad = dims.pads[pin.pin - 1];
+      if (pad) {
+        pads.push({ x: +(pos.x + pad.dx).toFixed(3), y: +(pos.y + pad.dy).toFixed(3) });
+      }
     });
 
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i]!;
-      const b = pts[i + 1]!;
+    // Fallback: round-robin when no connectivity
+    if (pads.length === 0) return;
+
+    const edges = mstEdges(pads);
+    for (const [a, b] of edges) {
       lines.push(
-        `  (segment (start ${a.x} ${a.y}) (end ${b.x} ${b.y}) (width 0.2) (layer "F.Cu") (net ${ni}))`
+        `  (segment (start ${a.x} ${a.y}) (end ${b.x} ${b.y}) (width ${width}) (layer "F.Cu") (net ${ni}))`
       );
     }
   });
