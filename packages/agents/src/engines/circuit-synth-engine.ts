@@ -203,6 +203,32 @@ function footprintToLibId(footprint: string): string {
 }
 
 // ============================================================
+// Schematic pin offset estimation (KiCad schematic units = mm)
+// Two-pin passives: pins at ±3.81mm on X axis
+// Multi-pin ICs: pins at ±5.08mm on X, spaced 2.54mm on Y
+// ============================================================
+
+function schPinOffset(footprint: string, pinIndex: number): { dx: number; dy: number } {
+  const fp = footprint.toUpperCase();
+  const pads = padCount(footprint);
+
+  if (pads === 2) {
+    return { dx: pinIndex === 0 ? -3.81 : 3.81, dy: 0 };
+  }
+  if (fp.includes('SOT-23')) {
+    const offsets = [{ dx: -5.08, dy: 2.54 }, { dx: -5.08, dy: -2.54 }, { dx: 5.08, dy: 0 }];
+    return offsets[pinIndex] ?? { dx: 0, dy: 0 };
+  }
+  // ICs: left column (pins 1..N/2) and right column (pins N/2+1..N)
+  const half = Math.floor(pads / 2);
+  if (pinIndex < half) {
+    return { dx: -5.08, dy: (pinIndex - (half - 1) / 2) * 2.54 };
+  }
+  const ri = pinIndex - half;
+  return { dx: 5.08, dy: ((half - 1 - ri) - (half - 1) / 2) * 2.54 };
+}
+
+// ============================================================
 // .kicad_sch generator (KiCad 7 S-expression format)
 // ============================================================
 
@@ -215,41 +241,86 @@ function generateSchematic(
   lines.push('  (paper "A4")');
   lines.push('  (lib_symbols)');
 
-  const cols = Math.max(1, Math.ceil(Math.sqrt(components.length)));
+  // Wider spacing so symbols don't overlap (50mm col × 40mm row)
+  const COLS      = Math.max(1, Math.ceil(Math.sqrt(components.length)));
+  const COL_STEP  = 50;
+  const ROW_STEP  = 40;
+  const ORIGIN_X  = 50;
+  const ORIGIN_Y  = 50;
 
+  const compPos = components.map((_, i) => ({
+    x: ORIGIN_X + (i % COLS) * COL_STEP,
+    y: ORIGIN_Y + Math.floor(i / COLS) * ROW_STEP,
+  }));
+  const compIdx = new Map(components.map((c, i) => [c.ref, i]));
+
+  // Component symbols
   components.forEach((comp, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = 50 + col * 30;
-    const y = 50 + row * 30;
+    const { x, y } = compPos[i]!;
     const libId = footprintToLibId(comp.footprint);
-    const ref = comp.ref.replace(/"/g, '\\"');
-    const val = comp.value.replace(/"/g, '\\"');
-    const fp  = comp.footprint.replace(/"/g, '\\"');
+    const ref   = comp.ref.replace(/"/g, '\\"');
+    const val   = comp.value.replace(/"/g, '\\"');
+    const fp    = comp.footprint.replace(/"/g, '\\"');
 
     lines.push(`  (symbol (lib_id "${libId}") (at ${x} ${y} 0) (unit 1)`);
-    lines.push(`    (property "Reference" "${ref}" (at ${x} ${y - 5} 0) (effects (font (size 1.27 1.27))))`);
-    lines.push(`    (property "Value" "${val}" (at ${x} ${y + 5} 0) (effects (font (size 1.27 1.27))))`);
-    lines.push(`    (property "Footprint" "${fp}" (at ${x} ${y + 9} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
+    lines.push(`    (property "Reference" "${ref}" (at ${x} ${y - 4} 0) (effects (font (size 1.27 1.27))))`);
+    lines.push(`    (property "Value" "${val}" (at ${x} ${y + 4} 0) (effects (font (size 1.27 1.27))))`);
+    lines.push(`    (property "Footprint" "${fp}" (at ${x} ${y + 8} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
     if (comp.lcsc) {
-      lines.push(`    (property "LCSC" "${comp.lcsc.replace(/"/g, '\\"')}" (at ${x} ${y + 13} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
+      lines.push(`    (property "LCSC" "${comp.lcsc.replace(/"/g, '\\"')}" (at ${x} ${y + 12} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
     }
     lines.push('  )');
   });
 
-  // Global net labels
-  const compIdx = new Map(components.map((c, i) => [c.ref, i]));
+  // Power symbols for GND / VCC nets
+  const powerSymbolsEmitted = new Set<string>();
+  let pwrIdx = 1;
+  connections.forEach((conn) => {
+    if (!isPowerNet(conn.name)) return;
+    conn.pins.forEach((pin) => {
+      const idx = compIdx.get(pin.ref);
+      if (idx === undefined) return;
+      const { x, y } = compPos[idx]!;
+      const off = schPinOffset(components[idx]!.footprint, pin.pin - 1);
+      const px  = +(x + off.dx).toFixed(2);
+      const py  = +(y + off.dy).toFixed(2);
+      const netUpper = conn.name.toUpperCase();
+      const libId    = netUpper.startsWith('GND') || netUpper.startsWith('VSS')
+        ? 'power:GND' : 'power:VCC';
+      const symKey = `${libId}@${px},${py}`;
+      if (powerSymbolsEmitted.has(symKey)) return;
+      powerSymbolsEmitted.add(symKey);
+      const ref = `#PWR${String(pwrIdx++).padStart(2, '0')}`;
+      lines.push(`  (symbol (lib_id "${libId}") (at ${px} ${py} 0) (unit 1)`);
+      lines.push(`    (property "Reference" "${ref}" (at ${px} ${py - 3} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
+      lines.push(`    (property "Value" "${conn.name.replace(/"/g, '\\"')}" (at ${px} ${py + 3} 0) (effects (font (size 1.27 1.27))))`);
+      lines.push('  )');
+    });
+  });
+
+  // Net labels + wire stubs — one label per pin endpoint per net
+  let wireIdx = 0;
   connections.forEach((conn) => {
     if (!conn.pins.length) return;
-    const idx = compIdx.get(conn.pins[0]!.ref) ?? 0;
-    const col = idx % cols;
-    const row = Math.floor(idx / cols);
-    const lx  = 50 + col * 30 + 10;
-    const ly  = 50 + row * 30;
     const name = conn.name.replace(/"/g, '\\"');
-    lines.push(`  (global_label "${name}" (shape input) (at ${lx} ${ly} 0)`);
-    lines.push('    (effects (font (size 1.27 1.27)))');
-    lines.push('  )');
+    conn.pins.forEach((pin) => {
+      const idx = compIdx.get(pin.ref);
+      if (idx === undefined) return;
+      const { x, y } = compPos[idx]!;
+      const off = schPinOffset(components[idx]!.footprint, pin.pin - 1);
+      const px  = +(x + off.dx).toFixed(2);
+      const py  = +(y + off.dy).toFixed(2);
+      // Short wire stub from component symbol pin outward
+      const stubEndX = +(px + (off.dx >= 0 ? 2.54 : -2.54)).toFixed(2);
+      const stubEndY = py;
+      if (++wireIdx <= 500) { // guard against huge schematics
+        lines.push(`  (wire (pts (xy ${px} ${py}) (xy ${stubEndX} ${stubEndY})) (stroke (width 0) (type default)))`);
+      }
+      // Net label at stub end
+      lines.push(`  (label "${name}" (at ${stubEndX} ${stubEndY} 0)`);
+      lines.push('    (effects (font (size 1.27 1.27)))');
+      lines.push('  )');
+    });
   });
 
   lines.push('  (sheet_instances (path "/" (page "1")))');
@@ -355,9 +426,18 @@ function generatePCB(
 
     const edges = mstEdges(pads);
     for (const [a, b] of edges) {
-      lines.push(
-        `  (segment (start ${a.x} ${a.y}) (end ${b.x} ${b.y}) (width ${width}) (layer "F.Cu") (net ${ni}))`
-      );
+      // Orthogonal (L-shaped) routing: horizontal segment then vertical segment
+      const mid = { x: b.x, y: a.y };
+      if (Math.abs(a.x - b.x) > 0.001) {
+        lines.push(
+          `  (segment (start ${a.x} ${a.y}) (end ${mid.x} ${mid.y}) (width ${width}) (layer "F.Cu") (net ${ni}))`
+        );
+      }
+      if (Math.abs(a.y - b.y) > 0.001) {
+        lines.push(
+          `  (segment (start ${mid.x} ${mid.y}) (end ${b.x} ${b.y}) (width ${width}) (layer "F.Cu") (net ${ni}))`
+        );
+      }
     }
   });
 
