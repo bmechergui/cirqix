@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// --- Hoisted mock variables (before vi.mock hoisting) --------------------
-const { mockSingle, mockGetUser, mockRunTSCircuitEngine } = vi.hoisted(() => ({
+// --- Hoisted mock variables --------------------------------------------------
+const { mockSingle, mockGetUser, mockRunCircuitSynthEngine } = vi.hoisted(() => ({
   mockSingle: vi.fn(),
   mockGetUser: vi.fn(),
-  mockRunTSCircuitEngine: vi.fn(),
+  mockRunCircuitSynthEngine: vi.fn(),
 }));
 
-// --- Supabase mock -------------------------------------------------------
+// --- Supabase mock -----------------------------------------------------------
 vi.mock('@/shared/lib/supabase-server', () => ({
   createRouteHandlerClient: vi.fn().mockResolvedValue({
     auth: { getUser: mockGetUser },
@@ -24,13 +24,13 @@ vi.mock('@/shared/lib/supabase-server', () => ({
   }),
 }));
 
-// --- Agents mock (runTSCircuitEngine) ------------------------------------
+// --- Agents mock (runCircuitSynthEngine) -------------------------------------
 vi.mock('@layrix/agents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@layrix/agents')>();
-  return { ...actual, runTSCircuitEngine: mockRunTSCircuitEngine };
+  return { ...actual, runCircuitSynthEngine: mockRunCircuitSynthEngine };
 });
 
-// --- JSZip mock ----------------------------------------------------------
+// --- JSZip mock --------------------------------------------------------------
 vi.mock('jszip', () => {
   const mockGenerateAsync = vi.fn().mockResolvedValue(new Uint8Array([80, 75, 3, 4]));
   const mockFile = vi.fn();
@@ -44,7 +44,7 @@ vi.mock('jszip', () => {
 // Import after mocks
 import { GET } from './route';
 
-// --- Helpers --------------------------------------------------------------
+// --- Helpers -----------------------------------------------------------------
 function makeReq() {
   return new NextRequest('http://localhost/api/projects/proj-1/export');
 }
@@ -53,22 +53,22 @@ function makeParams(id = 'proj-1') {
   return { params: Promise.resolve({ id }) };
 }
 
-const PCB_STATE_WITH_PLACEMENTS = {
-  placements: [{ ref: 'R1' }, { ref: 'LED1' }],
-  components: { R1: '330R', LED1: 'LED' },
-  board_width_mm: 50,
-  board_height_mm: 50,
-};
-
 const PCB_STATE_WITH_COMPONENTS = {
   components: [
     { ref: 'R1', value: '330R', footprint: '0402' },
     { ref: 'LED1', value: 'LED', footprint: 'LED' },
   ],
   nets: ['GND', 'VCC'],
+  board_width_mm: 50,
+  board_height_mm: 50,
 };
 
-// --- Tests ----------------------------------------------------------------
+const CIRCUIT_SYNTH_RESULT = {
+  kicad_sch_content: '(kicad_sch (version 20230121))',
+  kicad_pcb_content: '(kicad_pcb (version 20221018))',
+};
+
+// --- Tests -------------------------------------------------------------------
 describe('GET /api/projects/[id]/export', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -135,40 +135,13 @@ describe('GET /api/projects/[id]/export', () => {
     expect(json.error).toContain('no components');
   });
 
-  it('returns 500 when gerber generation fails', async () => {
+  it('returns ZIP with correct headers on success', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     mockSingle.mockResolvedValue({
-      data: { pcb_state: PCB_STATE_WITH_PLACEMENTS, name: 'My PCB' },
+      data: { pcb_state: PCB_STATE_WITH_COMPONENTS, name: 'My PCB' },
       error: null,
     });
-    mockRunTSCircuitEngine.mockResolvedValue({
-      gerbers: {},
-      circuitJson: [],
-      placements: [],
-      boardWidthMm: 50,
-      boardHeightMm: 50,
-    });
-
-    const res = await GET(makeReq(), makeParams());
-    const json = await res.json() as { success: boolean; error: string };
-
-    expect(res.status).toBe(500);
-    expect(json.error).toContain('Gerber generation failed');
-  });
-
-  it('returns ZIP with correct headers on success (placements field)', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockSingle.mockResolvedValue({
-      data: { pcb_state: PCB_STATE_WITH_PLACEMENTS, name: 'My PCB' },
-      error: null,
-    });
-    mockRunTSCircuitEngine.mockResolvedValue({
-      gerbers: { 'F.Cu': 'gerber-content-top', 'B.Cu': 'gerber-content-bottom' },
-      circuitJson: [],
-      placements: [{ ref: 'R1', x_mm: 10, y_mm: 10, rotation: 0, side: 'front' }],
-      boardWidthMm: 50,
-      boardHeightMm: 50,
-    });
+    mockRunCircuitSynthEngine.mockResolvedValue(CIRCUIT_SYNTH_RESULT);
 
     const res = await GET(makeReq(), makeParams());
 
@@ -178,46 +151,20 @@ describe('GET /api/projects/[id]/export', () => {
     expect(res.headers.get('Content-Disposition')).toContain('.zip');
   });
 
-  it('returns ZIP on success (components array field)', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
-    mockSingle.mockResolvedValue({
-      data: { pcb_state: PCB_STATE_WITH_COMPONENTS, name: 'Test Board' },
-      error: null,
-    });
-    mockRunTSCircuitEngine.mockResolvedValue({
-      gerbers: { 'F.Cu': 'top', 'Edge.Cuts': 'outline' },
-      circuitJson: [],
-      placements: [],
-      boardWidthMm: 50,
-      boardHeightMm: 50,
-    });
-
-    const res = await GET(makeReq(), makeParams());
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toBe('application/zip');
-  });
-
-  it('calls runTSCircuitEngine with board dimensions from pcb_state', async () => {
+  it('calls runCircuitSynthEngine with board dimensions from pcb_state', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     mockSingle.mockResolvedValue({
       data: {
-        pcb_state: { ...PCB_STATE_WITH_PLACEMENTS, board_width_mm: 80, board_height_mm: 60 },
+        pcb_state: { ...PCB_STATE_WITH_COMPONENTS, board_width_mm: 80, board_height_mm: 60 },
         name: 'Big Board',
       },
       error: null,
     });
-    mockRunTSCircuitEngine.mockResolvedValue({
-      gerbers: { 'F.Cu': 'top' },
-      circuitJson: [],
-      placements: [],
-      boardWidthMm: 80,
-      boardHeightMm: 60,
-    });
+    mockRunCircuitSynthEngine.mockResolvedValue(CIRCUIT_SYNTH_RESULT);
 
     await GET(makeReq(), makeParams());
 
-    expect(mockRunTSCircuitEngine).toHaveBeenCalledWith(
+    expect(mockRunCircuitSynthEngine).toHaveBeenCalledWith(
       expect.objectContaining({ components: expect.any(Array) }),
       80,
       60
