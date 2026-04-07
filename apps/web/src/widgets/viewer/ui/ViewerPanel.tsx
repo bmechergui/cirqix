@@ -33,12 +33,22 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
   const [layerVisibility, setLayerVisibility] =
     useState<Record<string, boolean>>(DEFAULT_LAYER_VISIBILITY);
   const [zoomControls, setZoomControls] = useState<ZoomControls | null>(null);
+  // Track whether the user has manually switched tabs — if so, don't auto-switch
+  const userChoseModeRef = useRef(false);
 
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
   );
   const agentStep = useAppStore((s) => s.agentStep);
   const setPcbState = useAppStore((s) => s.setPcbState);
+
+  // Auto-switch to Schematic when kicad_sch_url first arrives (agent just generated it)
+  const kicadSchUrl = pcbState?.kicad_sch_url;
+  useEffect(() => {
+    if (kicadSchUrl && !userChoseModeRef.current) {
+      setMode('schematic');
+    }
+  }, [kicadSchUrl]);
 
   // Load persisted PCB state from DB on mount
   useEffect(() => {
@@ -78,7 +88,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
             <button
               key={id}
               type="button"
-              onClick={() => setMode(id)}
+              onClick={() => { userChoseModeRef.current = true; setMode(id); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                 mode === id
                   ? 'bg-primary/20 text-primary'
