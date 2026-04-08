@@ -1,0 +1,18 @@
+{
+  "project_id": "test-lm7805",
+  "board_width_mm": 50,
+  "board_height_mm": 50,
+  "components": [
+    { "ref": "U1", "value": "LM7805", "footprint": "Package_TO_SOT_THT:TO-220-3_Vertical" },
+    { "ref": "C1", "value": "330nF", "footprint": "Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm" },
+    { "ref": "C2", "value": "100nF", "footprint": "Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm" },
+    { "ref": "J1", "value": "VIN_CONN", "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical" },
+    { "ref": "J2", "value": "VOUT_5V", "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical" }
+  ],
+  "nets": ["VIN", "VOUT", "GND"],
+  "connections": [
+    { "name": "VIN",  "pins": [{ "ref": "U1", "pin": 1 }, { "ref": "C1", "pin": 1 }, { "ref": "J1", "pin": 1 }] },
+    { "name": "GND",  "pins": [{ "ref": "U1", "pin": 2 }, { "ref": "C1", "pin": 2 }, { "ref": "C2", "pin": 2 }, { "ref": "J1", "pin": 2 }, { "ref": "J2", "pin": 2 }] },
+    { "name": "VOUT", "pins": [{ "ref": "U1", "pin": 3 }, { "ref": "C2", "pin": 1 }, { "ref": "J2", "pin": 1 }] }
+  ]
+}

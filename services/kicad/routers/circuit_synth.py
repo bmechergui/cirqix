@@ -404,46 +404,173 @@ def _grid_position(idx: int, total: int, board_w: float, board_h: float) -> tupl
     return round(x, 3), round(y, 3)
 
 
+_INLINE_LIB_SYMBOLS = """
+  (symbol "Device:R"
+    (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
+    (property "Reference" "R" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "R" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
+    (symbol "R_0_1"
+      (rectangle (start -2.032 -0.762) (end 2.032 0.762)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "R_1_1"
+      (pin passive line (at -3.81 0 0) (length 1.778)
+        (name "~" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 3.81 0 180) (length 1.778)
+        (name "~" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
+  (symbol "Device:C"
+    (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
+    (property "Reference" "C" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "C" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
+    (symbol "C_0_1"
+      (polyline (pts (xy -2.032 0.381) (xy 2.032 0.381))
+        (stroke (width 0.508) (type default)) (fill (type none)))
+      (polyline (pts (xy -2.032 -0.381) (xy 2.032 -0.381))
+        (stroke (width 0.508) (type default)) (fill (type none))))
+    (symbol "C_1_1"
+      (pin passive line (at -3.81 0 0) (length 1.778)
+        (name "+" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 3.81 0 180) (length 1.778)
+        (name "-" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
+  (symbol "Device:LED"
+    (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
+    (property "Reference" "D" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "LED" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
+    (symbol "LED_0_1"
+      (polyline (pts (xy -1.778 -1.778) (xy -1.778 1.778) (xy 1.778 0) (xy -1.778 -1.778))
+        (stroke (width 0.254) (type default)) (fill (type none)))
+      (polyline (pts (xy 1.778 -1.778) (xy 1.778 1.778))
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "LED_1_1"
+      (pin passive line (at -3.81 0 0) (length 2.032)
+        (name "A" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 3.81 0 180) (length 2.032)
+        (name "K" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
+  (symbol "Connector_Generic:Conn_01x02"
+    (pin_numbers hide) (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
+    (property "Reference" "J" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "Conn_01x02" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
+    (symbol "Conn_01x02_0_1"
+      (rectangle (start -1.524 -0.762) (end 1.524 0.762)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "Conn_01x02_1_1"
+      (pin passive line (at -3.81 0 0) (length 2.286)
+        (name "Pin_1" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+      (pin passive line (at 3.81 0 180) (length 2.286)
+        (name "Pin_2" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
+  (symbol "Device:IC"
+    (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "IC" (at 0 6 0) (effects (font (size 1.27 1.27))))
+    (symbol "IC_0_1"
+      (rectangle (start -4 -4.5) (end 4 4.5)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "IC_1_1"
+      (pin input line (at -5.08 -3.81 0) (length 1.016)
+        (name "1" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -5.08 -1.27 0) (length 1.016)
+        (name "2" (effects (font (size 1.016 1.016)))) (number "2" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -5.08 1.27 0) (length 1.016)
+        (name "3" (effects (font (size 1.016 1.016)))) (number "3" (effects (font (size 1.016 1.016)))))
+      (pin input line (at -5.08 3.81 0) (length 1.016)
+        (name "4" (effects (font (size 1.016 1.016)))) (number "4" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 3.81 180) (length 1.016)
+        (name "5" (effects (font (size 1.016 1.016)))) (number "5" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 1.27 180) (length 1.016)
+        (name "6" (effects (font (size 1.016 1.016)))) (number "6" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 -1.27 180) (length 1.016)
+        (name "7" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 -3.81 180) (length 1.016)
+        (name "8" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
+"""
+
+
+def _simple_lib_id(comp: SchemaComponent) -> str:
+    """Map a component to one of the inline lib_symbols (fallback rendering)."""
+    ref = comp.ref.upper()
+    if ref.startswith("R"):
+        return "Device:R"
+    if ref.startswith("C"):
+        return "Device:C"
+    if ref.startswith("LED") or ref.startswith("D"):
+        return "Device:LED"
+    if ref.startswith("J") or ref.startswith("P") or ref.startswith("CONN"):
+        return "Connector_Generic:Conn_01x02"
+    return "Device:IC"
+
+
+def _uuid4() -> str:
+    import uuid
+    return str(uuid.uuid4())
+
+
 def _generate_schematic_fallback(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
 ) -> str:
-    """Minimal but valid KiCad 7 schematic — no symbol bodies (fallback)."""
-    lines: list[str] = []
-    lines.append('(kicad_sch (version 20230121) (generator "layrix-circuit-synth")')
-    lines.append('  (paper "A4")')
-    lines.append('  (lib_symbols)')
+    """Minimal but valid KiCad 7 schematic with inline lib_symbols (fallback).
+    Mirrors packages/agents/src/engines/circuit-synth-engine.ts::generateSchematic.
+    """
+    n = len(components)
+    cols = max(1, min(4, math.ceil(math.sqrt(n)))) if n else 1
+    rows = max(1, math.ceil(n / cols)) if n else 1
+    col_step = 50
+    row_step = 40
+    margin = 20
+    origin_x = margin
+    origin_y = margin
+    paper_w = max(80, cols * col_step + margin * 2)
+    paper_h = max(60, rows * row_step + margin * 2 + 20)
 
-    cols = max(1, math.ceil(math.sqrt(len(components))))
+    lines: list[str] = []
+    lines.append(
+        f'(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "{_uuid4()}")'
+    )
+    lines.append(f'  (paper "User" {paper_w} {paper_h})')
+    lines.append(f'  (lib_symbols{_INLINE_LIB_SYMBOLS}  )')
+
+    positions: list[tuple[float, float]] = []
+    for i in range(n):
+        x = origin_x + (i % cols) * col_step
+        y = origin_y + (i // cols) * row_step
+        positions.append((x, y))
+
     for i, comp in enumerate(components):
-        col = i % cols
-        row = i // cols
-        x = 50 + col * 25
-        y = 50 + row * 25
-        lib_id = _map_symbol(comp)
+        x, y = positions[i]
+        lib_id = _simple_lib_id(comp)
         ref_e = comp.ref.replace('"', '\\"')
         val_e = comp.value.replace('"', '\\"')
         fp_e = comp.footprint.replace('"', '\\"')
-        lines.append(f'  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit 1)')
-        lines.append(f'    (property "Reference" "{ref_e}" (at {x} {y - 4} 0)')
-        lines.append(f'      (effects (font (size 1.27 1.27))))')
-        lines.append(f'    (property "Value" "{val_e}" (at {x} {y + 4} 0)')
-        lines.append(f'      (effects (font (size 1.27 1.27))))')
-        lines.append(f'    (property "Footprint" "{fp_e}" (at {x} {y + 8} 0)')
-        lines.append(f'      (effects (font (size 1.27 1.27)) (hide yes)))')
+        lines.append(
+            f'  (symbol (lib_id "{lib_id}") (at {x} {y} 0) (unit 1) (in_bom yes) (on_board yes)'
+        )
+        lines.append(f'    (uuid "{_uuid4()}")')
+        lines.append(
+            f'    (property "Reference" "{ref_e}" (at {x} {y - 4} 0) (effects (font (size 1.27 1.27))))'
+        )
+        lines.append(
+            f'    (property "Value" "{val_e}" (at {x} {y + 4} 0) (effects (font (size 1.27 1.27))))'
+        )
+        lines.append(
+            f'    (property "Footprint" "{fp_e}" (at {x} {y + 8} 0) (effects (font (size 1.27 1.27)) (hide yes)))'
+        )
         lines.append('  )')
 
+    # Simple net labels near first pin of each net
+    comp_idx_by_ref = {c.ref: i for i, c in enumerate(components)}
     for net in connections:
         if not net.pins:
             continue
         name_e = net.name.replace('"', '\\"')
-        comp_idx = next((j for j, c in enumerate(components) if c.ref == net.pins[0].ref), 0)
-        col = comp_idx % cols
-        row = comp_idx // cols
-        lx = 50 + col * 25 + 8
-        ly = 50 + row * 25
-        lines.append(f'  (global_label "{name_e}" (shape input) (at {lx} {ly} 0)')
-        lines.append('    (effects (font (size 1.27 1.27)))')
+        first = net.pins[0]
+        idx = comp_idx_by_ref.get(first.ref)
+        if idx is None:
+            continue
+        x, y = positions[idx]
+        # place label to the right of symbol
+        lx = x + 6
+        ly = y
+        lines.append(f'  (label "{name_e}" (at {lx} {ly} 0)')
+        lines.append('    (effects (font (size 1.27 1.27)) (justify left))')
         lines.append('  )')
 
     lines.append('  (sheet_instances (path "/" (page "1")))')

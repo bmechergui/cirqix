@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web (Next.js)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 3333,
+      "autoPort": false
+    },
+    {
+      "name": "kicad (FastAPI)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8766", "--app-dir", "services/kicad"],
+      "port": 8766,
+      "autoPort": false
+    }
+  ]
+}

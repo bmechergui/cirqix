@@ -1,0 +1,25 @@
+{
+  "project_id": "test-esp32-led",
+  "board_width_mm": 60,
+  "board_height_mm": 50,
+  "components": [
+    { "ref": "U1", "value": "ESP32-WROOM-32", "footprint": "RF_Module:ESP32-WROOM-32" },
+    { "ref": "J1", "value": "USB_5V", "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical" },
+    { "ref": "U2", "value": "AMS1117-3.3", "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2" },
+    { "ref": "C1", "value": "10uF", "footprint": "Capacitor_SMD:C_0805_2012Metric" },
+    { "ref": "C2", "value": "10uF", "footprint": "Capacitor_SMD:C_0805_2012Metric" },
+    { "ref": "C3", "value": "100nF", "footprint": "Capacitor_SMD:C_0603_1608Metric" },
+    { "ref": "R1", "value": "330R", "footprint": "Resistor_SMD:R_0603_1608Metric" },
+    { "ref": "LED1", "value": "LED_GREEN", "footprint": "LED_SMD:LED_0603_1608Metric" },
+    { "ref": "SW1", "value": "EN_BTN", "footprint": "Button_Switch_SMD:SW_SPST_B3U-1000P" }
+  ],
+  "nets": ["VBUS", "VCC_3V3", "GND", "GPIO2", "EN"],
+  "connections": [
+    { "name": "VBUS",    "pins": [{ "ref": "J1", "pin": 1 }, { "ref": "U2", "pin": 3 }, { "ref": "C1", "pin": 1 }] },
+    { "name": "VCC_3V3", "pins": [{ "ref": "U2", "pin": 2 }, { "ref": "C2", "pin": 1 }, { "ref": "C3", "pin": 1 }, { "ref": "U1", "pin": 2 }, { "ref": "SW1", "pin": 1 }] },
+    { "name": "GND",     "pins": [{ "ref": "J1", "pin": 2 }, { "ref": "U2", "pin": 1 }, { "ref": "C1", "pin": 2 }, { "ref": "C2", "pin": 2 }, { "ref": "C3", "pin": 2 }, { "ref": "U1", "pin": 1 }, { "ref": "LED1", "pin": 2 }, { "ref": "SW1", "pin": 2 }] },
+    { "name": "EN",      "pins": [{ "ref": "U1", "pin": 3 }, { "ref": "SW1", "pin": 1 }] },
+    { "name": "GPIO2",   "pins": [{ "ref": "U1", "pin": 24 }, { "ref": "R1", "pin": 1 }] },
+    { "name": "LED_K",   "pins": [{ "ref": "R1", "pin": 2 }, { "ref": "LED1", "pin": 1 }] }
+  ]
+}
