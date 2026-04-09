@@ -11,7 +11,7 @@
     {
       "name": "kicad (FastAPI)",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8766", "--app-dir", "services/kicad"],
+      "runtimeArgs": ["-X", "utf8", "services/kicad/run_dev.py"],
       "port": 8766,
       "autoPort": false
     }

@@ -4,9 +4,11 @@ Primary path: circuit_synth Python library (requires KICAD_SYMBOL_DIR).
 Fallback path: hand-written KiCad 7 S-expression generator.
 """
 
+import concurrent.futures
 import math
 import os
 import re
+import sys
 import tempfile
 import logging
 from pathlib import Path
@@ -320,13 +322,12 @@ def _map_symbol(comp: SchemaComponent) -> str:
 # ============================================================
 
 def _circuit_synth_available() -> bool:
-    """Check if circuit_synth library and KICAD_SYMBOL_DIR are both available.
+    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable.
 
-    NOTE: circuit_synth 0.12.1 has a Windows-only charmap crash when writing
-    KiCad project files (emoji-laden debug output triggers cp1252 encoding
-    errors inside the library even with PYTHONUTF8=1 / -X utf8 / monkey-
-    patched builtins.open). Until that is fixed upstream or we ship the
-    service in a Linux container, we force the fallback path on Windows.
+    NOTE: circuit_synth 0.12.1 placement algorithm enters an infinite loop on
+    Windows (bbox loop never converges).  Until a fixed version is released or
+    the service runs in a Linux container, force the fallback on Windows.
+    The fallback (compact stub+label schematic) renders correctly in KiCanvas.
     """
     if os.name == "nt":
         return False
@@ -831,13 +832,21 @@ def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
     sch_content: Optional[str] = None
     pcb_content: Optional[str] = None
 
-    # Primary path: use circuit_synth library (requires KICAD_SYMBOL_DIR)
+    # Primary path: use circuit_synth library (requires KICAD_SYMBOL_DIR + UTF-8 mode)
+    # Run in a thread with a hard 20s timeout — circuit_synth placement can hang.
+    _CS_TIMEOUT = 20
     if _circuit_synth_available():
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                sch_content, pcb_content = _generate_with_circuit_synth(
-                    req, Path(tmp_dir)
-                )
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                    _fut = _pool.submit(_generate_with_circuit_synth, req, Path(tmp_dir))
+                    try:
+                        sch_content, pcb_content = _fut.result(timeout=_CS_TIMEOUT)
+                    except concurrent.futures.TimeoutError:
+                        _fut.cancel()
+                        raise RuntimeError(
+                            f"circuit_synth timed out after {_CS_TIMEOUT}s"
+                        )
             if sch_content:
                 logger.info("circuit_synth schematic generated successfully")
         except Exception as e:
