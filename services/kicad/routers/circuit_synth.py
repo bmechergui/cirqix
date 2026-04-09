@@ -490,12 +490,31 @@ _INLINE_LIB_SYMBOLS = """
         (name "7" (effects (font (size 1.016 1.016)))) (number "7" (effects (font (size 1.016 1.016)))))
       (pin output line (at 5.08 -3.81 180) (length 1.016)
         (name "8" (effects (font (size 1.016 1.016)))) (number "8" (effects (font (size 1.016 1.016)))))))
+  (symbol "Device:VReg_3Pin"
+    (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (at 0 -3.5 0) (effects (font (size 1.27 1.27))))
+    (property "Value" "VReg" (at 0 3.5 0) (effects (font (size 1.27 1.27))))
+    (symbol "VReg_3Pin_0_1"
+      (rectangle (start -3 -1.5) (end 3 1.5)
+        (stroke (width 0.254) (type default)) (fill (type none))))
+    (symbol "VReg_3Pin_1_1"
+      (pin input line (at -5.08 0 0) (length 2.032)
+        (name "IN" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
+      (pin passive line (at 0 3.81 90) (length 2.286)
+        (name "GND" (effects (font (size 1.016 1.016)))) (number "2" (effects (font (size 1.016 1.016)))))
+      (pin output line (at 5.08 0 180) (length 2.032)
+        (name "OUT" (effects (font (size 1.016 1.016)))) (number "3" (effects (font (size 1.016 1.016)))))))
 """
 
 
 def _simple_lib_id(comp: SchemaComponent) -> str:
     """Map a component to one of the inline lib_symbols (fallback rendering)."""
     ref = comp.ref.upper()
+    val = comp.value.upper()
+    # 3-pin voltage regulators — TO-220 / SOT-223 style
+    if any(x in val for x in ["LM78", "LM79", "LM317", "LM1117", "LM2596",
+                               "LM2940", "LD33", "AMS1117", "L78", "L79"]):
+        return "Device:VReg_3Pin"
     if ref.startswith("R"):
         return "Device:R"
     if ref.startswith("C"):
@@ -512,23 +531,32 @@ def _uuid4() -> str:
     return str(uuid.uuid4())
 
 
-# Pin positions (dx, dy) relative to symbol origin — must match _INLINE_LIB_SYMBOLS
-_IC_PIN_OFFSETS = {
+# Pin tip positions (dx, dy) relative to symbol origin — must match _INLINE_LIB_SYMBOLS
+_IC_PIN_OFFSETS: dict[int, tuple[float, float]] = {
     1: (-5.08, -3.81),
     2: (-5.08, -1.27),
-    3: (-5.08, 1.27),
-    4: (-5.08, 3.81),
-    5: (5.08, 3.81),
-    6: (5.08, 1.27),
-    7: (5.08, -1.27),
-    8: (5.08, -3.81),
+    3: (-5.08,  1.27),
+    4: (-5.08,  3.81),
+    5: ( 5.08,  3.81),
+    6: ( 5.08,  1.27),
+    7: ( 5.08, -1.27),
+    8: ( 5.08, -3.81),
+}
+
+# Device:VReg_3Pin — IN(left) / GND(bottom) / OUT(right)
+_VREG_PIN_OFFSETS: dict[int, tuple[float, float]] = {
+    1: (-5.08, 0.0),   # IN  — left
+    2: ( 0.0,  3.81),  # GND — bottom
+    3: ( 5.08, 0.0),   # OUT — right
 }
 
 
 def _pin_offset(lib_id: str, pin_num: int) -> tuple[float, float]:
     if lib_id == "Device:IC":
         return _IC_PIN_OFFSETS.get(pin_num, (0.0, 0.0))
-    # 2-pin symbols: pin 1 on left, pin 2 on right
+    if lib_id == "Device:VReg_3Pin":
+        return _VREG_PIN_OFFSETS.get(pin_num, (0.0, 0.0))
+    # 2-pin horizontal symbols (R, C, LED, Conn): pin 1 left / pin 2 right
     if pin_num == 1:
         return (-3.81, 0.0)
     return (3.81, 0.0)
@@ -538,29 +566,24 @@ def _generate_schematic_fallback(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
 ) -> str:
-    """KiCad 7 fallback schematic with inline lib_symbols + real wire bus rails.
+    """KiCad 7 fallback schematic: compact grid + net-label stubs.
 
-    Layout strategy:
-      - Components placed in a dense grid (cols ≤ 4) with generous spacing
-        so pin stubs and labels are visible.
-      - Each net gets a dedicated horizontal "rail" below the component grid.
-      - From every pin of a net we drop a vertical wire stub down to the rail,
-        then a horizontal wire spans the rail between min/max stub X.
-      - A (label) sits on the rail near the first pin.
+    Each pin gets a short outward wire stub (2.54 mm) terminated by a net label.
+    Net labels sharing the same name are electrically connected in KiCad/KiCanvas.
+    No bus rails → compact paper, components clearly visible at zoom-to-fit.
     """
     n = len(components)
     cols = max(1, min(4, math.ceil(math.sqrt(n)))) if n else 1
     rows = max(1, math.ceil(n / cols)) if n else 1
-    col_step = 55
-    row_step = 35
-    margin = 15
+    col_step = 50   # horizontal spacing between component origins (mm)
+    row_step = 28   # vertical spacing (mm)
+    margin = 20     # sheet margin (mm)
+    stub_len = 2.54  # net-label stub length — one KiCad grid unit
     origin_x = margin
     origin_y = margin
-    rail_gap = 6  # mm between rails
-    rail_top = origin_y + rows * row_step + 10
-    rail_bottom = rail_top + max(1, len(connections)) * rail_gap
-    paper_w = max(80, origin_x + (cols - 1) * col_step + margin + 20)
-    paper_h = max(60, rail_bottom + margin + 10)
+
+    paper_w = max(80, margin + (cols - 1) * col_step + 25 + margin)
+    paper_h = max(60, margin + (rows - 1) * row_step + 20 + margin)
 
     lines: list[str] = []
     lines.append(
@@ -587,27 +610,25 @@ def _generate_schematic_fallback(
         )
         lines.append(f'    (uuid "{_uuid4()}")')
         lines.append(
-            f'    (property "Reference" "{ref_e}" (at {x - 7} {y - 2} 0) '
-            f'(effects (font (size 1.27 1.27)) (justify right)))'
+            f'    (property "Reference" "{ref_e}" (at {x} {y - 7} 0) '
+            f'(effects (font (size 1.27 1.27)) (justify center)))'
         )
         lines.append(
-            f'    (property "Value" "{val_e}" (at {x + 7} {y - 2} 0) '
-            f'(effects (font (size 1.27 1.27)) (justify left)))'
+            f'    (property "Value" "{val_e}" (at {x} {y + 7} 0) '
+            f'(effects (font (size 1.27 1.27)) (justify center)))'
         )
         lines.append(
-            f'    (property "Footprint" "{fp_e}" (at {x} {y + 8} 0) '
+            f'    (property "Footprint" "{fp_e}" (at {x} {y + 10} 0) '
             f'(effects (font (size 1.27 1.27)) (hide yes)))'
         )
         lines.append('  )')
 
-    # --- Real wires: per-net horizontal rail + vertical pin stubs ---
+    # --- Net-label stubs: short wire + label at each (net, pin) pair ---
     comp_idx_by_ref = {c.ref: i for i, c in enumerate(components)}
-    for ni, net in enumerate(connections):
+    for net in connections:
         if not net.pins:
             continue
         name_e = net.name.replace('"', '\\"')
-        rail_y = rail_top + ni * rail_gap
-        pin_xs: list[float] = []
         for p in net.pins:
             idx = comp_idx_by_ref.get(p.ref)
             if idx is None:
@@ -616,24 +637,25 @@ def _generate_schematic_fallback(
             dx, dy = _pin_offset(lib_ids[idx], p.pin)
             px = round(sx + dx, 3)
             py = round(sy + dy, 3)
-            pin_xs.append(px)
-            # vertical stub from pin endpoint down to the rail
+
+            # Stub endpoint extends away from the component body
+            if abs(dx) >= abs(dy):  # horizontal pin
+                sign = -1 if dx < 0 else 1
+                ex = round(px + sign * stub_len, 3)
+                ey = py
+                langle = 180 if dx < 0 else 0
+            else:  # vertical pin (e.g. VReg_3Pin GND — always bottom)
+                ex = px
+                ey = round(py + stub_len, 3)
+                langle = 90
+
             lines.append(
-                f'  (wire (pts (xy {px} {py}) (xy {px} {rail_y})) '
+                f'  (wire (pts (xy {px} {py}) (xy {ex} {ey})) '
                 f'(stroke (width 0.1524) (type default)) (uuid "{_uuid4()}"))'
             )
-        if len(pin_xs) >= 2:
-            xmin = min(pin_xs)
-            xmax = max(pin_xs)
             lines.append(
-                f'  (wire (pts (xy {xmin} {rail_y}) (xy {xmax} {rail_y})) '
-                f'(stroke (width 0.1524) (type default)) (uuid "{_uuid4()}"))'
-            )
-        if pin_xs:
-            lx = pin_xs[0]
-            lines.append(
-                f'  (label "{name_e}" (at {lx} {rail_y - 1.5} 0) '
-                f'(effects (font (size 1.4 1.4)) (justify left bottom)) '
+                f'  (label "{name_e}" (at {ex} {ey} {langle}) '
+                f'(effects (font (size 1.27 1.27))) '
                 f'(uuid "{_uuid4()}"))'
             )
 
