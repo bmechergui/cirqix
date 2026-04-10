@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Layrix — Schéma KiCad</title>
+  <script type="module" src="/kicanvas.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0A0A0A;color:#ccc;font-family:ui-monospace,Menlo,monospace;
+         display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+    /* ── Toolbar ── */
+    .toolbar{
+      display:flex;align-items:center;gap:6px;
+      padding:5px 12px;background:#0E0E0E;border-bottom:1px solid #222;
+      flex-shrink:0;
+    }
+    .toolbar-title{font-size:12px;color:#D4820A;font-weight:600;margin-right:6px}
+    .sep{width:1px;height:20px;background:#333;margin:0 4px}
+
+    /* Circuit tabs */
+    .tab{
+      padding:4px 12px;cursor:pointer;border:1px solid #333;border-radius:4px;
+      font-size:11px;color:#888;background:transparent;font-family:inherit;
+      transition:all .15s;
+    }
+    .tab:hover{color:#bbb;border-color:#555}
+    .tab.active{border-color:#D4820A;color:#D4820A;background:rgba(212,130,10,.10)}
+
+    /* Zoom / Fullscreen buttons */
+    .spacer{flex:1}
+    .btn{
+      display:flex;align-items:center;justify-content:center;
+      width:28px;height:28px;border-radius:4px;cursor:pointer;
+      border:1px solid #333;background:#161616;color:#aaa;
+      font-size:14px;font-family:inherit;transition:all .15s;
+      user-select:none;
+    }
+    .btn:hover{border-color:#555;color:#eee;background:#222}
+    .btn-label{font-size:10px;color:#666;margin-left:2px}
+
+    /* Viewer */
+    .viewer{flex:1;position:relative;min-height:0;overflow:hidden}
+    kicanvas-embed{display:block;width:100%;height:100%}
+
+    /* Fullscreen mode */
+    body.fullscreen .toolbar{display:none}
+    body.fullscreen .viewer{height:100vh}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="toolbar-title">Layrix · KiCanvas</span>
+    <div class="sep"></div>
+
+    <!-- Circuit selector -->
+    <button class="tab active" data-key="lm7805">LM7805</button>
+    <button class="tab" data-key="ne555">NE555</button>
+    <button class="tab" data-key="esp32">ESP32</button>
+
+    <div class="spacer"></div>
+
+    <!-- Zoom controls -->
+    <button class="btn" id="btn-zoomin"  title="Zoom +" >+</button>
+    <button class="btn" id="btn-zoomout" title="Zoom −" >−</button>
+    <button class="btn" id="btn-fit"     title="Zoom to fit" style="font-size:11px;width:auto;padding:0 8px">Fit</button>
+    <div class="sep"></div>
+    <button class="btn" id="btn-fs"      title="Plein écran" >⛶</button>
+  </div>
+
+  <div class="viewer" id="container">
+    <kicanvas-embed id="kv" src="/test-lm7805.kicad_sch" controls="full" theme="dark"></kicanvas-embed>
+  </div>
+
+  <script>
+    const FILES = {
+      lm7805: '/test-lm7805.kicad_sch',
+      ne555:  '/test-ne555.kicad_sch',
+      esp32:  '/test-esp32.kicad_sch',
+    };
+
+    // ── Tab switching ──────────────────────────────────────────
+    function show(key) {
+      document.querySelectorAll('.tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.key === key));
+      const parent = document.getElementById('container');
+      const old    = document.getElementById('kv');
+      const next   = document.createElement('kicanvas-embed');
+      next.id = 'kv';
+      next.setAttribute('src', FILES[key]);
+      next.setAttribute('controls', 'full');
+      next.setAttribute('theme', 'dark');
+      parent.replaceChild(next, old);
+    }
+    document.querySelectorAll('.tab').forEach(t =>
+      t.addEventListener('click', () => show(t.dataset.key)));
+
+    // ── Zoom helpers — dispatch keyboard events into KiCanvas ──
+    function sendKey(key, opts = {}) {
+      const kv = document.getElementById('kv');
+      const target = kv.shadowRoot ? kv.shadowRoot : kv;
+      const ev = new KeyboardEvent('keydown', { key, bubbles: true, ...opts });
+      target.dispatchEvent(ev);
+    }
+    function wheelZoom(delta) {
+      const kv = document.getElementById('kv');
+      const rect = kv.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top  + rect.height / 2;
+      kv.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true,
+        clientX: cx, clientY: cy,
+        deltaY: delta, deltaMode: 0,
+        ctrlKey: true,
+      }));
+    }
+
+    document.getElementById('btn-zoomin') .addEventListener('click', () => wheelZoom(-200));
+    document.getElementById('btn-zoomout').addEventListener('click', () => wheelZoom( 200));
+    document.getElementById('btn-fit')    .addEventListener('click', () => {
+      // KiCanvas listens to 'fit' custom event or keyboard shortcut 'f'
+      const kv = document.getElementById('kv');
+      kv.dispatchEvent(new CustomEvent('fit', { bubbles: true }));
+      sendKey('f');
+    });
+
+    // ── Fullscreen ─────────────────────────────────────────────
+    const fsBtn = document.getElementById('btn-fs');
+    fsBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+        document.body.classList.add('fullscreen');
+        fsBtn.textContent = '✕';
+        fsBtn.title = 'Quitter plein écran';
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        document.body.classList.remove('fullscreen');
+        fsBtn.textContent = '⛶';
+        fsBtn.title = 'Plein écran';
+      }
+    });
+    // ESC also exits fullscreen class
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') document.body.classList.remove('fullscreen');
+    });
+  </script>
+</body>
+</html>
