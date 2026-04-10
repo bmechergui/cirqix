@@ -104,15 +104,30 @@
     }
     function wheelZoom(delta) {
       const kv = document.getElementById('kv');
-      const rect = kv.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top  + rect.height / 2;
-      kv.dispatchEvent(new WheelEvent('wheel', {
-        bubbles: true, cancelable: true,
-        clientX: cx, clientY: cy,
-        deltaY: delta, deltaMode: 0,
-        ctrlKey: true,
-      }));
+      try {
+        // KiCanvas has 3 shadow-DOM levels: kicanvas-embed → kc-schematic-app → kc-schematic-viewer → canvas
+        const app    = kv.shadowRoot.querySelector('kc-schematic-app');
+        const viewer = app.shadowRoot.querySelector('kc-schematic-viewer');
+        const canvas = viewer.shadowRoot.querySelector('canvas');
+        const rect   = canvas.getBoundingClientRect();
+        canvas.dispatchEvent(new WheelEvent('wheel', {
+          bubbles: true, cancelable: true,
+          clientX: rect.left + rect.width  / 2,
+          clientY: rect.top  + rect.height / 2,
+          deltaY: delta, deltaMode: 0,
+          ctrlKey: true,
+        }));
+      } catch(e) {
+        // Fallback: dispatch directly on the custom element
+        const rect = kv.getBoundingClientRect();
+        kv.dispatchEvent(new WheelEvent('wheel', {
+          bubbles: true, cancelable: true,
+          clientX: rect.left + rect.width  / 2,
+          clientY: rect.top  + rect.height / 2,
+          deltaY: delta, deltaMode: 0,
+          ctrlKey: true,
+        }));
+      }
     }
 
     document.getElementById('btn-zoomin') .addEventListener('click', () => wheelZoom(-200));
