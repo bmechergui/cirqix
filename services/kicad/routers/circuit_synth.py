@@ -609,10 +609,12 @@ def _generate_schematic_fallback(
     row_step = 35    # vertical spacing — enough for 8-pin ICs with net labels
     stub_len = 2.54  # net-label stub length — one KiCad grid unit
 
-    # ── Intelligent layout: KiCanvas title block ≈ 30 % of paper height.
-    # Formula: paper_h = component_bottom_y / 0.70  → components fill top 70 %,
-    # title block fills bottom 30 %, zero empty gap between them.
-    TITLE_RATIO = 0.30        # empirical: KiCanvas title block ≈ 30 % of paper_h
+    # ── Intelligent layout: KiCanvas title block has a FIXED height of ~43 mm
+    # (verified empirically: for 93 mm paper, separator line at y≈50 mm).
+    # Formula: paper_h = component_bottom_y + TITLE_PADDING + TITLE_BLOCK_HEIGHT
+    # This guarantees a clean gap between the bottom component and the title block.
+    TITLE_BLOCK_HEIGHT = 44   # mm — KiCad standard title block fixed height
+    TITLE_PADDING      = 6    # mm — minimum gap between components and title block
     margin_top  = 12          # top / left margin inside frame border
     margin_side = 12
     comp_h_span = 18          # half-height of component body + value label below centre
@@ -623,7 +625,7 @@ def _generate_schematic_fallback(
     component_right_x  = margin_side + (cols - 1) * col_step + comp_w_span
 
     paper_w = max(80, component_right_x + margin_side)
-    paper_h = max(60, math.ceil(component_bottom_y / (1.0 - TITLE_RATIO)))
+    paper_h = max(80, component_bottom_y + TITLE_PADDING + TITLE_BLOCK_HEIGHT)
 
     origin_x = margin_side
     origin_y = margin_top
