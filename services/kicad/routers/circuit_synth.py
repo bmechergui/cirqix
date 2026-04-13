@@ -615,7 +615,7 @@ def _generate_schematic_fallback(
     # This guarantees a clean gap between the bottom component and the title block.
     TITLE_BLOCK_HEIGHT = 44   # mm — KiCad standard title block fixed height
     TITLE_PADDING      = 6    # mm — minimum gap between components and title block
-    margin_top  = 12          # top / left margin inside frame border
+    margin_top  = 20          # top / left margin inside frame border (≥15 mm from inner frame border at y≈5 mm)
     margin_side = 12
     comp_h_span = 18          # half-height of component body + value label below centre
     comp_w_span = 15          # half-width of component body + stub label right of centre
