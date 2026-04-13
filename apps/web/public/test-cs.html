@@ -168,12 +168,14 @@
       if (minX >= maxX || minY >= maxY) { v.zoom_to_page(); return; }
 
       const PAD_H = 12, PAD_V = 8;
-      const bx1 = Math.max(0, minX - PAD_H);
+      // Allow negative bx1 (labels left of paper edge) — no Math.max(0)
+      const bx1 = minX - PAD_H;
       const bx2 = Math.min(paperW, maxX + PAD_H);
       const by1 = Math.max(0, minY - PAD_V);
       const by2 = maxY + PAD_V;
       const bw = bx2 - bx1, bh = by2 - by1;
-      const cx = (bx1 + bx2) / 2;
+      // Center on actual component span for correct horizontal alignment
+      const cx = (minX + maxX) / 2;
       const cy = (by1 + by2) / 2;
 
       // Fit by HEIGHT with 15% margin → title block (bottom 30% of paper) guaranteed off-screen.
