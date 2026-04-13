@@ -607,15 +607,26 @@ def _generate_schematic_fallback(
     rows = max(1, math.ceil(n / cols)) if n else 1
     col_step = 55    # horizontal spacing between component origins (mm)
     row_step = 35    # vertical spacing — enough for 8-pin ICs with net labels
-    margin = 12      # frame border clearance (KiCad frame border ≈ 5 mm + safety)
     stub_len = 2.54  # net-label stub length — one KiCad grid unit
-    origin_x = margin
-    origin_y = margin
 
-    # Paper exactly fits components — no extra title_h padding, KiCanvas title block
-    # overlaps the bottom margin which is fine for a test/preview viewer.
-    paper_w = max(80, margin + (cols - 1) * col_step + 28 + margin)
-    paper_h = max(60, margin + (rows - 1) * row_step + 20 + margin)
+    # ── Intelligent layout: KiCanvas title block ≈ 30 % of paper height.
+    # Formula: paper_h = component_bottom_y / 0.70  → components fill top 70 %,
+    # title block fills bottom 30 %, zero empty gap between them.
+    TITLE_RATIO = 0.30        # empirical: KiCanvas title block ≈ 30 % of paper_h
+    margin_top  = 12          # top / left margin inside frame border
+    margin_side = 12
+    comp_h_span = 18          # half-height of component body + value label below centre
+    comp_w_span = 15          # half-width of component body + stub label right of centre
+
+    # Bounding box of all component placements (bottom edge of last row)
+    component_bottom_y = margin_top + (rows - 1) * row_step + comp_h_span
+    component_right_x  = margin_side + (cols - 1) * col_step + comp_w_span
+
+    paper_w = max(80, component_right_x + margin_side)
+    paper_h = max(60, math.ceil(component_bottom_y / (1.0 - TITLE_RATIO)))
+
+    origin_x = margin_side
+    origin_y = margin_top
 
     lines: list[str] = []
     lines.append(
