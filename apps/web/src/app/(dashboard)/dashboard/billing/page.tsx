@@ -39,7 +39,7 @@ const PLANS: PlanRow[] = [
     planKey: 'free',
   },
   {
-    name: 'Maker',
+    name: 'Pro',
     price: '25 €/mois',
     creditsLabel: '100 cr / mois',
     features: ['Tout Free', 'Placement composants', 'Routage automatique', 'Footprint IA', 'Vue 3D'],
@@ -48,10 +48,10 @@ const PLANS: PlanRow[] = [
     popular: true,
   },
   {
-    name: 'Pro',
+    name: 'Pro Max',
     price: '50 €/mois',
     creditsLabel: '300 cr / mois',
-    features: ['Tout Maker', 'Simulation SPICE', 'Export prioritaire', 'Support dédié'],
+    features: ['Tout Pro', 'Simulation SPICE', 'Export prioritaire', 'Support dédié'],
     planKey: 'pro',
     checkoutEnvKey: 'NEXT_PUBLIC_LS_CHECKOUT_PRO',
   },

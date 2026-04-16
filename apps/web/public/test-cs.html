@@ -92,7 +92,10 @@
         const doc    = v?.document;
         const cam    = v?.viewport?.camera;
         const hasContent  = doc?.symbols?.length > 0 || doc?.net_labels?.length > 0;
-        const hasViewport = (cam?.viewport_size?.x ?? 0) > 50;
+        // Guard both axes: width can become non-zero before height during
+        // layout races on initial load/tab-replace — require both to be ready.
+        const hasViewport = (cam?.viewport_size?.x ?? 0) > 50
+                         && (cam?.viewport_size?.y ?? 0) > 50;
         if ((hasContent && hasViewport) || attempts > 100) {
           clearInterval(poll);
           zoomToComponents();
