@@ -92,7 +92,8 @@
         const doc    = v?.document;
         const cam    = v?.viewport?.camera;
         const hasContent  = doc?.symbols?.length > 0 || doc?.net_labels?.length > 0;
-        const hasViewport = (cam?.viewport_size?.x ?? 0) > 50;
+        const hasViewport = (cam?.viewport_size?.x ?? 0) > 50
+                         && (cam?.viewport_size?.y ?? 0) > 50;
         if ((hasContent && hasViewport) || attempts > 100) {
           clearInterval(poll);
           zoomToComponents();
