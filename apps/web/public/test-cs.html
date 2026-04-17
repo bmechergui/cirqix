@@ -101,6 +101,16 @@
           zoomToComponents();
           setTimeout(zoomToComponents, 400);
           setTimeout(zoomToComponents, 1200);
+          setTimeout(zoomToComponents, 2500);
+
+          // Observe canvas size changes — KiCanvas may resize its canvas after
+          // initial render (DPR, layout race, container reflow). Each resize
+          // triggers a camera reset, so we must re-apply our framing.
+          const canvas = viewer?.canvas || deepQueryCanvas(viewer?.shadowRoot || viewer);
+          if (canvas && typeof ResizeObserver !== 'undefined') {
+            const ro = new ResizeObserver(() => zoomToComponents());
+            ro.observe(canvas);
+          }
         }
       }, 50);
 
@@ -109,7 +119,18 @@
       kvEl.addEventListener('pointerdown', () => {
         setTimeout(zoomToComponents, 120);
         setTimeout(zoomToComponents, 600);
+        setTimeout(zoomToComponents, 1400);
       }, { once: true });
+
+      // Also re-apply on window load (DOM ready may fire before iframe/canvas)
+      // and on window resize (responsive breakpoints / devtools open).
+      window.addEventListener('load', () => {
+        setTimeout(zoomToComponents, 150);
+        setTimeout(zoomToComponents, 900);
+      });
+      window.addEventListener('resize', () => {
+        setTimeout(zoomToComponents, 100);
+      });
     }
 
     // ── Tab switching ──────────────────────────────────────────
