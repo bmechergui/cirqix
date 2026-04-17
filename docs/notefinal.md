@@ -135,17 +135,27 @@ type SSEEvent =
   | { type: 'error';       message: string }             // erreur critique
 ```
 
-### Outils disponibles (PCB_TOOLS)
+### Outils disponibles (PCB_TOOLS) + modèle par agent
 
 ```
-call_agent_design      🔲  → design.json         (À ajouter)
-call_agent_schema      ✅  → schematic.json       (Haiku + Circuit-Synth)
-call_agent_footprint   ⚠️  → footprints.json      (Stub)
-call_agent_placement   ✅  → placement.json       (Haiku + pcbnew)
-call_agent_routing     🔲  → routing.json         (À créer — Freerouting)
-call_agent_drc         ⚠️  → drc.json             (Stub)
-call_agent_export      ⚠️  → export.json          (Stub)
-ask_user               ✅  → question string      (toujours disponible)
+┌─────────────────────────┬──────────────────────────────┬────────────────┬────────┐
+│ Tool                    │ Modèle IA                    │ Output         │ Statut │
+├─────────────────────────┼──────────────────────────────┼────────────────┼────────┤
+│ Orchestrateur           │ claude-sonnet-4-6            │ décisions      │ ✅     │
+│ call_agent_design       │ claude-haiku-4-5-20251001    │ design.json    │ 🔲     │
+│ call_agent_schema       │ claude-haiku-4-5-20251001    │ schematic.json │ ✅     │
+│ call_agent_footprint    │ claude-haiku-4-5-20251001    │ footprints.json│ ⚠️     │
+│ call_agent_placement    │ claude-haiku-4-5-20251001    │ placement.json │ ✅     │
+│ call_agent_routing      │ claude-haiku-4-5-20251001    │ routing.json   │ 🔲     │
+│ call_agent_drc          │ claude-haiku-4-5-20251001    │ drc.json       │ ⚠️     │
+│ call_agent_export       │ — (déterministe, pas de LLM) │ export.json    │ ⚠️     │
+│ ask_user                │ claude-sonnet-4-6 (réponse)  │ question user  │ ✅     │
+└─────────────────────────┴──────────────────────────────┴────────────────┴────────┘
+
+Pourquoi Sonnet pour l'orchestrateur et Haiku pour les agents ?
+  Sonnet 4.6  → raisonnement complexe, décisions architecturales, cohérence globale
+  Haiku 4.5   → tâches spécialisées répétitives, 3× moins cher que Sonnet
+  Résultat    → ~0.12€ par PCB complet (vs ~0.50€ si tout Sonnet)
 ```
 
 ### Règle critique — Sonnet décide les composants
@@ -268,7 +278,8 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5 (tâche simple + répétitive)
+Coût    : ~0.004€ par appel           ← 3× moins cher que Sonnet
 Rôle    : analyser le prompt → déduire type, layers, règles, contraintes
 Appel   : generateDesignWithHaiku(description)  ← À CRÉER
 ```
@@ -374,8 +385,9 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
-Rôle    : choisir composants + nets + pin mappings
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5
+Coût    : ~0.006€ par appel           ← génération JSON composants
+Rôle    : choisir composants + nets + pin mappings KiCad
 Appel   : generateSchemaWithHaiku(description)  ✅ Implémenté
 ```
 
@@ -495,7 +507,8 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5
+Coût    : ~0.003€ par composant       ← 5 composants → ~0.015€
 Rôle    : cascade 8 étapes → trouver footprint + LCSC part number
 Appel   : findFootprintCascade(partNumber, package)  ← À CRÉER
 ```
@@ -585,7 +598,8 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5
+Coût    : ~0.004€ par appel
 Rôle    : calculer coordonnées (x, y, rotation) par blocs fonctionnels
 Appel   : runPCBEngine(schema, boardW, boardH, projectId)  ✅ Implémenté
 ```
@@ -708,7 +722,8 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5
+Coût    : ~0.004€ par appel
 Rôle    : déclencher Freerouting + vérifier % routé
 Appel   : POST /route/auto  ← À CRÉER
 ```
@@ -844,7 +859,8 @@ Input tool :
 ### Agent IA
 
 ```
-Modèle  : Haiku 4.5
+Modèle  : claude-haiku-4-5-20251001  ← Haiku 4.5
+Coût    : ~0.003€ par appel
 Rôle    : analyser violations → décider action (fix placement, fix routing, relaxer rules)
 Appel   : POST /drc  ← À créer
 ```
@@ -935,8 +951,10 @@ Input tool :
 ### Agent IA
 
 ```
-Aucun agent IA pour l'export — 100% déterministe.
-L'orchestrateur appelle l'engine directement via le tool stub.
+Modèle  : AUCUN  ← Export 100% déterministe (pas de LLM)
+Coût    : 0€ en tokens Claude
+Rôle    : L'orchestrateur appelle le tool stub directement
+          → pcbnew Plotter génère les Gerbers sans décision IA
 ```
 
 ### Engine
@@ -991,18 +1009,35 @@ DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
 
 ---
 
-## Récapitulatif — Tous les outils de l'orchestrateur
+## Récapitulatif — Tous les outils + modèles
 
-| Tool | Agent | Engine | Status |
-|------|-------|--------|--------|
-| `call_agent_design`    | Haiku 4.5 | — (LLM only) | 🔲 À créer |
-| `call_agent_schema`    | Haiku 4.5 | Circuit-Synth `/circuit-synth/generate` | ✅ OK |
-| `call_agent_footprint` | Haiku 4.5 | LCSC + cascade | ⚠️ Stub |
-| `call_agent_placement` | Haiku 4.5 | pcbnew `/place/auto` | ✅ OK |
-| `call_agent_routing`   | Haiku 4.5 | Freerouting `/route/auto` | 🔲 À créer |
-| `call_agent_drc`       | Haiku 4.5 | pcbnew DRC `/drc` | ⚠️ Stub |
-| `call_agent_export`    | — (déterm.) | pcbnew Plotter `/export` | ⚠️ Stub |
-| `ask_user`             | Sonnet     | — | ✅ OK |
+| Tool | Modèle IA | Engine | Endpoint | Status |
+|------|-----------|--------|----------|--------|
+| **Orchestrateur** | `claude-sonnet-4-6` | — | — | ✅ |
+| `call_agent_design` | `claude-haiku-4-5-20251001` | — (LLM only) | — | 🔲 |
+| `call_agent_schema` | `claude-haiku-4-5-20251001` | Circuit-Synth | `POST /circuit-synth/generate` | ✅ |
+| `call_agent_footprint` | `claude-haiku-4-5-20251001` | LCSC cascade | `POST /footprint` | ⚠️ |
+| `call_agent_placement` | `claude-haiku-4-5-20251001` | pcbnew | `POST /place/auto` | ✅ |
+| `call_agent_routing` | `claude-haiku-4-5-20251001` | Freerouting | `POST /route/auto` | 🔲 |
+| `call_agent_drc` | `claude-haiku-4-5-20251001` | pcbnew DRC | `POST /drc` | ⚠️ |
+| `call_agent_export` | **AUCUN** (déterministe) | pcbnew Plotter | `POST /export` | ⚠️ |
+| `ask_user` | `claude-sonnet-4-6` (répond) | — | — | ✅ |
+
+### Budget estimé par PCB
+
+| Agent | Modèle | Tokens (~) | Coût (~) |
+|-------|--------|-----------|---------|
+| Orchestrateur (7 iter) | Sonnet 4.6 | 15 000 | ~0.075€ |
+| Design Agent | Haiku 4.5 | 1 000 | ~0.004€ |
+| Schematic Agent | Haiku 4.5 | 1 500 | ~0.006€ |
+| Footprint Agent (5×) | Haiku 4.5 | 750 | ~0.015€ |
+| Placement Agent | Haiku 4.5 | 500 | ~0.004€ |
+| Routing Agent | Haiku 4.5 | 500 | ~0.004€ |
+| DRC Agent | Haiku 4.5 | 500 | ~0.003€ |
+| Export | AUCUN | 0 | 0€ |
+| **TOTAL** | | **~19 750** | **~0.111€** |
+
+✅ Budget 0.12€/PCB respecté.
 
 ---
 
