@@ -16,34 +16,63 @@
 
 ---
 
-## Vue d'ensemble du pipeline
+## Orchestrateur — Rôle central
+
+```
+Orchestrator (Sonnet 4.6)
+│
+│  Reçoit : message user + historique + PCBStatus courant
+│  Décide : quel tool appeler selon le contexte
+│  Streame : SSE events vers le front en temps réel
+│  Limite  : max 15 itérations par PCB
+│  Budget  : ~0.12€ par PCB complet
+│
+├─ STEP 1 → tool: call_agent_design
+├─ STEP 2 → tool: call_agent_schema
+├─ STEP 3 → tool: call_agent_footprint
+├─ STEP 4 → tool: call_agent_placement
+├─ STEP 5 → tool: call_agent_routing
+├─ STEP 6 → tool: call_agent_drc
+├─ STEP 7 → tool: call_agent_export
+└─ ??     → tool: ask_user  (si info manquante)
+```
+
+**Fichier :** `packages/agents/src/orchestrator.ts`
+**Tools :** `packages/agents/src/tools.ts`
+
+---
+
+## Vue d'ensemble pipeline
 
 ```
 User Prompt
     ↓
-[STEP 1]  Design Agent       → design.json              🔲 À faire
+[STEP 1]  call_agent_design     → design.json              🔲 À faire
     ↓
-[STEP 2]  Schematic Agent    → schematic.json            ✅ Validé
-              ↓ Circuit-Synth engine
-          .kicad_sch + .kicad_pcb initial                ✅ Validé
-              ↓ KiCanvas viewer
+[STEP 2]  call_agent_schema     → schematic.json           ✅ Validé
+              ↓ Engine: Circuit-Synth (Python)
+          .kicad_sch + .kicad_pcb initial                  ✅ Validé
+              ↓ KiCanvas viewer (tab Schematic)
     ↓
-[STEP 3]  Footprint Agent    → footprints.json           ⚠️ Stub
+[STEP 3]  call_agent_footprint  → footprints.json          ⚠️ Stub
     ↓
-[STEP 4]  Placement Agent    → .kicad_pcb placé          ✅ Validé
-              ↓ pcbnew /place/auto
+[STEP 4]  call_agent_placement  → .kicad_pcb placé         ✅ Validé
+              ↓ Engine: pcbnew /place/auto
+              ↓ KiCanvas viewer (tab PCB)
     ↓
-[STEP 5]  Routing Agent      → .kicad_pcb routé          🔲 À faire
-              ↓ Freerouting /route/auto
+[STEP 5]  call_agent_routing    → .kicad_pcb routé         🔲 À faire
+              ↓ Engine: Freerouting /route/auto
+              ↓ KiCanvas viewer (tab Routing)
     ↓
-[STEP 6]  DRC Agent          → violations / DRC_CLEAN    ⚠️ Stub
-              ↓ pcbnew DRC
+[STEP 6]  call_agent_drc        → violations / DRC_CLEAN   ⚠️ Stub
+              ↓ Engine: pcbnew DRC /drc
     ↓
-[STEP 7]  Export             → Gerbers + BOM + STEP      ⚠️ Stub
+[STEP 7]  call_agent_export     → Gerbers + BOM + STEP     ⚠️ Stub
+              ↓ Engine: pcbnew plotter /export
     ↓
 User "OUI JE CONFIRME"
     ↓
-JLCPCB Order                                             🔲 Phase 4
+JLCPCB Order                                               🔲 Phase 4
 ```
 
 ---
@@ -52,19 +81,57 @@ JLCPCB Order                                             🔲 Phase 4
 
 **Statut : 🔲 À implémenter**
 
-### Rôle
-Premier agent du pipeline. Analyse le prompt utilisateur et produit
-`design.json` — le contexte structuré que tous les agents suivants utilisent.
+### Orchestrateur
 
-### Responsable
-Agent IA Haiku 4.5 — tool `call_agent_design` (manquant dans `tools.ts`)
-
-### Input
 ```
-Prompt utilisateur : "régulateur 5V LM7805 avec condensateurs"
+ITERATION 1
+
+Orchestrator reçoit :
+  message    = "régulateur 5V LM7805 avec condensateurs"
+  pcb_status = INITIAL
+  history    = []
+
+Orchestrator décide :
+  → "Je dois d'abord analyser le type de circuit et les contraintes"
+  → appelle call_agent_design
+
+SSE → { type: 'iteration',  count: 1 }
+SSE → { type: 'step',       step: 'DESIGN' }
+SSE → { type: 'tool_call',  tool: 'call_agent_design',
+        input: {
+          user_description: "régulateur 5V LM7805 avec condensateurs"
+        }}
+```
+
+### Outil (Tool)
+
+```
+Nom    : call_agent_design
+Fichier: packages/agents/src/tools.ts  ← À AJOUTER
+
+Input tool :
+{
+  "user_description": "régulateur 5V LM7805 avec condensateurs"
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : analyser le prompt → déduire type, layers, règles, contraintes
+Appel   : generateDesignWithHaiku(description)  ← À CRÉER
+```
+
+### Engine
+
+```
+Aucun engine externe pour cette étape.
+100% LLM (Haiku analyse le prompt texte).
 ```
 
 ### Output — `design.json`
+
 ```json
 {
   "type": "power_supply",
@@ -84,47 +151,120 @@ Prompt utilisateur : "régulateur 5V LM7805 avec condensateurs"
 }
 ```
 
-### Fichiers à modifier
-- `packages/agents/src/tools.ts` — ajouter `call_agent_design` dans `PCB_TOOLS` + `executeToolStub`
-- `packages/agents/src/types.ts` — ajouter interface `DesignJson`
+### SSE events produits
 
-### Critère de validation
 ```
-curl POST /api/agent/stream
-  → SSE event { type: 'tool_call', tool: 'call_agent_design' }
-  → SSE event { type: 'tool_result', summary: 'power_supply, 2 layers, ...' }
-  → SSE event { type: 'tool_call', tool: 'call_agent_schema' }  ← APRÈS design
+SSE → { type: 'tool_result', tool: 'call_agent_design',
+        summary: 'power_supply — 2 layers — trace 0.3mm' }
+```
+
+### PCBStatus
+
+```
+INITIAL  →  INITIAL  (pas de changement — design = contexte seulement)
+```
+
+### Critère de validation ✅
+
+```
+- SSE event tool_call: call_agent_design AVANT call_agent_schema
+- design.json contient type + layers + rules + constraints
+- call_agent_schema reçoit design.json en contexte
+```
+
+### Fichiers à modifier
+
+```
+packages/agents/src/tools.ts   → ajouter call_agent_design + generateDesignWithHaiku()
+packages/agents/src/types.ts   → ajouter interface DesignJson
 ```
 
 ---
 
-## STEP 2 — Schematic Agent + Circuit-Synth
+## STEP 2 — Schematic Agent
 
 **Statut : ✅ Validé**
 
-### Rôle
-Génère les composants + nets à partir du `design.json`.
-Circuit-Synth (Python) écrit le `.kicad_sch` et `.kicad_pcb` initial.
-KiCanvas affiche le schéma en temps réel.
+### Orchestrateur
 
-### Responsable
-- Agent IA Haiku 4.5 → `generateSchemaWithHaiku()` (`tools.ts`)
-- Engine Python : `POST /circuit-synth/generate` (`services/kicad/`)
+```
+ITERATION 2
 
-### Input
-```json
-{ "user_description": "...", "design": { "type": "power_supply", ... } }
+Orchestrator reçoit :
+  tool_result = { type: 'power_supply', layers: 2, ... }  ← design.json
+  pcb_status  = INITIAL
+
+Orchestrator décide :
+  → "Design connu. Je génère maintenant le schéma électronique."
+  → appelle call_agent_schema
+
+SSE → { type: 'iteration',  count: 2 }
+SSE → { type: 'step',       step: 'SCHEMA' }
+SSE → { type: 'tool_call',  tool: 'call_agent_schema',
+        input: {
+          user_description: "régulateur 5V LM7805 avec condensateurs",
+          design: { "type": "power_supply", "layers": 2, ... },
+          complexity: "simple"
+        }}
+```
+
+### Outil (Tool)
+
+```
+Nom    : call_agent_schema
+Fichier: packages/agents/src/tools.ts  ✅ Existe
+
+Input tool :
+{
+  "user_description": "régulateur 5V LM7805 avec condensateurs",
+  "complexity": "simple"
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : choisir composants + nets + pin mappings
+Appel   : generateSchemaWithHaiku(description)  ✅ Implémenté
+```
+
+### Engine
+
+```
+Nom     : Circuit-Synth
+Techno  : Python (SKiDL-based)
+Endpoint: POST /circuit-synth/generate  ✅ Implémenté
+Fichier : services/kicad/routers/circuit_synth.py
+
+Input engine :
+{
+  "project_id": "proj-abc123",
+  "board_width_mm": 50,
+  "board_height_mm": 50,
+  "components": [...],
+  "nets": [...],
+  "connections": [...]
+}
+
+Output engine :
+{
+  "success": true,
+  "kicad_sch_content": "(kicad_sch ...)",
+  "kicad_pcb_content": "(kicad_pcb ...)"
+}
 ```
 
 ### Output — `schematic.json`
+
 ```json
 {
   "components": [
-    { "ref": "U1", "value": "LM7805", "symbol": "Regulator_Linear:L7805", "footprint": "TO-220" },
-    { "ref": "C1", "value": "330nF",  "symbol": "Device:C", "footprint": "0603" },
-    { "ref": "C2", "value": "100nF",  "symbol": "Device:C", "footprint": "0603" },
-    { "ref": "J1", "value": "VIN_CONN", "symbol": "Connector_Generic:Conn_01x02", "footprint": "Conn_2" },
-    { "ref": "J2", "value": "VOUT_5V",  "symbol": "Connector_Generic:Conn_01x02", "footprint": "Conn_2" }
+    { "ref": "U1", "value": "LM7805",   "symbol": "Regulator_Linear:L7805",      "footprint": "TO-220" },
+    { "ref": "C1", "value": "330nF",    "symbol": "Device:C",                    "footprint": "0603" },
+    { "ref": "C2", "value": "100nF",    "symbol": "Device:C",                    "footprint": "0603" },
+    { "ref": "J1", "value": "VIN_CONN", "symbol": "Connector_Generic:Conn_01x02","footprint": "Conn_2" },
+    { "ref": "J2", "value": "VOUT_5V",  "symbol": "Connector_Generic:Conn_01x02","footprint": "Conn_2" }
   ],
   "nets": ["GND", "VIN", "VOUT"],
   "connections": [
@@ -132,59 +272,121 @@ KiCanvas affiche le schéma en temps réel.
     { "name": "VOUT", "pins": [{"ref":"U1","pin":"OUT"}, {"ref":"C2","pin":1}, {"ref":"J2","pin":1}] },
     { "name": "GND",  "pins": [{"ref":"J1","pin":2}, {"ref":"U1","pin":"GND"}, {"ref":"C1","pin":2},
                                 {"ref":"C2","pin":2}, {"ref":"J2","pin":2}] }
-  ]
+  ],
+  "kicad_sch_content": "(kicad_sch ...)",
+  "kicad_pcb_content": "(kicad_pcb ...)"
 }
 ```
 
-### Validations réalisées
-- ✅ KiCanvas affiche schéma LM7805 avec labels nets (VIN, VOUT, GND)
-- ✅ Composants à l'intérieur du cadre KiCad (margin_side=38mm)
-- ✅ Bloc titre masqué automatiquement
-- ✅ Testé sur LM7805 / NE555 / ESP32
+### SSE events produits
 
-### PCBStatus après step
 ```
-SCHEMA_DONE
+SSE → { type: 'tool_result', tool: 'call_agent_schema',
+        summary: 'Schéma généré — 5 composants, 3 nets, moteur: Circuit-Synth.' }
+SSE → { type: 'pcb_state',   state: { pcb_status: 'SCHEMA_DONE',
+        kicad_sch_content: '...' }}
+        ← Front: KiCanvas tab Schematic s'affiche automatiquement
+```
+
+### PCBStatus
+
+```
+INITIAL  →  SCHEMA_DONE
+```
+
+### Validations réalisées ✅
+
+```
+✅ KiCanvas affiche LM7805 + nets (VIN, VOUT, GND)
+✅ Composants à l'intérieur du cadre KiCad (margin_side=38mm)
+✅ Labels VIN/VOUT/GND visibles et lisibles
+✅ Bloc titre masqué automatiquement (zoomToComponents())
+✅ Testé sur LM7805 / NE555 / ESP32
 ```
 
 ---
 
 ## STEP 3 — Footprint Agent
 
-**Statut : ⚠️ Stub — recherche LCSC non implémentée**
+**Statut : ⚠️ Stub — LCSC non implémenté**
 
-### Rôle
-Pour chaque composant, trouve un footprint KiCad valide + numéro LCSC
-disponible chez JLCPCB.
+### Orchestrateur
 
-### Responsable
-Agent IA Haiku 4.5 — tool `call_agent_footprint`
-Cascade 8 étapes : LCSC → SnapMagic → Octopart → pgvector RAG → GitHub → AI → Manuel
+```
+ITERATION 3
 
-### Stub actuel (`tools.ts`)
-```typescript
-case 'call_agent_footprint':
-  return {
-    footprint_name: `${part_number}_footprint`,  // hardcodé !
-    source: 'lcsc',
-  };
+Orchestrator reçoit :
+  tool_result = { pcb_status: 'SCHEMA_DONE', components: [...] }
+
+Orchestrator décide :
+  → "J'ai le schéma. Je cherche les footprints LCSC pour JLCPCB."
+  → appelle call_agent_footprint pour chaque composant
+     (ou 1 appel avec tous les composants)
+
+SSE → { type: 'iteration',  count: 3 }
+SSE → { type: 'step',       step: 'FOOTPRINT' }
+SSE → { type: 'tool_call',  tool: 'call_agent_footprint',
+        input: { part_number: 'LM7805', package: 'TO-220' }}
 ```
 
-### Output cible
+### Outil (Tool)
+
+```
+Nom    : call_agent_footprint
+Fichier: packages/agents/src/tools.ts  ⚠️ Stub
+
+Input tool :
+{
+  "part_number": "LM7805",
+  "package": "TO-220"
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : cascade 8 étapes → trouver footprint + LCSC part number
+Appel   : findFootprintCascade(partNumber, package)  ← À CRÉER
+```
+
+### Engine
+
+```
+Cascade 8 étapes (dans l'ordre) :
+  1. LCSC API          → recherche par MPN/description
+  2. KiCad lib match   → pcbnew symbol library scan
+  3. SnapMagic         → footprints commerciaux
+  4. Octopart          → marketplace électronique
+  5. pgvector RAG      → embeddings footprints existants (Supabase)
+  6. GitHub search     → snippets open-source
+  7. Haiku AI gen      → génère footprint depuis datasheet
+  8. Manuel            → ask_user si tout échoue
+```
+
+### Output — `footprints.json`
+
 ```json
 {
   "footprints": {
-    "U1": { "kicad": "TO-220", "lcsc": "C14353", "available_jlc": true },
-    "C1": { "kicad": "C_0603", "lcsc": "C1525",  "available_jlc": true }
+    "U1": { "kicad": "Package_TO_SOT_THT:TO-220-3_Vertical",
+            "lcsc": "C14353", "available_jlc": true },
+    "C1": { "kicad": "Capacitor_SMD:C_0603_1608Metric",
+            "lcsc": "C1525",  "available_jlc": true },
+    "C2": { "kicad": "Capacitor_SMD:C_0603_1608Metric",
+            "lcsc": "C1525",  "available_jlc": true },
+    "J1": { "kicad": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+            "lcsc": "C358690","available_jlc": true },
+    "J2": { "kicad": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+            "lcsc": "C358690","available_jlc": true }
   }
 }
 ```
 
-### Critère de validation
+### PCBStatus
+
 ```
-LCSC API → retourne C14353 pour LM7805
-→ available_jlc: true vérifié
-→ footprint KiCad valide (pcbnew peut le charger)
+SCHEMA_DONE  →  SCHEMA_DONE  (pas de changement — footprints = enrichissement)
 ```
 
 ---
@@ -193,34 +395,123 @@ LCSC API → retourne C14353 pour LM7805
 
 **Statut : ✅ Validé**
 
-### Rôle
-Calcule les coordonnées (x, y, rotation) de chaque composant sur le PCB.
-pcbnew applique le placement via `SetPosition()` + `SetOrientation()`.
+### Orchestrateur
 
-### Responsable
-- Agent IA Haiku 4.5 → `call_agent_placement`
-- Engine Python : `POST /place/auto` (`services/kicad/routers/placement.py`)
+```
+ITERATION 4
 
-### Output
+Orchestrator reçoit :
+  tool_result = { footprints: {...} }
+  pcb_status  = SCHEMA_DONE
+
+Orchestrator décide :
+  → "Footprints trouvés. Je place les composants sur le PCB physique."
+  → appelle call_agent_placement
+
+SSE → { type: 'iteration',  count: 4 }
+SSE → { type: 'step',       step: 'PLACEMENT' }
+SSE → { type: 'tool_call',  tool: 'call_agent_placement',
+        input: {
+          schema_json: '{...}',
+          board_width_mm: 50,
+          board_height_mm: 50
+        }}
+```
+
+### Outil (Tool)
+
+```
+Nom    : call_agent_placement
+Fichier: packages/agents/src/tools.ts  ✅ Existe
+
+Input tool :
+{
+  "schema_json": "{ composants + nets }",
+  "board_width_mm": 50,
+  "board_height_mm": 50
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : calculer coordonnées (x, y, rotation) par blocs fonctionnels
+Appel   : runPCBEngine(schema, boardW, boardH, projectId)  ✅ Implémenté
+```
+
+### Engine
+
+```
+Nom     : pcbnew Placement
+Techno  : Python (pcbnew API)
+Endpoint: POST /place/auto  ✅ Implémenté
+Fichier : services/kicad/routers/placement.py
+          services/kicad/tools/placement.py
+
+Input engine :
+{
+  "project_id": "proj-abc123",
+  "board_width_mm": 50,
+  "board_height_mm": 50,
+  "components": [
+    { "ref": "U1", "footprint": "TO-220-3_Vertical", "x": 15, "y": 20, "rot": 0 },
+    ...
+  ]
+}
+
+Output engine :
+{
+  "success": true,
+  "kicad_pcb_content": "(kicad_pcb ...)",
+  "placements": [
+    { "ref": "U1", "x": 15.0, "y": 20.0, "rot": 0 },
+    { "ref": "C1", "x": 25.0, "y": 10.0, "rot": 0 },
+    { "ref": "C2", "x": 25.0, "y": 30.0, "rot": 0 },
+    { "ref": "J1", "x": 5.0,  "y": 30.0, "rot": 0 },
+    { "ref": "J2", "x": 45.0, "y": 30.0, "rot": 0 }
+  ]
+}
+```
+
+### Output — `placement.json`
+
 ```json
 {
   "placements": [
     { "ref": "U1", "x": 15, "y": 20, "rot": 0 },
     { "ref": "C1", "x": 25, "y": 10, "rot": 0 },
-    { "ref": "C2", "x": 25, "y": 30, "rot": 0 }
-  ]
+    { "ref": "C2", "x": 25, "y": 30, "rot": 0 },
+    { "ref": "J1", "x": 5,  "y": 30, "rot": 0 },
+    { "ref": "J2", "x": 45, "y": 30, "rot": 0 }
+  ],
+  "kicad_pcb_content": "(kicad_pcb ...)"
 }
 ```
 
-### Validations réalisées
-- ✅ pcbnew place les composants aux coordonnées calculées
-- ✅ `.kicad_pcb` placé généré correctement
-- ✅ FastAPI `POST /place/auto` HTTP 200
-- ✅ CI KiCad Docker Build vert (PR #31)
+### SSE events produits
 
-### PCBStatus après step
 ```
-PLACEMENT_DONE
+SSE → { type: 'tool_result', tool: 'call_agent_placement',
+        summary: 'Placement terminé — PCB 50×50mm, 5 composants' }
+SSE → { type: 'pcb_state',   state: { pcb_status: 'PLACEMENT_DONE',
+        kicad_pcb_content: '...' }}
+        ← Front: KiCanvas tab PCB Layout s'affiche
+```
+
+### PCBStatus
+
+```
+SCHEMA_DONE  →  PLACEMENT_DONE
+```
+
+### Validations réalisées ✅
+
+```
+✅ pcbnew place correctement les composants
+✅ .kicad_pcb généré avec footprints aux bonnes coordonnées
+✅ POST /place/auto HTTP 200
+✅ CI KiCad Docker Build vert
 ```
 
 ---
@@ -229,25 +520,79 @@ PLACEMENT_DONE
 
 **Statut : 🔲 À implémenter**
 
-### Rôle
-Route automatiquement les pistes entre composants placés.
-Freerouting (Java JAR headless) génère les traces cuivre.
+### Orchestrateur
 
-### Responsable
-- Agent IA Haiku 4.5 → `call_agent_routing`
-- Engine Java : `POST /route/auto` (`services/kicad/routers/routing.py`)
-
-### Pipeline engine
 ```
-.kicad_pcb placé
-    ↓ pcbnew.ExportSpecctraDSN()  → circuit.dsn
-    ↓ java -jar freerouting.jar -de circuit.dsn -do circuit.ses -mp 8
-    ↓ pcbnew.ImportSpecctraSES()  → .kicad_pcb avec pistes
+ITERATION 5
+
+Orchestrator reçoit :
+  tool_result = { pcb_status: 'PLACEMENT_DONE', kicad_pcb_content: '...' }
+
+Orchestrator décide :
+  → "Composants placés. Je lance le routage automatique Freerouting."
+  → appelle call_agent_routing
+
+SSE → { type: 'iteration',  count: 5 }
+SSE → { type: 'step',       step: 'ROUTING' }
+SSE → { type: 'tool_call',  tool: 'call_agent_routing',
+        input: {
+          pcb_base64: "base64(kicad_pcb_content)",
+          layers: 2
+        }}
 ```
 
-### Output
-```json
+### Outil (Tool)
+
+```
+Nom    : call_agent_routing
+Fichier: packages/agents/src/tools.ts  ⚠️ Stub actuel
+
+Input tool :
 {
+  "pcb_base64": "base64 du .kicad_pcb placé",
+  "layers": 2,
+  "via_costs": 50
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : déclencher Freerouting + vérifier % routé
+Appel   : POST /route/auto  ← À CRÉER
+```
+
+### Engine
+
+```
+Nom     : Freerouting
+Techno  : Java JAR headless (openjdk-17)
+Endpoint: POST /route/auto  🔲 À créer
+Fichier : services/kicad/routers/routing.py   🔲 À créer
+          services/kicad/tools/routing.py     🔲 À créer
+
+Pipeline engine :
+  .kicad_pcb (placé)
+      ↓ pcbnew.ExportSpecctraDSN(pcb_path, dsn_path)
+  circuit.dsn
+      ↓ java -jar freerouting.jar -de circuit.dsn -do circuit.ses -mp 8 -l 2
+  circuit.ses
+      ↓ pcbnew.ImportSpecctraSES(pcb_path, ses_path)
+  .kicad_pcb (routé avec pistes F.Cu + B.Cu + vias)
+
+Input engine :
+{
+  "pcb_base64": "...",
+  "layer_count": 2,
+  "via_costs": 50,
+  "timeout_s": 60
+}
+
+Output engine :
+{
+  "success": true,
+  "pcb_base64": "base64 du .kicad_pcb routé",
   "stats": {
     "track_count": 12,
     "via_count": 3,
@@ -257,53 +602,148 @@ Freerouting (Java JAR headless) génère les traces cuivre.
 }
 ```
 
-### Fichiers à créer
-- `services/kicad/routers/routing.py`
-- `services/kicad/tools/routing.py`
-- `services/kicad/tests/test_routing.py`
+### Output — `routing.json`
+
+```json
+{
+  "stats": {
+    "track_count": 12,
+    "via_count": 3,
+    "routed_percent": 100,
+    "duration_ms": 4200
+  },
+  "kicad_pcb_content": "(kicad_pcb avec pistes...)"
+}
+```
+
+### SSE events produits
+
+```
+SSE → { type: 'tool_result', tool: 'call_agent_routing',
+        summary: 'Routage 100% — 12 pistes, 3 vias, 4.2s' }
+SSE → { type: 'pcb_state',   state: { pcb_status: 'ROUTING_DONE',
+        kicad_pcb_content: '...' }}
+        ← Front: KiCanvas tab Routing — pistes cuivre visibles
+```
+
+### PCBStatus
+
+```
+PLACEMENT_DONE  →  ROUTING_DONE
+```
 
 ### Critère de validation
+
 ```
-curl POST /route/auto (test-lm7805.kicad_pcb placé)
-→ HTTP 200
-→ stats.track_count >= 1
-→ KiCanvas onglet PCB → pistes cuivre visibles
+- POST /route/auto (test-lm7805.kicad_pcb placé en base64) → HTTP 200
+- stats.routed_percent = 100
+- stats.track_count >= 1
+- KiCanvas onglet PCB → pistes cuivre F.Cu visibles
+- pytest services/kicad/tests/test_routing.py → 3 tests passent
 ```
 
-### PCBStatus après step
+### Fichiers à créer
+
 ```
-ROUTING_DONE
+services/kicad/routers/routing.py      (FastAPI endpoint)
+services/kicad/tools/routing.py        (pipeline Freerouting)
+services/kicad/tests/test_routing.py   (3 tests minimum)
+services/kicad/main.py                 (mount /route)
 ```
 
 ---
 
 ## STEP 6 — DRC Agent
 
-**Statut : ⚠️ Stub — toujours retourne DRC_CLEAN**
+**Statut : ⚠️ Stub — toujours DRC_CLEAN**
 
-### Rôle
-Vérifie le PCB routé contre les design rules (clearance, trace width, vias).
-Boucle max 3× avec auto-fix si violations.
+### Orchestrateur
 
-### Responsable
-- Agent IA Haiku 4.5 → `call_agent_drc`
-- Engine Python : `POST /drc` (`services/kicad/routers/drc.py` — à créer)
-
-### Boucle DRC
 ```
-pcbnew DRC → violations?
-   ├─ 0    → PCBStatus = DRC_CLEAN → Step 7
-   └─ > 0  → Agent choisit fix → loop back Step 4 ou 5
-              iter++ ; si iter > 3 → abort + user feedback
+ITERATION 6
+
+Orchestrator reçoit :
+  tool_result = { pcb_status: 'ROUTING_DONE', kicad_pcb_content: '...' }
+
+Orchestrator décide :
+  → "Routage terminé. Je vérifie les règles de design (DRC)."
+  → appelle call_agent_drc
+
+SSE → { type: 'iteration',  count: 6 }
+SSE → { type: 'step',       step: 'DRC' }
+SSE → { type: 'tool_call',  tool: 'call_agent_drc',
+        input: {
+          pcb_base64: "base64(kicad_pcb_content)",
+          auto_fix: true
+        }}
 ```
 
-### Fichiers à créer (Phase 3 Step 3)
-- `services/kicad/routers/drc.py`
-- `services/kicad/tools/drc.py`
+### Outil (Tool)
 
-### PCBStatus après step
 ```
-DRC_CLEAN
+Nom    : call_agent_drc
+Fichier: packages/agents/src/tools.ts  ⚠️ Stub
+
+Input tool :
+{
+  "pcb_base64": "base64 du .kicad_pcb routé",
+  "auto_fix": true
+}
+```
+
+### Agent IA
+
+```
+Modèle  : Haiku 4.5
+Rôle    : analyser violations → décider action (fix placement, fix routing, relaxer rules)
+Appel   : POST /drc  ← À créer
+```
+
+### Engine
+
+```
+Nom     : pcbnew DRC
+Techno  : Python (pcbnew API — DRC runner natif)
+Endpoint: POST /drc  🔲 À créer
+Fichier : services/kicad/routers/drc.py  🔲 À créer
+          services/kicad/tools/drc.py    🔲 À créer
+
+Boucle DRC (dans orchestrateur) :
+  DRC run → violations > 0 ?
+    ├─ NON  → ROUTING_DONE → PCBStatus = DRC_CLEAN → STEP 7
+    └─ OUI  → Agent choisit :
+               ├─ reroute  → loop back STEP 5  (iter++)
+               ├─ replace  → loop back STEP 4  (iter++)
+               └─ si iter > 3 → ask_user
+
+Output engine :
+{
+  "violations": [
+    { "type": "clearance", "loc": [12.5, 30.1],
+      "actual_mm": 0.15, "required_mm": 0.2 }
+  ],
+  "stats": { "checked": 24, "errors": 1, "warnings": 3 }
+}
+```
+
+### Output — `drc.json`
+
+```json
+{
+  "drc_clean": true,
+  "violations": [],
+  "warnings": [
+    { "type": "track_width_info",
+      "message": "Tracks set to 0.2mm (JLCPCB recommended). Ground plane on B.Cu." }
+  ]
+}
+```
+
+### PCBStatus
+
+```
+ROUTING_DONE  →  DRC_CLEAN   (si 0 violations)
+ROUTING_DONE  →  ROUTING_DONE (si violations → loop back STEP 5)
 ```
 
 ---
@@ -312,33 +752,107 @@ DRC_CLEAN
 
 **Statut : ⚠️ Stub — Gerbers non générés**
 
-### Rôle
-Génère les fichiers de fabrication pour JLCPCB :
-- Gerbers (F.Cu, B.Cu, F.SilkS, B.SilkS, F.Mask, B.Mask, Edge.Cuts)
-- BOM CSV avec numéros LCSC
-- Fichier STEP 3D
+### Orchestrateur
 
-### Responsable
-Engine déterministe (pas d'agent IA) : `POST /export`
-
-### Output
 ```
-gerbers/
-  ├── F.Cu.gtl
-  ├── B.Cu.gbl
-  ├── F.SilkS.gto
-  ├── B.SilkS.gbo
-  ├── F.Mask.gts
-  ├── B.Mask.gbs
-  └── Edge.Cuts.gm1
-bom.csv      (ref, value, lcsc)
-board.step   (3D model)
+ITERATION 7
+
+Orchestrator reçoit :
+  tool_result = { drc_clean: true, pcb_status: 'DRC_CLEAN' }
+
+Orchestrator décide :
+  → "DRC clean. Je génère les fichiers de fabrication JLCPCB."
+  → appelle call_agent_export
+
+SSE → { type: 'iteration',  count: 7 }
+SSE → { type: 'step',       step: 'EXPORT' }
+SSE → { type: 'tool_call',  tool: 'call_agent_export',
+        input: { pcb_base64: "base64(kicad_pcb_content)" }}
 ```
 
-### PCBStatus après step
+### Outil (Tool)
+
 ```
-PCB_LIVRÉ (après confirmation user "OUI JE CONFIRME")
+Nom    : call_agent_export
+Fichier: packages/agents/src/tools.ts  ⚠️ Stub
+
+Input tool :
+{
+  "pcb_base64": "base64 du .kicad_pcb DRC-clean"
+}
 ```
+
+### Agent IA
+
+```
+Aucun agent IA pour l'export — 100% déterministe.
+L'orchestrateur appelle l'engine directement via le tool stub.
+```
+
+### Engine
+
+```
+Nom     : pcbnew Plotter
+Techno  : Python (pcbnew API — Gerber plotter)
+Endpoint: POST /export  🔲 À créer
+
+Outputs :
+  Gerbers (7 fichiers) :
+    ├── F.Cu.gtl      (front copper)
+    ├── B.Cu.gbl      (back copper)
+    ├── F.SilkS.gto   (front silkscreen)
+    ├── B.SilkS.gbo   (back silkscreen)
+    ├── F.Mask.gts    (front solder mask)
+    ├── B.Mask.gbs    (back solder mask)
+    └── Edge.Cuts.gm1 (board outline)
+  BOM :
+    └── bom.csv       (ref, value, lcsc)
+  3D :
+    └── board.step    (via occt-import-js)
+```
+
+### Output — `export.json`
+
+```json
+{
+  "gerber_layers": 7,
+  "gerbers_zip_base64": "base64(gerbers.zip)",
+  "bom_csv": "ref,value,lcsc\nU1,LM7805,C14353\nC1,330nF,C1525\n...",
+  "step_base64": "base64(board.step)",
+  "quote_usd": 12.50,
+  "lead_time_days": 7
+}
+```
+
+### SSE events produits
+
+```
+SSE → { type: 'tool_result', tool: 'call_agent_export',
+        summary: '7 Gerbers + BOM + STEP. Devis: $12.50 (7 jours)' }
+SSE → { type: 'text', delta: "✅ PCB prêt ! Tapez OUI JE CONFIRME pour commander." }
+SSE → { type: 'done', fullText: '...' }
+```
+
+### PCBStatus
+
+```
+DRC_CLEAN  →  PCB_LIVRÉ  (après "OUI JE CONFIRME")
+```
+
+---
+
+## Récapitulatif — Tous les outils de l'orchestrateur
+
+| Tool | Agent | Engine | Status |
+|------|-------|--------|--------|
+| `call_agent_design`    | Haiku 4.5 | — (LLM only) | 🔲 À créer |
+| `call_agent_schema`    | Haiku 4.5 | Circuit-Synth `/circuit-synth/generate` | ✅ OK |
+| `call_agent_footprint` | Haiku 4.5 | LCSC + cascade | ⚠️ Stub |
+| `call_agent_placement` | Haiku 4.5 | pcbnew `/place/auto` | ✅ OK |
+| `call_agent_routing`   | Haiku 4.5 | Freerouting `/route/auto` | 🔲 À créer |
+| `call_agent_drc`       | Haiku 4.5 | pcbnew DRC `/drc` | ⚠️ Stub |
+| `call_agent_export`    | — (déterm.) | pcbnew Plotter `/export` | ⚠️ Stub |
+| `ask_user`             | Sonnet     | — | ✅ OK |
 
 ---
 
