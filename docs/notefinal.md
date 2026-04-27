@@ -135,23 +135,11 @@ type SSEEvent =
   | { type: 'error';       message: string }             // erreur critique
 ```
 
-### Outils disponibles (PCB_TOOLS) + modèle par agent
+### Outils disponibles (PCB_TOOLS)
+
+> Voir le tableau récapitulatif complet en fin de document (modèle + engine + endpoint).
 
 ```
-┌─────────────────────────┬──────────────────────────────┬────────────────┬────────┐
-│ Tool                    │ Modèle IA                    │ Output         │ Statut │
-├─────────────────────────┼──────────────────────────────┼────────────────┼────────┤
-│ Orchestrateur           │ claude-sonnet-4-6            │ décisions      │ ✅     │
-│ call_agent_design       │ claude-haiku-4-5-20251001    │ design.json    │ 🔲     │
-│ call_agent_schema       │ claude-haiku-4-5-20251001    │ schematic.json │ ✅     │
-│ call_agent_footprint    │ claude-haiku-4-5-20251001    │ footprints.json│ ⚠️     │
-│ call_agent_placement    │ claude-haiku-4-5-20251001    │ placement.json │ ✅     │
-│ call_agent_routing      │ claude-haiku-4-5-20251001    │ routing.json   │ 🔲     │
-│ call_agent_drc          │ claude-haiku-4-5-20251001    │ drc.json       │ ⚠️     │
-│ call_agent_export       │ — (déterministe, pas de LLM) │ export.json    │ ⚠️     │
-│ ask_user                │ claude-sonnet-4-6 (réponse)  │ question user  │ ✅     │
-└─────────────────────────┴──────────────────────────────┴────────────────┴────────┘
-
 Pourquoi Sonnet pour l'orchestrateur et Haiku pour les agents ?
   Sonnet 4.6  → raisonnement complexe, décisions architecturales, cohérence globale
   Haiku 4.5   → tâches spécialisées répétitives, 3× moins cher que Sonnet
@@ -173,32 +161,6 @@ Pourquoi Sonnet pour l'orchestrateur et Haiku pour les agents ?
    })
    → Haiku reçoit exactement les composants décidés par Sonnet
 ```
-
----
-
-## Orchestrateur — Rôle central (résumé)
-
-```
-Orchestrator (Sonnet 4.6)
-│
-│  Reçoit : message user + historique + PCBStatus courant
-│  Décide : quel tool appeler selon le contexte
-│  Streame : SSE events vers le front en temps réel
-│  Limite  : max 15 itérations par PCB
-│  Budget  : ~0.12€ par PCB complet
-│
-├─ STEP 1 → tool: call_agent_design     🔲
-├─ STEP 2 → tool: call_agent_schema     ✅
-├─ STEP 3 → tool: call_agent_footprint  ⚠️
-├─ STEP 4 → tool: call_agent_placement  ✅
-├─ STEP 5 → tool: call_agent_routing    🔲
-├─ STEP 6 → tool: call_agent_drc        ⚠️
-├─ STEP 7 → tool: call_agent_export     ⚠️
-└─ ??     → tool: ask_user              ✅
-```
-
-**Fichier principal :** `packages/agents/src/orchestrator.ts`
-**Tools :** `packages/agents/src/tools.ts`
 
 ---
 
