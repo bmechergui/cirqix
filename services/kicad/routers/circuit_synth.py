@@ -415,6 +415,28 @@ def _grid_position(idx: int, total: int, board_w: float, board_h: float) -> tupl
 
 
 _INLINE_LIB_SYMBOLS = """
+  (symbol "power:GND"
+    (power) (pin_names (offset 0)) (in_bom no) (on_board yes)
+    (property "Reference" "#PWR" (at 0 -6.35 0) (effects (font (size 1.27 1.27)) hide))
+    (property "Value" "GND" (at 0 -3.81 0) (effects (font (size 1.27 1.27))))
+    (symbol "GND_0_1"
+      (polyline (pts (xy 0 0) (xy 0 -1.27) (xy 1.27 -1.27) (xy 0 -2.54) (xy -1.27 -1.27) (xy 0 -1.27))
+        (stroke (width 0) (type default)) (fill (type none))))
+    (symbol "GND_1_1"
+      (pin power_in line (at 0 0 270) (length 0)
+        (name "GND" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
+  (symbol "power:VCC"
+    (power) (pin_names (offset 0)) (in_bom no) (on_board yes)
+    (property "Reference" "#PWR" (at 0 -3.81 0) (effects (font (size 1.27 1.27)) hide))
+    (property "Value" "VCC" (at 0 3.81 0) (effects (font (size 1.27 1.27))))
+    (symbol "VCC_0_1"
+      (polyline (pts (xy -0.762 1.27) (xy 0 2.54) (xy 0.762 1.27))
+        (stroke (width 0) (type default)) (fill (type none)))
+      (circle (center 0 1.27) (radius 0.635)
+        (stroke (width 0) (type default)) (fill (type none))))
+    (symbol "VCC_1_1"
+      (pin power_in line (at 0 0 90) (length 1.27)
+        (name "VCC" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
   (symbol "Device:R"
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "R" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
@@ -580,6 +602,63 @@ _VREG_PIN_OFFSETS: dict[int, tuple[float, float]] = {
 }
 
 
+# --- Title block helpers ----------------------------------------------------
+
+
+def _today_iso() -> str:
+    """Return today's date in ISO format (YYYY-MM-DD), used in the title block."""
+    from datetime import date
+    return date.today().isoformat()
+
+
+def _derive_title(components: list[SchemaComponent]) -> str:
+    """Derive a project title from the most prominent component value.
+
+    Heuristic: the first IC (ref starting with "U") wins; otherwise the first
+    component's value. Title is truncated/escaped for KiCad's S-expression syntax.
+    """
+    if not components:
+        return "Layrix Project"
+    primary = next(
+        (c for c in components if c.ref.upper().startswith("U")),
+        components[0],
+    )
+    raw = (primary.value or "Layrix Project").strip()
+    # Strip quotes that would break the S-expression
+    raw = raw.replace('"', "")
+    if len(raw) > 60:
+        raw = raw[:57] + "..."
+    return f"Layrix — {raw}"
+
+
+# --- Power-net handling for "pro" rendering ---------------------------------
+
+# Nets considered power rails — these are rendered with standard KiCad power
+# symbols (`power:GND` triangle, `power:VCC` arrow) instead of plain text labels.
+# Aligned with KiCad / EE convention: any +Vxxx is a positive supply rail.
+_GND_NETS: frozenset[str] = frozenset({"GND", "VSS", "AGND", "DGND", "PGND", "GROUND"})
+_VCC_NETS: frozenset[str] = frozenset({"VCC", "VDD", "VBUS", "VBAT"})
+
+
+def _is_power_net(name: str) -> bool:
+    """Return True if `name` should be rendered with a KiCad power symbol."""
+    if not name:
+        return False
+    upper = name.upper().strip()
+    if upper in _GND_NETS or upper in _VCC_NETS:
+        return True
+    # Positive rails like "+5V", "+3V3", "+3.3V", "+12V"
+    if upper.startswith("+") and len(upper) >= 2:
+        return True
+    return False
+
+
+def _power_lib_id(name: str) -> str:
+    """Return the KiCad power lib_id for a given net name."""
+    upper = name.upper().strip()
+    return "power:GND" if upper in _GND_NETS else "power:VCC"
+
+
 def _pin_offset(lib_id: str, pin_num: int) -> tuple[float, float]:
     # DIP-8 style ICs: Device:IC and Timer:NE555P share same pin geometry
     if lib_id in ("Device:IC", "Timer:NE555P"):
@@ -642,6 +721,18 @@ def _generate_schematic_fallback(
         f'(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "{_uuid4()}")'
     )
     lines.append(f'  (paper "User" {paper_w} {paper_h})')
+
+    # Title block — fills the standard KiCad title block at bottom-right.
+    # Project name is derived from the most prominent component's value.
+    title_str = _derive_title(components)
+    today_iso = _today_iso()
+    lines.append('  (title_block')
+    lines.append(f'    (title "{title_str}")')
+    lines.append(f'    (date "{today_iso}")')
+    lines.append('    (rev "1.0")')
+    lines.append('    (company "Layrix.ai")')
+    lines.append('  )')
+
     lines.append(f'  (lib_symbols{_INLINE_LIB_SYMBOLS}  )')
 
     positions: list[tuple[float, float]] = [
@@ -675,12 +766,16 @@ def _generate_schematic_fallback(
         )
         lines.append('  )')
 
-    # --- Net-label stubs: short wire + label at each (net, pin) pair ---
+    # --- Net-label stubs: short wire + label OR power symbol at each pin ---
+    # Power nets (GND, VCC, +5V, +3V3…) get standard KiCad power symbols
+    # (triangle / arrow). Signal nets keep readable text labels.
     comp_idx_by_ref = {c.ref: i for i, c in enumerate(components)}
     for net in connections:
         if not net.pins:
             continue
         name_e = net.name.replace('"', '\\"')
+        is_power = _is_power_net(net.name)
+        power_id = _power_lib_id(net.name) if is_power else ""
         for p in net.pins:
             idx = comp_idx_by_ref.get(p.ref)
             if idx is None:
@@ -705,11 +800,37 @@ def _generate_schematic_fallback(
                 f'  (wire (pts (xy {px} {py}) (xy {ex} {ey})) '
                 f'(stroke (width 0.1524) (type default)) (uuid "{_uuid4()}"))'
             )
-            lines.append(
-                f'  (label "{name_e}" (at {ex} {ey} {langle}) '
-                f'(effects (font (size 1.27 1.27))) '
-                f'(uuid "{_uuid4()}"))'
-            )
+            if is_power:
+                # Power symbol orientation: GND points down (rotation 0),
+                # VCC points up (rotation 180). Choose orientation so the
+                # symbol's pin connects to the stub endpoint.
+                # GND triangle: pin at top, body extends downward → rotation 0
+                # VCC arrow:    pin at bottom, body extends upward → rotation 0
+                rot = 0
+                lines.append(
+                    f'  (symbol (lib_id "{power_id}") (at {ex} {ey} {rot}) '
+                    f'(unit 1) (in_bom no) (on_board yes)'
+                )
+                lines.append(f'    (uuid "{_uuid4()}")')
+                # Override the Value property to show the actual net name
+                # (so "+5V", "+3V3", etc. display correctly even though they
+                # all reuse the same `power:VCC` symbol shape).
+                _value_y_offset = -3.81 if power_id == "power:GND" else 3.81
+                lines.append(
+                    f'    (property "Reference" "#PWR" (at {ex} {ey - 6.35} 0) '
+                    f'(effects (font (size 1.27 1.27)) hide))'
+                )
+                lines.append(
+                    f'    (property "Value" "{name_e}" (at {ex} {ey + _value_y_offset} 0) '
+                    f'(effects (font (size 1.27 1.27))))'
+                )
+                lines.append('  )')
+            else:
+                lines.append(
+                    f'  (label "{name_e}" (at {ex} {ey} {langle}) '
+                    f'(effects (font (size 1.27 1.27))) '
+                    f'(uuid "{_uuid4()}"))'
+                )
 
     lines.append('  (sheet_instances (path "/" (page "1")))')
     lines.append(')')

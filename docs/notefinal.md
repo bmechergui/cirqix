@@ -585,6 +585,20 @@ INITIAL  →  SCHEMA_DONE
 ✅ Labels VIN/VOUT/GND visibles et lisibles
 ✅ Bloc titre masqué automatiquement (zoomToComponents())
 ✅ Testé sur LM7805 / NE555 / ESP32
+
+— Sprint "Schéma Pro" (2026-04-28) —
+✅ Symboles power KiCad standards :
+   - power:GND (triangle) sur tous les nets GND/VSS/AGND/DGND/PGND
+   - power:VCC (flèche + cercle) sur VCC/VDD/VBUS/+5V/+3V3/+3.3V/+12V
+✅ Helper _is_power_net(name) — détection automatique des rails power
+✅ Title block rempli :
+   - title : "Layrix — {nom du composant principal}"
+   - date  : ISO YYYY-MM-DD
+   - rev   : "1.0"
+   - company : "Layrix.ai"
+✅ Net-labels texte conservés pour les nets non-power (VIN, VOUT, GPIO2…)
+✅ 21 tests pytest passent (TDD : RED → GREEN)
+✅ Vérifié visuellement sur LM7805 / NE555 / ESP32 (Chrome DevTools)
 ```
 
 ---
