@@ -199,6 +199,53 @@ JLCPCB Order                                               🔲 Phase 4
 
 ---
 
+## La Netlist — qui fait quoi
+
+La netlist (liste `{net → pads connectés}`) est créée **une seule fois** puis voyage dans tous les fichiers KiCad jusqu'à la fabrication.
+
+| Étape | Acteur | Rôle |
+|-------|--------|------|
+| 1️⃣ **Création** | **Schematic Agent (Haiku 4.5)** | Décide *"VIN connecte J1.1 + U1.IN + C1.1"* |
+| 2️⃣ **Sérialisation** | **Circuit-Synth (Python)** | Écrit la netlist dans `.kicad_sch` + `.kicad_pcb` |
+| 3️⃣ **Affichage** | **KiCanvas (front)** | Affiche les net labels (VIN, VOUT, GND) sur le schéma |
+| 4️⃣ **Lecture** | **Freerouting (Java)** | Lit la netlist pour router les pistes physiques |
+| 5️⃣ **Vérification** | **DRC Agent + pcbnew** | Vérifie que les pistes correspondent bien à la netlist |
+
+### Format de la netlist (dans schematic.json — connections[])
+
+```json
+{
+  "connections": [
+    {
+      "name": "VIN",
+      "pins": [
+        { "ref": "J1", "pin": 1 },
+        { "ref": "U1", "pin": "IN" },
+        { "ref": "C1", "pin": 1 }
+      ]
+    },
+    {
+      "name": "GND",
+      "pins": [
+        { "ref": "J1", "pin": 2 },
+        { "ref": "U1", "pin": "GND" },
+        { "ref": "C1", "pin": 2 }
+      ]
+    }
+  ]
+}
+```
+
+### Règle critique — un seul créateur
+
+```
+✅ Le Schematic Agent (Haiku 4.5) est l'UNIQUE créateur de la netlist
+   → tous les autres acteurs ne font que la transporter ou la consommer
+   → jamais de mutation de la netlist en aval (immutabilité)
+```
+
+---
+
 ## STEP 1 — Design Agent
 
 **Statut : 🔲 À implémenter**
