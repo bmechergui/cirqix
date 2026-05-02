@@ -253,6 +253,9 @@ SchemaJson {
 
 **Écarté aussi :** écrire directement les S-expressions `.kicad_sch` par le LLM — format trop verbeux (plusieurs milliers de lignes), fragile (change entre versions KiCad 6 → 7 → 8).
 
+**SKiDL ≠ Circuit-Synth — rôles différents, non interchangeables :
+SKiDL génère des netlists. Circuit-Synth consomme une netlist et produit des fichiers KiCad. On ne peut pas remplacer l'un par l'autre.
+
 **SKiDL ne peut pas s'insérer entre le LLM et Circuit-Synth :**
 
 ```
