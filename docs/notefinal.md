@@ -173,10 +173,10 @@ Les deux fichiers ont un **placement grille naïve** — positions mathématique
 
 **Placement Phase 2 — grille naïve uniquement :**
 
-Phase 2 utilise exclusivement Python Circuit-Synth ou TS fallback — les deux produisent une grille naïve, sans logique électrique. Il n'existe pas d'alternative en Phase 2.
+Phase 2 utilise exclusivement Python Circuit-Synth ou TS fallback — les deux génèrent `.kicad_sch` + `.kicad_pcb` avec une grille naïve, sans logique électrique. Il n'existe pas d'alternative en Phase 2.
 
-- Python disponible → `_grid_position()` calcule les positions → écrit dans `.kicad_pcb`
-- Python indisponible → `autoLayout()` (TS) calcule les positions en mémoire → `generatePCB()` écrit les S-expressions KiCad 7 → `.kicad_pcb` créé
+- Python disponible → `_grid_position()` calcule les positions → génère `.kicad_sch` + `.kicad_pcb` natifs KiCad 7
+- Python indisponible → `autoLayout()` (TS) calcule les positions → `generateSchematic()` + `generatePCB()` génèrent `.kicad_sch` + `.kicad_pcb` en S-expressions TypeScript
 
 Phase 3 (à faire) :
 1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
