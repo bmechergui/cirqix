@@ -150,7 +150,7 @@ SchemaJson
     │   → Python circuit_synth lib → _grid_position() pour placement
     │   → .kicad_sch + .kicad_pcb natifs KiCad 7
     │
-    └── NON (fallback inline TS — service KiCad down ou non déployé)
+    └── NON (fallback inline TS — service  down ou non déployé)
             │
             ▼
         generateSchematic() + generatePCB() (circuit-synth-engine.ts)
@@ -206,7 +206,7 @@ runPCBEngine(schema, boardW, boardH, projectId) → PCBEngineResult
 |------|-----------------|------------------------|
 | `call_agent_spec` | ✅ Haiku 4.5 → `DesignJson` | — (déjà opérationnel) |
 | `call_agent_schema` | ✅ Haiku 4.5 → Circuit-Synth | — (déjà opérationnel) |
-| `call_agent_placement` | ⚠️ Stub grille TS `autoLayout()` | `POST /place/auto` → pcbnew |
+| `call_agent_placement` | ⚠️ Grille naïve — Python `_grid_position()` ou TS `autoLayout()` selon disponibilité FastAPI. Pas de logique électrique, pas de solveur de contraintes. Impossible d'améliorer en Phase 2 — pcbnew obligatoire. | `POST /place/auto` → pcbnew |
 | `call_agent_routing` | ⚠️ Stub Circuit-Synth | `POST /route` → Freerouting |
 | `call_agent_drc` | ⚠️ Stub (0 violations toujours) | `POST /drc` → pcbnew DRC natif |
 | `call_agent_export` | ⚠️ Stub (pas de vrais Gerbers) | `POST /export` → Gerbers réels |
