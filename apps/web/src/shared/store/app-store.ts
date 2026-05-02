@@ -26,7 +26,7 @@ interface AppState {
 
   // Agent
   isAgentRunning: boolean;
-  agentStep: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+  agentStep: 'DESIGN' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
   // PCB state par projet (mis à jour par les events SSE de l'agent)
   pcbStateByProject: Record<string, PCBState>;

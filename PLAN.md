@@ -12,16 +12,17 @@ Tagline : *"Every layer, perfectly designed by AI"*
 ```
 layrix/
 ├── apps/
-│   ├── landing/        → Next.js 15 (SEO, waitlist, marketing) — Lighthouse 100/100
-│   ├── dashboard/      → Next.js 15 (chat, viewer PCB, projets, footprints)
-│   └── api/            → Next.js API Routes (backend MVP)
+│   └── web/            → Next.js 15 (marketing + auth + dashboard + API Routes, port 3333)
 ├── packages/
-│   ├── agents/         → Boucle agentique Claude SDK (Orchestrateur + 6 agents)
-│   ├── ui/             → shadcn/ui + PixiJS + Three.js (partagé)
-│   ├── db/             → Types Supabase + Prisma + pgvector
+│   ├── agents/         → Boucle agentique Claude SDK (Orchestrateur + agents)
+│   ├── types/          → Source de vérité TypeScript (@layrix/types)
+│   ├── db/             → Supabase client + migrations
+│   ├── logger/         → Pino logger
+│   ├── utils/          → cn() helpers
+│   ├── ui/             → shadcn/ui + design system partagé
 │   └── config-typescript/ → tsconfig partagé (strict)
 └── services/
-    └── kicad/          → Python FastAPI + pcbnew (Docker headless)
+    └── kicad/          → Python FastAPI + Circuit-Synth (Docker headless)
 ```
 
 ---

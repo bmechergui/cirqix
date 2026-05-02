@@ -67,3 +67,6 @@ apps/web/public/test-*.kicad_sch
 apps/web/public/test-*.kicad_pcb
 apps/web/public/test-*.html
 apps/web/public/test-kicad.html
+
+# Temp dev artifacts
+tmp/

@@ -5,7 +5,6 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./engines/tscircuit-engine": "./src/engines/tscircuit-engine.ts",
     "./engines/engine-router": "./src/engines/engine-router.ts"
   },
   "scripts": {
@@ -14,12 +13,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.28.0",
+    "@anthropic-ai/sdk": "^0.92.0",
     "@layrix/db": "workspace:*",
     "@layrix/types": "workspace:*",
     "bullmq": "^5.0.0",
-    "circuit-json": "^0.0.406",
-    "circuit-json-to-gerber": "^0.0.48",
     "ioredis": "^5.3.0",
     "jszip": "^3.10.1",
     "pino": "^9.0.0",

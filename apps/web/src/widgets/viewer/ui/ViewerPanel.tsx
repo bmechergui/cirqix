@@ -230,9 +230,10 @@ function PCBPlaceholder() {
   );
 }
 
-type AgentStep = 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+type AgentStep = 'DESIGN' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 const STEP_LABELS: Record<NonNullable<AgentStep>, string> = {
+  DESIGN:    'Analysing circuit requirements…',
   SCHEMA:    'Generating schematic…',
   PLACEMENT: 'Placing components…',
   ROUTING:   'Auto-routing traces…',

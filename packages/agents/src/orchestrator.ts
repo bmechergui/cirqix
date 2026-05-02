@@ -100,7 +100,7 @@ export async function* runOrchestrator(
     // Build assistant content blocks for history
     const assistantContent: ContentBlock[] = [];
     if (textDelta) {
-      const textBlock: TextBlock = { type: 'text', text: textDelta };
+      const textBlock = { type: 'text' as const, text: textDelta } as TextBlock;
       assistantContent.push(textBlock);
     }
     for (const tool of toolUseBlocks) {
@@ -110,12 +110,12 @@ export async function* runOrchestrator(
       } catch {
         toolInput = {};
       }
-      const toolBlock: ToolUseBlock = {
-        type: 'tool_use',
+      const toolBlock = {
+        type: 'tool_use' as const,
         id: tool.id,
         name: tool.name,
         input: toolInput,
-      };
+      } as ToolUseBlock;
       assistantContent.push(toolBlock);
       yield { type: 'tool_call', tool: tool.name, input: toolInput };
 

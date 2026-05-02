@@ -1,8 +1,9 @@
 import { Check } from 'lucide-react';
 
-const STEPS = ['SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
+const STEPS = ['DESIGN', 'SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
 
 const STEP_LABELS: Record<(typeof STEPS)[number], string> = {
+  DESIGN:    'Design',
   SCHEMA:    'Schema',
   PLACEMENT: 'Placement',
   ROUTING:   'Routing',
@@ -13,11 +14,12 @@ const STEP_LABELS: Record<(typeof STEPS)[number], string> = {
 type AgentStep = (typeof STEPS)[number] | null;
 
 const STEP_INDEX: Record<NonNullable<AgentStep>, number> = {
-  SCHEMA:    0,
-  PLACEMENT: 1,
-  ROUTING:   2,
-  DRC:       3,
-  EXPORT:    4,
+  DESIGN:    0,
+  SCHEMA:    1,
+  PLACEMENT: 2,
+  ROUTING:   3,
+  DRC:       4,
+  EXPORT:    5,
 };
 
 interface AgentProgressBarProps {
