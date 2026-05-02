@@ -159,7 +159,7 @@ SchemaJson
         → .kicad_sch + .kicad_pcb (qualité moindre mais toujours disponible)
 ```
 
-**Pourquoi deux implémentations :** résilience — si le service Docker KiCad est down, l'agent ne bloque pas. Le TS fallback permet toujours d'afficher quelque chose dans KiCanvas. Jamais les deux en même temps — un seul chemin retourne les fichiers.
+**Pourquoi deux implémentations :** résilience — si le service FastAPI n'est pas accessible (`KICAD_SERVICE_URL` non défini, ex: développement local sans Docker), l'agent ne bloque pas. Le TS fallback génère les fichiers directement en mémoire. Circuit-Synth n'a pas besoin de KiCad installé ni de Docker pour générer les S-expressions — Docker sert uniquement à déployer le service FastAPI. Jamais les deux en même temps — un seul chemin retourne les fichiers.
 
 **Output toujours :**
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
