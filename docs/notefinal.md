@@ -160,11 +160,21 @@ SchemaJson
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
 - `.kicad_pcb` — board avec footprints. La netlist est embarquée sous forme de ratsnest (connexions attendues entre pads).
 
-**Important Phase 2 — `.kicad_pcb` généré par Circuit-Synth :**
-- Pas de placement réel — composants posés en grille naïve (`autoLayout()`)
-- Pas de routage — aucune piste tracée, seulement le ratsnest (fils virtuels)
-- Utilisable uniquement pour visualisation dans KiCanvas
-- Phase 3 : placement pcbnew + Freerouting remplaceront ce stub
+**Placement Phase 2 vs Phase 3 — même fichier `.kicad_pcb` :**
+
+Phase 2 (actuel) :
+1. `autoLayout()` prend `SchemaJson` en mémoire → calcule positions X/Y grille mathématique
+2. Pas de lecture de fichier — tout en mémoire
+3. `generatePCB()` écrit les positions en S-expressions KiCad 7 (string TS)
+4. Résultat → `.kicad_pcb` créé
+
+Phase 3 (à faire) :
+1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
+2. `POST /place/auto` → pcbnew lit ce `.kicad_pcb`
+3. `pcbnew.SetPosition()` écrase les coordonnées par des positions réelles
+4. Retourne le **même** `.kicad_pcb` modifié — pas un nouveau fichier
+
+Pourquoi pas pcbnew maintenant : `call_agent_placement` appelle `runPCBEngine()` (TS) au lieu de `POST /place/auto` (FastAPI). Câblage non fait — travail Phase 3.
 
 #### Engine Router
 
