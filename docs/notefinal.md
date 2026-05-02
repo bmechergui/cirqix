@@ -253,6 +253,18 @@ SchemaJson {
 
 **Écarté aussi :** écrire directement les S-expressions `.kicad_sch` par le LLM — format trop verbeux (plusieurs milliers de lignes), fragile (change entre versions KiCad 6 → 7 → 8).
 
+**SKiDL ne peut pas s'insérer entre le LLM et Circuit-Synth :**
+
+```
+Option SKiDL :
+LLM → code Python SKiDL → SKiDL → fichier .net → ??? → Circuit-Synth
+                                                    ↑
+                          Circuit-Synth ne lit pas .net
+                          il attend SchemaJson
+```
+
+SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth attend un `SchemaJson` — formats incompatibles. Il faudrait un convertisseur `.net → SchemaJson` entre les deux, couche supplémentaire sans valeur ajoutée. SKiDL remplacerait `call_agent_schema` (le générateur de netlist), pas Circuit-Synth — et on a écarté cette position pour les raisons de sécurité citées ci-dessus.
+
 ---
 
 ## Template pour la prochaine décision
