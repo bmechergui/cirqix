@@ -188,11 +188,17 @@ Le schéma Phase 2 est suffisant pour KiCanvas et pour extraire la netlist.
   Réorganiser le .kicad_sch n'est pas dans le scope Phase 3 — c'est une
   amélioration cosmétique, pas un blocage pour fabriquer le PCB.
 
-**Pourquoi pas pcbnew en Phase 2 :** pcbnew est une bibliothèque Python KiCad, pas disponible en TypeScript. Le TS ne peut qu'écrire des S-expressions manuellement (grille naïve), pas appeler les API internes de KiCad.
 
-**Phase 3 — placement réel via pcbnew :**
+**OR-Tools — amélioration cosmétique avant pcbnew (Free / Maker) :**
+OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et les écrire dans les S-expressions via `circuit-synth-engine.ts` — sans pcbnew. Résultat : placement mathématiquement optimisé, schéma plus lisible, `.kicad_pcb` plus propre. Pas un vrai placement EDA (pas de DRC, pas de tailles réelles de footprints) mais suffisant pour améliorer la lisibilité Free/Maker.
 
-`pcbnew` = bibliothèque Python officielle de KiCad. Elle permet de lire, modifier et écrire des fichiers `.kicad_pcb` programmatiquement — déplacer des footprints, tracer des pistes, lancer le DRC, exporter des Gerbers. Tout ce qu'on fait manuellement dans KiCad, `pcbnew` le fait en Python.
+**Stratégie par plan :**
+- Free / Maker → OR-Tools + S-expressions TS (placement amélioré, sans pcbnew)
+- Pro / Max → pcbnew réel (`POST /place/auto`) — placement EDA natif avec DRC
+
+**Phase 3 — placement réel via pcbnew (Pro / Max) :**
+
+`pcbnew` = bibliothèque Python officielle de KiCad. Elle permet de lire, modifier et écrire des fichiers `.kicad_pcb` programmatiquement — déplacer des footprints, tracer des pistes, lancer le DRC, exporter des Gerbers. Tout ce qu'on fait manuellement dans KiCad, `pcbnew` le fait en Python. pcbnew n'est pas disponible en TypeScript — obligatoirement Python via FastAPI.
 
 1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
 2. `call_agent_placement` appelle `POST /place/auto` (FastAPI) — câblage à faire
