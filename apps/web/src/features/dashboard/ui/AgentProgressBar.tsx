@@ -1,9 +1,9 @@
 import { Check } from 'lucide-react';
 
-const STEPS = ['DESIGN', 'SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
+const STEPS = ['SPEC', 'SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'] as const;
 
 const STEP_LABELS: Record<(typeof STEPS)[number], string> = {
-  DESIGN:    'Design',
+  SPEC:      'Spec',
   SCHEMA:    'Schema',
   PLACEMENT: 'Placement',
   ROUTING:   'Routing',
@@ -14,7 +14,7 @@ const STEP_LABELS: Record<(typeof STEPS)[number], string> = {
 type AgentStep = (typeof STEPS)[number] | null;
 
 const STEP_INDEX: Record<NonNullable<AgentStep>, number> = {
-  DESIGN:    0,
+  SPEC:      0,
   SCHEMA:    1,
   PLACEMENT: 2,
   ROUTING:   3,

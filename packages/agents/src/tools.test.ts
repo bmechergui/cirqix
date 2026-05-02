@@ -14,15 +14,15 @@ beforeEach(() => {
   process.env['ANTHROPIC_API_KEY'] = 'test-key';
 });
 
-describe('PCB_TOOLS — call_agent_design', () => {
-  it('exposes a call_agent_design tool definition', () => {
-    const designTool = PCB_TOOLS.find((t) => t.name === 'call_agent_design');
+describe('PCB_TOOLS — call_agent_spec', () => {
+  it('exposes a call_agent_spec tool definition', () => {
+    const designTool = PCB_TOOLS.find((t) => t.name === 'call_agent_spec');
     expect(designTool).toBeDefined();
     expect(designTool?.description).toMatch(/design|type|circuit/i);
   });
 
   it('declares user_description as required input', () => {
-    const designTool = PCB_TOOLS.find((t) => t.name === 'call_agent_design');
+    const designTool = PCB_TOOLS.find((t) => t.name === 'call_agent_spec');
     const schema = designTool?.input_schema as {
       type: string;
       properties: Record<string, unknown>;
@@ -34,7 +34,7 @@ describe('PCB_TOOLS — call_agent_design', () => {
   });
 
   it('appears BEFORE call_agent_schema in PCB_TOOLS list', () => {
-    const designIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_design');
+    const designIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_spec');
     const schemaIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_schema');
     expect(designIdx).toBeGreaterThanOrEqual(0);
     expect(schemaIdx).toBeGreaterThanOrEqual(0);
@@ -42,12 +42,12 @@ describe('PCB_TOOLS — call_agent_design', () => {
   });
 });
 
-describe('executeToolStub — call_agent_design', () => {
+describe('executeToolStub — call_agent_spec', () => {
   it('returns success with a fallback design when API key absent', async () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     const result = await executeToolStub(
-      'call_agent_design',
+      'call_agent_spec',
       { user_description: 'régulateur 5V LM7805 avec condensateurs' },
       'proj-test'
     );
@@ -87,7 +87,7 @@ describe('executeToolStub — call_agent_design', () => {
     });
 
     const result = await executeToolStub(
-      'call_agent_design',
+      'call_agent_spec',
       { user_description: 'régulateur 5V LM7805' },
       'proj-test'
     );
@@ -105,7 +105,7 @@ describe('executeToolStub — call_agent_design', () => {
     });
 
     const result = await executeToolStub(
-      'call_agent_design',
+      'call_agent_spec',
       { user_description: 'circuit simple' },
       'proj-test'
     );
@@ -121,7 +121,7 @@ describe('executeToolStub — call_agent_design', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     const result = await executeToolStub(
-      'call_agent_design',
+      'call_agent_spec',
       { user_description: 'simple LED' },
       'proj-test'
     );
@@ -137,7 +137,7 @@ describe('executeToolStub — call_agent_design', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     const result = await executeToolStub(
-      'call_agent_design',
+      'call_agent_spec',
       { user_description: 'régulateur 5V' },
       'proj-test'
     );

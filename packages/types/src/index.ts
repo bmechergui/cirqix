@@ -18,7 +18,7 @@ export type FootprintSource =
 
 export type AgentAction =
   | 'chat'
-  | 'design'
+  | 'spec'
   | 'schema'
   | 'placement'
   | 'routing'
@@ -28,7 +28,7 @@ export type AgentAction =
   | 'view3d'
   | 'simulation';
 
-export type AgentStep = 'DESIGN' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+export type AgentStep = 'SPEC' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 export interface Project {
   id: string;
@@ -159,7 +159,7 @@ export interface PCBState {
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {
   chat: 0.5,
-  design: 0.5,
+  spec: 0.5,
   schema: 2,
   placement: 2,
   routing: 3,

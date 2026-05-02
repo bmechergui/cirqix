@@ -29,9 +29,9 @@ const MAX_DESC_LENGTH = 2000;
 // Définitions des tools pour l'API Anthropic
 export const PCB_TOOLS: Tool[] = [
   {
-    name: 'call_agent_design',
+    name: 'call_agent_spec',
     description:
-      "Analyse le prompt utilisateur pour produire le contexte technique du PCB : type de circuit (power_supply, iot_sensor, motor_driver…), nombre de couches, design rules (trace width, clearance), contraintes (tension, courant). Doit être appelé EN PREMIER, avant call_agent_schema, pour donner aux agents suivants un contexte structuré.",
+      "Parse la description utilisateur pour produire le contexte technique du PCB : type de circuit (power_supply, iot_sensor, motor_driver…), nombre de couches, design rules (trace width, clearance), contraintes (tension, courant). Doit être appelé EN PREMIER, avant call_agent_schema, pour donner aux agents suivants un contexte structuré.",
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -188,7 +188,7 @@ export async function executeToolStub(
 ): Promise<Record<string, unknown>> {
   switch (toolName) {
 
-    case 'call_agent_design': {
+    case 'call_agent_spec': {
       const rawDesc = String(input['user_description'] ?? '').trim();
       // Review fix MEDIUM-1: clamp prompt length before forwarding to Haiku
       const desc = rawDesc.slice(0, MAX_DESC_LENGTH);
@@ -651,7 +651,7 @@ function buildFallbackDesign(description: string): DesignJson {
   };
 }
 
-const DESIGN_AGENT_SYSTEM = `You are the Design Agent for Layrix.ai PCB pipeline.
+const SPEC_PARSER_SYSTEM = `You are the Spec Parser for Layrix.ai PCB pipeline.
 
 Given a user's circuit description in natural language, return a single JSON object describing the high-level PCB design context. NO markdown, NO comments, NO explanation — just the JSON.
 
@@ -692,7 +692,7 @@ async function generateDesignWithHaiku(description: string): Promise<DesignJson 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: DESIGN_AGENT_SYSTEM,
+      system: SPEC_PARSER_SYSTEM,
       messages: [{ role: 'user', content: `Circuit: ${description}` }],
     });
 

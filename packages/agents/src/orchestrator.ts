@@ -121,7 +121,7 @@ export async function* runOrchestrator(
 
       // Emit step event for PCB pipeline steps
       const stepMap: Record<string, string> = {
-        call_agent_design: 'DESIGN',
+        call_agent_spec: 'SPEC',
         call_agent_schema: 'SCHEMA',
         call_agent_placement: 'PLACEMENT',
         call_agent_routing: 'ROUTING',
