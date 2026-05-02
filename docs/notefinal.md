@@ -233,6 +233,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 **Après DRC → Export :**
 `call_agent_export` → génère les Gerbers, BOM CSV et CPL pour JLCPCB, puis obtient un devis. Confirmation "OUI JE CONFIRME" obligatoire avant commande — jamais automatique.
 
+**Après export → Commande JLCPCB :**
+L'utilisateur confirme "OUI JE CONFIRME" → commande envoyée à JLCPCB. Statut final : `PCB_LIVRÉ`. C'est la fin du pipeline.
+
 ---
 
 ---
