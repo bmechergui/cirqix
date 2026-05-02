@@ -227,6 +227,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 **Après placement → Routage :**
 `call_agent_routing` → Freerouting trace les pistes entre les footprints dans le `.kicad_pcb`. C'est l'étape qui suit immédiatement le placement dans le pipeline.
 
+**Après routage → DRC :**
+`call_agent_drc` → pcbnew vérifie les violations de règles (clearance, largeur de piste, courts-circuits) et tente de les corriger automatiquement. Obligatoire avant export — le PCB doit être DRC_CLEAN.
+
 ---
 
 ---
