@@ -171,13 +171,12 @@ Les deux fichiers ont un **placement grille naïve** — positions mathématique
 
 "Bon placement" = Phase 3 (pcbnew).
 
-**Placement Phase 2 vs Phase 3 — même fichier `.kicad_pcb` :**
+**Placement Phase 2 — grille naïve uniquement :**
 
-Phase 2 (actuel) :
-1. `autoLayout()` prend `SchemaJson` en mémoire → calcule positions X/Y grille mathématique
-2. Pas de lecture de fichier — tout en mémoire
-3. `generatePCB()` écrit les positions en S-expressions KiCad 7 (string TS)
-4. Résultat → `.kicad_pcb` créé
+Phase 2 utilise exclusivement Python Circuit-Synth ou TS fallback — les deux produisent une grille naïve, sans logique électrique. Il n'existe pas d'alternative en Phase 2.
+
+- Python disponible → `_grid_position()` calcule les positions → écrit dans `.kicad_pcb`
+- Python indisponible → `autoLayout()` (TS) calcule les positions en mémoire → `generatePCB()` écrit les S-expressions KiCad 7 → `.kicad_pcb` créé
 
 Phase 3 (à faire) :
 1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
