@@ -230,6 +230,9 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 **Après routage → DRC :**
 `call_agent_drc` → pcbnew vérifie les violations de règles (clearance, largeur de piste, courts-circuits) et tente de les corriger automatiquement. Obligatoire avant export — le PCB doit être DRC_CLEAN.
 
+**Après DRC → Export :**
+`call_agent_export` → génère les Gerbers, BOM CSV et CPL pour JLCPCB, puis obtient un devis. Confirmation "OUI JE CONFIRME" obligatoire avant commande — jamais automatique.
+
 ---
 
 ---
