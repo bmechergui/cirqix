@@ -190,7 +190,10 @@ Le schéma Phase 2 est suffisant pour KiCanvas et pour extraire la netlist.
 
 **Pourquoi pas pcbnew en Phase 2 :** pcbnew est une bibliothèque Python KiCad, pas disponible en TypeScript. Le TS ne peut qu'écrire des S-expressions manuellement (grille naïve), pas appeler les API internes de KiCad.
 
-**Phase 3 — placement réel :**
+**Phase 3 — placement réel via pcbnew :**
+
+`pcbnew` = bibliothèque Python officielle de KiCad. Elle permet de lire, modifier et écrire des fichiers `.kicad_pcb` programmatiquement — déplacer des footprints, tracer des pistes, lancer le DRC, exporter des Gerbers. Tout ce qu'on fait manuellement dans KiCad, `pcbnew` le fait en Python.
+
 1. Circuit-Synth génère le `.kicad_pcb` (avec grille naïve)
 2. `call_agent_placement` appelle `POST /place/auto` (FastAPI) — câblage à faire
 3. pcbnew lit ce `.kicad_pcb` → `pcbnew.SetPosition()` écrase les coordonnées par des positions réelles
