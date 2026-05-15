@@ -37,6 +37,7 @@ export function ViewerPanel({ projectId, mode: modeProp, onModeChange }: ViewerP
   const [layerVisibility, setLayerVisibility] =
     useState<Record<string, boolean>>(DEFAULT_LAYER_VISIBILITY);
   const [zoomControls, setZoomControls] = useState<ZoomControls | null>(null);
+  const [showRawKicad, setShowRawKicad] = useState(false);
 
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
@@ -95,34 +96,51 @@ export function ViewerPanel({ projectId, mode: modeProp, onModeChange }: ViewerP
           ))}
         </div>
 
-        {/* Zoom + Gerber controls */}
-        <div className="flex items-center gap-1">
-          <div className="flex items-center gap-0.5 bg-[#141414] rounded-lg px-1 py-0.5">
-            <Button
-              variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom in"
-              disabled={mode !== 'routing' || !zoomControls}
-              onClick={() => zoomControls?.zoomIn()}
-              title="Zoom in"
+        {/* Context-aware controls */}
+        <div className="flex items-center gap-2">
+          {/* Schema view toggle — only on Schema tab with .kicad_sch */}
+          {mode === 'schematic' && pcbState?.kicad_sch_url && (
+            <button
+              type="button"
+              onClick={() => setShowRawKicad((v) => !v)}
+              className="h-8 px-2.5 inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider rounded-md border border-[#1F1F1F] bg-[#0d0d0d] text-[#A1A1AA] hover:text-foreground hover:border-[#2E2E2E] transition-colors"
+              title={showRawKicad ? 'Show logical netlist view' : 'Show raw KiCad schematic'}
             >
-              <ZoomIn size={14} />
-            </Button>
-            <Button
-              variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom out"
-              disabled={mode !== 'routing' || !zoomControls}
-              onClick={() => zoomControls?.zoomOut()}
-              title="Zoom out"
-            >
-              <ZoomOut size={14} />
-            </Button>
-            <Button
-              variant="ghost" size="icon" className="h-8 w-8" aria-label="Reset zoom"
-              disabled={mode !== 'routing' || !zoomControls}
-              onClick={() => zoomControls?.resetZoom()}
-              title="Fit to screen"
-            >
-              <Maximize2 size={14} />
-            </Button>
-          </div>
+              <span className={`w-1.5 h-1.5 rounded-full ${showRawKicad ? 'bg-amber-400' : 'bg-primary'}`} />
+              {showRawKicad ? 'Raw KiCad' : 'Netlist'}
+            </button>
+          )}
+
+          {/* Zoom controls — Routing only */}
+          {mode === 'routing' && (
+            <div className="flex items-center gap-0.5 bg-[#141414] rounded-lg px-1 py-0.5">
+              <Button
+                variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom in"
+                disabled={!zoomControls}
+                onClick={() => zoomControls?.zoomIn()}
+                title="Zoom in"
+              >
+                <ZoomIn size={14} />
+              </Button>
+              <Button
+                variant="ghost" size="icon" className="h-8 w-8" aria-label="Zoom out"
+                disabled={!zoomControls}
+                onClick={() => zoomControls?.zoomOut()}
+                title="Zoom out"
+              >
+                <ZoomOut size={14} />
+              </Button>
+              <Button
+                variant="ghost" size="icon" className="h-8 w-8" aria-label="Reset zoom"
+                disabled={!zoomControls}
+                onClick={() => zoomControls?.resetZoom()}
+                title="Fit to screen"
+              >
+                <Maximize2 size={14} />
+              </Button>
+            </div>
+          )}
+
           <Button
             variant="default"
             size="sm"
@@ -161,7 +179,7 @@ export function ViewerPanel({ projectId, mode: modeProp, onModeChange }: ViewerP
             </>
           )
         ) : mode === 'schematic' ? (
-          pcbState?.kicad_sch_url ? (
+          showRawKicad && pcbState?.kicad_sch_url ? (
             <KiCanvasViewer src={pcbState.kicad_sch_url} type="schematic" className="h-full" />
           ) : (
             <SchemaNetlistView pcbState={pcbState} />
@@ -496,6 +514,18 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
 
   return (
     <div ref={containerRef} className="relative h-full bg-[#090909] overflow-hidden select-none">
+      {/* Schema header — components + nets count */}
+      <div className="absolute top-2 left-3 z-10 flex items-center gap-3 pointer-events-none">
+        <span className="text-[9px] font-mono text-[#A1A1AA] uppercase tracking-wider">
+          Netlist
+        </span>
+        <span className="text-[9px] font-mono text-[#52525B]">
+          {components.length} component{components.length !== 1 ? 's' : ''}
+          <span className="text-[#2A2A2A]"> · </span>
+          {(connections.length || nets.length)} net{(connections.length || nets.length) !== 1 ? 's' : ''}
+        </span>
+      </div>
+
       {/* Reset zoom button */}
       <button
         type="button"
