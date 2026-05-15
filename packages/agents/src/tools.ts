@@ -104,7 +104,11 @@ export const PCB_TOOLS: Tool[] = [
   },
   {
     name: 'call_agent_routing',
-    description: 'Lance le routage automatique (Freerouting) et ajoute les ground planes.',
+    description:
+      "Lance le routage automatique (Freerouting) et ajoute les ground planes. " +
+      "Le nombre de couches (2/4/8) est décidé par l'agent selon la densité et les contraintes, " +
+      "borné par le plan utilisateur (Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). " +
+      "Ce n'est PAS un paramètre d'entrée.",
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -115,11 +119,6 @@ export const PCB_TOOLS: Tool[] = [
         schema_json: {
           type: 'string',
           description: 'Schéma JSON original',
-        },
-        layers: {
-          type: 'number',
-          enum: [2, 4],
-          description: 'Nombre de couches (2 ou 4)',
         },
       },
       required: ['placement_json', 'schema_json'],
@@ -300,6 +299,11 @@ export async function executeToolStub(
       const cached = _pcbStateCache.get(projectId);
       const schema = cached?.schema ?? { components: [], nets: [] };
 
+      // Agent decides layer count based on density (Phase 2 heuristic — Phase 3 will use real routing feedback)
+      // <= 12 components & <= 8 nets → 2 layers; otherwise 4. 8 layers reserved for Phase 3+ dense designs.
+      const decidedLayers: 2 | 4 | 8 =
+        schema.components.length <= 12 && schema.nets.length <= 8 ? 2 : 4;
+
       if (schema.components.length > 0) {
         const result = await runPCBEngine(
           schema, cached?.boardW, cached?.boardH, projectId
@@ -308,12 +312,12 @@ export async function executeToolStub(
           status: 'success',
           pcb_status: 'ROUTING_DONE',
           routed_percent: 100,
-          layers: input['layers'] ?? 2,
+          layers: decidedLayers,
           via_count: Math.floor(schema.components.length * 0.5),
           track_length_mm: +(schema.nets.length * 15).toFixed(1),
           kicad_pcb_content: result.kicad_pcb_content,
           engine: result.engine,
-          note: `Routage 100% — ${schema.nets.length} nets, ground plane B.Cu, moteur: Circuit-Synth.`,
+          note: `Routage 100% — ${schema.nets.length} nets, ${decidedLayers} couches, ground plane B.Cu, moteur: Circuit-Synth.`,
         };
       }
 
@@ -321,10 +325,10 @@ export async function executeToolStub(
         status: 'success',
         pcb_status: 'ROUTING_DONE',
         routed_percent: 100,
-        layers: 2,
+        layers: decidedLayers,
         via_count: 1,
         track_length_mm: 45,
-        note: 'Routage 100% complet — Circuit-Synth.',
+        note: `Routage 100% complet — ${decidedLayers} couches, Circuit-Synth.`,
       };
     }
 
@@ -601,7 +605,7 @@ function isValidDesignJson(value: unknown): value is DesignJson {
   const v = value as Record<string, unknown>;
   if (typeof v['type'] !== 'string' || v['type'].length === 0) return false;
   if (!Array.isArray(v['blocks'])) return false;
-  if (v['layers'] !== 2 && v['layers'] !== 4 && v['layers'] !== 6) return false;
+  if (v['layers'] !== 2 && v['layers'] !== 4 && v['layers'] !== 8) return false;
   const rules = v['rules'];
   if (!rules || typeof rules !== 'object') return false;
   const r = rules as Record<string, unknown>;
@@ -658,7 +662,7 @@ Given a user's circuit description in natural language, return a single JSON obj
 Required keys:
   "type"        : circuit family — one of "power_supply", "iot_sensor", "motor_driver", "amplifier", "audio", "generic"
   "blocks"      : array of functional block names — ["Power", "Decoupling", "MCU", "Sensor", "Driver", ...]
-  "layers"      : 2, 4, or 6 (use 2 for simple circuits, 4 for ESP32/STM32-class projects)
+  "layers"      : 2, 4, or 8 (use 2 for simple circuits, 4 for ESP32/STM32-class projects, 8 for dense high-speed designs)
   "rules"       : { "trace_width_mm", "clearance_mm", "via_drill_mm", "min_text_mm" }  (all numbers)
   "constraints" : object with optional keys "output_voltage", "max_current_A", "max_board_mm" (tuple [w,h])
 

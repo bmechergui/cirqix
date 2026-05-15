@@ -57,7 +57,7 @@ describe('executeToolStub — call_agent_spec', () => {
     const design = result['design'] as Record<string, unknown>;
     expect(typeof design['type']).toBe('string');
     expect(Array.isArray(design['blocks'])).toBe(true);
-    expect([2, 4, 6]).toContain(design['layers']);
+    expect([2, 4, 8]).toContain(design['layers']);
     expect(design['rules']).toBeDefined();
   });
 
@@ -114,7 +114,7 @@ describe('executeToolStub — call_agent_spec', () => {
     expect(result['status']).toBe('success');
     const design = result['design'] as Record<string, unknown>;
     expect(design['type']).toBeDefined();
-    expect([2, 4, 6]).toContain(design['layers']);
+    expect([2, 4, 8]).toContain(design['layers']);
   });
 
   it('does NOT change PCBStatus (design = context, not a deliverable)', async () => {
