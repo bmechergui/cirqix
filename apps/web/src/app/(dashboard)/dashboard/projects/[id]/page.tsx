@@ -4,7 +4,7 @@ import { use, useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChatPanel } from '@/features/dashboard/ui/ChatPanel';
 import { ViewerPanel } from '@/widgets/viewer';
-import { AgentProgressBar } from '@/features/dashboard/ui/AgentProgressBar';
+import { PipelineBar, type ViewerMode } from '@/features/dashboard/ui/PipelineBar';
 import { useAppStore } from '@/shared/store/app-store';
 import { Pencil, Trash2 } from 'lucide-react';
 
@@ -113,11 +113,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const project = useAppStore((s) => s.projects.find((p) => p.id === id));
   const projectsLoading = useAppStore((s) => s.projectsLoading);
   const agentStep = useAppStore((s) => s.agentStep);
+  const pcbState = useAppStore((s) => s.pcbStateByProject[id] ?? null);
   const setSelectedProjectId = useAppStore((s) => s.setSelectedProjectId);
 
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('schematic');
   const isDragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-switch viewer mode when new artifacts arrive
+  const kicadSchUrl = pcbState?.kicad_sch_url;
+  const kicadPcbUrl = pcbState?.kicad_pcb_url;
+  useEffect(() => { if (kicadSchUrl) setViewerMode('schematic'); }, [kicadSchUrl]);
+  useEffect(() => { if (kicadPcbUrl) setViewerMode('routing'); }, [kicadPcbUrl]);
 
   useEffect(() => {
     setSelectedProjectId(id);
@@ -157,14 +165,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="flex flex-col -m-6 overflow-hidden" style={{ height: 'calc(100vh - var(--header-height, 57px))' }}>
-      <AgentProgressBar step={agentStep} />
-      <div ref={containerRef} className="flex flex-1 overflow-hidden">
+      <PipelineBar
+        pcbState={pcbState}
+        activeStep={agentStep}
+        mode={viewerMode}
+        onModeChange={setViewerMode}
+      />
+      <div ref={containerRef} className="flex flex-1 overflow-hidden min-h-0">
         {/* Chat — resizable */}
         <div
           className="border-r border-border flex flex-col overflow-hidden shrink-0"
           style={{ width: chatWidth }}
         >
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
+          <div className="shrink-0 px-4 py-3 border-b border-border flex items-center justify-between gap-2">
             <ProjectTitle projectId={id} initialName={project.name} />
             <DeleteButton projectId={id} />
           </div>
@@ -179,8 +192,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         />
 
         {/* Viewer — remaining space */}
-        <div className="flex-1 overflow-hidden">
-          <ViewerPanel projectId={id} />
+        <div className="flex-1 overflow-hidden min-w-0">
+          <ViewerPanel projectId={id} mode={viewerMode} onModeChange={setViewerMode} />
         </div>
       </div>
     </div>

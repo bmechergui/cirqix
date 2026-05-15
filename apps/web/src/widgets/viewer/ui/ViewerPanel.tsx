@@ -22,41 +22,27 @@ const KiCanvasViewer = dynamic(
 );
 
 
-type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
+export type ViewMode = 'routing' | '3d' | 'schematic' | 'components';
 
 interface ViewerPanelProps {
   projectId?: string;
+  mode?: ViewMode;
+  onModeChange?: (mode: ViewMode) => void;
 }
 
-export function ViewerPanel({ projectId }: ViewerPanelProps) {
-  const [mode, setMode] = useState<ViewMode>('routing');
+export function ViewerPanel({ projectId, mode: modeProp, onModeChange }: ViewerPanelProps) {
+  const [internalMode, setInternalMode] = useState<ViewMode>('schematic');
+  const mode = modeProp ?? internalMode;
+  const setMode = onModeChange ?? setInternalMode;
   const [layerVisibility, setLayerVisibility] =
     useState<Record<string, boolean>>(DEFAULT_LAYER_VISIBILITY);
   const [zoomControls, setZoomControls] = useState<ZoomControls | null>(null);
-  // Track whether the user has manually switched tabs — if so, don't auto-switch
-  const userChoseModeRef = useRef(false);
 
   const pcbState = useAppStore((s) =>
     projectId ? s.pcbStateByProject[projectId] ?? null : null
   );
   const agentStep = useAppStore((s) => s.agentStep);
   const setPcbState = useAppStore((s) => s.setPcbState);
-
-  // Auto-switch to Schematic when kicad_sch_url first arrives (Schema step done)
-  const kicadSchUrl = pcbState?.kicad_sch_url;
-  useEffect(() => {
-    if (kicadSchUrl && !userChoseModeRef.current) {
-      setMode('schematic');
-    }
-  }, [kicadSchUrl]);
-
-  // Auto-switch to Routing when kicad_pcb_url first arrives (Placement step done)
-  const kicadPcbUrl = pcbState?.kicad_pcb_url;
-  useEffect(() => {
-    if (kicadPcbUrl && !userChoseModeRef.current) {
-      setMode('routing');
-    }
-  }, [kicadPcbUrl]);
 
   // Load persisted PCB state from DB on mount
   useEffect(() => {
@@ -96,7 +82,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
             <button
               key={id}
               type="button"
-              onClick={() => { userChoseModeRef.current = true; setMode(id); }}
+              onClick={() => setMode(id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                 mode === id
                   ? 'bg-primary/20 text-primary'
@@ -154,6 +140,7 @@ export function ViewerPanel({ projectId }: ViewerPanelProps) {
 
       {/* Viewer area */}
       <div className="flex-1 relative overflow-hidden">
+        <LiveAgentOverlay agentStep={agentStep} mode={mode} />
         {mode === 'routing' ? (
           pcbState?.kicad_pcb_url ? (
             <KiCanvasViewer src={pcbState.kicad_pcb_url} type="board" className="h-full" />
@@ -230,6 +217,62 @@ function PCBPlaceholder() {
   );
 }
 
+const AGENT_META: Record<string, { agent: string; model: string; targetMode: ViewMode | null }> = {
+  SPEC:      { agent: 'Spec Parser',     model: 'Haiku 4.5',   targetMode: null },
+  SCHEMA:    { agent: 'Schematic Agent', model: 'Haiku 4.5',   targetMode: 'schematic' },
+  PLACEMENT: { agent: 'Placement Agent', model: 'Circuit-Synth', targetMode: 'routing' },
+  ROUTING:   { agent: 'Routing Agent',   model: 'Freerouting', targetMode: 'routing' },
+  DRC:       { agent: 'DRC Agent',       model: 'pcbnew',      targetMode: 'routing' },
+  EXPORT:    { agent: 'Export Agent',    model: 'pcbnew',      targetMode: 'components' },
+};
+
+function LiveAgentOverlay({
+  agentStep,
+  mode,
+}: {
+  agentStep: string | null;
+  mode: ViewMode;
+}) {
+  if (!agentStep) return null;
+  const meta = AGENT_META[agentStep];
+  if (!meta) return null;
+
+  const focused = meta.targetMode === mode;
+
+  return (
+    <div className="absolute top-3 right-3 z-20 pointer-events-none">
+      <div
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-md border backdrop-blur-md transition-colors ${
+          focused
+            ? 'bg-primary/15 border-primary/40 shadow-[0_0_16px_rgba(0,194,255,0.25)]'
+            : 'bg-[#0D0D0D]/85 border-[#1F1F1F]'
+        }`}
+      >
+        <span className="relative flex items-center justify-center w-2 h-2">
+          <span className="absolute inset-0 rounded-full bg-primary animate-ping opacity-70" />
+          <span className="relative w-2 h-2 rounded-full bg-primary" />
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className={`text-[10px] font-mono font-semibold ${focused ? 'text-primary' : 'text-[#E4E4E7]'}`}>
+            {meta.agent}
+          </span>
+          <span className="text-[9px] text-[#52525B] font-mono">·</span>
+          <span className="text-[9px] text-[#71717A] font-mono">{meta.model}</span>
+        </span>
+        <span className="flex gap-0.5 ml-1">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className={`w-1 h-1 rounded-full ${focused ? 'bg-primary' : 'bg-[#A1A1AA]'} animate-pulse`}
+              style={{ animationDelay: `${i * 200}ms` }}
+            />
+          ))}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 type AgentStep = 'SPEC' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 const STEP_LABELS: Record<NonNullable<AgentStep>, string> = {
@@ -240,12 +283,6 @@ const STEP_LABELS: Record<NonNullable<AgentStep>, string> = {
   DRC:       'Running DRC check…',
   EXPORT:    'Exporting Gerbers…',
 };
-
-const EXAMPLE_CIRCUITS = [
-  '3.3 V LDO regulator — TPS7333, bypass caps',
-  'ESP32-C3 minimal — USB-C, reset, decoupling',
-  'LED PWM driver — N-MOSFET, 100 mA, 10 kHz',
-];
 
 /** Full-area overlay shown when no circuit_json is available */
 function PCBEmptyState({ agentStep }: { agentStep: AgentStep }) {
@@ -260,47 +297,34 @@ function PCBEmptyState({ agentStep }: { agentStep: AgentStep }) {
         }}
       />
 
-      <div className="relative z-10 flex flex-col items-center gap-6 text-center px-8 max-w-sm">
+      <div className="relative z-10 flex flex-col items-center gap-4 text-center px-8 max-w-[280px]">
         {agentStep ? (
           /* Agent running */
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
-              <Layers size={22} className="text-primary/60" />
+          <>
+            <div className="w-16 h-16 rounded-xl bg-[#141414] border border-primary/30 flex items-center justify-center shadow-[0_0_24px_rgba(0,194,255,0.15)]">
+              <Layers size={32} className="text-primary/60 animate-pulse" />
             </div>
-            <div className="flex items-center gap-2 bg-[#111111] border border-border rounded-full px-4 py-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
-              <span className="text-xs text-[#A1A1AA] font-mono">{STEP_LABELS[agentStep]}</span>
+            <div className="space-y-1.5">
+              <p className="text-xs text-primary font-medium">{STEP_LABELS[agentStep]}</p>
+              <p className="text-[11px] text-[#52525B] leading-relaxed">
+                The board renders here as soon as the placement agent finishes.
+              </p>
             </div>
-            <p className="text-[10px] text-[#3D3D3D] font-mono">PCB renders here when placement is done</p>
-          </div>
+          </>
         ) : (
           /* INITIAL: welcoming canvas */
           <>
-            <div className="w-14 h-14 rounded-xl bg-[#141414] border border-[#1E1E1E] flex items-center justify-center">
-              <Layers size={26} className="text-primary/25" />
+            <div className="w-16 h-16 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
+              <Route size={32} className="text-primary/30" />
             </div>
-
-            <div className="space-y-1">
-              <p className="text-sm text-[#52525B]">PCB canvas</p>
-              <p className="text-[11px] text-[#2E2E2E] leading-relaxed">
-                Describe your circuit in the chat.<br />
-                Schematic → placement → routing → Gerbers.
+            <div className="space-y-1.5">
+              <p className="text-xs text-[#A1A1AA] font-medium">Routing</p>
+              <p className="text-[11px] text-[#52525B] leading-relaxed">
+                Auto-placed footprints + Freerouting traces.
+                Edge cuts, copper layers, silkscreen, and ground planes.
               </p>
             </div>
-
-            <div className="w-full space-y-1.5">
-              <p className="text-[9px] text-[#2A2A2A] font-mono uppercase tracking-wider text-left">
-                Example circuits
-              </p>
-              {EXAMPLE_CIRCUITS.map((ex) => (
-                <div
-                  key={ex}
-                  className="px-3 py-2 rounded-md border border-[#181818] bg-[#0D0D0D] text-left"
-                >
-                  <p className="text-[10px] text-[#383838] font-mono">{ex}</p>
-                </div>
-              ))}
-            </div>
+            <p className="text-[9px] text-[#3D3D3D] font-mono">Generated by the Routing agent</p>
           </>
         )}
       </div>
@@ -454,11 +478,18 @@ function SchemaNetlistView({ pcbState }: { pcbState: PCBState | null }) {
 
   if (!components.length) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-2">
-        <FileText size={20} className="text-[#2E2E2E]" />
-        <p className="text-[10px] text-[#2E2E2E] font-mono">
-          Schematic available after agent generates the netlist
-        </p>
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+        <div className="w-16 h-16 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
+          <FileText size={32} className="text-primary/30" />
+        </div>
+        <div className="space-y-1.5 max-w-[260px]">
+          <p className="text-xs text-[#A1A1AA] font-medium">Schematic</p>
+          <p className="text-[11px] text-[#52525B] leading-relaxed">
+            Auto-generated from the netlist — components, nets,
+            and reference designators rendered as a KiCad schema.
+          </p>
+        </div>
+        <p className="text-[9px] text-[#3D3D3D] font-mono">Describe your circuit in the chat to begin</p>
       </div>
     );
   }
@@ -575,11 +606,18 @@ function ComponentsBOMView({ pcbState }: { pcbState: PCBState | null }) {
 
   if (!components.length) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-2">
-        <Cpu size={20} className="text-[#2E2E2E]" />
-        <p className="text-[10px] text-[#2E2E2E] font-mono">
-          BOM available after agent generates the schematic
-        </p>
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+        <div className="w-16 h-16 rounded-xl bg-[#141414] border border-border flex items-center justify-center">
+          <Cpu size={32} className="text-primary/30" />
+        </div>
+        <div className="space-y-1.5 max-w-[260px]">
+          <p className="text-xs text-[#A1A1AA] font-medium">Components · BOM</p>
+          <p className="text-[11px] text-[#52525B] leading-relaxed">
+            Bill of materials with grouped values, footprints,
+            and LCSC part numbers — exportable as CSV for JLCPCB.
+          </p>
+        </div>
+        <p className="text-[9px] text-[#3D3D3D] font-mono">Available once the schematic is generated</p>
       </div>
     );
   }

@@ -32,12 +32,12 @@ User prompt → Layrix Agent → Schematic → Placement → Routing → DRC fix
 | AI Agents | Claude SDK — Sonnet 4.6 (orchestrator) + Haiku 4.5 (specialists) |
 | Database | Supabase · PostgreSQL · pgvector |
 | Queue | Redis · BullMQ (10 concurrent PCBs) |
-| KiCad Service | Python · FastAPI · pcbnew · Freerouting · Docker |
-| Viewer 2D | PixiJS (WebGL, 60 FPS) |
-| Viewer 3D | Three.js + STEP via occt-import-js |
+| KiCad Service | Python · FastAPI · Circuit-Synth · pcbnew · Freerouting · Docker |
+| Viewer Schematic + PCB | KiCanvas (native `.kicad_sch` / `.kicad_pcb` rendering) |
+| Viewer 3D | Three.js + STEP via occt-import-js (Pro plan+) |
 | Auth | Supabase Auth (email + Google OAuth) |
 | Payments | Lemon Squeezy (MVP) |
-| Infra | Vercel (frontend) · DigitalOcean (KiCad service) |
+| Infra | Vercel (frontend) · Railway (api) · DigitalOcean (KiCad service) |
 
 ---
 
@@ -46,26 +46,32 @@ User prompt → Layrix Agent → Schematic → Placement → Routing → DRC fix
 ```
 layrix/
 ├── apps/
-│   ├── web/                  # Single Next.js app (landing + dashboard)
+│   ├── web/                          # Next.js 15 app — port 3333
 │   │   ├── src/app/
-│   │   │   ├── (marketing)/  # layrix.ai — landing page
-│   │   │   └── (dashboard)/  # app.layrix.ai/dashboard
-│   │   ├── src/components/
-│   │   │   ├── marketing/    # Navbar, Hero, Features, Pricing…
-│   │   │   └── dashboard/    # Sidebar, ChatPanel, ViewerPanel…
-│   │   └── src/store/        # Zustand global store
-│   └── api/                  # Next.js API routes
+│   │   │   ├── (marketing)/          # layrix.ai — landing
+│   │   │   ├── (dashboard)/          # layrix.ai/dashboard
+│   │   │   ├── (auth)/               # login / signup
+│   │   │   └── api/                  # API Routes (chat SSE, webhooks…)
+│   │   ├── src/features/             # FSD — auth, chat-agent, credits, dashboard, marketing, pcb-project, settings
+│   │   ├── src/widgets/viewer/       # KiCanvas viewer (schematic + PCB)
+│   │   ├── src/entities/             # project, pcb, credits
+│   │   ├── src/shared/               # ui (shadcn), store (Zustand), lib, types
+│   │   └── src/middleware.ts         # Supabase Auth JWT — protects /dashboard/*
+│   └── api/                          # (legacy — kept for compatibility)
 ├── packages/
-│   ├── agents/               # Claude SDK agents (orchestrator + specialists)
-│   ├── db/                   # Supabase client + types + migrations
-│   ├── ui/                   # Shared UI components
-│   ├── config-typescript/    # Shared tsconfig
-│   └── config-eslint/        # Shared ESLint config
+│   ├── agents/                       # Claude SDK — orchestrator + specialists + engines
+│   ├── types/                        # @layrix/types — single source of truth
+│   ├── db/                           # Supabase client + migrations
+│   ├── logger/                       # Pino logger
+│   ├── utils/                        # cn() helpers
+│   ├── ui/                           # Shared shadcn/ui components
+│   ├── config-typescript/            # Shared strict tsconfig
+│   └── config-eslint/                # Shared ESLint config
 ├── services/
-│   └── kicad/                # FastAPI + pcbnew + Freerouting (Docker)
-├── docs/                     # Architecture, design system, agent prompts
-├── PLAN.md                   # Full implementation plan (6 phases)
-└── CLAUDE.md                 # AI assistant context & rules
+│   └── kicad/                        # FastAPI + Circuit-Synth + pcbnew + Freerouting (Docker)
+├── docs/                             # Architecture, design system, agent prompts
+├── PLAN.md                           # Full implementation plan (6 phases)
+└── CLAUDE.md                         # AI assistant context & rules
 ```
 
 ---
@@ -117,8 +123,7 @@ KICAD_SERVICE_URL=http://localhost:8000
 # Start all apps (Turborepo)
 pnpm dev
 
-# apps/web → http://localhost:3000
-# apps/api  → http://localhost:3002
+# apps/web → http://localhost:3333
 ```
 
 ### KiCad Service (Docker)
@@ -133,12 +138,14 @@ docker compose up
 
 ## PCB Engine Strategy
 
-| Condition | Engine |
-|-----------|--------|
-| < 20 components, 2 layers | TSCircuit (fast, Claude generates TSX natively) |
-| ≥ 20 components or > 2 layers | KiCad + Freerouting + pcbnew |
+**Circuit-Synth (Python)** is the single PCB engine — TSCircuit has been deprecated since v0.3.0.
 
-Both produce standard Gerber files — the engine selection is invisible to the user.
+| Phase | Pipeline |
+|-------|----------|
+| Phase 2 (current) | Haiku generates JSON schema → `validateAndCorrectSchema()` → Circuit-Synth Python → `.kicad_sch` + `.kicad_pcb` natifs → KiCanvas viewer |
+| Phase 3 | `pcbnew` placement + Freerouting (DSN/SES) routing + native DRC + Gerbers/BOM/STEP export |
+
+All paths produce standard `.kicad_sch` + `.kicad_pcb` + Gerber files — the engine is invisible to the user.
 
 ---
 
@@ -156,12 +163,12 @@ Both produce standard Gerber files — the engine selection is invisible to the 
 | 3D view | 1 |
 | SPICE simulation | 3 |
 
-| Plan | Price | Credits |
-|------|-------|---------|
-| Free | 0€ | 5 / day |
-| Maker | 25€/mo | 100 / month |
-| Pro | 50€/mo | 300 / month |
-| Enterprise | Custom | Unlimited |
+| Plan       | Price      | Credits        | Max layers |
+|------------|------------|----------------|------------|
+| Free       | 0€         | 5 / day        | 2          |
+| Pro        | 25€/mo     | 100 / month    | 4          |
+| Pro Max    | 50€/mo     | 300 / month    | 8          |
+| Enterprise | Custom     | Unlimited      | Unlimited  |
 
 ---
 
@@ -169,8 +176,8 @@ Both produce standard Gerber files — the engine selection is invisible to the 
 
 - [x] **Phase 0** — Monorepo setup, DB schema, KiCad Docker, CI/CD
 - [x] **Phase 1** — Landing page + waitlist (design system, mock data)
-- [ ] **Phase 2** — Auth + dashboard + Claude agent MVP + streaming SSE
-- [ ] **Phase 3** — KiCad + Freerouting + footprint cascade + pgvector
+- [x] **Phase 2** — Auth + dashboard + Claude agent MVP + SSE streaming + Circuit-Synth + KiCanvas viewer + credits
+- [ ] **Phase 3** — `pcbnew` placement + Freerouting + native DRC + Gerbers/BOM + footprint cascade (LCSC / SnapMagic / Octopart / AI)
 - [ ] **Phase 4** — 3D viewer + SPICE simulation + JLCPCB integration + payments
 - [ ] **Phase 5** — Rate limiting + E2E tests + monitoring + launch
 
@@ -187,7 +194,7 @@ See [PLAN.md](./PLAN.md) for the full detailed plan.
 | Placement Agent | Claude Haiku 4.5 | Places components on board |
 | Routing Agent | Claude Haiku 4.5 | Routes traces via Freerouting |
 | DRC Agent | Claude Haiku 4.5 | Fixes DRC violations (max 3 iterations) |
-| Footprint Agent | Claude Haiku 4.5 | 8-step cascade: DB → KiCad → SnapMagic → AI |
+| Footprint Agent | Claude Haiku 4.5 | 8-step cascade: pgvector DB → KiCad libs → LCSC → SnapMagic → Octopart → AI generation |
 
 Target cost: **~0.12€ per complete PCB**.
 

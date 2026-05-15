@@ -24,10 +24,7 @@ const NAV = [
   { href: '/dashboard/projects', label: 'Projects', icon: FolderOpen },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   { href: '/dashboard/billing',  label: 'Billing',  icon: CreditCard },
-];
-
-const BOTTOM_NAV = [
-  { href: '/dashboard/help', label: 'Help', icon: HelpCircle },
+  { href: '/dashboard/help',     label: 'Help',     icon: HelpCircle },
 ];
 
 export function Sidebar() {
@@ -114,20 +111,6 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Bottom nav */}
-      <div className="px-2 pb-4 space-y-0.5">
-        <Separator className="mb-3" />
-        {BOTTOM_NAV.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-[#141414] transition-colors"
-          >
-            <Icon size={16} />
-            {label}
-          </Link>
-        ))}
-      </div>
     </aside>
   );
 }
