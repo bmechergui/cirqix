@@ -7,11 +7,19 @@ Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step,
 import os
 
 # Ensure KiCad symbol library path is set BEFORE importing any router that probes it.
-# Dev default: Windows KiCad 10.99 install.
+# Priority: env var → repo-local kicad-symbols/ → Windows KiCad install.
 if not os.environ.get("KICAD_SYMBOL_DIR"):
-    _default_sym_dir = r"C:\Program Files\KiCad\10.99\share\kicad\symbols"
-    if os.path.isdir(_default_sym_dir):
-        os.environ["KICAD_SYMBOL_DIR"] = _default_sym_dir
+    _candidates = [
+        os.path.join(os.path.dirname(__file__), "kicad-symbols"),
+        r"C:\Program Files\KiCad\10.99\share\kicad\symbols",
+        r"C:\Program Files\KiCad\9.0\share\kicad\symbols",
+        r"C:\Program Files\KiCad\8.0\share\kicad\symbols",
+        "/usr/share/kicad/symbols",  # Linux/Docker
+    ]
+    for _dir in _candidates:
+        if os.path.isdir(_dir):
+            os.environ["KICAD_SYMBOL_DIR"] = _dir
+            break
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

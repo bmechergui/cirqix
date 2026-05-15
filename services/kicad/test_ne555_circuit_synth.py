@@ -8,9 +8,17 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
+
+# Point circuit_synth at the repo-local KiCad symbol libraries before importing it.
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault(
+    "KICAD_SYMBOL_DIR",
+    os.path.join(os.path.dirname(__file__), "kicad-symbols"),
+)
 
 try:
     from circuit_synth import circuit, Component, Net
