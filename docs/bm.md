@@ -385,7 +385,7 @@ Utilisateur → Supervisor
           ↓
    Décomposition + Plan
           ↓
-Schematic Agent → exécute SKiDL → netlist OK ?
+Schematic Agent → exécute  → netlist OK ?
           ↓ (si erreur → boucle)
 Placement Agent → pcbnew placement
           ↓
@@ -397,4 +397,115 @@ Exporter Agent → fichiers finaux + preview
           ↓
 Human-in-the-Loop (utilisateur valide ou modifie)
           ↓
-Sauvegarde projet dans Supabase
+Sauvegarde projet dans Supabaseok
+
+
+
+KiCAD-Prism est un complément excellent pour la partie visualisation et collaboration de ton SaaS.
+Mais il ne remplace pas KiCad installé sur l’ordinateur
+
+KiCAD-Prism est un complément excellent pour la partie visualisation et collaboration de ton SaaS.
+Mais il ne remplace pas KiCad installé sur l’ordinateur. Tu auras toujours besoin de KiCad (ou d’un équivalent) pour créer et modifier sérieusement les designs.
+Tu veux que je t’explique comment combiner les deux dans ton SaaS ?
+Par exemple :
+
+Comment générer avec Circuit-Synth → importer automatiquement dans Prism ?
+Ou comment permettre à l’utilisateur de télécharger → modifier dans KiCad → ré-uploader ?
+
+Le code complet React/Next.js pour intégrer KiCanvas
+
+Si tu veux vraiment automatiser le PCB, utilise circuit-synth pour générer le schéma, puis demande à Claude : "Écris-moi un script python pour pcbnew qui groupe les composants par blocs fonctionnels."
+
+
+: Conception Assistée par IA (Le "Cerveau")
+Le Prompt : Tu décris ton projet à Claude dans ton terminal (ex: "Je veux une carte avec un ESP32-S3, un capteur de température I2C et une recharge de batterie LiPo via USB-C").
+
+L'Analyse de l'Agent : Claude utilise les outils de circuit-synth pour :
+
+Chercher des composants réels (LCSC/Digikey).
+
+Vérifier les tensions et les compatibilités.
+
+Génération du Code : Claude écrit un script Python utilisant les classes de circuit-synth.
+
+Phase 2 : Synthèse du Schéma (Le "Front-end")
+Exécution : Tu lances le script Python.
+
+Génération KiCad : circuit-synth transforme le code en un fichier .kicad_sch.
+
+Vérification Visuelle : Tu ouvres KiCad 8. Le schéma est déjà "dessiné" avec les composants reliés. C'est ici que tu valides que l'IA n'a pas fait d'erreur logique.
+
+Phase 3 : Organisation du PCB (Le "Back-end")
+Update PCB : Dans KiCad, tu transfères le schéma vers l'éditeur de PCB (pcbnew).
+
+Placement Assisté :
+
+Option A (Manuelle) : Tu places les composants par groupes.
+
+Option B (Scriptée) : Tu demandes à Claude d'écrire un petit script Python pour pcbnew afin de regrouper les composants par "blocs" (tous les composants de l'alim ensemble, etc.).
+
+Phase 4 : Routage et Finition
+Tracé des pistes : Tu traces les pistes manuellement (ou via un plugin comme Freerouting). C'est l'étape où l'humain reste indispensable pour la précision.
+
+DRC (Design Rule Check) : Tu lances la vérification native de KiCad pour être sûr qu'il n'y a pas de courts-circuits.
+
+Phase 5 : Fabrication
+Exports : Tu génères les fichiers Gerber et les fichiers BOM (liste de composants) / Pick-and-Place (pour l'assemblage automatique).
+
+Commande : Tu envoies tout ça chez un fabricant (JLCPCB, PCBWay, etc.).
+
+Pourquoi ce pipeline est puissant ?
+Vitesse : Ce qui prenait 4 heures de dessin manuel (chercher les footprints, relier 50 fils) prend 5 minutes de génération de code.
+
+Fiabilité : Si tu changes de microcontrôleur, tu changes une ligne de code et circuit-synth régénère tout le schéma proprement, sans que tu aies à tout "redessiner".
+
+Réutilisabilité : Ton bloc "Alimentation USB-C" devient une fonction Python que tu peux copier-coller dans tous tes futurs projets.
+
+C'est une approche très propre pour une première étape de génération. En utilisant des labels (net names) aux extrémités plutôt que des connexions filaires physiques (Wires: 0),
+
+
+
+3 options possibles
+Option A — tscir
+cuit seul (le plus simple)
+Claude écrit index.circuit.tsx
+    ↓ npx tsci build
+    ↓ npx tsci export -f kicad-project
+    → .kicad_sch + .kicad_pcb (routé par tscircuit)
+
+Pour : 100% open source, routing inclus, tout automatisable
+Contre : routing basique, limites sur les designs complexes, CLI pas bien documentée en batch
+Option B — circuit-synth + freerouting (le plus pro)
+Claude écrit main.py (circuit-synth)
+    ↓ python main.py → .kicad_sch + .kicad_pro
+    ↓ kicad-cli sch export → netlist
+    ↓ script Python → .kicad_pcb (placement)
+    ↓ kicad-cli pcb export → .dsn (Specctra)
+    ↓ freerouting.jar → .ses (routé, jusqu'à 32 layers)
+    ↓ kicad-cli pcb import → .kicad_pcb final
+    ↓ kicad-cli pcb drc → validation
+    ↓ kicad-cli pcb export gerbers → fabrication
+
+Pour : routing professionnel, 32 layers, contrôle total, pipeline 100% CLI
+Contre : Java requis (à installer), étape placement manuel ou semi-auto
+Option C — KiCad IPC API (le plus puissant)
+Claude écrit circuit via API KiCad
+    ↓ kicad-cli api-server (headless)
+    ↓ Python pilote KiCad directement
+    → placement + routing + DRC dans KiCad natif
+
+Pour : accès à tout KiCad, routing natif
+Contre : complexe, API nouvelle (KiCad 8+), documentation limitée
+Ma recommandation : Option B
+Pourquoi :
+
+freerouting est le meilleur auto-router open source (utilisé par les pros)
+supporte 32 layers nativement
+pipeline 100% scriptable → Claude Agent peut tout piloter
+kicad-cli est déjà installé et fonctionnel
+Ce qu'il faut faire :
+
+Installer Java (JRE 17+) — 5 min
+Télécharger freerouting-2.1.0.jar — 1 min
+Écrire le script Python orchestrateur (pipeline.py)
+Mettre à jour CLAUDE.md pour que Claude Code sache utiliser le pipeline
