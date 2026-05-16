@@ -6,7 +6,7 @@ import { uploadKicadArtifact } from './kicad-storage';
 
 // Only the steps that surface in the UI Timeline (SPEC is skipped — it's
 // internal context analysis without a dedicated stage).
-type UiStep = 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
+type UiStep = 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
 
 interface BridgeOptions {
   controller: ReadableStreamDefaultController<Uint8Array>;
@@ -43,7 +43,7 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
 
         case 'step': {
-          const validSteps: UiStep[] = ['SCHEMA', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'];
+          const validSteps: UiStep[] = ['SCHEMA', 'ERC', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'];
           if (validSteps.includes(ev.step as UiStep)) {
             controller.enqueue(
               encoder.encode(encodeSse({ type: 'step', step: ev.step as UiStep }))

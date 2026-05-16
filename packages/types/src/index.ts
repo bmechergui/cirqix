@@ -3,6 +3,7 @@
 export type PCBStatus =
   | 'INITIAL'
   | 'SCHEMA_DONE'
+  | 'ERC_CLEAN'
   | 'PLACEMENT_DONE'
   | 'ROUTING_DONE'
   | 'DRC_CLEAN'
@@ -20,6 +21,7 @@ export type AgentAction =
   | 'chat'
   | 'spec'
   | 'schema'
+  | 'erc'
   | 'placement'
   | 'routing'
   | 'drc'
@@ -28,7 +30,7 @@ export type AgentAction =
   | 'view3d'
   | 'simulation';
 
-export type AgentStep = 'SPEC' | 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+export type AgentStep = 'SPEC' | 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
 
 export interface Project {
   id: string;
@@ -60,6 +62,24 @@ export interface DRCViolation {
   x_mm: number;
   y_mm: number;
   layer?: string;
+}
+
+/**
+ * Electrical Rules Check violation from kicad-cli sch erc.
+ * Severity reflects KiCad's report severity. `ref`/`pin` point to the offending
+ * symbol pin; coordinates (in mm) are in the schematic page space.
+ */
+export interface ERCViolation {
+  id: string;
+  severity: 'error' | 'warning';
+  /** Free-form description from KiCad (e.g. "Pin not connected") */
+  message: string;
+  /** ERC violation type identifier from KiCad (e.g. "pin_not_connected", "different_net_no_marker") */
+  type?: string;
+  ref?: string;
+  pin?: string;
+  x_mm?: number;
+  y_mm?: number;
 }
 
 // --- PCB Design types (high-level circuit context) ---
@@ -150,6 +170,9 @@ export interface PCBState {
   placement?: Record<string, unknown>;
   routing?: Record<string, unknown>;
   drcViolations?: DRCViolation[];
+  ercViolations?: ERCViolation[];
+  /** True when the ERC check was skipped (e.g. kicad-cli unavailable in dev). */
+  erc_skipped?: boolean;
   board_width_mm?: number;
   board_height_mm?: number;
   /** Supabase Storage signed URL for .kicad_sch file (Circuit-Synth output) */
@@ -162,6 +185,7 @@ export const CREDIT_COSTS: Record<AgentAction, number> = {
   chat: 0.5,
   spec: 0.5,
   schema: 2,
+  erc: 0.5,
   placement: 2,
   routing: 3,
   drc: 1,

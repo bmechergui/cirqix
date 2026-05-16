@@ -3,6 +3,7 @@ export type { Project, PCBStatus } from '@layrix/types';
 export const PCB_STAGE_ORDER = [
   'IDEA',
   'SCHEMA',
+  'ERC',
   'PLACEMENT',
   'ROUTING',
   'DRC',
@@ -17,6 +18,7 @@ export function statusToStage(status: PCBStatus): PcbStage {
   switch (status) {
     case 'INITIAL':         return 'IDEA';
     case 'SCHEMA_DONE':     return 'SCHEMA';
+    case 'ERC_CLEAN':       return 'ERC';
     case 'PLACEMENT_DONE':  return 'PLACEMENT';
     case 'ROUTING_DONE':    return 'ROUTING';
     case 'DRC_CLEAN':       return 'DRC';

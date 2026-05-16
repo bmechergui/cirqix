@@ -4,6 +4,10 @@ import {
   runRealPlacement,
   PlacementServiceUnavailableError,
 } from './engines/placement-service';
+import {
+  runRealErc,
+  ErcServiceUnavailableError,
+} from './engines/erc-service';
 
 // Mock Anthropic SDK at module level for generateDesignWithHaiku tests
 const mockCreate = vi.fn();
@@ -23,6 +27,16 @@ vi.mock('./engines/placement-service', async () => {
   return {
     ...actual,
     runRealPlacement: vi.fn(),
+  };
+});
+
+vi.mock('./engines/erc-service', async () => {
+  const actual = await vi.importActual<typeof import('./engines/erc-service')>(
+    './engines/erc-service',
+  );
+  return {
+    ...actual,
+    runRealErc: vi.fn(),
   };
 });
 
@@ -298,5 +312,147 @@ describe('executeToolStub — call_agent_placement', () => {
     );
     expect(typeof result['note']).toBe('string');
     expect((result['note'] as string).length).toBeGreaterThan(0);
+  });
+});
+
+// ============================================================
+// call_agent_erc — Electrical Rules Check
+// ============================================================
+
+describe('PCB_TOOLS — call_agent_erc', () => {
+  it('exposes a call_agent_erc tool definition', () => {
+    const ercTool = PCB_TOOLS.find((t) => t.name === 'call_agent_erc');
+    expect(ercTool).toBeDefined();
+    expect(ercTool?.description).toMatch(/electrical rules|erc/i);
+  });
+
+  it('positioned AFTER call_agent_schema and BEFORE call_agent_placement', () => {
+    const schemaIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_schema');
+    const ercIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_erc');
+    const placementIdx = PCB_TOOLS.findIndex((t) => t.name === 'call_agent_placement');
+    expect(ercIdx).toBeGreaterThan(schemaIdx);
+    expect(ercIdx).toBeLessThan(placementIdx);
+  });
+});
+
+describe('executeToolStub — call_agent_erc', () => {
+  beforeEach(() => {
+    vi.mocked(runRealErc).mockReset();
+  });
+
+  it('skips when no schema is cached', async () => {
+    const result = await executeToolStub('call_agent_erc', { auto_fix: true }, 'proj-no-cache');
+    expect(result['status']).toBe('success');
+    expect(result['pcb_status']).toBe('ERC_CLEAN');
+    expect(result['erc_skipped']).toBe(true);
+    expect(result['engine']).toBe('fallback-skip');
+    expect(runRealErc).not.toHaveBeenCalled();
+  });
+
+  it('returns clean result when service reports no violations', async () => {
+    // Prime cache via call_agent_schema (mocked Haiku absent → fallback path)
+    delete process.env['ANTHROPIC_API_KEY'];
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      'proj-erc-clean',
+    );
+
+    vi.mocked(runRealErc).mockResolvedValueOnce({
+      ercClean: true,
+      violations: [],
+      fixedCount: 0,
+      skipped: false,
+    });
+
+    const result = await executeToolStub('call_agent_erc', { auto_fix: true }, 'proj-erc-clean');
+    expect(result['pcb_status']).toBe('ERC_CLEAN');
+    expect(result['engine']).toBe('kicad-cli');
+    expect(result['ercViolations']).toEqual([]);
+    expect(result['erc_skipped']).toBe(false);
+  });
+
+  it('propagates skipped state when kicad-cli unavailable', async () => {
+    delete process.env['ANTHROPIC_API_KEY'];
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      'proj-erc-skip',
+    );
+
+    vi.mocked(runRealErc).mockResolvedValueOnce({
+      ercClean: true,
+      violations: [],
+      fixedCount: 0,
+      skipped: true,
+      warning: 'kicad-cli not available',
+    });
+
+    const result = await executeToolStub('call_agent_erc', { auto_fix: true }, 'proj-erc-skip');
+    expect(result['engine']).toBe('kicad-cli-skipped');
+    expect(result['erc_skipped']).toBe(true);
+    expect(result['warning']).toContain('kicad-cli');
+  });
+
+  it('falls back when service throws ErcServiceUnavailableError', async () => {
+    delete process.env['ANTHROPIC_API_KEY'];
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      'proj-erc-fallback',
+    );
+
+    vi.mocked(runRealErc).mockRejectedValueOnce(
+      new ErcServiceUnavailableError('service down'),
+    );
+
+    const result = await executeToolStub(
+      'call_agent_erc',
+      { auto_fix: true },
+      'proj-erc-fallback',
+    );
+    expect(result['engine']).toBe('fallback-skip');
+    expect(result['erc_skipped']).toBe(true);
+  });
+
+  it('falls back on any unexpected error', async () => {
+    delete process.env['ANTHROPIC_API_KEY'];
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      'proj-erc-error',
+    );
+
+    vi.mocked(runRealErc).mockRejectedValueOnce(new Error('unexpected'));
+
+    const result = await executeToolStub(
+      'call_agent_erc',
+      { auto_fix: true },
+      'proj-erc-error',
+    );
+    expect(result['status']).toBe('success');
+    expect(result['engine']).toBe('fallback-skip');
+  });
+
+  it('returns updated kicad_sch_content when auto-fix applied', async () => {
+    delete process.env['ANTHROPIC_API_KEY'];
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      'proj-erc-fix',
+    );
+
+    const fixedSch = '(kicad_sch with no_connect added)';
+    vi.mocked(runRealErc).mockResolvedValueOnce({
+      ercClean: true,
+      violations: [],
+      fixedCount: 1,
+      skipped: false,
+      kicadSchContent: fixedSch,
+    });
+
+    const result = await executeToolStub('call_agent_erc', { auto_fix: true }, 'proj-erc-fix');
+    expect(result['kicad_sch_content']).toBe(fixedSch);
+    expect(result['fixed_count']).toBe(1);
   });
 });

@@ -78,6 +78,7 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
             const stageMap = {
               INITIAL: 'IDEA',
               SCHEMA_DONE: 'SCHEMA',
+              ERC_CLEAN: 'ERC',
               PLACEMENT_DONE: 'PLACEMENT',
               ROUTING_DONE: 'ROUTING',
               DRC_CLEAN: 'DRC',

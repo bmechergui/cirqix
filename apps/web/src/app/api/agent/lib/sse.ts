@@ -2,7 +2,7 @@ import type { PCBState, PCBStatus } from '@layrix/types';
 
 export type SseEvent =
   | { type: 'token'; content: string }
-  | { type: 'step'; step: 'SCHEMA' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null }
+  | { type: 'step'; step: 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null }
   | { type: 'status'; status: PCBStatus }
   | { type: 'pcb_state'; state: PCBState }
   | { type: 'error'; message: string }

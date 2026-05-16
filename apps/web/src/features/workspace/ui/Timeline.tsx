@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Loader2, Sparkles, FileText, MoveDiagonal2, Route, ShieldCheck, Download } from 'lucide-react';
+import { Check, Loader2, Sparkles, FileText, MoveDiagonal2, Route, ShieldCheck, Download, Activity } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { PCBStatus } from '@layrix/types';
 import {
@@ -20,6 +20,7 @@ interface TimelineProps {
 const STAGE_META: Record<PcbStage, { label: string; icon: LucideIcon }> = {
   IDEA:      { label: 'Idea',     icon: Sparkles },
   SCHEMA:    { label: 'Schema',   icon: FileText },
+  ERC:       { label: 'ERC',      icon: Activity },
   PLACEMENT: { label: 'Place',    icon: MoveDiagonal2 },
   ROUTING:   { label: 'Route',    icon: Route },
   DRC:       { label: 'DRC',      icon: ShieldCheck },
@@ -45,6 +46,7 @@ export function Timeline({ projectId, status }: TimelineProps) {
         const isAgentActive =
           agentStep === stage ||
           (agentStep === 'SCHEMA' && stage === 'SCHEMA') ||
+          (agentStep === 'ERC' && stage === 'ERC') ||
           (agentStep === 'PLACEMENT' && stage === 'PLACEMENT') ||
           (agentStep === 'ROUTING' && stage === 'ROUTING') ||
           (agentStep === 'DRC' && stage === 'DRC') ||

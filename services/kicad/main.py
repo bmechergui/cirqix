@@ -88,6 +88,10 @@ app.include_router(circuit_synth_router)
 from routers.placement import router as placement_router  # noqa: E402
 app.include_router(placement_router)
 
+# ERC router — /erc (kicad-cli sch erc with auto-fix loop)
+from routers.erc import router as erc_router  # noqa: E402
+app.include_router(erc_router)
+
 # ============================================================
 # Routes
 # ============================================================

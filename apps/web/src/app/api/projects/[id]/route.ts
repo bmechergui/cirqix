@@ -6,7 +6,7 @@ const updateSchema = z.object({
   name: z.string().min(1).max(100).trim().optional(),
   description: z.string().max(500).trim().optional(),
   status: z
-    .enum(['INITIAL', 'SCHEMA_DONE', 'PLACEMENT_DONE', 'ROUTING_DONE', 'DRC_CLEAN', 'PCB_LIVRÉ'])
+    .enum(['INITIAL', 'SCHEMA_DONE', 'ERC_CLEAN', 'PLACEMENT_DONE', 'ROUTING_DONE', 'DRC_CLEAN', 'PCB_LIVRÉ'])
     .optional(),
 });
 

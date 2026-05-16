@@ -4,6 +4,7 @@ import type { PCBStatus } from '@layrix/types';
 const STATUS_LABEL: Record<PCBStatus, string> = {
   INITIAL: 'Draft',
   SCHEMA_DONE: 'Schema',
+  ERC_CLEAN: 'ERC clean',
   PLACEMENT_DONE: 'Placed',
   ROUTING_DONE: 'Routed',
   DRC_CLEAN: 'DRC clean',
@@ -13,6 +14,7 @@ const STATUS_LABEL: Record<PCBStatus, string> = {
 const STATUS_VARIANT: Record<PCBStatus, 'secondary' | 'default' | 'success' | 'copper' | 'warning'> = {
   INITIAL: 'secondary',
   SCHEMA_DONE: 'default',
+  ERC_CLEAN: 'default',
   PLACEMENT_DONE: 'default',
   ROUTING_DONE: 'copper',
   DRC_CLEAN: 'success',

@@ -6,6 +6,8 @@ import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
 import type { SchemaJson } from './engines/engine-router';
 import { runRealPlacement } from './engines/placement-service';
 import { computeLayout, layoutToPlacements } from './engines/placement-fallback';
+import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
+import { runErcFallback } from './engines/erc-fallback';
 
 type Tool = Anthropic.Tool;
 
@@ -62,6 +64,23 @@ export const PCB_TOOLS: Tool[] = [
         },
       },
       required: ['user_description'],
+    },
+  },
+  {
+    name: 'call_agent_erc',
+    description:
+      "Vérifie les Electrical Rules sur le .kicad_sch produit par call_agent_schema. " +
+      "Auto-corrige les violations 'pin_not_connected' en ajoutant des markers no_connect. " +
+      "NE modifie JAMAIS la connectivité. DOIT être appelé après call_agent_schema, avant call_agent_placement.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        auto_fix: {
+          type: 'boolean',
+          description: 'Ajouter des no_connect markers pour les pins flottants (défaut: true)',
+        },
+      },
+      required: [],
     },
   },
   {
@@ -184,6 +203,7 @@ interface PcbStateCacheEntry {
   schema: SchemaJson;
   boardW: number;
   boardH: number;
+  kicad_sch_content?: string;
   kicad_pcb_content?: string;
 }
 const _pcbStateCache = new Map<string, PcbStateCacheEntry>();
@@ -253,6 +273,7 @@ export async function executeToolStub(
         schema,
         boardW: 50,
         boardH: 50,
+        kicad_sch_content: csResult.kicad_sch_content,
         kicad_pcb_content: csResult.kicad_pcb_content,
       });
 
@@ -267,6 +288,71 @@ export async function executeToolStub(
         kicad_pcb_content: csResult.kicad_pcb_content,
         note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.`,
       };
+    }
+
+    case 'call_agent_erc': {
+      const autoFix = input['auto_fix'] !== false; // default true
+      const cached = _pcbStateCache.get(projectId);
+      const schContent = cached?.kicad_sch_content;
+      if (!schContent || schContent.length === 0) {
+        // Schema step was never run — return empty result rather than crashing
+        return {
+          status: 'success',
+          pcb_status: 'ERC_CLEAN',
+          ercViolations: [],
+          erc_skipped: true,
+          engine: 'fallback-skip',
+          warning: 'No .kicad_sch in cache — run call_agent_schema first.',
+          note: 'ERC sauté — pas de schéma en cache.',
+        };
+      }
+
+      try {
+        const result = await runRealErc({ kicadSchContent: schContent, autoFix });
+        // Persist updated .kicad_sch in cache so downstream tools see auto-fixes
+        if (result.kicadSchContent && cached) {
+          _pcbStateCache.set(projectId, {
+            ...cached,
+            kicad_sch_content: result.kicadSchContent,
+          });
+        }
+        // Only promote status when ERC actually passes (clean or skipped).
+        // Unresolved violations keep the project at SCHEMA_DONE so the
+        // orchestrator can surface them and the user knows the schema is dirty.
+        const newStatus: 'ERC_CLEAN' | 'SCHEMA_DONE' =
+          result.ercClean || result.skipped ? 'ERC_CLEAN' : 'SCHEMA_DONE';
+        return {
+          status: 'success',
+          pcb_status: newStatus,
+          ercViolations: result.violations,
+          erc_skipped: result.skipped,
+          fixed_count: result.fixedCount,
+          kicad_sch_content: result.kicadSchContent ?? schContent,
+          engine: result.skipped ? 'kicad-cli-skipped' : 'kicad-cli',
+          warning: result.warning,
+          note: result.skipped
+            ? `ERC sauté — ${result.warning ?? 'kicad-cli indisponible'}.`
+            : result.ercClean
+            ? `ERC OK — 0 violation${result.fixedCount > 0 ? `, ${result.fixedCount} auto-fix appliqués` : ''}.`
+            : `ERC — ${result.violations.length} violations restantes après auto-fix. Pipeline arrêté avant placement.`,
+        };
+      } catch (err) {
+        if (!(err instanceof ErcServiceUnavailableError)) {
+          log.warn({ err }, 'ERC service threw unexpected error — falling back');
+        }
+        const fallback = runErcFallback();
+        return {
+          status: 'success',
+          pcb_status: 'ERC_CLEAN',
+          ercViolations: fallback.violations,
+          erc_skipped: fallback.skipped,
+          fixed_count: fallback.fixedCount,
+          kicad_sch_content: schContent,
+          engine: fallback.engine,
+          warning: fallback.warning,
+          note: `ERC sauté (fallback) — ${fallback.warning}`,
+        };
+      }
     }
 
     case 'call_agent_footprint':

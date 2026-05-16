@@ -6,6 +6,7 @@ import { statusToStage, type PcbStage } from '@/entities/project';
 import { useAppStore } from '@/shared/store/app-store';
 import { IdeaView } from './IdeaView';
 import { SchemaView } from './SchemaView';
+import { ErcView } from './ErcView';
 import { PcbView } from './PcbView';
 import { DrcView } from './DrcView';
 import { ExportView } from './ExportView';
@@ -36,6 +37,8 @@ export function Stage({ project }: StageProps) {
       return <IdeaView project={project} />;
     case 'SCHEMA':
       return <SchemaView state={pcbState} />;
+    case 'ERC':
+      return <ErcView state={pcbState} />;
     case 'PLACEMENT':
       return <PcbView state={pcbState} title="Component placement" showRouting={false} />;
     case 'ROUTING':
