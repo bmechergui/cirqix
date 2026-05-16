@@ -22,9 +22,16 @@ export async function createRouteHandlerClient() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet: Array<{ name: string; value: string; options?: CookieOptions }>) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
+          // Server Components cannot mutate cookies — the auth middleware already
+          // refreshes the session, so silently swallowing here is safe.
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // Read-only render context (e.g. Server Component) — middleware
+            // is responsible for refresh.
+          }
         },
       },
     }

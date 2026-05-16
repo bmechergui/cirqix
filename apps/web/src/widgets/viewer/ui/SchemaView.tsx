@@ -5,6 +5,7 @@ import { FileText, Hash } from 'lucide-react';
 import type { PCBState } from '@layrix/types';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
+import { SchematicGraph } from './SchematicGraph';
 import { ViewModeSwitch, type ViewMode } from './ViewModeSwitch';
 
 const NET_PALETTE = [
@@ -51,7 +52,10 @@ export function SchemaView({ state }: { state: PCBState }) {
         <KiCanvasViewer src={nativeUrl} controls="basic" />
       ) : (
 
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        <div className="max-w-7xl mx-auto">
+          <SchematicGraph components={components} connections={connections} />
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 max-w-7xl mx-auto">
           {/* Components BOM */}
           <section className="rounded-xl border border-border bg-[#111111] overflow-hidden">
