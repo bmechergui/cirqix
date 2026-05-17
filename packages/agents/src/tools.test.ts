@@ -16,6 +16,10 @@ import {
   runRealDrc,
   DrcServiceUnavailableError,
 } from './engines/drc-service';
+import {
+  runRealExport,
+  ExportServiceUnavailableError,
+} from './engines/export-service';
 
 // Mock Anthropic SDK at module level for generateDesignWithHaiku tests
 const mockCreate = vi.fn();
@@ -65,6 +69,16 @@ vi.mock('./engines/drc-service', async () => {
   return {
     ...actual,
     runRealDrc: vi.fn(),
+  };
+});
+
+vi.mock('./engines/export-service', async () => {
+  const actual = await vi.importActual<typeof import('./engines/export-service')>(
+    './engines/export-service',
+  );
+  return {
+    ...actual,
+    runRealExport: vi.fn(),
   };
 });
 
@@ -734,5 +748,124 @@ describe('executeToolStub — call_agent_drc', () => {
     );
     expect(result['kicad_pcb_content']).toBe(fixedPcb);
     expect(result['fixed_count']).toBe(2);
+  });
+});
+
+// ============================================================
+// call_agent_export — Gerbers/BOM/CPL service + fallback
+// ============================================================
+
+describe('executeToolStub — call_agent_export', () => {
+  beforeEach(() => {
+    vi.mocked(runRealExport).mockReset();
+    delete process.env['ANTHROPIC_API_KEY'];
+  });
+
+  async function primeRouting(projectId: string): Promise<void> {
+    await executeToolStub(
+      'call_agent_schema',
+      { user_description: 'LED indicator', complexity: 'simple' },
+      projectId,
+    );
+    vi.mocked(runRealRouting).mockResolvedValueOnce({
+      kicadPcbContent: '(kicad_pcb routed for export test)',
+      routedPercent: 100,
+      layers: 2,
+      skipped: false,
+    });
+    await executeToolStub(
+      'call_agent_routing',
+      { placement_json: '{}', schema_json: '{}' },
+      projectId,
+    );
+  }
+
+  it('skips when no .kicad_pcb is cached', async () => {
+    const result = await executeToolStub(
+      'call_agent_export',
+      { pcb_state: '{}' },
+      'proj-export-empty',
+    );
+    expect(result['status']).toBe('success');
+    expect(result['pcb_status']).toBe('PCB_LIVRÉ');
+    expect(result['engine']).toBe('fallback-skip');
+    expect(runRealExport).not.toHaveBeenCalled();
+  });
+
+  it('returns manufacturing files + quote when service succeeds', async () => {
+    await primeRouting('proj-export-ok');
+    vi.mocked(runRealExport).mockResolvedValueOnce({
+      files: ['F_Cu.gbr', 'B_Cu.gbr', 'Edge_Cuts.gm1'],
+      zipB64: 'BASE64ZIP',
+      quoteUsd: 15.5,
+      leadTimeDays: 7,
+      skipped: false,
+    });
+
+    const result = await executeToolStub(
+      'call_agent_export',
+      { pcb_state: '{}' },
+      'proj-export-ok',
+    );
+    expect(result['engine']).toBe('kicad-cli');
+    expect(result['gerber_layers']).toBe(3);
+    expect(result['zip_b64']).toBe('BASE64ZIP');
+    expect(result['quote_usd']).toBe(15.5);
+    expect(result['lead_time_days']).toBe(7);
+    expect((result['note'] as string)).toContain('OUI JE CONFIRME');
+  });
+
+  it('falls back when service throws ExportServiceUnavailableError', async () => {
+    await primeRouting('proj-export-fallback');
+    vi.mocked(runRealExport).mockRejectedValueOnce(
+      new ExportServiceUnavailableError('service down'),
+    );
+
+    const result = await executeToolStub(
+      'call_agent_export',
+      { pcb_state: '{}' },
+      'proj-export-fallback',
+    );
+    expect(result['engine']).toBe('fallback-skip');
+    expect(result['pcb_status']).toBe('PCB_LIVRÉ');
+    expect(typeof result['bom_csv']).toBe('string');
+    expect((result['note'] as string)).toContain('OUI JE CONFIRME');
+  });
+
+  it('propagates skipped state when kicad-cli unavailable', async () => {
+    await primeRouting('proj-export-skip');
+    vi.mocked(runRealExport).mockResolvedValueOnce({
+      files: [],
+      quoteUsd: 0,
+      leadTimeDays: 0,
+      skipped: true,
+      warning: 'kicad-cli not available',
+    });
+
+    const result = await executeToolStub(
+      'call_agent_export',
+      { pcb_state: '{}' },
+      'proj-export-skip',
+    );
+    expect(result['engine']).toBe('kicad-cli-skipped');
+    expect((result['warning'] as string)).toContain('kicad-cli');
+  });
+
+  it('never auto-confirms JLCPCB order — note always demands OUI JE CONFIRME', async () => {
+    await primeRouting('proj-export-confirm');
+    vi.mocked(runRealExport).mockResolvedValueOnce({
+      files: ['F_Cu.gbr'],
+      zipB64: 'b',
+      quoteUsd: 10,
+      leadTimeDays: 5,
+      skipped: false,
+    });
+
+    const result = await executeToolStub(
+      'call_agent_export',
+      { pcb_state: '{}' },
+      'proj-export-confirm',
+    );
+    expect((result['note'] as string)).toContain('OUI JE CONFIRME');
   });
 });

@@ -77,8 +77,8 @@ def place(req: PlacementRequest) -> PlacementResponse:
             req.output_path,
         )
     except Exception as exc:
-        logger.exception("Erreur place_components")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Erreur place_components: %s", exc)
+        raise HTTPException(status_code=500, detail="placement failed") from exc
 
     return PlacementResponse(**result)
 
@@ -101,7 +101,7 @@ def place_auto(req: AutoPlacementRequest) -> AutoPlacementResponse:
             board_height_mm=req.board_height_mm,
         )
     except Exception as exc:
-        logger.exception("Erreur auto_place")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Erreur auto_place: %s", exc)
+        raise HTTPException(status_code=500, detail="auto-placement failed") from exc
 
     return AutoPlacementResponse(**result)

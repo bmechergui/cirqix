@@ -10,6 +10,7 @@ import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
 import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
+import { runRealExport, ExportServiceUnavailableError } from './engines/export-service';
 
 type Tool = Anthropic.Tool;
 
@@ -618,18 +619,73 @@ export async function executeToolStub(
     case 'call_agent_export': {
       const cached = _pcbStateCache.get(projectId);
       const schema = cached?.schema ?? { components: [], nets: [] };
-      // Circuit-Synth generates 2-layer KiCad files (F.Cu + B.Cu + silkscreen + mask + Edge.Cuts)
-      const gerberLayerCount = schema.components.length > 0 ? 7 : 0;
+      const pcbContent = cached?.kicad_pcb_content;
 
-      return {
-        status: 'success',
-        pcb_status: 'PCB_LIVRÉ',
-        gerber_layers: gerberLayerCount,
-        bom_csv: `ref,value,lcsc\n${(schema.components).map((c) => `${c.ref},${c.value},${c.lcsc ?? ''}`).join('\n')}`,
-        quote_usd: 12.50,
-        lead_time_days: 7,
-        note: `Export prêt — ${gerberLayerCount} fichiers Gerber (Circuit-Synth). Devis: $12.50 (7 jours). Confirme avec "OUI JE CONFIRME".`,
-      };
+      // Always-available fallback BOM CSV from the cached schema components
+      const fallbackBomCsv = `ref,value,lcsc\n${schema.components
+        .map((c) => `${c.ref},${c.value},${c.lcsc ?? ''}`)
+        .join('\n')}`;
+
+      if (!pcbContent || pcbContent.length === 0) {
+        return {
+          status: 'success',
+          pcb_status: 'PCB_LIVRÉ',
+          gerber_layers: 0,
+          bom_csv: fallbackBomCsv,
+          quote_usd: 0,
+          lead_time_days: 0,
+          engine: 'fallback-skip',
+          warning: 'No .kicad_pcb in cache — run the pipeline first.',
+          note: 'Export sauté — pas de PCB en cache.',
+        };
+      }
+
+      try {
+        const result = await runRealExport({
+          kicadPcbContent: pcbContent,
+          projectId,
+        });
+        if (result.skipped) {
+          return {
+            status: 'success',
+            pcb_status: 'PCB_LIVRÉ',
+            gerber_layers: schema.components.length > 0 ? 7 : 0,
+            bom_csv: fallbackBomCsv,
+            quote_usd: 12.5,
+            lead_time_days: 7,
+            engine: 'kicad-cli-skipped',
+            warning: result.warning,
+            note: `Export sauté — ${result.warning ?? 'kicad-cli indisponible'}. BOM CSV fallback inclus. Confirme avec "OUI JE CONFIRME" pour commander en production.`,
+          };
+        }
+        return {
+          status: 'success',
+          pcb_status: 'PCB_LIVRÉ',
+          gerber_layers: result.files.length,
+          files: result.files,
+          zip_b64: result.zipB64,
+          bom_csv: fallbackBomCsv,
+          quote_usd: result.quoteUsd,
+          lead_time_days: result.leadTimeDays,
+          engine: 'kicad-cli',
+          note: `Export prêt — ${result.files.length} fichiers (${result.files.join(', ')}). Devis: $${result.quoteUsd} (${result.leadTimeDays} jours). Confirme avec "OUI JE CONFIRME".`,
+        };
+      } catch (err) {
+        if (!(err instanceof ExportServiceUnavailableError)) {
+          log.warn({ err }, 'export service threw unexpected error — falling back');
+        }
+        return {
+          status: 'success',
+          pcb_status: 'PCB_LIVRÉ',
+          gerber_layers: schema.components.length > 0 ? 7 : 0,
+          bom_csv: fallbackBomCsv,
+          quote_usd: 12.5,
+          lead_time_days: 7,
+          engine: 'fallback-skip',
+          warning: err instanceof Error ? err.message : 'export service unavailable',
+          note: 'Export fallback — BOM CSV uniquement. Gerbers générés en production. Confirme avec "OUI JE CONFIRME".',
+        };
+      }
     }
 
     case 'ask_user':

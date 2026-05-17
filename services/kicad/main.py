@@ -100,6 +100,10 @@ app.include_router(routing_router)
 from routers.drc import router as drc_router  # noqa: E402
 app.include_router(drc_router)
 
+# Export router — /export/all (Gerbers + drill + CPL, b64 zip output, fallback skip)
+from routers.export import router as export_router  # noqa: E402
+app.include_router(export_router)
+
 # ============================================================
 # Routes
 # ============================================================
