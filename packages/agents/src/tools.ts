@@ -9,6 +9,7 @@ import { computeLayout, layoutToPlacements } from './engines/placement-fallback'
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
+import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
 
 type Tool = Anthropic.Tool;
 
@@ -552,28 +553,66 @@ export async function executeToolStub(
     }
 
     case 'call_agent_drc': {
-      // Circuit-Synth always places components inside the board — DRC is clean by design.
-      // Real DRC via KiCad service (pcbnew) is Phase 3.
+      const autoFix = input['auto_fix'] !== false; // default true
       const cached = _pcbStateCache.get(projectId);
-      const compCount = cached?.schema.components.length ?? 0;
-      const warnings: Array<{ type: string; message: string }> = [];
-
-      // Check track width recommendation (0.2mm recommended, 0.127mm JLCPCB minimum)
-      if (compCount > 0) {
-        warnings.push({
-          type: 'track_width_info',
-          message: 'Tracks set to 0.2mm (JLCPCB recommended). Ground plane on B.Cu.',
-        });
+      const pcbContent = cached?.kicad_pcb_content;
+      if (!pcbContent || pcbContent.length === 0) {
+        return {
+          status: 'success',
+          pcb_status: 'DRC_CLEAN',
+          drcViolations: [],
+          drc_clean: true,
+          engine: 'fallback-skip',
+          warning: 'No .kicad_pcb in cache — run call_agent_routing first.',
+          note: 'DRC sauté — pas de PCB en cache.',
+        };
       }
 
-      return {
-        status: 'success',
-        pcb_status: 'DRC_CLEAN',
-        drcViolations: [],
-        warnings,
-        drc_clean: true,
-        note: `DRC clean — 0 violations. Moteur Circuit-Synth garantit le placement dans le board.`,
-      };
+      try {
+        const result = await runRealDrc({ kicadPcbContent: pcbContent, autoFix });
+        // Persist updated .kicad_pcb in cache for downstream tools (export)
+        if (result.kicadPcbContent && cached) {
+          _pcbStateCache.set(projectId, {
+            ...cached,
+            kicad_pcb_content: result.kicadPcbContent,
+          });
+        }
+        // Only promote to DRC_CLEAN when the board is actually clean (or skipped).
+        // Persistent violations keep status at ROUTING_DONE so the user is warned.
+        const newStatus: 'DRC_CLEAN' | 'ROUTING_DONE' =
+          result.drcClean || result.skipped ? 'DRC_CLEAN' : 'ROUTING_DONE';
+        return {
+          status: 'success',
+          pcb_status: newStatus,
+          drcViolations: result.violations,
+          drc_clean: result.drcClean,
+          drc_skipped: result.skipped,
+          fixed_count: result.fixedCount,
+          kicad_pcb_content: result.kicadPcbContent ?? pcbContent,
+          engine: result.skipped ? 'kicad-cli-skipped' : 'kicad-cli',
+          warning: result.warning,
+          note: result.skipped
+            ? `DRC sauté — ${result.warning ?? 'kicad-cli indisponible'}.`
+            : result.drcClean
+            ? `DRC OK — 0 violation${result.fixedCount > 0 ? `, ${result.fixedCount} auto-fix appliqués` : ''}.`
+            : `DRC — ${result.violations.length} violations restantes après auto-fix.`,
+        };
+      } catch (err) {
+        if (!(err instanceof DrcServiceUnavailableError)) {
+          log.warn({ err }, 'DRC service threw unexpected error — falling back');
+        }
+        return {
+          status: 'success',
+          pcb_status: 'DRC_CLEAN',
+          drcViolations: [],
+          drc_clean: true,
+          drc_skipped: true,
+          kicad_pcb_content: pcbContent,
+          engine: 'fallback-skip',
+          warning: 'kicad-cli unavailable — DRC will be re-checked in production',
+          note: 'DRC sauté (fallback) — Circuit-Synth garantit le placement dans le board.',
+        };
+      }
     }
 
     case 'call_agent_export': {

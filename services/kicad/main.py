@@ -96,6 +96,10 @@ app.include_router(erc_router)
 from routers.routing import router as routing_router  # noqa: E402
 app.include_router(routing_router)
 
+# DRC router — /drc/auto (base64 I/O, kicad-cli pcb drc with auto-fix loop)
+from routers.drc import router as drc_router  # noqa: E402
+app.include_router(drc_router)
+
 # ============================================================
 # Routes
 # ============================================================
