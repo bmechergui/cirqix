@@ -75,7 +75,7 @@ describe('Validation — SCHEMA + PLACEMENT', () => {
       'call_agent_spec',
       { user_description: userDescription },
       projectId,
-    )) as ToolResult;
+    )) as unknown as ToolResult;
     expect(spec.status).toBe('success');
     // eslint-disable-next-line no-console
     console.log(`[1/3] SPEC      engine=${spec.engine}`);
@@ -87,7 +87,7 @@ describe('Validation — SCHEMA + PLACEMENT', () => {
       'call_agent_schema',
       { user_description: userDescription, complexity: 'simple' },
       projectId,
-    )) as ToolResult;
+    )) as unknown as ToolResult;
     expect(schema.status).toBe('success');
     expect(schema.pcb_status).toBe('SCHEMA_DONE');
     expect(typeof schema.kicad_sch_content).toBe('string');
@@ -122,7 +122,7 @@ describe('Validation — SCHEMA + PLACEMENT', () => {
       'call_agent_placement',
       { board_width_mm: 50, board_height_mm: 50 },
       projectId,
-    )) as ToolResult;
+    )) as unknown as ToolResult;
     expect(placement.status).toBe('success');
     expect(placement.pcb_status).toBe('PLACEMENT_DONE');
     expect(Array.isArray(placement.placements)).toBe(true);

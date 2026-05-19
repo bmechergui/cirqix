@@ -28,15 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Add the KiCad 8.0 PPA repository line directly
     && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu jammy main" \
         > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
-    # Import the PPA signing key via HTTP (avoids dirmngr / socket issues in
-    # Docker buildkit where /root/.gnupg cannot be created by the sandbox).
+    # Import the PPA signing key via HTTP + --dearmor (no dirmngr needed).
+    # curl downloads the ASCII-armored public key; gpg --dearmor converts it
+    # to binary format required by modern apt (trusted.gpg.d/*.gpg).
     && mkdir -p /root/.gnupg && chmod 700 /root/.gnupg \
     && for i in 1 2 3; do \
            curl -fsSL \
                "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${KICAD_PPA_KEY}" \
-           | gpg --no-default-keyring \
-                 --keyring /etc/apt/trusted.gpg.d/kicad.gpg \
-                 --import \
+           | gpg --dearmor \
+           | tee /etc/apt/trusted.gpg.d/kicad.gpg > /dev/null \
            && break || sleep 10; \
        done \
     && chmod 644 /etc/apt/trusted.gpg.d/kicad.gpg \
