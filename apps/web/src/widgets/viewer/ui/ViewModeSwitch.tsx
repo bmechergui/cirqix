@@ -1,6 +1,6 @@
 'use client';
 
-import { Layers, ListTree } from 'lucide-react';
+import { Cpu, LayoutList, Lock } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
 export type ViewMode = 'native' | 'spec';
@@ -8,41 +8,56 @@ export type ViewMode = 'native' | 'spec';
 interface ViewModeSwitchProps {
   mode: ViewMode;
   onChange: (mode: ViewMode) => void;
-  /** When true, the 'native' option is disabled (no .kicad file available). */
   nativeDisabled?: boolean;
 }
 
 export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitchProps) {
   return (
-    <div className="flex items-center gap-0.5 bg-[#1a1a1a] rounded-md p-0.5 border border-border">
+    <div className="flex items-center gap-0.5 bg-[#111111] rounded-lg p-0.5 border border-[#1e1e1e]">
+      {/* Native KiCad button */}
       <button
         type="button"
-        onClick={() => onChange('native')}
+        onClick={() => !nativeDisabled && onChange('native')}
         disabled={nativeDisabled}
-        title={nativeDisabled ? 'Generate the design to enable native KiCad view' : 'Native KiCad render'}
+        title={nativeDisabled ? 'Generate a design first to unlock native KiCad rendering' : 'Native KiCad render (official renderer)'}
         className={cn(
-          'flex items-center gap-1 px-2 py-1 rounded-sm text-[10px] font-medium transition-colors',
+          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all duration-150',
           mode === 'native' && !nativeDisabled
-            ? 'bg-primary/15 text-primary'
-            : 'text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground'
+            ? 'bg-[#0c1e35] text-[#5baeff] border border-[#1d5fa0]/40 shadow-sm'
+            : nativeDisabled
+              ? 'text-[#2e2e2e] cursor-not-allowed'
+              : 'text-[#555] hover:text-[#888] hover:bg-[#161616]',
         )}
       >
-        <Layers size={10} />
-        Native
+        {nativeDisabled
+          ? <Lock size={9} className="shrink-0" />
+          : <Cpu size={10} className="shrink-0" />
+        }
+        <span>KiCad</span>
+        {!nativeDisabled && (
+          <span className={cn(
+            'text-[8px] font-mono px-1 py-px rounded leading-none',
+            mode === 'native' ? 'bg-[#1d5fa0]/30 text-[#5baeff]' : 'bg-[#1a1a1a] text-[#3d3d3d]'
+          )}>
+            native
+          </span>
+        )}
       </button>
+
+      {/* Spec button */}
       <button
         type="button"
         onClick={() => onChange('spec')}
-        title="Datasheet view"
+        title="Logical view — netlist, components, diagram"
         className={cn(
-          'flex items-center gap-1 px-2 py-1 rounded-sm text-[10px] font-medium transition-colors',
+          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all duration-150',
           mode === 'spec'
-            ? 'bg-primary/15 text-primary'
-            : 'text-muted-foreground hover:text-foreground'
+            ? 'bg-primary/10 text-primary border border-primary/20 shadow-sm'
+            : 'text-[#555] hover:text-[#888] hover:bg-[#161616]',
         )}
       >
-        <ListTree size={10} />
-        Spec
+        <LayoutList size={10} className="shrink-0" />
+        <span>Logical</span>
       </button>
     </div>
   );
