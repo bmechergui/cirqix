@@ -22,18 +22,22 @@ ENV KICAD_PPA_KEY=FDA854F61C4D0D9572BB95E5245D5502FAD7A805
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg \
-        dirmngr \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     # Add the KiCad 8.0 PPA repository line directly
     && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu jammy main" \
         > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
-    # Import the PPA signing key — retry up to 3 times on keyserver flakes
+    # Import the PPA signing key via HTTP (avoids dirmngr / socket issues in
+    # Docker buildkit where /root/.gnupg cannot be created by the sandbox).
+    && mkdir -p /root/.gnupg && chmod 700 /root/.gnupg \
     && for i in 1 2 3; do \
-           gpg --no-default-keyring --keyring /etc/apt/trusted.gpg.d/kicad.gpg \
-               --keyserver hkps://keyserver.ubuntu.com \
-               --recv-keys "$KICAD_PPA_KEY" && break || sleep 10; \
+           curl -fsSL \
+               "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${KICAD_PPA_KEY}" \
+           | gpg --no-default-keyring \
+                 --keyring /etc/apt/trusted.gpg.d/kicad.gpg \
+                 --import \
+           && break || sleep 10; \
        done \
     && chmod 644 /etc/apt/trusted.gpg.d/kicad.gpg \
     # Now install KiCad — retry up to 3 times on archive CDN flakes
