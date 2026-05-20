@@ -38,8 +38,7 @@ if (existsSync(envPath)) {
   }
 }
 
-// eslint-disable-next-line import/first
-import { executeToolStub } from './tools';
+import { executeToolStub } from './tools'; // loaded after env setup above
 
 interface ToolResult {
   status: string;
