@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { FileText, Network, ListTree, Cable, ExternalLink, Cpu, Zap, Plug } from 'lucide-react';
+import { FileText, Network, ListTree, Cable, Cpu, Zap, Plug } from 'lucide-react';
 import type { PCBState, SchemaComponent } from '@layrix/types';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
@@ -158,7 +158,6 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
                   <th className="px-4 py-2 font-medium">Value</th>
                   <th className="px-4 py-2 font-medium hidden sm:table-cell">Footprint</th>
                   <th className="px-4 py-2 font-medium hidden md:table-cell">Symbol</th>
-                  <th className="px-4 py-2 font-medium w-24">LCSC</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1a1a1a]">
@@ -178,21 +177,6 @@ function BomTab({ components }: { components: SchemaComponent[] }) {
                     </td>
                     <td className="px-4 py-2 text-[#666] font-mono text-[10px] hidden md:table-cell">
                       {c.symbol ?? '—'}
-                    </td>
-                    <td className="px-4 py-2">
-                      {c.lcsc ? (
-                        <a
-                          href={`https://jlcpcb.com/parts/componentSearch?searchTxt=${c.lcsc}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono bg-[#1a1200] text-[#D4820A] border border-[#D4820A]/20 hover:border-[#D4820A]/50 transition-colors"
-                        >
-                          {c.lcsc}
-                          <ExternalLink size={8} />
-                        </a>
-                      ) : (
-                        <span className="text-[9px] text-[#444] font-mono">—</span>
-                      )}
                     </td>
                   </tr>
                 ))}
@@ -357,7 +341,7 @@ export function SchemaView({ state }: { state: PCBState }) {
               active={tab === 'components'}
               onClick={() => setTab('components')}
               icon={<ListTree size={10} />}
-              label="BOM"
+              label="Components"
               count={components.length}
             />
             <TabBtn
