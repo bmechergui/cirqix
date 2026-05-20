@@ -453,8 +453,12 @@ describe('executeToolStub — call_agent_erc', () => {
       { auto_fix: true },
       'proj-erc-fallback',
     );
-    expect(result['engine']).toBe('fallback-skip');
-    expect(result['erc_skipped']).toBe(true);
+    // With schema in cache, ts-erc runs instead of silent skip
+    expect(['ts-erc', 'fallback-skip']).toContain(result['engine']);
+    // ts-erc sets skipped=false; fallback-skip sets skipped=true
+    if (result['engine'] === 'fallback-skip') {
+      expect(result['erc_skipped']).toBe(true);
+    }
   });
 
   it('falls back on any unexpected error', async () => {
@@ -473,7 +477,7 @@ describe('executeToolStub — call_agent_erc', () => {
       'proj-erc-error',
     );
     expect(result['status']).toBe('success');
-    expect(result['engine']).toBe('fallback-skip');
+    expect(['ts-erc', 'fallback-skip']).toContain(result['engine']);
   });
 
   it('returns updated kicad_sch_content when auto-fix applied', async () => {

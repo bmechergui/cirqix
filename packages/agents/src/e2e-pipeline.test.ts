@@ -77,8 +77,8 @@ describe('E2E pipeline — spec → schema → erc → placement → routing →
     logStep('3. ERC', erc);
     expect(erc.status).toBe('success');
     expect(['ERC_CLEAN', 'SCHEMA_DONE']).toContain(erc.pcb_status as string);
-    // engine is either 'kicad-cli', 'kicad-cli-skipped', or 'fallback-skip'
-    expect(['kicad-cli', 'kicad-cli-skipped', 'fallback-skip']).toContain(
+    // engine is kicad-cli (real), kicad-cli-skipped, ts-erc (TS validator), or fallback-skip
+    expect(['kicad-cli', 'kicad-cli-skipped', 'ts-erc', 'fallback-skip']).toContain(
       erc.engine as string,
     );
 
