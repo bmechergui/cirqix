@@ -14,11 +14,15 @@ export function loadKiCanvas(): Promise<void> {
   loadPromise = new Promise<void>((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${KICANVAS_CDN_URL}"]`);
     if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener(
+        'load',
+        () => { customElements.whenDefined('kicanvas-embed').then(() => resolve(), () => resolve()); },
+        { once: true },
+      );
       existing.addEventListener(
         'error',
         () => reject(new Error('Failed to load KiCanvas script')),
-        { once: true }
+        { once: true },
       );
       return;
     }
@@ -26,7 +30,15 @@ export function loadKiCanvas(): Promise<void> {
     script.src = KICANVAS_CDN_URL;
     script.type = 'module';
     script.async = true;
-    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener(
+      'load',
+      () => {
+        // KiCanvas registers its custom element asynchronously (WASM init).
+        // Wait until the element is actually defined before resolving.
+        customElements.whenDefined('kicanvas-embed').then(() => resolve(), () => resolve());
+      },
+      { once: true },
+    );
     script.addEventListener(
       'error',
       () => {
