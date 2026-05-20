@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
-import { Textarea } from '@/shared/ui/textarea';
+import { Input } from '@/shared/ui/input';
 import {
   Dialog,
   DialogTrigger,
@@ -23,37 +23,31 @@ const EXAMPLES = [
   'LM7805 linear power supply with input/output caps',
 ];
 
-function deriveNameFromDescription(desc: string): string {
-  const words = desc.trim().split(/\s+/);
-  const slug = words.slice(0, 6).join(' ');
-  return slug.length > 60 ? slug.slice(0, 57) + '…' : slug;
-}
-
 export function NewProjectDialog() {
   const router = useRouter();
   const createProject = useAppStore((s) => s.createProject);
   const [open, setOpen] = useState(false);
-  const [description, setDescription] = useState('');
+  const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
-    setDescription('');
+    setName('');
     setError(null);
     setSubmitting(false);
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!description.trim()) {
-      setError('Please describe what you want to build.');
+    if (!name.trim()) {
+      setError('Project name is required.');
       return;
     }
     setSubmitting(true);
     setError(null);
     const project = await createProject({
-      name: deriveNameFromDescription(description),
-      description: description.trim(),
+      name: name.trim(),
+      description: name.trim(),
     });
     if (!project) {
       setError('Could not create project. Try again.');
@@ -88,13 +82,12 @@ export function NewProjectDialog() {
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Textarea
-            id="project-description"
-            placeholder="Describe the circuit: components, power requirements, interfaces…"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={500}
-            rows={4}
+          <Input
+            id="project-name"
+            placeholder="e.g. ESP32 Weather Station"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={100}
             autoFocus
             disabled={submitting}
           />
@@ -104,7 +97,7 @@ export function NewProjectDialog() {
               <button
                 key={ex}
                 type="button"
-                onClick={() => setDescription(ex)}
+                onClick={() => setName(ex)}
                 disabled={submitting}
                 className="text-[11px] px-2 py-1 rounded-md border border-border bg-[#0a0a0a] text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
               >
@@ -125,7 +118,7 @@ export function NewProjectDialog() {
                 Cancel
               </Button>
             </DialogClose>
-            <Button type="submit" disabled={submitting || !description.trim()} className="gap-1.5">
+            <Button type="submit" disabled={submitting || !name.trim()} className="gap-1.5">
               {submitting && <Loader2 size={14} className="animate-spin" />}
               {submitting ? 'Creating…' : 'Create project'}
             </Button>
