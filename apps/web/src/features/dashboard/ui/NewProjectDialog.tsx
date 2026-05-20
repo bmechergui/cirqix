@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
 import { Textarea } from '@/shared/ui/textarea';
 import {
   Dialog,
@@ -24,17 +23,21 @@ const EXAMPLES = [
   'LM7805 linear power supply with input/output caps',
 ];
 
+function deriveNameFromDescription(desc: string): string {
+  const words = desc.trim().split(/\s+/);
+  const slug = words.slice(0, 6).join(' ');
+  return slug.length > 60 ? slug.slice(0, 57) + '…' : slug;
+}
+
 export function NewProjectDialog() {
   const router = useRouter();
   const createProject = useAppStore((s) => s.createProject);
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
-    setName('');
     setDescription('');
     setError(null);
     setSubmitting(false);
@@ -42,14 +45,14 @@ export function NewProjectDialog() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) {
-      setError('Project name is required');
+    if (!description.trim()) {
+      setError('Please describe what you want to build.');
       return;
     }
     setSubmitting(true);
     setError(null);
     const project = await createProject({
-      name: name.trim(),
+      name: deriveNameFromDescription(description),
       description: description.trim(),
     });
     if (!project) {
@@ -85,47 +88,29 @@ export function NewProjectDialog() {
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="project-name" className="text-xs font-medium text-muted-foreground">
-              Project name
-            </label>
-            <Input
-              id="project-name"
-              placeholder="e.g. ESP32 Weather Station"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={100}
-              autoFocus
-              disabled={submitting}
-            />
-          </div>
+          <Textarea
+            id="project-description"
+            placeholder="Describe the circuit: components, power requirements, interfaces…"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={500}
+            rows={4}
+            autoFocus
+            disabled={submitting}
+          />
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="project-description" className="text-xs font-medium text-muted-foreground">
-              What do you want to build?
-            </label>
-            <Textarea
-              id="project-description"
-              placeholder="Describe the circuit: components, power requirements, interfaces…"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={500}
-              rows={4}
-              disabled={submitting}
-            />
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {EXAMPLES.map((ex) => (
-                <button
-                  key={ex}
-                  type="button"
-                  onClick={() => setDescription(ex)}
-                  disabled={submitting}
-                  className="text-[11px] px-2 py-1 rounded-md border border-border bg-[#0a0a0a] text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
-                >
-                  {ex}
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setDescription(ex)}
+                disabled={submitting}
+                className="text-[11px] px-2 py-1 rounded-md border border-border bg-[#0a0a0a] text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
+              >
+                {ex}
+              </button>
+            ))}
           </div>
 
           {error && (
@@ -140,7 +125,7 @@ export function NewProjectDialog() {
                 Cancel
               </Button>
             </DialogClose>
-            <Button type="submit" disabled={submitting || !name.trim()} className="gap-1.5">
+            <Button type="submit" disabled={submitting || !description.trim()} className="gap-1.5">
               {submitting && <Loader2 size={14} className="animate-spin" />}
               {submitting ? 'Creating…' : 'Create project'}
             </Button>
