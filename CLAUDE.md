@@ -35,6 +35,8 @@ Chaîne : layrix-prompt-improver → plan → TDD → code →
 **NEVER** sauter `code-reviewer` après une implémentation.
 **NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
 **NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement.
+**NEVER** progresser d'une étape pipeline (Schema→ERC→Place→Route→DRC→Export) sans valider avec `layrix-quality-gate`.
+**NEVER** accepter ERC skipped, composants non connectés, DRC violations comme "OK" — corriger ou documenter explicitement.
 
 ### 5. Prochaine étape — obligatoire après chaque tâche terminée
 

@@ -363,34 +363,91 @@ function uuidv4(): string {
   });
 }
 
+// ─── Topology-aware schematic layout ────────────────────────────────────────
+//
+// Groups components by functional category so the schematic reads left→right:
+//   Connectors | Power/Reg ICs | Core ICs (MCU/FPGA) | Passives | Diodes/LEDs
+//
+// Within each group components are stacked in columns of max 3, with 60mm
+// horizontal spacing and 50mm vertical spacing — large enough that net labels
+// are legible in KiCanvas without zooming in.
+
+function schematicLayout(
+  components: SchemaComponent[],
+): Array<{ ref: string; x: number; y: number }> {
+  const COL_STEP = 60;
+  const ROW_STEP = 50;
+  const MARGIN   = 25;
+  const MAX_ROWS = 3;
+
+  type Group = 'conn' | 'power' | 'core' | 'passive' | 'diode';
+
+  const classify = (c: SchemaComponent): Group => {
+    const r = c.ref.toUpperCase();
+    if (/^J\d*/.test(r) || /^P\d*/.test(r))         return 'conn';
+    if (/^U\d*/.test(r) || /^IC\d*/.test(r)) {
+      const v = c.value.toUpperCase();
+      if (/LDO|REG|AMS|LM78|LM33|7805|3V3|5V|VREF/.test(v)) return 'power';
+      return 'core';
+    }
+    if (/^[RCL]\d*/.test(r) || /^FB\d*/.test(r))    return 'passive';
+    if (/^[DQ]\d*/.test(r) || /^LED\d*/.test(r))    return 'diode';
+    return 'passive';
+  };
+
+  const groups: Record<Group, SchemaComponent[]> = {
+    conn: [], power: [], core: [], passive: [], diode: [],
+  };
+  for (const c of components) groups[classify(c)].push(c);
+
+  const order: Group[] = ['conn', 'power', 'core', 'passive', 'diode'];
+  const result: Array<{ ref: string; x: number; y: number }> = [];
+  let colOffset = 0;
+
+  for (const gName of order) {
+    const group = groups[gName];
+    if (group.length === 0) continue;
+
+    const cols = Math.ceil(group.length / MAX_ROWS);
+    group.forEach((c, idx) => {
+      const col = Math.floor(idx / MAX_ROWS);
+      const row = idx % MAX_ROWS;
+      result.push({
+        ref: c.ref,
+        x: MARGIN + (colOffset + col) * COL_STEP,
+        y: MARGIN + row * ROW_STEP,
+      });
+    });
+    colOffset += cols + 1; // +1 = gap between groups
+  }
+
+  return result;
+}
+
 function generateSchematic(
   components: SchemaComponent[],
   connections: SchemaNet[]
 ): string {
   const lines: string[] = [];
 
-  // Max 4 columns so symbols don't crowd; spacing 50mm col × 40mm row
-  const COLS      = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(components.length))));
-  const ROWS      = Math.ceil(components.length / COLS);
-  const COL_STEP  = 50;
-  const ROW_STEP  = 40;
-  const MARGIN    = 20;
-  const ORIGIN_X  = MARGIN;
-  const ORIGIN_Y  = MARGIN;
+  // Topology-aware placement
+  const layout = schematicLayout(components);
+  const compPos = components.map((c) => {
+    const pos = layout.find((p) => p.ref === c.ref);
+    return pos ?? { x: 25, y: 25 };
+  });
+  const compIdx = new Map(components.map((c, i) => [c.ref, i]));
 
-  // Custom paper size = exact content bounding box → KiCanvas fits to circuit
-  const paperW = Math.max(80, COLS * COL_STEP + MARGIN * 2);
-  const paperH = Math.max(60, ROWS * ROW_STEP + MARGIN * 2 + 20);
+  // Paper = bounding box of placed components + margins so KiCanvas fills view
+  const MARGIN = 25;
+  const xs = compPos.map((p) => p.x);
+  const ys = compPos.map((p) => p.y);
+  const paperW = Math.max(100, Math.max(...xs) + MARGIN * 2);
+  const paperH = Math.max(80,  Math.max(...ys) + MARGIN * 2 + 20);
 
   lines.push(`(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "${uuidv4()}")`);
   lines.push(`  (paper "User" ${paperW} ${paperH})`);
   lines.push(`  (lib_symbols${INLINE_LIB_SYMBOLS}\n  )`);
-
-  const compPos = components.map((_, i) => ({
-    x: ORIGIN_X + (i % COLS) * COL_STEP,
-    y: ORIGIN_Y + Math.floor(i / COLS) * ROW_STEP,
-  }));
-  const compIdx = new Map(components.map((c, i) => [c.ref, i]));
 
   // Component symbols
   components.forEach((comp, i) => {
@@ -402,11 +459,11 @@ function generateSchematic(
 
     lines.push(`  (symbol (lib_id "${libId}") (at ${x} ${y} 0) (unit 1) (in_bom yes) (on_board yes)`);
     lines.push(`    (uuid "${uuidv4()}")`);
-    lines.push(`    (property "Reference" "${ref}" (at ${x} ${y - 4} 0) (effects (font (size 1.27 1.27))))`);
-    lines.push(`    (property "Value" "${val}" (at ${x} ${y + 4} 0) (effects (font (size 1.27 1.27))))`);
-    lines.push(`    (property "Footprint" "${fp}" (at ${x} ${y + 8} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
+    lines.push(`    (property "Reference" "${ref}" (at ${x} ${y - 5} 0) (effects (font (size 1.524 1.524) bold)))`);
+    lines.push(`    (property "Value" "${val}" (at ${x} ${y + 5} 0) (effects (font (size 1.524 1.524))))`);
+    lines.push(`    (property "Footprint" "${fp}" (at ${x} ${y + 9} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
     if (comp.lcsc) {
-      lines.push(`    (property "LCSC" "${comp.lcsc.replace(/"/g, '\\"')}" (at ${x} ${y + 12} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
+      lines.push(`    (property "LCSC" "${comp.lcsc.replace(/"/g, '\\"')}" (at ${x} ${y + 13} 0) (effects (font (size 1.27 1.27)) (hide yes)))`);
     }
     lines.push('  )');
   });
@@ -438,7 +495,11 @@ function generateSchematic(
     });
   });
 
-  // Net labels + wire stubs — one label per pin endpoint per net
+  // Net labels + wire stubs — one label per pin endpoint per net.
+  // Stubs are 5.08mm (2×KiCad grid step) so labels are visually separate from
+  // the symbol body and legible at normal KiCanvas zoom levels.
+  const STUB_LEN = 5.08;
+  const LABEL_FONT = '1.524 1.524'; // slightly larger than default 1.27 for readability
   let wireIdx = 0;
   connections.forEach((conn) => {
     if (!conn.pins.length) return;
@@ -450,17 +511,18 @@ function generateSchematic(
       const off = schPinOffset(components[idx]!.footprint, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
-      // Alternate stub direction every other pin to spread labels
-      const goesRight = pinIdx % 2 === 0 ? off.dx >= 0 : off.dx < 0;
-      const stubEndX  = +(px + (goesRight ? 2.54 : -2.54)).toFixed(2);
+      // Stub direction follows pin orientation: left pins get right-facing label, vice versa
+      const goesRight = off.dx >= 0;
+      const stubEndX  = +(px + (goesRight ? STUB_LEN : -STUB_LEN)).toFixed(2);
       const stubEndY  = py;
       const angle     = goesRight ? 0 : 180;
       const justify   = goesRight ? 'left' : 'right';
+      // Cap total wires to avoid huge files (>500 connections = pathological case)
       if (++wireIdx <= 500) {
         lines.push(`  (wire (pts (xy ${px} ${py}) (xy ${stubEndX} ${stubEndY})) (stroke (width 0) (type default)))`);
       }
       lines.push(`  (label "${name}" (at ${stubEndX} ${stubEndY} ${angle})`);
-      lines.push(`    (effects (font (size 1.27 1.27)) (justify ${justify}))`);
+      lines.push(`    (effects (font (size ${LABEL_FONT})) (justify ${justify}))`);
       lines.push('  )');
     });
   });
