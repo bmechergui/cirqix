@@ -123,6 +123,7 @@ export async function* runOrchestrator(
       const stepMap: Record<string, string> = {
         call_agent_spec: 'SPEC',
         call_agent_schema: 'SCHEMA',
+        call_agent_footprint: 'FOOTPRINT',
         call_agent_erc: 'ERC',
         call_agent_placement: 'PLACEMENT',
         call_agent_routing: 'ROUTING',

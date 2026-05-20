@@ -11,6 +11,7 @@ import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
 import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
 import { runRealExport, ExportServiceUnavailableError } from './engines/export-service';
+import { findFootprint, quickLookup } from './engines/footprint-service';
 
 type Tool = Anthropic.Tool;
 
@@ -88,17 +89,23 @@ export const PCB_TOOLS: Tool[] = [
   },
   {
     name: 'call_agent_footprint',
-    description: 'Trouve ou génère le footprint KiCad pour un composant donné. Cherche sur LCSC, SnapMagic, Octopart.',
+    description:
+      'Résout le footprint KiCad pour un composant via cascade 4 étapes : ' +
+      '(1) librairies KiCad officielles (instant), ' +
+      '(2) SnapMagic API (si clé dispo), ' +
+      '(3) LCSC/EasyEDA API, ' +
+      '(4) génération .kicad_mod par Claude Haiku (fallback IA — 3 crédits). ' +
+      'Retourne footprint_name (ex: "Package_TO_SOT_SMD:SOT-23"), source, et kicad_mod si généré par IA.',
     input_schema: {
       type: 'object' as const,
       properties: {
         part_number: {
           type: 'string',
-          description: 'Numéro de pièce ou description du composant',
+          description: 'Numéro de pièce exact (ex: NE555P, LM7805, C14877) ou description (ex: "résistance 10k 0402")',
         },
         package: {
           type: 'string',
-          description: 'Package souhaité (ex: SOT-23, TSSOP-16, 0402)',
+          description: 'Hint de package pour affiner la recherche (ex: SOT-23, TSSOP-16, 0402, DIP-8)',
         },
       },
       required: ['part_number'],
@@ -272,8 +279,23 @@ export async function executeToolStub(
       // Circuit-Synth always generates native KiCad files
       const csResult = await runCircuitSynthEngine(schema, 50, 50, projectId);
 
+      // Auto-resolve footprints via KiCad library lookup (Step 1 — instant, no network).
+      // Replaces short names ("0402", "SOT-23") with official lib paths
+      // ("Resistor_SMD:R_0402_1005Metric"). Unknowns keep their original value
+      // and are reported in unresolved_footprints so the orchestrator can call
+      // call_agent_footprint for the full 4-step cascade.
+      const enrichedComponents = schema.components.map((c) => ({
+        ...c,
+        footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
+      }));
+      const unresolvedFootprints = enrichedComponents
+        .filter((c) => !c.footprint.includes(':'))
+        .map((c) => ({ ref: c.ref, value: c.value, footprint: c.footprint }));
+
+      const enrichedSchema = { ...schema, components: enrichedComponents };
+
       _pcbStateCache.set(projectId, {
-        schema,
+        schema: enrichedSchema,
         boardW: 50,
         boardH: 50,
         kicad_sch_content: csResult.kicad_sch_content,
@@ -283,13 +305,14 @@ export async function executeToolStub(
       return {
         status: 'success',
         pcb_status: 'SCHEMA_DONE',
-        components: schema.components,
+        components: enrichedComponents,
         nets: schema.nets,
         connections: schema.connections ?? [],
         engine: 'circuit-synth',
         kicad_sch_content: csResult.kicad_sch_content,
         kicad_pcb_content: csResult.kicad_pcb_content,
-        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.`,
+        unresolved_footprints: unresolvedFootprints,
+        note: `Schéma généré — ${schema.components.length} composants, ${schema.nets.length} nets, moteur: Circuit-Synth.${unresolvedFootprints.length > 0 ? ` ${unresolvedFootprints.length} footprint(s) à résoudre.` : ' Tous les footprints résolus.'}`,
       };
     }
 
@@ -358,14 +381,30 @@ export async function executeToolStub(
       }
     }
 
-    case 'call_agent_footprint':
-      return {
-        status: 'success',
-        part_number: input['part_number'],
-        source: 'lcsc',
-        footprint_name: `${String(input['part_number'])}_footprint`,
-        note: 'Footprint trouvé sur LCSC.',
-      };
+    case 'call_agent_footprint': {
+      const pn = String(input['part_number'] ?? '').trim();
+      const pkg = input['package'] ? String(input['package']).trim() : undefined;
+      if (!pn) {
+        return { status: 'error', note: 'part_number requis.' };
+      }
+      try {
+        const result = await findFootprint(pn, pkg);
+        return {
+          status: 'success',
+          part_number: pn,
+          footprint_name: result.footprint_name,
+          source: result.source,
+          kicad_mod: result.kicad_mod ?? null,
+          lcsc: result.lcsc ?? null,
+          package_type: result.package_type ?? null,
+          note: result.note,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Footprint resolution failed';
+        log.error({ err, pn }, 'call_agent_footprint error');
+        return { status: 'error', part_number: pn, note: msg };
+      }
+    }
 
     case 'call_agent_placement': {
       const boardW = Number(input['board_width_mm'] ?? 50);
