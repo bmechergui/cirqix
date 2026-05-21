@@ -13,6 +13,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
+import { lookupFootprintCache, cacheFootprintResult } from './footprint-cache';
 
 const log = pino({ name: 'layrix.agents.footprint-service', level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -267,29 +268,44 @@ export async function findFootprint(
 
   log.info({ partNumber: pn, packageHint: pkg }, 'footprint cascade start');
 
-  // Step 1 — KiCad standard library
+  // Step 1 — KiCad standard library (instant, no network)
   const kicadName = lookupKicadLibrary(pn, pkg);
   if (kicadName) {
     log.info({ partNumber: pn, kicadName }, 'step 1 hit: kicad_official');
-    return {
+    const result: FootprintResult = {
       footprint_name: kicadName,
       source: 'kicad_official',
       package_type: kicadName.split(':')[1] ?? kicadName,
       note: `Footprint officiel KiCad trouvé : ${kicadName}`,
     };
+    void cacheFootprintResult(pn, pkg, result);
+    return result;
   }
+
+  // Step 1.5 — pgvector community cache (Supabase)
+  const cacheHit = await lookupFootprintCache(pn, pkg);
+  if (cacheHit) return cacheHit;
 
   // Step 2 — SnapMagic
   const snapResult = await searchSnapMagic(pn);
-  if (snapResult) return snapResult;
+  if (snapResult) {
+    void cacheFootprintResult(pn, pkg, snapResult);
+    return snapResult;
+  }
 
   // Step 3 — LCSC / EasyEDA
   const lcscResult = await searchLCSC(pn);
-  if (lcscResult) return lcscResult;
+  if (lcscResult) {
+    void cacheFootprintResult(pn, pkg, lcscResult);
+    return lcscResult;
+  }
 
   // Step 4 — Claude Haiku AI generation (always available)
   const aiResult = await generateWithAI(pn, pkg);
-  if (aiResult) return aiResult;
+  if (aiResult) {
+    void cacheFootprintResult(pn, pkg, aiResult);
+    return aiResult;
+  }
 
   // Ultimate fallback — generic SMD footprint
   log.warn({ partNumber: pn }, 'all cascade steps failed — using generic fallback');
