@@ -123,16 +123,6 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
       </div>
 
       <div ref={scrollerRef} className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-        {isEmpty && (
-          <div className="rounded-xl border border-border bg-[#111111] p-4 space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">Tell me what to build</h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Describe your circuit in plain English. I&apos;ll design the schematic, place components,
-              route the PCB, and run DRC.
-            </p>
-          </div>
-        )}
-
         {messages.map((m, i) => (
           <MessageBubble
             key={m.id}
