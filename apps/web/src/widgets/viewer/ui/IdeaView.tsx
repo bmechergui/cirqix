@@ -1,6 +1,6 @@
 'use client';
 
-import { Sparkles, Terminal, Cpu, Settings, ArrowRight } from 'lucide-react';
+import { Sparkles, Terminal, Cpu, Settings } from 'lucide-react';
 import type { Project } from '@layrix/types';
 
 export function IdeaView({ project }: { project: Project }) {
@@ -43,11 +43,6 @@ export function IdeaView({ project }: { project: Project }) {
                 Awaiting Prompt
               </div>
             </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {project.description || (
-                <span className="italic opacity-40">No description provided for this PCB design yet.</span>
-              )}
-            </p>
           </div>
         </div>
 
@@ -89,15 +84,6 @@ export function IdeaView({ project }: { project: Project }) {
           </div>
         </div>
 
-        {/* Action Callout */}
-        <div className="rounded-xl border border-dashed border-primary/15 bg-primary/[0.02] p-6 text-center shadow-inner">
-          <p className="text-xs text-muted-foreground leading-relaxed flex flex-col items-center justify-center gap-2">
-            <span>Use the agent chat panel on the left to start designing your board.</span>
-            <span className="flex items-center gap-1 text-[11px] text-primary font-mono group hover:underline cursor-pointer">
-              Send a prompt to begin <ArrowRight size={11} className="transition-transform group-hover:translate-x-0.5" />
-            </span>
-          </p>
-        </div>
       </div>
     </div>
   );
