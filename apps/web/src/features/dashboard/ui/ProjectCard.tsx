@@ -86,10 +86,6 @@ export function ProjectCard({ project, onDelete }: ProjectCardProps) {
         )}
       </div>
 
-      <p className="text-xs text-muted-foreground line-clamp-2 min-h-[2rem] leading-relaxed">
-        {project.description || <span className="italic opacity-50">No description</span>}
-      </p>
-
       <div className="flex items-center justify-between pt-2 border-t border-border/60">
         <StatusBadge status={project.status} />
         <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 group-hover:text-primary transition-colors">
