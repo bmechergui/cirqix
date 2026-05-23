@@ -212,26 +212,53 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     // Set cursor on host element
     el.style.cursor = isPanMode ? 'grab' : 'default';
 
-    // 1. Inject cursor styles into shadowRoot to inherit host cursor
+    // 1. Inject cursor styles + hide native toolbar into all shadow roots
+    const injectStyleIntoShadow = (shadow: ShadowRoot, id: string, css: string) => {
+      if (!shadow.querySelector(`#${id}`)) {
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = css;
+        shadow.appendChild(style);
+      }
+    };
+
     const injectCursorStyles = () => {
       const shadow = el.shadowRoot;
-      if (shadow) {
-        if (!shadow.querySelector('#kicanvas-custom-cursor-style')) {
-          const style = document.createElement('style');
-          style.id = 'kicanvas-custom-cursor-style';
-          style.textContent = `
-            canvas, div, .canvas-container, :host {
-              cursor: inherit !important;
-            }
-          `;
-          shadow.appendChild(style);
-        }
+      if (!shadow) return;
+
+      // Cursor on kicanvas-embed shadow
+      injectStyleIntoShadow(shadow, 'kicanvas-custom-cursor-style', `
+        canvas, div, .canvas-container, :host { cursor: inherit !important; }
+      `);
+
+      // Hide native toolbar — it lives in kc-board-app's shadow
+      const boardApp = shadow.querySelector('kc-board-app') as HTMLElement | null;
+      const boardShadow = boardApp?.shadowRoot;
+      if (boardShadow) {
+        injectStyleIntoShadow(boardShadow, 'kicanvas-hide-toolbar', `
+          kc-ui-floating-toolbar { display: none !important; }
+        `);
       }
     };
 
     injectCursorStyles();
-    const observer = new MutationObserver(() => injectCursorStyles());
+    // Observe kicanvas-embed for children (e.g. kc-board-app appearing)
+    const observer = new MutationObserver(() => {
+      injectCursorStyles();
+      // Also observe kc-board-app's shadow so we catch when Lit renders kc-ui-floating-toolbar
+      const boardApp = el.shadowRoot?.querySelector('kc-board-app') as HTMLElement | null;
+      if (boardApp?.shadowRoot && !boardApp.shadowRoot.querySelector('#kicanvas-hide-toolbar')) {
+        boardAppObserver.observe(boardApp.shadowRoot, { childList: true, subtree: true });
+      }
+    });
     observer.observe(el, { childList: true, subtree: true });
+
+    // Second observer on kc-board-app's shadow root (Lit renders toolbar asynchronously)
+    const boardAppObserver = new MutationObserver(() => injectCursorStyles());
+    const boardApp = el.shadowRoot?.querySelector('kc-board-app') as HTMLElement | null;
+    if (boardApp?.shadowRoot) {
+      boardAppObserver.observe(boardApp.shadowRoot, { childList: true, subtree: true });
+    }
 
     // 2. Wheel Zoom Event Handler (Ctrl+Wheel to zoom, regular scroll to scroll page)
     const handleWheel = (e: WheelEvent) => {
@@ -373,15 +400,18 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     target.addEventListener('pointerup', handlePointerUp as EventListener, { capture: true });
     target.addEventListener('pointercancel', handlePointerCancel as EventListener, { capture: true });
 
-    // 4. Zoom="objects" re-application on loaded events
+    // 4. Zoom="objects" re-application + toolbar hide on loaded events
     const handleLoad = () => {
       el.setAttribute('zoom', zoom);
+      // Inject toolbar-hide CSS after KiCanvas fully initializes its shadow DOM
+      injectCursorStyles();
     };
     el.addEventListener('load', handleLoad);
     el.addEventListener('kicanvas:load', handleLoad);
 
     return () => {
       observer.disconnect();
+      boardAppObserver.disconnect();
       el.removeEventListener('wheel', handleWheel, { capture: true });
       target.removeEventListener('pointerdown', handlePointerDown as EventListener, { capture: true });
       target.removeEventListener('pointermove', handlePointerMove as EventListener, { capture: true });
@@ -451,7 +481,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
           <kicanvas-embed
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
             src={src}
-            controls="none"
+            controls="basic"
             theme="witchhazel"
             {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}
