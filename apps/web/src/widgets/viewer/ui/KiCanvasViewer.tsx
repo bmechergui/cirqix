@@ -10,6 +10,19 @@ interface KiCanvasViewerProps {
   zoom?: string;
 }
 
+function findCanvasInShadow(el: Element): HTMLCanvasElement | null {
+  const shadow = (el as HTMLElement).shadowRoot;
+  if (!shadow) return null;
+  const direct = shadow.querySelector('canvas');
+  if (direct) return direct as HTMLCanvasElement;
+  // Recurse into shadow roots of ALL descendants (not just direct children)
+  for (const descendant of Array.from(shadow.querySelectorAll('*'))) {
+    const found = findCanvasInShadow(descendant);
+    if (found) return found;
+  }
+  return null;
+}
+
 function getScrollParent(node: HTMLElement | null): HTMLElement | null {
   if (node == null) return null;
   if (node.scrollHeight > node.clientHeight) {
@@ -76,42 +89,29 @@ export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: Ki
   const retryCountRef = useRef(0);
   const embedRef = useRef<HTMLElement | null>(null);
 
-  const handleZoomIn = useCallback(() => {
+  const dispatchZoomWheel = useCallback((deltaY: number) => {
     const el = embedRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const event = new WheelEvent('wheel', {
+    const canvas = findCanvasInShadow(el) ?? el;
+    const rect = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent('wheel', {
       clientX: rect.left + rect.width / 2,
       clientY: rect.top + rect.height / 2,
-      deltaY: -120,
+      deltaY,
       ctrlKey: true,
       bubbles: true,
       cancelable: true,
       composed: true,
-    });
-    el.dispatchEvent(event);
+    }));
   }, []);
 
-  const handleZoomOut = useCallback(() => {
-    const el = embedRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const event = new WheelEvent('wheel', {
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
-      deltaY: 120,
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-    });
-    el.dispatchEvent(event);
-  }, []);
+  const handleZoomIn = useCallback(() => dispatchZoomWheel(-120), [dispatchZoomWheel]);
+  const handleZoomOut = useCallback(() => dispatchZoomWheel(120), [dispatchZoomWheel]);
 
   const handleZoomToFit = useCallback(() => {
     const el = embedRef.current;
     if (!el) return;
-    const canvas = el.shadowRoot?.querySelector('canvas');
+    const canvas = findCanvasInShadow(el);
     const evt = new KeyboardEvent('keydown', { key: 'Home', code: 'Home', bubbles: true, composed: true });
     if (canvas) canvas.dispatchEvent(evt);
     else window.dispatchEvent(evt);
