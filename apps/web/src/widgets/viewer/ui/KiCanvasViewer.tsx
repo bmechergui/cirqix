@@ -6,7 +6,6 @@ import { loadKiCanvas } from '../lib/kicanvas-loader';
 
 interface KiCanvasViewerProps {
   src: string;
-  controls?: 'none' | 'basic' | 'full';
   zoom?: string;
 }
 
@@ -96,7 +95,7 @@ function dispatchSimulatedPointerEvent(
   }
 }
 
-export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: KiCanvasViewerProps) {
+export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showHints, setShowHints] = useState(false);
@@ -452,7 +451,7 @@ export function KiCanvasViewer({ src, controls = 'basic', zoom = 'objects' }: Ki
           <kicanvas-embed
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
             src={src}
-            controls={controls}
+            controls="none"
             theme="witchhazel"
             {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}

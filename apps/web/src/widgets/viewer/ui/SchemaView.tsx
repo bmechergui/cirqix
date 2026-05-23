@@ -328,7 +328,6 @@ export function SchemaView({ state }: { state: PCBState }) {
       {effectiveMode === 'native' && nativeUrl ? (
         <KiCanvasViewer
           src={nativeUrl}
-          controls="basic"
           zoom="objects"
         />
       ) : (

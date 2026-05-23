@@ -755,7 +755,7 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
       />
 
       {effectiveMode === 'native' && nativeUrl ? (
-        <KiCanvasViewer src={nativeUrl} controls="basic" zoom="objects" />
+        <KiCanvasViewer src={nativeUrl} zoom="objects" />
       ) : (
         <>
           {/* Sub-tab bar */}
