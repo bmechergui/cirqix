@@ -671,6 +671,79 @@ def _pin_offset(lib_id: str, pin_num: int) -> tuple[float, float]:
     return (3.81, 0.0)
 
 
+def _compute_logical_coords(
+    components: list[SchemaComponent],
+    connections: list[SchemaNet],
+) -> list[tuple[int, int]]:
+    """Assigns components to a logical grid (col, row) grouped by connectivity."""
+    if not components:
+        return []
+        
+    from collections import defaultdict, Counter
+    
+    connectors = []
+    ics = []
+    passives = []
+    for c in components:
+        if c.ref.startswith("J") or c.ref.startswith("P") or c.ref.startswith("CONN"):
+            connectors.append(c)
+        elif c.ref.startswith("U"):
+            ics.append(c)
+        else:
+            passives.append(c)
+            
+    # Count connections from passive to IC
+    ic_refs = {ic.ref for ic in ics}
+    passive_ic_counts = defaultdict(Counter)
+    for net in connections:
+        if _is_power_net(net.name):
+            continue
+        refs = {p.ref for p in net.pins}
+        net_ics = refs.intersection(ic_refs)
+        net_passives = refs.intersection({p.ref for p in passives})
+        for p_ref in net_passives:
+            for ic_ref in net_ics:
+                passive_ic_counts[p_ref][ic_ref] += 1
+                
+    ic_to_passives = defaultdict(list)
+    unassigned_passives = []
+    for p in passives:
+        if p.ref in passive_ic_counts and passive_ic_counts[p.ref]:
+            best_ic = passive_ic_counts[p.ref].most_common(1)[0][0]
+            ic_to_passives[best_ic].append(p)
+        else:
+            unassigned_passives.append(p)
+            
+    logical_coords = {}
+    col = 0
+    
+    # Col 0: Connectors
+    for row, c in enumerate(connectors):
+        logical_coords[c.ref] = (col, row)
+    if connectors:
+        col += 1
+        
+    # ICs and their passives
+    for ic in ics:
+        logical_coords[ic.ref] = (col, 0)
+        p_list = ic_to_passives[ic.ref]
+        max_rows_per_col = 4
+        
+        for i, p in enumerate(p_list):
+            p_col = col + 1 + (i // max_rows_per_col)
+            p_row = i % max_rows_per_col
+            logical_coords[p.ref] = (p_col, p_row)
+            
+        cols_used = (len(p_list) + max_rows_per_col - 1) // max_rows_per_col if p_list else 0
+        col += 1 + max(1, cols_used)
+        
+    # Unassigned passives
+    for i, p in enumerate(unassigned_passives):
+        logical_coords[p.ref] = (col + (i // 4), i % 4)
+        
+    return [logical_coords[c.ref] for c in components]
+
+
 def _generate_schematic_fallback(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -682,8 +755,9 @@ def _generate_schematic_fallback(
     No bus rails → compact paper, components clearly visible at zoom-to-fit.
     """
     n = len(components)
-    cols = max(1, min(4, math.ceil(math.sqrt(n)))) if n else 1
-    rows = max(1, math.ceil(n / cols)) if n else 1
+    logical_coords = _compute_logical_coords(components, connections)
+    cols = max((c[0] for c in logical_coords), default=0) + 1 if n else 1
+    rows = max((c[1] for c in logical_coords), default=0) + 1 if n else 1
     col_step = 55    # horizontal spacing between component origins (mm)
     row_step = 35    # vertical spacing — enough for 8-pin ICs with net labels
     stub_len = 2.54  # net-label stub length — one KiCad grid unit
@@ -736,8 +810,8 @@ def _generate_schematic_fallback(
     lines.append(f'  (lib_symbols{_INLINE_LIB_SYMBOLS}  )')
 
     positions: list[tuple[float, float]] = [
-        (origin_x + (i % cols) * col_step, origin_y + (i // cols) * row_step)
-        for i in range(n)
+        (origin_x + coord[0] * col_step, origin_y + coord[1] * row_step)
+        for coord in logical_coords
     ]
     lib_ids: list[str] = [_simple_lib_id(c) for c in components]
 
