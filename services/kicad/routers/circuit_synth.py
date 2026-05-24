@@ -226,6 +226,9 @@ _SMD_CAPACITOR: dict[str, str] = {
     "1206": "Capacitor_SMD:C_1206_3216Metric",
 }
 
+_SMD_SIZE_RE = re.compile(r"\b(0402|0603|0805|1206)\b")
+
+
 def _expand_footprint(comp: SchemaComponent) -> str:
     """Convert simplified footprint key to full KiCad footprint path."""
     fp = comp.footprint.strip()
@@ -236,14 +239,22 @@ def _expand_footprint(comp: SchemaComponent) -> str:
     if ":" in fp:
         return fp
 
+    # Extract bare SMD size if embedded in a longer key like "R_0402" or "C0805"
+    m_size = _SMD_SIZE_RE.search(fp_up)
+    bare_size = m_size.group(1) if m_size else None
+
     # Capacitor symbols → use capacitor footprints for SMD sizes
-    if any(x in symbol for x in ["device:c", "capacitor"]):
+    if any(x in symbol for x in ["device:c", "capacitor"]) or fp_up.startswith("C"):
+        if bare_size and bare_size in _SMD_CAPACITOR:
+            return _SMD_CAPACITOR[bare_size]
         if fp_up in _SMD_CAPACITOR:
             return _SMD_CAPACITOR[fp_up]
-        if "polarized" in symbol:
+        if "polarized" in symbol or "CPOL" in fp_up or "ELCO" in fp_up:
             return "Capacitor_THT:C_Radial_D8.0mm_H11.5mm_P3.50mm"
 
     # Resistor / LED / diode → SMD resistor footprints for SMD sizes
+    if bare_size and bare_size in _SMD_RESISTOR:
+        return _SMD_RESISTOR[bare_size]
     if fp_up in _SMD_RESISTOR:
         return _SMD_RESISTOR[fp_up]
 
@@ -1126,9 +1137,20 @@ def _generate_pcb_sexpr(
         ref_e = comp.ref.replace('"', '\\"')
         val_e = comp.value.replace('"', '\\"')
 
-        lines.append(f'  (footprint "{fp_e}" (layer "F.Cu") (at {x} {y})')
-        lines.append(f'    (property "Reference" "{ref_e}" (at 0 -2 0) (layer "F.SilkS"))')
-        lines.append(f'    (property "Value" "{val_e}" (at 0 2 0) (layer "F.Fab"))')
+        # Determine if this is an SMD or THT footprint for the attr field
+        fp_up_full = fp_full.upper()
+        is_smd = any(t in fp_up_full for t in (
+            "SMD", "0402", "0603", "0805", "1206",
+            "SOT-23", "SOT23", "SOT-223", "SOT223",
+            "TSSOP", "SOIC", "QFP", "QFN",
+        ))
+        attr = "smd" if is_smd else "through_hole"
+
+        lines.append(f'  (footprint "{fp_e}" (layer "F.Cu") (at {x} {y}) (attr {attr})')
+        lines.append(f'    (fp_text reference "{ref_e}" (at 0 -2) (layer "F.SilkS")'
+                     f' (effects (font (size 1 1) (thickness 0.15))))')
+        lines.append(f'    (fp_text value "{val_e}" (at 0 2) (layer "F.Fab")'
+                     f' (effects (font (size 1 1) (thickness 0.15))))')
 
         for pad_line in _footprint_pads(fp_full):
             m = re.search(r'\(pad "(\w+)"', pad_line)

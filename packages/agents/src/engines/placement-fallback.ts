@@ -162,6 +162,45 @@ export function computeLayout(
 }
 
 /**
+ * Apply a layout (ref → [x, y, rotation]) to a .kicad_pcb S-expression string.
+ *
+ * Finds each footprint by its Reference property and rewrites the (at X Y)
+ * in the footprint header line. Used by the TS fallback when pcbnew is
+ * unavailable — ensures the cached PCB has real positions so the routing
+ * agent works on a properly-placed board.
+ */
+export function applyLayoutToPcb(kicadPcbContent: string, layout: Layout): string {
+  const lines = kicadPcbContent.split('\n');
+  const out: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Match footprint header lines (2-space indent in our generator)
+    if (/^  \(footprint /.test(line)) {
+      // Peek forward to find the Reference property (within next 5 lines)
+      let ref: string | undefined;
+      for (let j = 1; j <= 5 && i + j < lines.length; j++) {
+        const peek = lines[i + j]!;
+        const m = peek.match(/^\s+\(property "Reference" "([^"]+)"/);
+        if (m) { ref = m[1]; break; }
+        if (/^\s+\(pad /.test(peek)) break; // past property block
+      }
+      if (ref !== undefined && layout[ref] !== undefined) {
+        const [nx, ny] = layout[ref]!;
+        // Replace (at X Y) or (at X Y R) on the footprint header line
+        out.push(line.replace(
+          /\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/,
+          `(at ${nx.toFixed(3)} ${ny.toFixed(3)})`,
+        ));
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
  * Convenience helper for the agent tool: turn the {ref: [x,y,rot]} layout
  * into the placement objects already consumed by PCBEngineResult.
  */

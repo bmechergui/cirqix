@@ -5,7 +5,7 @@ import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
 import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
 import type { SchemaJson } from './engines/engine-router';
 import { runRealPlacement } from './engines/placement-service';
-import { computeLayout, layoutToPlacements } from './engines/placement-fallback';
+import { computeLayout, layoutToPlacements, applyLayoutToPcb } from './engines/placement-fallback';
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
 import { runErcFallback } from './engines/erc-fallback';
 import { runRealRouting, RoutingServiceUnavailableError } from './engines/routing-service';
@@ -511,14 +511,17 @@ export async function executeToolStub(
         const refs = schema.components.map((c) => c.ref);
         const layout = computeLayout(refs, boardW, boardH);
         const placements = layoutToPlacements(layout);
+        // Apply the computed positions into the PCB S-expression so the routing
+        // agent works on a properly-placed board (not the initial grid positions).
+        const placedPcbContent = applyLayoutToPcb(base.kicad_pcb_content, layout);
         _pcbStateCache.set(projectId, {
-          schema, boardW, boardH, kicad_pcb_content: base.kicad_pcb_content,
+          schema, boardW, boardH, kicad_pcb_content: placedPcbContent,
         });
         return {
           status: 'success',
           pcb_status: 'PLACEMENT_DONE',
           placements,
-          kicad_pcb_content: base.kicad_pcb_content,
+          kicad_pcb_content: placedPcbContent,
           board_width_mm: boardW,
           board_height_mm: boardH,
           engine: 'fallback-ts',
