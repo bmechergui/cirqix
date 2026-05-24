@@ -419,6 +419,46 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 ---
 
+---
+
+### 2026-05-24 — Architecture agents : LLM vs déterministe
+
+**Décision :**
+
+`call_agent_placement` n'appelle jamais Haiku. C'est juste :
+
+```
+call_agent_placement
+      ↓
+POST /place/auto (FastAPI pcbnew)   ← si backend up
+      ou
+placement-fallback.ts (algo TS)     ← toujours dispo
+```
+
+Aucun LLM. C'est une fonction déterministe déguisée en "agent" pour garder la même interface dans la boucle orchestrateur.
+
+Idem pour :
+- `call_agent_routing` → Freerouting ou MST TS
+- `call_agent_drc` → kicad-cli ou vérification TS
+- `call_agent_export` → génération Gerbers
+
+Seuls vrais agents LLM :
+- `call_agent_spec` → Haiku
+- `call_agent_schema` → Haiku
+
+**Pourquoi :**
+Placement, routing, DRC et export sont des problèmes algorithmiques déterministes — pas besoin d'intelligence. Le LLM n'apporte rien là où un algo suffît. On économise des tokens et on garde la prévisibilité.
+
+**Écarté :**
+Utiliser Haiku pour "décider" du placement — inutile et coûteux.
+
+**Fichiers concernés :**
+- `packages/agents/src/tools.ts` — `call_agent_placement`, `call_agent_routing`, `call_agent_drc`, `call_agent_export`
+- `packages/agents/src/engines/placement-fallback.ts`
+- `packages/agents/src/engines/routing-fallback.ts`
+
+---
+
 ## Template pour la prochaine décision
 
 ```
