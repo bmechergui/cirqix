@@ -232,68 +232,97 @@ _SMD_SIZE_RE = re.compile(r"\b(0402|0603|0805|1206)\b")
 def _expand_footprint(comp: SchemaComponent) -> str:
     """Convert simplified footprint key to full KiCad footprint path."""
     fp = comp.footprint.strip()
-    symbol = (comp.symbol or "").lower()
+    symbol = (comp.symbol or "").upper()
     fp_up = fp.upper()
+    val_up = comp.value.upper()
 
     # Already a full path (contains ':')
     if ":" in fp:
         return fp
+
+    # Helper: check if any keyword is in fp, symbol, or value
+    def matches(*keywords):
+        return any(kw in fp_up or kw in symbol or kw in val_up for kw in keywords)
 
     # Extract bare SMD size if embedded in a longer key like "R_0402" or "C0805"
     m_size = _SMD_SIZE_RE.search(fp_up)
     bare_size = m_size.group(1) if m_size else None
 
     # Capacitor symbols → use capacitor footprints for SMD sizes
-    if any(x in symbol for x in ["device:c", "capacitor"]) or fp_up.startswith("C"):
+    if matches("DEVICE:C", "CAPACITOR") or fp_up.startswith("C"):
         if bare_size and bare_size in _SMD_CAPACITOR:
             return _SMD_CAPACITOR[bare_size]
         if fp_up in _SMD_CAPACITOR:
             return _SMD_CAPACITOR[fp_up]
-        if "polarized" in symbol or "CPOL" in fp_up or "ELCO" in fp_up:
-            return "Capacitor_THT:C_Radial_D8.0mm_H11.5mm_P3.50mm"
+        if matches("POLARIZED", "CPOL", "ELCO"):
+            return "Capacitor_THT:CP_Radial_D8.0mm_P3.50mm"
+        if not bare_size and matches("10UF", "100UF", "1000UF"):
+            return "Capacitor_THT:CP_Radial_D8.0mm_P3.50mm"
+        if not bare_size:
+            return "Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P2.50mm"
 
     # Resistor / LED / diode → SMD resistor footprints for SMD sizes
     if bare_size and bare_size in _SMD_RESISTOR:
         return _SMD_RESISTOR[bare_size]
     if fp_up in _SMD_RESISTOR:
         return _SMD_RESISTOR[fp_up]
+    if matches("DEVICE:R", "RESISTOR") and not bare_size:
+        return "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal"
+
+    # Diodes
+    if matches("DIODE", "1N4148", "1N4007"):
+        return "Diode_THT:D_DO-35_SOD27_P7.62mm_Horizontal"
 
     # LED THT
-    if fp_up == "LED":
+    if matches("LED"):
         return "LED_THT:LED_D5.0mm"
 
-    # Connectors
-    fp_conn_map = {
-        "CONN_2": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
-        "CONN_3": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
-        "CONN_4": "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
-    }
-    if fp_up in fp_conn_map:
-        return fp_conn_map[fp_up]
+    # Connectors / Pinheaders
+    if matches("CONN", "PINHEADER", "HEADER"):
+        # Regex to find something like 1x04, 1X4, 2x03
+        m_conn = re.search(r'([12])X0?(\d+)', fp_up.replace("-", ""))
+        rows = int(m_conn.group(1)) if m_conn else 1
+        pins = int(m_conn.group(2)) if m_conn else 2
+        pins = max(1, min(pins, 40))
+        return f"Connector_PinHeader_2.54mm:PinHeader_{rows}x{pins:02d}_P2.54mm_Vertical"
+
+    # IC Packages (THT)
+    if matches("DIP", "NE555", "LM358"):
+        m_dip = re.search(r'DIP-?(\d+)', fp_up)
+        pins = int(m_dip.group(1)) if m_dip else 8
+        width = "W7.62mm" if pins <= 20 else "W15.24mm"
+        return f"Package_DIP:DIP-{pins}_{width}"
+
+    # IC Packages (SMD)
+    if matches("SOIC"):
+        m_so = re.search(r'SOIC-?(\d+)', fp_up)
+        pins = int(m_so.group(1)) if m_so else 8
+        return f"Package_SO:SOIC-{pins}_3.9x4.9mm_P1.27mm"
+
+    if matches("TSSOP"):
+        m_ts = re.search(r'TSSOP-?(\d+)', fp_up)
+        pins = int(m_ts.group(1)) if m_ts else 8
+        return f"Package_SO:TSSOP-{pins}_4.4x3mm_P0.65mm"
 
     # TO-220 (LM7805 etc.)
-    if fp_up == "TO-220":
+    if matches("TO-220", "TO220", "LM7805", "7805", "LM317"):
         return "Package_TO_SOT_THT:TO-220-3_Vertical"
 
     # SOT-223 (LM1117 etc.)
-    if fp_up == "SOT-223":
+    if matches("SOT-223", "SOT223", "1117"):
         return "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 
-    # SOT-23 (transistors, small ICs)
-    if fp_up in ("SOT-23", "SOT-23-3"):
-        return "Package_TO_SOT_SMD:SOT-23"
-
     # SOT-23-5
-    if fp_up == "SOT-23-5":
+    if matches("SOT-23-5", "SOT23-5"):
         return "Package_TO_SOT_SMD:SOT-23-5"
 
-    # DIP-8
-    if fp_up == "DIP-8":
-        return "Package_DIP:DIP-8_W7.62mm"
-
-    # TSSOP-8
-    if fp_up == "TSSOP-8":
-        return "Package_SO:TSSOP-8_4.4x3mm_P0.65mm"
+    # SOT-23 (transistors, small ICs)
+    if matches("SOT-23", "SOT23"):
+        return "Package_TO_SOT_SMD:SOT-23"
+        
+    # Generic Transistors
+    if matches("TO-92", "TO92", "2N3904", "BC547"):
+        return "Package_TO_SOT_THT:TO-92_Inline"
 
     # Fallback: keep original value
     return fp
@@ -979,6 +1008,10 @@ def _read_real_kicad_footprint(
                 
         for pad_num, end_idx in reversed(pads_info):
             net_id = pad_net_map.get((comp.ref, pad_num), 0)
+            if not net_id and pad_num in ("A", "K", "C", "E", "B"):
+                # Map Diodes (A->1, K->2) and generic (C->1, B->2, E->3)
+                alt_pin = {"A": "1", "K": "2", "C": "1", "B": "2", "E": "3"}.get(pad_num)
+                net_id = pad_net_map.get((comp.ref, alt_pin), 0)
             if net_id and net_id in net_name_map:
                 net_name_esc = net_name_map[net_id].replace('"', '\\"')
                 net_sexpr = f' (net {net_id} "{net_name_esc}")'
@@ -1229,6 +1262,10 @@ def _generate_pcb_sexpr(
                 m = re.search(r'\(pad "(\w+)"', pad_line)
                 pad_num = m.group(1) if m else "1"
                 net_id = pad_net_map.get((comp.ref, pad_num), 0)
+                if not net_id and pad_num in ("A", "K", "C", "E", "B"):
+                    # Map Diodes (A->1, K->2) and generic (C->1, B->2, E->3)
+                    alt_pin = {"A": "1", "K": "2", "C": "1", "B": "2", "E": "3"}.get(pad_num)
+                    net_id = pad_net_map.get((comp.ref, alt_pin), 0)
                 if net_id and net_id in net_name_map:
                     net_name_esc = net_name_map[net_id].replace('"', '\\"')
                     net_sexpr = f' (net {net_id} "{net_name_esc}")'

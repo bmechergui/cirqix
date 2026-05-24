@@ -104,7 +104,13 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
   }
 
   function cancel() {
-    abortRef.current?.abort();
+    try {
+      if (abortRef.current && typeof abortRef.current.abort === 'function') {
+        abortRef.current.abort();
+      }
+    } catch (e) {
+      console.warn('Failed to abort:', e);
+    }
     setAgentStep(null);
     setAgentBusy(false);
     abortRef.current = null;

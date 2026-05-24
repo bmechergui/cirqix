@@ -57,6 +57,23 @@ const FOOTPRINT_DIMS: Record<string, PadDimensions> = {
       dy: (i < 4 ? i : 7 - i) * 2.54 - 3.81,
     })),
   },
+  'TO-220': {
+    width: 10.4, height: 4.6,
+    pads: [{ dx: -2.54, dy: 0 }, { dx: 0, dy: 0 }, { dx: 2.54, dy: 0 }],
+  },
+  'LM7805': {
+    width: 10.4, height: 4.6,
+    pads: [{ dx: -2.54, dy: 0 }, { dx: 0, dy: 0 }, { dx: 2.54, dy: 0 }],
+  },
+  '1X03': {
+    width: 2.54, height: 7.62,
+    pads: [{ dx: 0, dy: -2.54 }, { dx: 0, dy: 0 }, { dx: 0, dy: 2.54 }],
+  },
+  'CONN': {
+    width: 2.54, height: 5.08,
+    pads: [{ dx: 0, dy: -1.27 }, { dx: 0, dy: 1.27 }],
+  },
+  'DIODE': { width: 3.5, height: 1.5, pads: [{ dx: -1.5, dy: 0 }, { dx: 1.5, dy: 0 }] },
   'LED': { width: 2.0, height: 1.2, pads: [{ dx: -0.9, dy: 0 }, { dx: 0.9, dy: 0 }] },
 };
 
@@ -197,15 +214,15 @@ function footprintToLibId(ref: string, footprint: string, value?: string): strin
   const r  = ref.toUpperCase();
   const v  = value ? value.toUpperCase() : '';
 
-  if (v === 'NE555' || v.includes('555')) return 'Timer:NE555P';
-  if (v.includes('7805') || v === 'LM7805') return 'Device:VReg_3Pin';
+  if (v === 'NE555' || v.includes('555') || fp.includes('555')) return 'Timer:NE555P';
+  if (v.includes('7805') || v === 'LM7805' || fp.includes('7805') || fp === 'LM7805' || fp.includes('TO-220')) return 'Device:VReg_3Pin';
 
   if (fp.includes('LED')   || r.startsWith('LED'))             return 'Device:LED';
   if (fp.includes('SOT-23'))                                   return 'Device:Q_NPN_BCE';
   if (fp.includes('DIP')   || fp.includes('SOIC') || fp.includes('TSSOP')) return 'Device:IC';
-  if (fp.includes('CONN')  || fp.includes('2PIN') || r.startsWith('J'))   return 'Connector_Generic:Conn_01x02';
-  if (r.startsWith('C')    || fp.includes('CAP'))              return 'Device:C';
-  if (r.startsWith('Q')    || r.startsWith('D'))               return 'Device:Q_NPN_BCE';
+  if (fp.includes('CONN')  || fp.includes('2PIN') || r.startsWith('J') || fp.includes('1X03')) return 'Connector_Generic:Conn_01x02';
+  if (r.startsWith('C')    || fp.includes('CAP') || fp.includes('10UF') || fp.includes('UF') || v.includes('UF')) return 'Device:C';
+  if (r.startsWith('Q')    || r.startsWith('D') || fp.includes('DIODE') || fp.includes('1N4148')) return 'Device:Q_NPN_BCE';
   return 'Device:R';
 }
 
@@ -411,6 +428,37 @@ function schPinOffset(libId: string, pinIndex: number): { dx: number; dy: number
   return { dx: 5.08, dy: ((half - 1 - ri) - (half - 1) / 2) * 2.54 };
 }
 
+function resolvePinIndex(pinVal: number | string | undefined, libId?: string): number {
+  if (typeof pinVal === 'number') return pinVal - 1;
+  if (!pinVal) return 0;
+  
+  const s = String(pinVal).toUpperCase();
+  const parsed = parseInt(s, 10);
+  if (!isNaN(parsed)) return parsed - 1;
+
+  if (libId === 'Device:VReg_3Pin') {
+    if (s === 'VI' || s === 'IN') return 0;
+    if (s === 'GND') return 1;
+    if (s === 'VO' || s === 'OUT') return 2;
+  }
+  if (libId === 'Timer:NE555P') {
+    const map: Record<string, number> = { 'GND': 0, 'TRIG': 1, 'OUT': 2, 'RESET': 3, 'CTRL': 4, 'THR': 5, 'DIS': 6, 'VCC': 7 };
+    if (map[s] !== undefined) return map[s]!;
+  }
+  if (libId === 'Device:Q_NPN_BCE') {
+    if (s === 'B' || s === 'BASE') return 0;
+    if (s === 'E' || s === 'EMITTER') return 1;
+    if (s === 'C' || s === 'COLLECTOR') return 2;
+    if (s === 'A' || s === 'ANODE') return 0;
+    if (s === 'K' || s === 'CATHODE') return 2;
+  }
+  if (libId === 'Device:LED') {
+    if (s === 'A' || s === 'ANODE' || s === '+') return 0;
+    if (s === 'K' || s === 'CATHODE' || s === '-') return 1;
+  }
+  return 0; // Fallback to 1st pin
+}
+
 // ============================================================
 // .kicad_sch generator (KiCad 7 S-expression format)
 // ============================================================
@@ -538,7 +586,7 @@ function generateSchematic(
       const { x, y } = compPos[idx]!;
       const targetComp = components[idx]!;
       const targetLibId = footprintToLibId(targetComp.ref, targetComp.footprint, targetComp.value);
-      const off = schPinOffset(targetLibId, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
+      const off = schPinOffset(targetLibId, resolvePinIndex(pin.pin, targetLibId));
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
       const netUpper = conn.name.toUpperCase();
@@ -569,7 +617,9 @@ function generateSchematic(
       const idx = compIdx.get(pin.ref);
       if (idx === undefined) return;
       const { x, y } = compPos[idx]!;
-      const off = schPinOffset(components[idx]!.footprint, (typeof pin.pin === 'number' ? pin.pin : 1) - 1);
+      const targetComp = components[idx]!;
+      const targetLibId = footprintToLibId(targetComp.ref, targetComp.footprint, targetComp.value);
+      const off = schPinOffset(targetLibId, resolvePinIndex(pin.pin, targetLibId));
       const px  = +(x + off.dx).toFixed(2);
       const py  = +(y + off.dy).toFixed(2);
       // Stub direction follows pin orientation: left pins get right-facing label, vice versa
@@ -680,8 +730,9 @@ function generatePCB(
     conn.pins.forEach((pin) => {
       const pos  = compPositions.get(pin.ref);
       const dims = compDims.get(pin.ref);
-      if (!pos || !dims) return;
-      const pad = dims.pads[(typeof pin.pin === 'number' ? pin.pin : 1) - 1];
+      const targetComp = components.find(c => c.ref === pin.ref);
+      const targetLibId = targetComp ? footprintToLibId(pin.ref, targetComp.footprint, targetComp.value) : undefined;
+      const pad = dims.pads[resolvePinIndex(pin.pin, targetLibId)];
       if (pad) {
         pads.push({ x: +(pos.x + pad.dx).toFixed(3), y: +(pos.y + pad.dy).toFixed(3) });
       }
