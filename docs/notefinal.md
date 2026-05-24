@@ -139,13 +139,19 @@ ask_user({
 
 ### Engines — Moteurs de génération KiCad
 
-#### Circuit-Synth (moteur unique, Phase 2+)
+#### Layrix Schematic Generator (moteur unique, Phase 2+)
+
+> ⚠️ **Ne pas confondre avec le package PyPI `circuit-synth`** (v0.1.0, google-adk dep, API incompatible).
+> Layrix utilise sa propre implémentation custom — indépendante du package officiel.
 
 ```
-Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts
-Fichier Py  : services/kicad/routers/circuit_synth.py (1044 lignes)
+Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts   (fallback TS si Docker absent)
+Fichier Py  : services/kicad/routers/schematic_gen.py               (générateur principal, Docker)
 Router      : POST /circuit-synth/generate
 ```
+
+**Package PyPI `circuit-synth` :** Non utilisé. Version 0.1.0 seulement sur PyPI, dépend de google-adk (Gemini).
+La vraie version documentée (0.12.x) n'est pas publiée. Notre implémentation custom est supérieure.
 
 **Deux chemins selon disponibilité FastAPI — un seul retourné :**
 
@@ -365,7 +371,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 ---
 
-### 2026-05-24 — Footprints professionnels + connectivité nets dans circuit_synth.py
+### 2026-05-24 — Footprints professionnels + connectivité nets dans schematic_gen.py
 
 **Décision :** Remplacer les pads génériques 0.6×0.6mm par des géométries correctes par footprint, injecter les assignations de net sur chaque pad, et utiliser `_expand_footprint()` pour les chemins complets dans le PCB S-expression.
 
@@ -379,7 +385,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Écarté :** Modifier `routing.py` pour injecter les nets — trop tard dans le pipeline, le DSN exporté par pcbnew serait déjà basé sur les mauvais pads.
 
-**Fichiers :** `services/kicad/routers/circuit_synth.py`
+**Fichiers :** `services/kicad/routers/schematic_gen.py`
 
 ---
 

@@ -518,7 +518,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 **Moteur schéma :**
 - Haiku génère JSON `{ components, nets, connections }` avec pin names KiCad (`"IN"`, `"GND"`, `"TR"`)
 - `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
-- FastAPI `circuit_synth.py` → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` natif
+- FastAPI `schematic_gen.py` (générateur custom Layrix) → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` natif
 - Upload Supabase Storage → `pcb_state.kicad_sch_url` + `kicad_pcb_url` → SSE → KiCanvas
 
 **Skill :** `/everything-claude-code:claude-api`, `layrix-pcb-agent` | **Risque :** 🔴 ÉLEVÉ
@@ -683,14 +683,14 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 **Fichiers :**
 - `packages/agents/src/engines/circuit-synth-engine.ts` ✅
 - `packages/agents/src/engines/engine-router.ts` ✅
-- `services/kicad/routers/circuit_synth.py` ✅
+- `services/kicad/routers/schematic_gen.py` ✅ (ex circuit_synth.py — renommé pour éviter confusion avec PyPI circuit-synth)
 - `services/kicad/requirements.txt` ✅
 
 **Livré :**
 1. Haiku génère JSON schema `{ components, nets, connections }` avec pin names KiCad
 2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
-4. `circuit_synth.py` → `CSComponent()` → `.kicad_sch` natif + `.kicad_pcb`
+4. `schematic_gen.py` (custom Layrix) → `CSComponent()` → `.kicad_sch` natif + `.kicad_pcb`
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible
 

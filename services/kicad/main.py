@@ -1,7 +1,7 @@
 """
 Layrix KiCad Service — FastAPI headless
 Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step, /export/bom, /simulate
-         /circuit-synth/generate (JSON schema → .kicad_sch + .kicad_pcb natifs)
+         /circuit-synth/generate (JSON schema → .kicad_sch + .kicad_pcb — custom Layrix generator, see routers/schematic_gen.py)
 """
 
 import os
@@ -80,9 +80,9 @@ class SimulationRequest(BaseModel):
     sim_type: str = "transient"  # "dc" | "transient" | "ac" | "noise"
     output_dir: str
 
-# Circuit-Synth router — JSON schema → native KiCad files
-from routers.circuit_synth import router as circuit_synth_router  # noqa: E402
-app.include_router(circuit_synth_router)
+# Schematic generator router — JSON schema → native KiCad files (custom impl, no circuit-synth PyPI dep)
+from routers.schematic_gen import router as schematic_gen_router  # noqa: E402
+app.include_router(schematic_gen_router)
 
 # Placement router — /place (explicit) + /place/auto (grid algorithm, base64 I/O)
 from routers.placement import router as placement_router  # noqa: E402

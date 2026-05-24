@@ -126,7 +126,7 @@ packages/
 
 services/
 └── kicad/          ← FastAPI Python headless KiCad
-    ├── routers/circuit_synth.py  ← /circuit-synth/generate + /validate-symbols
+    ├── routers/schematic_gen.py  ← /circuit-synth/generate + /validate-symbols (générateur custom Layrix — ≠ package PyPI circuit-synth)
     ├── routers/placement.py      ← POST /place (explicit) + POST /place/auto (base64 I/O)
     ├── routers/routing.py        ← POST /route/auto (Freerouting, base64 I/O)
     ├── routers/drc.py            ← POST /drc/auto (kicad-cli, boucle auto-fix, base64 I/O)
@@ -178,7 +178,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ↓ call_agent_schema
 Haiku 4.5 → JSON schema { components, nets, connections, pin names KiCad }
   ↓ validateAndCorrectSchema() → POST /circuit-synth/validate-symbols
-FastAPI circuit_synth.py → CSComponent() + _safe_symbol() → .kicad_sch + .kicad_pcb
+FastAPI schematic_gen.py → CSComponent() + _safe_symbol() → .kicad_sch + .kicad_pcb
   ↓ call_agent_placement
 runRealPlacement() → POST /place/auto (pcbnew SetPosition/SetOrientationDegrees, base64 I/O)
   fallback : placement-fallback.ts (algo pur TS si KICAD_SERVICE_URL absent)
@@ -298,7 +298,7 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
   - `call_agent_export` dans `pcbStateTools` → SSE → frontend reçoit `gerberZipB64` + `bomCsv` + `quoteUsd`
   - Téléchargements Gerbers (blob base64) et BOM CSV réels dans ExportView
   - `POST /api/jlcpcb/order` : guard `z.literal(true)` + validation DRC_CLEAN + orderRef
-  - Footprints professionnels dans `circuit_synth.py` : géométrie réelle par type (DIP-8, SOT-23, 0402…)
+  - Footprints professionnels dans `schematic_gen.py` : géométrie réelle par type (DIP-8, SOT-23, 0402…)
   - Net assignments sur chaque pad → Freerouting route correctement
   - `placement_layout.py` : caps 4mm tight + 90°, connectors 90°
 

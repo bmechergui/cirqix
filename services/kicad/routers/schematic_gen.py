@@ -1,7 +1,7 @@
 """
-Circuit-Synth router — converts JSON schema to native .kicad_sch + .kicad_pcb files.
-Primary path: circuit_synth Python library (requires KICAD_SYMBOL_DIR).
-Fallback path: hand-written KiCad 7 S-expression generator.
+Layrix Schematic Generator — converts JSON schema to native .kicad_sch + .kicad_pcb files.
+Custom implementation — no dependency on the circuit-synth PyPI package.
+Uses KiCad S-expression format directly via hand-written generator + pcbnew for PCB layout.
 """
 
 import concurrent.futures
