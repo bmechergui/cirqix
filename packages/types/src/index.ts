@@ -30,7 +30,7 @@ export type AgentAction =
   | 'view3d'
   | 'simulation';
 
-export type AgentStep = 'SPEC' | 'SCHEMA' | 'FOOTPRINT' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null;
+export type AgentStep = 'SPEC' | 'SCHEMA' | 'FOOTPRINT' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | 'SIMULATION' | null;
 
 export interface Project {
   id: string;
@@ -187,6 +187,20 @@ export interface PCBState {
   quoteUsd?: number;
   /** Estimated lead time in days from export service */
   leadTimeDays?: number;
+  /** ngspice simulation waveform data */
+  simulationData?: SimulationData;
+}
+
+export interface SimulationVector {
+  name: string;
+  unit: 'V' | 'A' | 's' | '';
+  time: number[];
+  values: number[];
+}
+
+export interface SimulationData {
+  sim_type: string;
+  vectors: SimulationVector[];
 }
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {

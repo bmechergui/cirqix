@@ -2,7 +2,7 @@
 
 import {
   Check, Loader2, Sparkles, FileText, MoveDiagonal2,
-  Route, ShieldCheck, Download, Activity, Cpu,
+  Route, ShieldCheck, Download, Activity, Cpu, FlaskConical,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { PCBStatus } from '@layrix/types';
@@ -21,24 +21,26 @@ interface TimelineProps {
 }
 
 const STAGE_META: Record<PcbStage, { label: string; icon: LucideIcon }> = {
-  IDEA:      { label: 'Idea',     icon: Sparkles },
-  SCHEMA:    { label: 'Schema',   icon: FileText },
-  ERC:       { label: 'ERC',      icon: Activity },
-  PLACEMENT: { label: 'Place',    icon: MoveDiagonal2 },
-  ROUTING:   { label: 'Route',    icon: Route },
-  DRC:       { label: 'DRC',      icon: ShieldCheck },
-  EXPORT:    { label: 'Export',   icon: Download },
+  IDEA:       { label: 'Idea',     icon: Sparkles },
+  SCHEMA:     { label: 'Schema',   icon: FileText },
+  ERC:        { label: 'ERC',      icon: Activity },
+  PLACEMENT:  { label: 'Place',    icon: MoveDiagonal2 },
+  ROUTING:    { label: 'Route',    icon: Route },
+  DRC:        { label: 'DRC',      icon: ShieldCheck },
+  EXPORT:     { label: 'Export',   icon: Download },
+  SIMULATION: { label: 'Simulate', icon: FlaskConical },
 };
 
 // AgentStep → PcbStage mapping for highlighting (FOOTPRINT is handled separately)
 const STEP_TO_STAGE: Partial<Record<string, PcbStage>> = {
-  SPEC:      'IDEA',
-  SCHEMA:    'SCHEMA',
-  ERC:       'ERC',
-  PLACEMENT: 'PLACEMENT',
-  ROUTING:   'ROUTING',
-  DRC:       'DRC',
-  EXPORT:    'EXPORT',
+  SPEC:       'IDEA',
+  SCHEMA:     'SCHEMA',
+  ERC:        'ERC',
+  PLACEMENT:  'PLACEMENT',
+  ROUTING:    'ROUTING',
+  DRC:        'DRC',
+  EXPORT:     'EXPORT',
+  SIMULATION: 'SIMULATION',
 };
 
 export function Timeline({ projectId, status }: TimelineProps) {

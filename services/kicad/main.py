@@ -104,6 +104,10 @@ app.include_router(drc_router)
 from routers.export import router as export_router  # noqa: E402
 app.include_router(export_router)
 
+# Simulate router — /simulate/auto (kicad-cli → ngspice, base64 I/O, fallback demo)
+from routers.simulate import router as simulate_router  # noqa: E402
+app.include_router(simulate_router)
+
 # ============================================================
 # Routes
 # ============================================================

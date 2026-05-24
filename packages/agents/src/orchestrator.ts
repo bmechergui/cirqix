@@ -129,6 +129,7 @@ export async function* runOrchestrator(
         call_agent_routing: 'ROUTING',
         call_agent_drc: 'DRC',
         call_agent_export: 'EXPORT',
+        call_agent_simulation: 'SIMULATION',
       };
       const step = stepMap[tool.name];
       if (step) yield { type: 'step', step };
@@ -173,6 +174,7 @@ export async function* runOrchestrator(
         'call_agent_routing',
         'call_agent_drc',
         'call_agent_export',
+        'call_agent_simulation',
       ]);
       if (pcbStateTools.has(tool.name)) {
         yield {

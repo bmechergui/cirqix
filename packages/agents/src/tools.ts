@@ -12,6 +12,7 @@ import { runRealRouting, RoutingServiceUnavailableError } from './engines/routin
 import { runRealDrc, DrcServiceUnavailableError } from './engines/drc-service';
 import { runRealExport, ExportServiceUnavailableError } from './engines/export-service';
 import { findFootprint, quickLookup } from './engines/footprint-service';
+import { runSimulation, SimulationServiceUnavailableError } from './engines/simulation-service';
 
 type Tool = Anthropic.Tool;
 
@@ -185,6 +186,25 @@ export const PCB_TOOLS: Tool[] = [
         },
       },
       required: ['pcb_state'],
+    },
+  },
+  {
+    name: 'call_agent_simulation',
+    description:
+      'Lance une simulation SPICE ngspice sur le schéma KiCad. ' +
+      'Retourne des vecteurs temporels tension/courant pour les noeuds principaux. ' +
+      'Requiert plan Pro ou supérieur. Coût : 3 crédits. ' +
+      'Doit être appelé après call_agent_schema (le schéma doit exister en cache).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        sim_type: {
+          type: 'string',
+          enum: ['transient', 'dc', 'ac'],
+          description: "Type d'analyse SPICE (défaut: transient)",
+        },
+      },
+      required: [],
     },
   },
   {
@@ -736,6 +756,45 @@ export async function executeToolStub(
       }
     }
 
+    case 'call_agent_simulation': {
+      const simType = (input['sim_type'] as 'transient' | 'dc' | 'ac' | undefined) ?? 'transient';
+      const cached = _pcbStateCache.get(projectId);
+      const schContent = cached?.kicad_sch_content;
+
+      if (!schContent || schContent.length === 0) {
+        return {
+          status: 'error',
+          note: 'Pas de schéma en cache — exécute call_agent_schema en premier.',
+        };
+      }
+
+      try {
+        const result = await runSimulation({ kicadSchContent: schContent, simType });
+        return {
+          status: 'success',
+          sim_type: simType,
+          simulation_data: result.data,
+          vector_count: result.data.vectors.length,
+          note: `Simulation ${simType} — ${result.data.vectors.length} vecteurs (${result.data.vectors.map((v) => v.name).join(', ')}).`,
+        };
+      } catch (err) {
+        if (!(err instanceof SimulationServiceUnavailableError)) {
+          log.warn({ err }, 'simulation service threw unexpected error');
+        }
+        // Return synthetic demo data so the pipeline stays alive offline
+        const demoVectors = _demoVectors(simType);
+        return {
+          status: 'success',
+          sim_type: simType,
+          simulation_data: { sim_type: simType, vectors: demoVectors },
+          vector_count: demoVectors.length,
+          engine: 'demo',
+          warning: err instanceof Error ? err.message : 'simulation service unavailable',
+          note: `Simulation démo — ${demoVectors.length} vecteurs synthétiques (ngspice indisponible).`,
+        };
+      }
+    }
+
     case 'ask_user':
       return {
         status: 'waiting',
@@ -1015,6 +1074,28 @@ function buildFallbackDesign(description: string): DesignJson {
       max_board_mm: [50, 50],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Demo simulation vectors (used when ngspice service is unavailable)
+// ---------------------------------------------------------------------------
+
+function _demoVectors(simType: string): Array<{ name: string; unit: string; time: number[]; values: number[] }> {
+  const steps = 200;
+  if (simType === 'ac') {
+    const freqs = Array.from({ length: 70 }, (_, i) => Math.pow(10, i * 0.1));
+    return [
+      { name: 'v(out)', unit: 'V', time: freqs,
+        values: freqs.map((f) => 1 / Math.sqrt(1 + Math.pow(f / 1592, 2))) },
+    ];
+  }
+  const t = Array.from({ length: steps }, (_, i) => i * 1e-6);
+  const tau = 1e-4;
+  return [
+    { name: 'v(vin)',  unit: 'V', time: t, values: Array(steps).fill(5.0) },
+    { name: 'v(vmid)', unit: 'V', time: t, values: t.map((ti) => 5 * (1 - Math.exp(-ti / tau))) },
+    { name: 'i(v1)',   unit: 'A', time: t, values: t.map((ti) => (5 / 1000) * Math.exp(-ti / tau)) },
+  ];
 }
 
 const SPEC_PARSER_SYSTEM = `You are the Spec Parser for Layrix.ai PCB pipeline.

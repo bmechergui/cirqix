@@ -10,6 +10,7 @@ import { ErcView } from './ErcView';
 import { PcbView } from './PcbView';
 import { DrcView } from './DrcView';
 import { ExportView } from './ExportView';
+import { SimulationView } from './SimulationView';
 
 interface StageProps {
   project: Project;
@@ -47,5 +48,7 @@ export function Stage({ project }: StageProps) {
       return <DrcView state={pcbState} />;
     case 'EXPORT':
       return <ExportView state={pcbState} />;
+    case 'SIMULATION':
+      return <SimulationView state={pcbState} />;
   }
 }

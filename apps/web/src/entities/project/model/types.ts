@@ -8,6 +8,7 @@ export const PCB_STAGE_ORDER = [
   'ROUTING',
   'DRC',
   'EXPORT',
+  'SIMULATION',
 ] as const;
 
 export type PcbStage = (typeof PCB_STAGE_ORDER)[number];

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PCBState, PCBStatus } from '@layrix/types';
+import type { PCBState, PCBStatus, SimulationData } from '@layrix/types';
 import { runOrchestrator } from '@layrix/agents';
 import { logger } from '@layrix/logger';
 import { encodeSse } from './sse';
@@ -137,6 +137,9 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           if (typeof r['bom_csv'] === 'string') (mergedState as PCBState).bomCsv = r['bom_csv'];
           if (typeof r['quote_usd'] === 'number') (mergedState as PCBState).quoteUsd = r['quote_usd'];
           if (typeof r['lead_time_days'] === 'number') (mergedState as PCBState).leadTimeDays = r['lead_time_days'];
+          if (r['simulation_data'] && typeof r['simulation_data'] === 'object') {
+            (mergedState as PCBState).simulationData = r['simulation_data'] as SimulationData;
+          }
 
           lastStatus = status;
 
