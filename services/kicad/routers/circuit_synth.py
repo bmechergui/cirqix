@@ -385,8 +385,9 @@ def _generate_with_circuit_synth(
     output_dir: Path,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    Use the circuit_synth Python library to generate .kicad_sch.
-    Returns (sch_content, pcb_content) — pcb_content may be None.
+    Use the circuit_synth Python library to generate .kicad_sch + .kicad_pcb
+    with hierarchical placement built-in.
+    Returns (sch_content, pcb_content).
     Raises on failure so the caller can fall back.
     """
     from circuit_synth import circuit as cs_circuit, Component as CSComponent, Net as CSNet
@@ -396,14 +397,11 @@ def _generate_with_circuit_synth(
 
     @cs_circuit(name=project_name)
     def _build() -> None:
-        # Create nets
         nets: dict[str, CSNet] = {name: CSNet(name) for name in req.nets}
 
-        # Create components — pass full ref (e.g. "R1") so circuit_synth uses it as-is
         comps: dict[str, CSComponent] = {}
         for comp in req.components:
             symbol = _safe_symbol(_map_symbol(comp))
-            # Use prefix only (strip trailing digits) — circuit_synth auto-numbers
             ref_prefix = comp.ref.rstrip("0123456789") or comp.ref
             c = CSComponent(
                 symbol=symbol,
@@ -413,7 +411,6 @@ def _generate_with_circuit_synth(
             )
             comps[comp.ref] = c
 
-        # Connect pins
         for conn in req.connections:
             net = nets.get(conn.name)
             if net is None:
@@ -425,17 +422,26 @@ def _generate_with_circuit_synth(
                 try:
                     comp_obj[pin.pin] += net
                 except Exception as e:
-                    logger.warning(f"Pin connection skipped {pin.ref}[{pin.pin}] to {conn.name}: {e}")
+                    logger.warning("Pin connection skipped %s[%s] to %s: %s", pin.ref, pin.pin, conn.name, e)
 
     circ = _build()
     project_path = str(output_dir / project_name)
-    circ.generate_kicad_project(project_path, force_regenerate=True, generate_pcb=False)
 
-    # Find generated files
+    # generate_pcb=True → circuit-synth places components hierarchically and
+    # produces a .kicad_pcb ready for Freerouting. No pcbnew needed.
+    circ.generate_kicad_project(
+        project_path,
+        force_regenerate=True,
+        generate_pcb=True,
+        placement_algorithm="hierarchical",
+    )
+
     sch_files = list(output_dir.rglob("*.kicad_sch"))
+    pcb_files = list(output_dir.rglob("*.kicad_pcb"))
     sch_content = sch_files[0].read_text(encoding="utf-8") if sch_files else None
-    
-    return sch_content, None
+    pcb_content = pcb_files[0].read_text(encoding="utf-8") if pcb_files else None
+
+    return sch_content, pcb_content
 
 
 # ============================================================
