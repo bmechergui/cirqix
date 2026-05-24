@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+kicad-symbols/
+kicad_libs/
+test_out*.kicad_pcb
+output_*/
