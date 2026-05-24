@@ -179,6 +179,14 @@ export interface PCBState {
   kicad_sch_url?: string;
   /** Supabase Storage signed URL for .kicad_pcb file (Circuit-Synth output) */
   kicad_pcb_url?: string;
+  /** Base64-encoded gerbers+drill ZIP from kicad-cli export */
+  gerberZipB64?: string;
+  /** BOM CSV with LCSC part numbers for JLCPCB PCBA */
+  bomCsv?: string;
+  /** PCB-only price estimate in USD from kicad-cli export service */
+  quoteUsd?: number;
+  /** Estimated lead time in days from export service */
+  leadTimeDays?: number;
 }
 
 export const CREDIT_COSTS: Record<AgentAction, number> = {

@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import {
   Download, FileArchive, FileSpreadsheet, Box, AlertCircle,
-  ShieldCheck, Package, Clock, ChevronRight, CheckCircle2,
+  ShieldCheck, Package, Clock, ChevronRight, CheckCircle2, Loader2,
 } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
@@ -18,6 +18,29 @@ const View3D = dynamic(() => import('./View3D').then((m) => ({ default: m.View3D
     </div>
   ),
 });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function downloadB64(b64: string, filename: string, mime: string) {
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(text: string, filename: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
@@ -68,7 +91,8 @@ const OUTPUT_FILES: OutputFile[] = [
 type Qty = 5 | 10 | 20 | 50;
 const QUANTITIES: Qty[] = [5, 10, 20, 50];
 
-const QUOTE: Record<Qty, { pcb: number; pcba: number; days: string }> = {
+// Fallback quote table when the export service hasn't returned a quote yet
+const QUOTE_TABLE: Record<Qty, { pcb: number; pcba: number; days: string }> = {
   5:  { pcb:  8,  pcba:  48, days: '2–3' },
   10: { pcb: 12,  pcba:  82, days: '3–5' },
   20: { pcb: 18,  pcba: 140, days: '3–5' },
@@ -77,7 +101,14 @@ const QUOTE: Record<Qty, { pcb: number; pcba: number; days: string }> = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function FileCard({ file, ready }: { file: OutputFile; ready: boolean }) {
+interface FileCardProps {
+  file: OutputFile;
+  ready: boolean;
+  onDownload?: () => void;
+}
+
+function FileCard({ file, ready, onDownload }: FileCardProps) {
+  const canDownload = ready && !!onDownload;
   return (
     <div className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-colors">
       <div className="flex items-start gap-3">
@@ -104,11 +135,14 @@ function FileCard({ file, ready }: { file: OutputFile; ready: boolean }) {
       <Button
         size="sm"
         variant="secondary"
-        disabled={!ready}
+        disabled={!canDownload}
+        onClick={onDownload}
         className="w-full gap-1.5 text-[11px] h-7"
       >
         <Download size={11} />
-        {ready ? `Download${file.credit ? ` · ${file.credit} credit` : ' · free'}` : 'Not yet available'}
+        {canDownload
+          ? `Download${file.credit ? ` · ${file.credit} credit` : ' · free'}`
+          : ready ? 'Run export to generate' : 'Not yet available'}
       </Button>
     </div>
   );
@@ -125,14 +159,58 @@ export function ExportView({ state }: { state: PCBState }) {
   const [showOrder, setShowOrder] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [ordered, setOrdered] = useState(false);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [orderRef, setOrderRef] = useState<string | null>(null);
 
-  const quote = QUOTE[qty];
+  const fallbackQuote = QUOTE_TABLE[qty];
+  const pcbPrice = state.quoteUsd ?? fallbackQuote.pcb;
+  const pcbaPrice = state.quoteUsd != null ? Math.round(state.quoteUsd * 5) : fallbackQuote.pcba;
+  const leadTime = state.leadTimeDays != null ? `${state.leadTimeDays}` : fallbackQuote.days;
+  const quoteIsReal = state.quoteUsd != null;
 
-  function handleOrder() {
+  function getDownloadHandler(fileId: string): (() => void) | undefined {
+    switch (fileId) {
+      case 'gerbers':
+        return state.gerberZipB64
+          ? () => downloadB64(state.gerberZipB64!, 'gerbers.zip', 'application/zip')
+          : undefined;
+      case 'bom':
+        return state.bomCsv
+          ? () => downloadText(state.bomCsv!, 'bom-lcsc.csv')
+          : undefined;
+      case 'cpl':
+        // CPL is embedded in the BOM for now; expose when a dedicated field is added
+        return undefined;
+      case 'step':
+        // STEP export is a separate Phase 4.2 feature
+        return undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  async function handleOrder() {
     if (!confirmed) return;
-    setOrdered(true);
-    setShowOrder(false);
-    setConfirmed(false);
+    setOrderLoading(true);
+    setOrderError(null);
+    try {
+      const res = await fetch('/api/jlcpcb/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: state.projectId, qty, confirmed: true }),
+      });
+      const json = (await res.json()) as { success: boolean; data?: { orderRef: string }; error?: string };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Order failed');
+      setOrderRef(json.data?.orderRef ?? null);
+      setOrdered(true);
+      setShowOrder(false);
+      setConfirmed(false);
+    } catch (err) {
+      setOrderError(err instanceof Error ? err.message : 'Order failed');
+    } finally {
+      setOrderLoading(false);
+    }
   }
 
   const metaBadge = ready
@@ -185,6 +263,9 @@ export function ExportView({ state }: { state: PCBState }) {
             <CheckCircle2 size={14} className="text-[#22C55E] shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-semibold text-[#22C55E]">Order sent to JLCPCB</p>
+              {orderRef && (
+                <p className="text-[10px] font-mono text-[#22C55E]/70 mt-0.5">{orderRef}</p>
+              )}
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 You will receive a confirmation email from JLCPCB within a few minutes.
               </p>
@@ -198,7 +279,17 @@ export function ExportView({ state }: { state: PCBState }) {
             Fabrication files
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {OUTPUT_FILES.map((f) => <FileCard key={f.id} file={f} ready={ready} />)}
+            {OUTPUT_FILES.map((f) => {
+              const onDownload = getDownloadHandler(f.id);
+              return (
+                <FileCard
+                  key={f.id}
+                  file={f}
+                  ready={ready}
+                  {...(onDownload ? { onDownload } : {})}
+                />
+              );
+            })}
           </div>
         </section>
 
@@ -208,6 +299,11 @@ export function ExportView({ state }: { state: PCBState }) {
             <div className="flex items-center gap-2">
               <Package size={12} className="text-[#00C2FF]" />
               <span className="text-xs font-semibold text-foreground/90">JLCPCB estimate</span>
+              {quoteIsReal && (
+                <span className="text-[9px] font-mono px-1.5 py-px rounded bg-[#00C2FF]/10 text-[#00C2FF] border border-[#00C2FF]/20">
+                  live quote
+                </span>
+              )}
             </div>
             {/* Quantity selector */}
             <div className="flex items-center gap-0.5 bg-[#111] rounded-lg p-0.5 border border-[#1e1e1e]">
@@ -237,7 +333,7 @@ export function ExportView({ state }: { state: PCBState }) {
                 <p className="text-[10px] text-[#3d3d3d]">Standard 1.6 mm FR4 · 2 layers · green soldermask</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-foreground">~${quote.pcb}.00</p>
+                <p className="text-sm font-bold text-foreground">~${pcbPrice.toFixed(0)}.00</p>
                 <p className="text-[9px] font-mono text-[#3d3d3d]">USD · {qty} pcs</p>
               </div>
             </div>
@@ -251,7 +347,7 @@ export function ExportView({ state }: { state: PCBState }) {
                 <p className="text-[10px] text-[#3d3d3d]">SMT assembly · LCSC components · economic service</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-foreground">~${quote.pcba}.00</p>
+                <p className="text-sm font-bold text-foreground">~${pcbaPrice.toFixed(0)}.00</p>
                 <p className="text-[9px] font-mono text-[#3d3d3d]">USD · {qty} pcs assembled</p>
               </div>
             </div>
@@ -260,12 +356,14 @@ export function ExportView({ state }: { state: PCBState }) {
             <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0a0a0a] border border-[#141414]">
               <Clock size={11} className="text-[#3d3d3d]" />
               <span className="text-[10px] font-mono text-[#3d3d3d]">
-                Estimated lead time: <span className="text-foreground/60">{quote.days} business days</span>
+                Estimated lead time: <span className="text-foreground/60">{leadTime} business days</span>
               </span>
             </div>
 
             <p className="text-[9px] text-[#2a2a2a] font-mono">
-              * Estimates based on JLCPCB standard pricing. Final price confirmed at checkout.
+              {quoteIsReal
+                ? '* Quote from kicad-cli export service. Final price confirmed at JLCPCB checkout.'
+                : '* Estimates based on JLCPCB standard pricing. Final price confirmed at checkout.'}
             </p>
           </div>
         </section>
@@ -315,7 +413,7 @@ export function ExportView({ state }: { state: PCBState }) {
                   </div>
                   <div className="flex justify-between text-foreground/80 font-bold border-t border-[#1a1a1a] pt-1.5 mt-1.5">
                     <span>Estimated total</span>
-                    <span>~${quote.pcba}.00 USD</span>
+                    <span>~${pcbaPrice.toFixed(0)}.00 USD</span>
                   </div>
                 </div>
 
@@ -334,20 +432,26 @@ export function ExportView({ state }: { state: PCBState }) {
                   </span>
                 </label>
 
+                {orderError && (
+                  <p className="text-[11px] text-destructive font-mono">{orderError}</p>
+                )}
+
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    disabled={!confirmed}
+                    disabled={!confirmed || orderLoading}
                     onClick={handleOrder}
                     className="gap-1.5 text-xs h-8"
                   >
-                    <ShieldCheck size={11} />
-                    Confirm & send to JLCPCB
+                    {orderLoading
+                      ? <><Loader2 size={11} className="animate-spin" />Sending…</>
+                      : <><ShieldCheck size={11} />Confirm & send to JLCPCB</>}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => { setShowOrder(false); setConfirmed(false); }}
+                    disabled={orderLoading}
+                    onClick={() => { setShowOrder(false); setConfirmed(false); setOrderError(null); }}
                     className="text-xs h-8 text-muted-foreground"
                   >
                     Cancel

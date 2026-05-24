@@ -130,6 +130,14 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           } as Partial<PCBState>;
           if (kicad_sch_url) (mergedState as PCBState).kicad_sch_url = kicad_sch_url;
           if (kicad_pcb_url) (mergedState as PCBState).kicad_pcb_url = kicad_pcb_url;
+
+          // Map export tool result fields (snake_case) → PCBState (camelCase)
+          const r = raw as Record<string, unknown>;
+          if (typeof r['zip_b64'] === 'string') (mergedState as PCBState).gerberZipB64 = r['zip_b64'];
+          if (typeof r['bom_csv'] === 'string') (mergedState as PCBState).bomCsv = r['bom_csv'];
+          if (typeof r['quote_usd'] === 'number') (mergedState as PCBState).quoteUsd = r['quote_usd'];
+          if (typeof r['lead_time_days'] === 'number') (mergedState as PCBState).leadTimeDays = r['lead_time_days'];
+
           lastStatus = status;
 
           const finalized = mergedState as PCBState;

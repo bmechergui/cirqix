@@ -172,6 +172,7 @@ export async function* runOrchestrator(
         'call_agent_placement',
         'call_agent_routing',
         'call_agent_drc',
+        'call_agent_export',
       ]);
       if (pcbStateTools.has(tool.name)) {
         yield {
