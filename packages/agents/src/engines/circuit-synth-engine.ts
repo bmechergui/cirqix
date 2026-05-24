@@ -78,9 +78,53 @@ const FOOTPRINT_DIMS: Record<string, PadDimensions> = {
 };
 
 function getFootprintDims(footprint: string): PadDimensions {
-  const key = Object.keys(FOOTPRINT_DIMS).find(
-    (k) => footprint.toUpperCase().includes(k.toUpperCase())
-  );
+  const f = footprint.toUpperCase();
+
+  // Dynamic Header parsing (e.g. 1x04, 2x05)
+  const headerMatch = f.match(/(\d+)X(\d+)/);
+  if (headerMatch) {
+    const rows = parseInt(headerMatch[1]!, 10);
+    const cols = parseInt(headerMatch[2]!, 10);
+    const pads = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        pads.push({ dx: (c - (cols - 1) / 2) * 2.54, dy: (r - (rows - 1) / 2) * 2.54 });
+      }
+    }
+    return { width: cols * 2.54, height: rows * 2.54, pads };
+  }
+
+  // Dynamic DIP parsing (e.g. DIP-14)
+  const dipMatch = f.match(/DIP[_-]?(\d+)/);
+  if (dipMatch) {
+    const pins = parseInt(dipMatch[1]!, 10);
+    const half = Math.floor(pins / 2);
+    const pads = [];
+    for (let i = 0; i < pins; i++) {
+      pads.push({
+        dx: i < half ? -3.81 : 3.81,
+        dy: (i < half ? i : (pins - 1) - i) * 2.54 - (half - 1) * 1.27
+      });
+    }
+    return { width: 8.0, height: half * 2.54 + 1.0, pads };
+  }
+
+  // Dynamic SOIC/SOP parsing
+  const soicMatch = f.match(/SOIC[_-]?(\d+)/) || f.match(/SOP[_-]?(\d+)/);
+  if (soicMatch) {
+    const pins = parseInt(soicMatch[1]!, 10);
+    const half = Math.floor(pins / 2);
+    const pads = [];
+    for (let i = 0; i < pins; i++) {
+      pads.push({
+        dx: i < half ? -2.6 : 2.6,
+        dy: (i < half ? i : (pins - 1) - i) * 1.27 - (half - 1) * 0.635
+      });
+    }
+    return { width: 6.0, height: half * 1.27 + 1.0, pads };
+  }
+
+  const key = Object.keys(FOOTPRINT_DIMS).find(k => f.includes(k.toUpperCase()));
   return FOOTPRINT_DIMS[key ?? '0402'] ?? FOOTPRINT_DIMS['0402']!;
 }
 

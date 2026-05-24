@@ -172,29 +172,42 @@ export function computeLayout(
 export function applyLayoutToPcb(kicadPcbContent: string, layout: Layout): string {
   const lines = kicadPcbContent.split('\n');
   const out: string[] = [];
+  let pendingPlacement: { ref: string; x: number; y: number } | null = null;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    // Match footprint header lines (2-space indent in our generator)
+    let line = lines[i]!;
+
     if (/^  \(footprint /.test(line)) {
-      // Peek forward to find the Reference property (within next 5 lines)
+      // Peek forward to find Reference
       let ref: string | undefined;
-      for (let j = 1; j <= 5 && i + j < lines.length; j++) {
+      for (let j = 1; j <= 15 && i + j < lines.length; j++) {
         const peek = lines[i + j]!;
         const m = peek.match(/^\s+\(property "Reference" "([^"]+)"/);
         if (m) { ref = m[1]; break; }
-        if (/^\s+\(pad /.test(peek)) break; // past property block
+        if (/^\s+\(pad /.test(peek)) break;
       }
+      
       if (ref !== undefined && layout[ref] !== undefined) {
         const [nx, ny] = layout[ref]!;
-        // Replace (at X Y) or (at X Y R) on the footprint header line
-        out.push(line.replace(
-          /\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/,
-          `(at ${nx.toFixed(3)} ${ny.toFixed(3)})`,
-        ));
-        continue;
+        pendingPlacement = { ref, x: nx, y: ny };
+      } else {
+        pendingPlacement = null;
       }
     }
+
+    if (pendingPlacement) {
+      // Look for the first (at ...) before any property or pad
+      if (/^\s+\(property /.test(line) || /^\s+\(pad /.test(line) || /^\s+\(fp_/.test(line)) {
+        pendingPlacement = null; // stop looking
+      } else if (/\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/.test(line)) {
+        line = line.replace(
+          /\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/,
+          `(at ${pendingPlacement.x.toFixed(3)} ${pendingPlacement.y.toFixed(3)})`
+        );
+        pendingPlacement = null; // applied
+      }
+    }
+
     out.push(line);
   }
   return out.join('\n');

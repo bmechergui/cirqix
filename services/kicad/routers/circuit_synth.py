@@ -12,7 +12,7 @@ import sys
 import tempfile
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/circuit-synth", tags=["circuit-synth"])
 
 class SchemaPin(BaseModel):
     ref: str
-    pin: int  # 1-indexed
+    pin: Union[int, str]  # 1-indexed, or named string like 'VI'
 
 
 class SchemaNet(BaseModel):
@@ -434,6 +434,7 @@ def _generate_with_circuit_synth(
     # Find generated files
     sch_files = list(output_dir.rglob("*.kicad_sch"))
     sch_content = sch_files[0].read_text(encoding="utf-8") if sch_files else None
+    
     return sch_content, None
 
 
