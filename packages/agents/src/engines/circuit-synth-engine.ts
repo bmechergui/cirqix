@@ -741,8 +741,8 @@ function generatePCB(
   const compPositions = new Map<string, { x: number; y: number }>();
   const compDims      = new Map<string, PadDimensions>();
 
-  components.forEach((comp, i) => {
-    const pos  = placed[i] ?? { x: boardW / 2, y: boardH / 2 };
+  components.forEach((comp) => {
+    const pos  = placed.find(p => p.ref === comp.ref) ?? { x: boardW / 2, y: boardH / 2 };
     const dims = getFootprintDims(comp.footprint);
     compPositions.set(comp.ref, { x: +pos.x.toFixed(3), y: +pos.y.toFixed(3) });
     compDims.set(comp.ref, dims);

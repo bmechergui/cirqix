@@ -1374,12 +1374,8 @@ def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
         logger.info("Using fallback S-expression schematic generator")
         sch_content = _generate_schematic_fallback(req.components, req.connections)
 
-    # PCB: always use S-expression generator (circuit_synth PCB not yet enabled)
-    if not pcb_content:
-        pcb_content = _generate_pcb_sexpr(
-            req.components, req.connections,
-            req.board_width_mm, req.board_height_mm,
-        )
+    # PCB: do not use S-expression generator. Let the TS fallback in the frontend do it
+    # so that MST routing traces are applied.
 
     return CircuitSynthResponse(
         success=True,
