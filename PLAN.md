@@ -515,11 +515,15 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 5. Tools : `call_agent_schema`, `call_agent_placement`, `call_agent_routing`, `call_agent_drc`, `call_agent_export`, `call_agent_footprint`, `ask_user`
 6. Compression contexte après 10 tours (Haiku résume)
 
-**Moteur schéma :**
+**Moteur schéma — dual-mode :**
 - Haiku génère JSON `{ components, nets, connections }` avec pin names KiCad (`"IN"`, `"GND"`, `"TR"`)
 - `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
-- FastAPI `schematic_gen.py` (générateur custom Layrix) → `CSComponent()` + `_safe_symbol()` → `.kicad_sch` natif
+- **Docker actif** → `circuit-synth` officiel GitHub v0.12.1 (`kicad-sch-api`) → `.kicad_sch` + `.kicad_pcb` réels
+- **Docker absent** → `schematic_gen.py` fallback custom Layrix → `.kicad_sch` S-expression basique
 - Upload Supabase Storage → `pcb_state.kicad_sch_url` + `kicad_pcb_url` → SSE → KiCanvas
+
+> `circuit-synth` officiel : `pip install git+https://github.com/circuit-synth/circuit-synth.git`
+> Sans `[fast_generation]` → zéro google-adk. Core deps : kicad-sch-api, numpy, PySpice.
 
 **Skill :** `/everything-claude-code:claude-api`, `layrix-pcb-agent` | **Risque :** 🔴 ÉLEVÉ
 
@@ -690,9 +694,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 1. Haiku génère JSON schema `{ components, nets, connections }` avec pin names KiCad
 2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
-4. `schematic_gen.py` (custom Layrix) → `CSComponent()` → `.kicad_sch` natif + `.kicad_pcb`
+4. Dual-mode génération schéma :
+   - Docker actif → `circuit-synth` GitHub v0.12.1 (`kicad-sch-api`) → `.kicad_sch` réel
+   - Docker absent → `schematic_gen.py` (custom Layrix) → `.kicad_sch` S-expression basique
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible
+
+**TODO (Phase 4.5) :** Intégrer `circuit-synth` officiel GitHub dans `requirements.txt` + adapter `schematic_gen.py` pour appeler l'API v0.12.1 quand disponible.
 
 **Skill :** `layrix-circuit-synth`, `layrix-kicad-service`
 

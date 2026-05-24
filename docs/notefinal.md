@@ -139,19 +139,37 @@ ask_user({
 
 ### Engines — Moteurs de génération KiCad
 
-#### Layrix Schematic Generator (moteur unique, Phase 2+)
-
-> ⚠️ **Ne pas confondre avec le package PyPI `circuit-synth`** (v0.1.0, google-adk dep, API incompatible).
-> Layrix utilise sa propre implémentation custom — indépendante du package officiel.
+#### Layrix Schematic Generator — Architecture dual-mode (Phase 4+)
 
 ```
-Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts   (fallback TS si Docker absent)
-Fichier Py  : services/kicad/routers/schematic_gen.py               (générateur principal, Docker)
+Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts   (fallback si Docker absent)
+Fichier Py  : services/kicad/routers/schematic_gen.py               (fallback custom Python)
 Router      : POST /circuit-synth/generate
 ```
 
-**Package PyPI `circuit-synth` :** Non utilisé. Version 0.1.0 seulement sur PyPI, dépend de google-adk (Gemini).
-La vraie version documentée (0.12.x) n'est pas publiée. Notre implémentation custom est supérieure.
+**Décision architecture (2026-05-25) — Dual-mode :**
+
+```
+Backend Docker ACTIF
+        ↓
+circuit-synth officiel (GitHub v0.12.1, sans [fast_generation] → zéro google-adk)
+pip install git+https://github.com/circuit-synth/circuit-synth.git
+→ kicad-sch-api → .kicad_sch + .kicad_pcb réels ✅
+
+Backend Docker ABSENT
+        ↓
+schematic_gen.py (fallback custom Layrix)
+→ S-expression Python/TS → .kicad_sch basique ✅
+```
+
+**Pourquoi circuit-synth officiel dans Docker :**
+- v0.12.1 sur GitHub (pas encore sur PyPI)
+- google-adk est OPTIONNEL (`[fast_generation]`) — NON requis pour installation standard
+- Dépendances core : numpy, scipy, networkx, pydantic, kicad-sch-api, PySpice
+- `kicad-sch-api>=0.5.5` fait le vrai travail KiCad
+- Extra `[claude]` disponible : `claude-code-sdk>=0.0.17` (intégration native Claude)
+
+**Package PyPI `circuit-synth==0.1.0` :** Ne pas utiliser — vieux prototype, google-adk requis (non optionnel), API incompatible avec v0.12.1.
 
 **Deux chemins selon disponibilité FastAPI — un seul retourné :**
 

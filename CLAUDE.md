@@ -178,7 +178,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ↓ call_agent_schema
 Haiku 4.5 → JSON schema { components, nets, connections, pin names KiCad }
   ↓ validateAndCorrectSchema() → POST /circuit-synth/validate-symbols
-FastAPI schematic_gen.py → CSComponent() + _safe_symbol() → .kicad_sch + .kicad_pcb
+FastAPI → circuit-synth officiel (GitHub v0.12.1, kicad-sch-api) si Docker actif
+         → schematic_gen.py (fallback custom) si circuit-synth absent
+         → .kicad_sch + .kicad_pcb
   ↓ call_agent_placement
 runRealPlacement() → POST /place/auto (pcbnew SetPosition/SetOrientationDegrees, base64 I/O)
   fallback : placement-fallback.ts (algo pur TS si KICAD_SERVICE_URL absent)
@@ -192,6 +194,9 @@ runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
   ↓ Upload Supabase Storage → signed URLs KiCanvas
 ```
 
+- Génération schéma dual-mode :
+  - Docker actif → `circuit-synth` officiel GitHub v0.12.1 (`pip install git+https://github.com/circuit-synth/circuit-synth.git`, sans `[fast_generation]`, zéro google-adk)
+  - Docker absent → `schematic_gen.py` fallback custom Layrix (S-expression Python/TS)
 - Fallback inline : S-expression TypeScript si FastAPI indisponible
 
 **Placement actuel :** `placement_layout.py` — algorithme déterministe pur Python (ICs centre, passifs cluster, connecteurs bords)
