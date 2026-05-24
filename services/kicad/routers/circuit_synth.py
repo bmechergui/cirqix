@@ -922,6 +922,75 @@ def _generate_schematic_fallback(
     return "\n".join(lines)
 
 
+def _find_kicad_footprint_dir() -> Optional[Path]:
+    """Find the standard KiCad footprint directory on the current OS."""
+    if sys.platform == "win32":
+        for ver in ["10.99", "8.0", "7.0", "9.0"]:
+            p = Path(rf"C:\Program Files\KiCad\{ver}\share\kicad\footprints")
+            if p.exists():
+                return p
+    else:
+        p = Path("/usr/share/kicad/footprints")
+        if p.exists():
+            return p
+    return None
+
+KICAD_FP_DIR = _find_kicad_footprint_dir()
+
+
+def _read_real_kicad_footprint(
+    fp_full: str, x: float, y: float,
+    comp: SchemaComponent, pad_net_map: dict, net_name_map: dict
+) -> Optional[str]:
+    if not KICAD_FP_DIR or ":" not in fp_full:
+        return None
+    try:
+        lib_name, fp_name = fp_full.split(":", 1)
+        mod_file = KICAD_FP_DIR / f"{lib_name}.pretty" / f"{fp_name}.kicad_mod"
+        if not mod_file.exists():
+            return None
+        
+        content = mod_file.read_text(encoding="utf-8")
+        
+        # 1. Insert (at X Y) after opening footprint
+        content = re.sub(r'(\(footprint\s+"[^"]+")', r'\1\n  (at ' + str(x) + ' ' + str(y) + ')', content, count=1)
+        
+        # 2. Update Reference
+        content = re.sub(r'\(property\s+"Reference"\s+"[^"]+"', f'(property "Reference" "{comp.ref}"', content)
+        
+        # 3. Update Value
+        content = re.sub(r'\(property\s+"Value"\s+"[^"]+"', f'(property "Value" "{comp.value}"', content)
+        
+        # 4. Inject nets into pads
+        pads_info = []
+        for m in re.finditer(r'\(pad\s+"([^"]+)"', content):
+            pad_num = m.group(1)
+            depth = 0
+            end_idx = -1
+            for j in range(m.start(), len(content)):
+                if content[j] == '(': depth += 1
+                elif content[j] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = j
+                        break
+            if end_idx != -1:
+                pads_info.append((pad_num, end_idx))
+                
+        for pad_num, end_idx in reversed(pads_info):
+            net_id = pad_net_map.get((comp.ref, pad_num), 0)
+            if net_id and net_id in net_name_map:
+                net_name_esc = net_name_map[net_id].replace('"', '\\"')
+                net_sexpr = f' (net {net_id} "{net_name_esc}")'
+                content = content[:end_idx] + net_sexpr + content[end_idx:]
+                
+        # Indent each line by 2 spaces to match the nested level in pcb file
+        return "\n".join("  " + line if line.strip() else line for line in content.splitlines())
+    except Exception as exc:
+        logger.warning("Error reading real footprint %s: %s", fp_full, exc)
+        return None
+
+
 def _footprint_pads(fp: str) -> list[str]:
     """Return KiCad pad S-expression lines for the given footprint.
 
@@ -1137,33 +1206,37 @@ def _generate_pcb_sexpr(
         ref_e = comp.ref.replace('"', '\\"')
         val_e = comp.value.replace('"', '\\"')
 
-        # Determine if this is an SMD or THT footprint for the attr field
-        fp_up_full = fp_full.upper()
-        is_smd = any(t in fp_up_full for t in (
-            "SMD", "0402", "0603", "0805", "1206",
-            "SOT-23", "SOT23", "SOT-223", "SOT223",
-            "TSSOP", "SOIC", "QFP", "QFN",
-        ))
-        attr = "smd" if is_smd else "through_hole"
-
-        lines.append(f'  (footprint "{fp_e}" (layer "F.Cu") (at {x} {y}) (attr {attr})')
-        lines.append(f'    (fp_text reference "{ref_e}" (at 0 -2) (layer "F.SilkS")'
-                     f' (effects (font (size 1 1) (thickness 0.15))))')
-        lines.append(f'    (fp_text value "{val_e}" (at 0 2) (layer "F.Fab")'
-                     f' (effects (font (size 1 1) (thickness 0.15))))')
-
-        for pad_line in _footprint_pads(fp_full):
-            m = re.search(r'\(pad "(\w+)"', pad_line)
-            pad_num = m.group(1) if m else "1"
-            net_id = pad_net_map.get((comp.ref, pad_num), 0)
-            if net_id and net_id in net_name_map:
-                net_name_esc = net_name_map[net_id].replace('"', '\\"')
-                net_sexpr = f' (net {net_id} "{net_name_esc}")'
-            else:
-                net_sexpr = ''
-            lines.append(pad_line.replace('{NET}', net_sexpr))
-
-        lines.append('  )')
+        real_fp_block = _read_real_kicad_footprint(fp_full, x, y, comp, pad_net_map, net_name_map)
+        if real_fp_block:
+            lines.append(real_fp_block)
+        else:
+            # Determine if this is an SMD or THT footprint for the attr field
+            fp_up_full = fp_full.upper()
+            is_smd = any(t in fp_up_full for t in (
+                "SMD", "0402", "0603", "0805", "1206",
+                "SOT-23", "SOT23", "SOT-223", "SOT223",
+                "TSSOP", "SOIC", "QFP", "QFN",
+            ))
+            attr = "smd" if is_smd else "through_hole"
+    
+            lines.append(f'  (footprint "{fp_e}" (layer "F.Cu") (at {x} {y}) (attr {attr})')
+            lines.append(f'    (fp_text reference "{ref_e}" (at 0 -2) (layer "F.SilkS")'
+                         f' (effects (font (size 1 1) (thickness 0.15))))')
+            lines.append(f'    (fp_text value "{val_e}" (at 0 2) (layer "F.Fab")'
+                         f' (effects (font (size 1 1) (thickness 0.15))))')
+    
+            for pad_line in _footprint_pads(fp_full):
+                m = re.search(r'\(pad "(\w+)"', pad_line)
+                pad_num = m.group(1) if m else "1"
+                net_id = pad_net_map.get((comp.ref, pad_num), 0)
+                if net_id and net_id in net_name_map:
+                    net_name_esc = net_name_map[net_id].replace('"', '\\"')
+                    net_sexpr = f' (net {net_id} "{net_name_esc}")'
+                else:
+                    net_sexpr = ''
+                lines.append(pad_line.replace('{NET}', net_sexpr))
+    
+            lines.append('  )')
 
     lines.append(')')
     return "\n".join(lines)

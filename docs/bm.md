@@ -509,3 +509,31 @@ Installer Java (JRE 17+) — 5 min
 Télécharger freerouting-2.1.0.jar — 1 min
 Écrire le script Python orchestrateur (pipeline.py)
 Mettre à jour CLAUDE.md pour que Claude Code sache utiliser le pipeline
+
+Pour compléter l'écosystème actuel de Layrix (Schéma, Placement, Routage, DRC, Empreintes), il y a plusieurs agents hautement stratégiques que vous pourriez ajouter.
+
+Dans l'industrie de l'électronique (EDA), le plus dur n'est pas seulement de tracer des fils, mais de s'assurer que la carte fonctionnera, qu'elle est fabricable à bas coût, et qu'elle s'intégrera dans un produit fini.
+
+Voici 5 propositions d'agents IA qui pourraient donner un avantage concurrentiel massif à Layrix :
+
+1. Le "Review Agent" (L'Inspecteur Qualité)
+Son rôle : C'est un ingénieur senior qui fait la revue de conception ("Design Review") avant l'envoi en fabrication.
+Ce qu'il fait : Il analyse la netlist et recherche des erreurs sémantiques ou physiques que le DRC classique de KiCad ne voit pas. Par exemple : "Avez-vous oublié les résistances de pull-up sur le bus I2C ?", "Ce régulateur LM7805 n'a pas de condensateur de découplage en sortie", ou "La piste d'alimentation de 5V est trop fine pour supporter 2 Ampères".
+Pourquoi c'est vital : Cela rassure les utilisateurs et évite la fabrication de cartes mort-nées, ce qui renforce la confiance en Layrix.
+2. Le "Sourcing & BOM Agent" (L'Acheteur)
+Son rôle : Optimiser la nomenclature (Bill of Materials) pour le coût et la disponibilité.
+Ce qu'il fait : Il interroge en temps réel les API de JLCPCB/LCSC, Mouser ou Octopart. Si un microcontrôleur ou un capteur est en rupture de stock, l'agent propose une alternative "Pin-to-Pin compatible" (ex: remplacer un STM32 par un GD32 ou un CH32), ajuste le schéma, et recalcule le prix total de la carte.
+Pourquoi c'est vital : La pénurie de composants est le pire cauchemar des créateurs de matériel. Un agent qui gère cela automatiquement est une "killer feature".
+3. Le "MCAD / Form Factor Agent" (Le Mécanicien)
+Son rôle : Définir la forme physique du PCB (Board Outline) et les trous de montage.
+Ce qu'il fait : L'utilisateur dit : "Fais en sorte que la carte rentre dans un boîtier Hammond 1590B avec des trous de fixation M3 dans les coins", ou "La carte doit être circulaire avec un diamètre de 40mm". L'agent génère les contours Edge.Cuts de KiCad en conséquence avant l'étape de placement.
+Pourquoi c'est vital : Une carte électronique ne vit jamais dans le vide, elle va toujours dans un boîtier.
+4. Le "Simulation Agent" (L'Analyste SPICE)
+Son rôle : Prouver que l'idée de l'utilisateur va fonctionner électriquement avant même de router.
+Ce qu'il fait : (Puisque vous prévoyez d'intégrer SPICE en Phase 4). Il écrit le fichier de simulation .cir, lance la simulation via Ngspice, et surtout, interprète les résultats pour l'utilisateur en langage naturel. "Le filtre passe-bas coupe bien à 1kHz comme demandé, mais attention à la chute de tension."
+Pourquoi c'est vital : SPICE est très difficile à configurer pour les débutants. Un agent qui le fait de manière transparente est magique.
+5. Le "Firmware Agent" (Le Développeur Embarqué)
+Son rôle : Générer le code logiciel de base (Board Support Package) qui correspond exactement au matériel qui vient d'être routé.
+Ce qu'il fait : Puisque Layrix "sait" que la LED rouge est connectée au GPIO 4 de l'ESP32 et que le bouton est sur le GPIO 5, cet agent génère automatiquement le code Arduino, MicroPython ou C (ESP-IDF) pour tester la carte.
+Pourquoi c'est vital : Cela permet de vendre la promesse "Du texte au produit fini". L'utilisateur reçoit sa carte physique et le code de test est déjà écrit et prêt à être flashé.
+Par lequel commencer ? Je vous recommanderais de commencer par le Sourcing Agent combiné au Footprint Agent. Le fait de garantir que 100% des composants placés sur le schéma sont en stock et soudables chez JLCPCB (Basic parts / Extended parts) créera une valeur immédiate énorme pour vos utilisateurs payants.

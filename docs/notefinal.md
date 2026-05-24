@@ -205,6 +205,7 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 - Free          → OR-Tools + S-expressions TS (placement amélioré, sans pcbnew)
 - Pro / Pro Max → pcbnew réel (`POST /place/auto`) — placement EDA natif avec DRC
 
+
 **Phase 3 — placement réel via pcbnew (Pro / Pro Max) :**
 
 `pcbnew` = bibliothèque Python officielle de KiCad. Elle permet de lire, modifier et écrire des fichiers `.kicad_pcb` programmatiquement — déplacer des footprints, tracer des pistes, lancer le DRC, exporter des Gerbers. Tout ce qu'on fait manuellement dans KiCad, `pcbnew` le fait en Python. pcbnew n'est pas disponible en TypeScript — obligatoirement Python via FastAPI.
@@ -213,10 +214,18 @@ OR-Tools (Google) peut calculer des positions meilleures que la grille naïve et
 2. `call_agent_placement` appelle `POST /place/auto` (FastAPI) — câblage à faire
 3. pcbnew lit ce `.kicad_pcb` → `pcbnew.SetPosition()` écrase les coordonnées par des positions réelles
 4. Retourne le **même** `.kicad_pcb` modifié — pas un nouveau fichier
-
+  ou avec ou avec https://github.com/LukeVassallo/RL_PCB
 #### Engine Router
 
 
+Voici comment combiner RL_PCB (placement par Reinforcement Learning) + LLM ( Claude,) de manière pratique en 2026.
+Approche recommandée : Hybride RL_PCB + LLM
+L’idée est d’utiliser le LLM comme cerveau intelligent et RL_PCB comme moteur d’optimisation puissant.
+Architecture proposée :
+
+LLM → Analyse le schéma, comprend les contraintes, suggère une stratégie de placement (groupes fonctionnels, faces Top/Bottom, zones sensibles…).
+RL_PCB → Prend les suggestions du LLM et optimise mathématiquement les positions.
+pcbnew (KiCad) → Importe le résultat final pour vérification / ajustement manuel.
 ```
 
 ---
