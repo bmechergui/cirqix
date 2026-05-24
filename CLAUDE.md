@@ -193,6 +193,12 @@ runRealExport() → POST /export/all (Gerbers + drill + CPL, zip base64)
 ```
 
 - Fallback inline : S-expression TypeScript si FastAPI indisponible
+
+**Placement actuel :** `placement_layout.py` — algorithme déterministe pur Python (ICs centre, passifs cluster, connecteurs bords)
+**Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
+  - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
+  - RL_PCB optimise mathématiquement les positions X/Y
+  - pcbnew valide via DRC
 - **KiCanvas** → charge `.kicad_sch` / `.kicad_pcb` depuis Supabase Storage (signed URL 1h)
 - Client TS : `packages/agents/src/engines/placement-service.ts` | `routing-service.ts` | `drc-service.ts` | `export-service.ts`
 

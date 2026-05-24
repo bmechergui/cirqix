@@ -791,6 +791,14 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ## Phase 5 — Polish + Launch (Semaine 10)
 
+> **Amélioration placement future (Post-Phase 5) : RL_PCB**
+> Architecture hybride LLM + Reinforcement Learning pour le placement PCB :
+> - LLM (Sonnet) → analyse schéma, comprend contraintes, suggère stratégie (groupes fonctionnels, faces Top/Bottom, zones sensibles)
+> - RL_PCB → prend les suggestions LLM et optimise mathématiquement les positions X/Y
+> - pcbnew → importe le résultat pour validation DRC
+> Pipeline : `call_agent_schema → LLM strategy → RL_PCB optimizer → pcbnew SetPosition → Freerouting`
+> Actuellement : `placement_layout.py` (algo déterministe pur Python) — RL_PCB serait l'upgrade Phase 6+.
+
 ### Étape 5.1 — Sécurité
 
 - Rate limiting Upstash Ratelimit (10 req/min `/api/agent/run`)
