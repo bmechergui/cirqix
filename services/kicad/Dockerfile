@@ -1,23 +1,14 @@
 # ============================================================
 # Layrix KiCad Service — Docker headless
 # Base : KiCad 8.0 + Python 3.11 + FastAPI + Freerouting
+# Port : 8766 (matches KICAD_SERVICE_URL in .env.local)
 # ============================================================
 
 FROM ubuntu:22.04 AS base
 
-# Prevent interactive prompts during apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System dependencies + KiCad 8.0 via official PPA
-#
-# We deliberately AVOID `add-apt-repository ppa:kicad/...` here because it
-# depends on the Launchpad REST API (api.launchpad.net) which is flaky and
-# regularly times out (HTTP 504), failing the CI build. Instead we add the
-# PPA repository line manually and import the signing key directly from a
-# keyserver — both steps wrapped in retry loops so transient outages of the
-# Ubuntu archive, the Launchpad CDN, or keyserver.ubuntu.com don't kill the
-# build. KiCad PPA signing key fingerprint:
-#   FDA854F61C4D0D9572BB95E5245D5502FAD7A805
+# KiCad PPA signing key fingerprint
 ENV KICAD_PPA_KEY=FDA854F61C4D0D9572BB95E5245D5502FAD7A805
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,12 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    # Add the KiCad 8.0 PPA repository line directly
     && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu jammy main" \
         > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
-    # Import the PPA signing key via HTTP + --dearmor (no dirmngr needed).
-    # curl downloads the ASCII-armored public key; gpg --dearmor converts it
-    # to binary format required by modern apt (trusted.gpg.d/*.gpg).
     && mkdir -p /root/.gnupg && chmod 700 /root/.gnupg \
     && for i in 1 2 3; do \
            curl -fsSL \
@@ -40,7 +27,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
            && break || sleep 10; \
        done \
     && chmod 644 /etc/apt/trusted.gpg.d/kicad.gpg \
-    # Now install KiCad — retry up to 3 times on archive CDN flakes
     && apt-get update \
     && for i in 1 2 3; do \
            apt-get install -y --no-install-recommends --fix-missing \
@@ -49,6 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                kicad-footprints \
                python3-pip \
                python3-dev \
+               python3-pcbnew \
+               xvfb \
                openjdk-17-jre-headless \
                zip \
                unzip \
@@ -58,30 +46,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
 ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
+ENV PYTHONUNBUFFERED=1
+ENV DISPLAY=:99
 
-# Copier les requirements et installer Python deps
+# Add KiCad system Python path so pcbnew is importable by pip-installed uvicorn
+ENV PYTHONPATH=/usr/lib/python3/dist-packages:${PYTHONPATH}
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Télécharger Freerouting JAR
+# Freerouting JAR
 RUN mkdir -p /opt/freerouting && \
-    curl -L https://github.com/freerouting/freerouting/releases/latest/download/freerouting.jar \
-    -o /opt/freerouting/freerouting.jar
+    for i in 1 2 3; do \
+        curl -fL https://github.com/freerouting/freerouting/releases/latest/download/freerouting.jar \
+            -o /opt/freerouting/freerouting.jar && break || sleep 15; \
+    done
 
-# Copier le code source
 COPY . .
 
-# Créer le répertoire de travail temporaire
 RUN mkdir -p /tmp/kicad-jobs
 
-# Variables d'environnement
-ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
+EXPOSE 8766
 
-EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8766/health || exit 1
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Start Xvfb (headless display for kicad-cli) then uvicorn on port 8766
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac &\
+     uvicorn main:app --host 0.0.0.0 --port 8766 --workers 4"]
