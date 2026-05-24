@@ -4,10 +4,6 @@ pydantic==2.8.0
 python-multipart==0.0.9
 httpx==0.27.0
 
-# circuit-synth officiel GitHub v0.12.1 — sans [fast_generation] = zéro google-adk
-# Fournit kicad-sch-api pour génération .kicad_sch réelle
-# Fallback automatique vers schematic_gen.py si import échoue
-circuit-synth @ https://github.com/circuit-synth/circuit-synth/archive/refs/heads/main.tar.gz
 
 # Dev/test dependencies
 pytest>=9.0.0
