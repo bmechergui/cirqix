@@ -39,10 +39,13 @@ Utilisateur (texte naturel)
 INITIAL
   → call_agent_spec        → [contexte DesignJson]
   → call_agent_schema      → SCHEMA_DONE + .kicad_sch + .kicad_pcb
-  → call_agent_placement   → PLACEMENT_DONE
-  → call_agent_routing     → ROUTING_DONE
-  → call_agent_drc         → DRC_CLEAN
+  → call_agent_footprint   → résolution cascade 4 étapes (KiCad → SnapMagic → LCSC → AI)
+  → call_agent_erc         → ERC_CLEAN (kicad-cli sch erc, auto-fix no_connect)
+  → call_agent_placement   → PLACEMENT_DONE (pcbnew /place/auto ou fallback TS)
+  → call_agent_routing     → ROUTING_DONE (Freerouting /route/auto ou fallback TS)
+  → call_agent_drc         → DRC_CLEAN (kicad-cli pcb drc, boucle auto-fix max 3×)
   → call_agent_export      → PCB_LIVRÉ → JLCPCB (après "OUI JE CONFIRME")
+  → call_agent_simulation  → vecteurs SPICE (ngspice, optionnel, 3 crédits)
 ```
 
 ---
@@ -53,11 +56,13 @@ INITIAL
 |-------|-----------|--------|------|--------|
 | Spec Parser | `call_agent_spec` | Haiku 4.5 | Parse la description → contexte structuré | `DesignJson` |
 | Schematic | `call_agent_schema` | Haiku 4.5 | Génère le schéma électronique + netlist | `SchemaJson` + `.kicad_sch` + `.kicad_pcb` |
-| Footprint | `call_agent_footprint` | Haiku 4.5 | Trouve le footprint KiCad (LCSC/SnapMagic/Octopart) | `kicad_mod` |
-| Placement | `call_agent_placement` | — | Positionne les composants X/Y/rotation | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | Freerouting + ground planes | `.kicad_pcb` routé |
-| DRC | `call_agent_drc` | — | Design Rule Check + corrections | rapport violations |
-| Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` Gerbers |
+| Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→SnapMagic→LCSC→IA | `footprint_name` + `kicad_mod` |
+| ERC | `call_agent_erc` | — | kicad-cli sch erc, auto-fix no_connect markers | rapport violations ERC |
+| Placement | `call_agent_placement` | — | pcbnew /place/auto + fallback TS planner | `.kicad_pcb` placé |
+| Routing | `call_agent_routing` | — | Freerouting /route/auto + fallback TS | `.kicad_pcb` routé |
+| DRC | `call_agent_drc` | — | kicad-cli pcb drc, boucle auto-fix max 3× | rapport violations + `.kicad_pcb` corrigé |
+| Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |
+| Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch, fallback démo | `SimulationData` (vecteurs V/A) |
 | Ask | `ask_user` | — | Pose une question à l'utilisateur | — |
 
 **Orchestrateur :** Claude Sonnet 4.6 — coordonne, décide l'ordre, écrit les réponses chat.
@@ -346,6 +351,62 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 **Raison technique :** TSCircuit génère du `circuit-json` (format JSON custom de tscircuit.io), pas du `.kicad_sch` / `.kicad_pcb` natif. Il faudrait un convertisseur `circuit-json → KiCad` — non officiel, perd des informations (symboles, annotations, design rules KiCad). Circuit-Synth produit directement des S-expressions KiCad 7 — format natif, lisible par KiCad et KiCanvas sans conversion.
 
 **Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Layrix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
+
+---
+
+---
+
+### 2026-05-24 — Footprints professionnels + connectivité nets dans circuit_synth.py
+
+**Décision :** Remplacer les pads génériques 0.6×0.6mm par des géométries correctes par footprint, injecter les assignations de net sur chaque pad, et utiliser `_expand_footprint()` pour les chemins complets dans le PCB S-expression.
+
+**Pourquoi :** `pcbnew.LoadBoard()` lit les pads embarqués dans le `.kicad_pcb` — il ne recharge PAS depuis les bibliothèques KiCad. Si les pads sont faux à la génération, ils restent faux tout au long du pipeline. Sans `(net N "NAME")` sur chaque pad, Freerouting voit des pads non connectés et route aléatoirement ou pas du tout.
+
+**Ce qui a changé :**
+- `_footprint_pads(fp)` → retourne les lignes de pads avec placeholder `{NET}` : 0402 (1.3×0.9mm SMD roundrect), DIP-8 (8 THT 7.62mm rows 0.8mm drill), SOT-23 (3 SMD), SOIC-8, TSSOP-8, TO-220, PinHeader, etc.
+- `_net_classes_sexpr(power_nets)` → net_settings KiCad : Default 0.2mm signal, Power 0.5mm pour GND/VCC/VDD
+- `pad_net_map[(ref, pad_num)] → net_id` construit depuis les connections → injection dans les pads via `{NET}` replacement
+- Plus de segments pré-routés (Freerouting gère le routage)
+
+**Écarté :** Modifier `routing.py` pour injecter les nets — trop tard dans le pipeline, le DSN exporté par pcbnew serait déjà basé sur les mauvais pads.
+
+**Fichiers :** `services/kicad/routers/circuit_synth.py`
+
+---
+
+### 2026-05-24 — Placement professionnel dans placement_layout.py
+
+**Décision :** Séparer caps (C*) et passifs signal dans `_place_cluster()` : caps à 4mm (tight decoupling) avec rotation 90°, passifs signal à rayon existant avec 0°. Connectors avec rotation 90° pour orientation bord.
+
+**Pourquoi :** Sur un vrai PCB, les condensateurs de découplage doivent être le plus proche possible des broches d'alimentation des ICs — rayon 8mm était trop large et les plaçait n'importe où. La rotation 90° pour les composants 2-pads SMD facilite le routage parallèle.
+
+**Écarté :** Utiliser des positions fixes hardcodées par type de composant — trop fragile selon le nombre de composants.
+
+**Fichiers :** `services/kicad/tools/placement_layout.py`
+
+---
+
+### 2026-05-24 — Phase 4.2 : Simulation ngspice end-to-end
+
+**Décision :** Implémenter la simulation SPICE complète via le pipeline : `call_agent_simulation` → `POST /simulate/auto` (base64 .kicad_sch) → kicad-cli SPICE export → ngspice batch → parsing tabular output → vecteurs `SimulationData` → `SimulationView` Recharts.
+
+**Pourquoi :** La simulation SPICE valide électriquement le circuit AVANT la fabrication — c'est une étape critique qui différencie Layrix des outils qui génèrent juste du PCB sans vérification fonctionnelle. ngspice est disponible dans le Docker KiCad existant.
+
+**Fallback :** Quand ngspice ou kicad-cli est indisponible (dev local), des waveformes synthétiques RC/AC réalistes sont retournées pour que le pipeline reste fonctionnel et que l'UI reste testable.
+
+**Types d'analyse :** transient (`.tran 1µs 1ms`), dc (`.op`), ac (`.ac dec 100 1 10Meg`)
+
+**Frontend :** `SimulationView.tsx` — Recharts `LineChart` groupés par unité (V / A), formatage engineering notation (µs/ms, µA/mA), onglet "Simulate" dans la Timeline avec icône `FlaskConical`.
+
+**Écarté :** Ajouter SPICE comme nouveau `PCBStatus` — la simulation ne bloque pas la fabrication, c'est une feature optionnelle (3 crédits, plan Pro+). `simulationData` est un champ optionnel de `PCBState`.
+
+**Fichiers :**
+- `services/kicad/routers/simulate.py` (NOUVEAU)
+- `services/kicad/tools/simulation.py` (refonte complète)
+- `packages/agents/src/engines/simulation-service.ts` (NOUVEAU)
+- `packages/agents/src/tools.ts` — `call_agent_simulation` + `_demoVectors()`
+- `packages/types/src/index.ts` — `SimulationVector`, `SimulationData`, `PCBState.simulationData`
+- `apps/web/src/widgets/viewer/ui/SimulationView.tsx` (NOUVEAU)
 
 ---
 

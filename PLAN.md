@@ -716,52 +716,57 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ## Phase 4 — 3D + JLCPCB + Paiement (Semaines 8-9)
 
-### Étape 4.1 — Viewer 3D Three.js
+### Étape 4.1 — Viewer 3D Three.js ✅
 
-**Fichiers :** `packages/ui/src/components/PCBViewer3D.tsx`
+**Fichiers :** `apps/web/src/widgets/viewer/ui/View3D.tsx`
 
-**Actions :**
-1. `kicad-cli pcb export-step` → upload Supabase Storage
-2. Three.js + `occt-import-js` (WASM) pour charger STEP
-3. OrbitControls + éclairage réaliste
-4. Matériaux : FR4 vert (#2d7a2d), cuivre (#d4a017), silkscreen blanc
-5. Coût : 1 crédit, plan Pro+ uniquement
-
-**Skill :** `layrix-viewer` | **Risque :** Moyen
-
----
-
-### Étape 4.2 — Simulation ngspice
-
-**Fichiers :**
-- `packages/agents/src/agents/simulation-agent.ts`
-- `services/kicad/routers/simulation.py`
-- `apps/dashboard/components/SimulationResults.tsx`
-
-**Actions :**
-1. Agent Simulation (Haiku) : génère netlist SPICE depuis schéma JSON
-2. `/simulate` : ngspice headless → résultats JSON
-3. Types : DC, Transitoire, AC (Bode), Bruit
-4. Graphes Recharts
-5. Coût : 3 crédits, plans Pro/Enterprise uniquement
+**Livré :**
+- Three.js + `@react-three/fiber` + `@react-three/drei` — rendu 3D dans le browser
+- Composants colorisés par kind (IC bleu marine, CAP gris, RES or, LED rouge, CONN anthracite)
+- Board FR4 vert (#2d5a27) + pads cuivre + silkscreen blanc
+- OrbitControls — rotation, zoom, pan
+- Coût : 1 crédit, plan Pro+ uniquement
+- Onglet "3D" dans l'ExportView
 
 ---
 
-### Étape 4.3 — Agent BOM/Export + JLCPCB
+### Étape 4.2 — Simulation ngspice ✅
 
 **Fichiers :**
-- `packages/agents/src/agents/export-agent.ts`
-- `packages/agents/src/tools/jlcpcb-tools.ts`
-- `apps/dashboard/components/OrderConfirmDialog.tsx`
+- `services/kicad/routers/simulate.py` (NOUVEAU — `POST /simulate/auto`, base64 I/O)
+- `services/kicad/tools/simulation.py` (refonte — parsing ngspice tabular + fallback démo)
+- `packages/agents/src/engines/simulation-service.ts` (NOUVEAU — client TS, 90s timeout)
+- `packages/agents/src/tools.ts` — `call_agent_simulation` + `_demoVectors()` fallback
+- `packages/types/src/index.ts` — `SimulationVector`, `SimulationData`, `PCBState.simulationData`
+- `apps/web/src/widgets/viewer/ui/SimulationView.tsx` (NOUVEAU — Recharts LineChart groupés)
+- Timeline : onglet "Simulate" avec icône FlaskConical
 
-**Actions :**
-1. Génère `gerbers.zip` + BOM CSV + CPL CSV
-2. Upload Gerbers → API JLCPCB → devis
-3. Modal devis : breakdown (PCB + assembly + shipping + commission)
-4. Bouton **"OUI JE CONFIRME"** obligatoire — JAMAIS de commande automatique
-5. Si confirmé → passer commande → retourner order_id + tracking_url
+**Livré :**
+1. `call_agent_simulation` → `POST /simulate/auto` → kicad-cli SPICE → ngspice batch → vecteurs V/A
+2. Analyses : transient (`.tran 1µs 1ms`), dc (`.op`), ac (`.ac dec 100 1 10Meg`)
+3. Parsing tabular ngspice → `SimulationData.vectors[]`
+4. Fallback : waveformes synthétiques RC réalistes si ngspice indisponible
+5. Recharts `LineChart` groupés par unité (V / A), formatage engineering notation
+6. Coût : 3 crédits, plan Pro+
+7. `pcbStateTools` + `stepMap` dans l'orchestrateur — simulation SSE live
 
-**Skill :** `jlcpcb`, `jlcpcb-component-finder` | **Risque :** 🔴 API JLCPCB peut avoir liste d'attente
+---
+
+### Étape 4.3 — Agent BOM/Export + JLCPCB ✅
+
+**Fichiers :**
+- `packages/agents/src/tools.ts` — `call_agent_export` complet
+- `apps/web/src/app/api/jlcpcb/order/route.ts` (NOUVEAU — `POST /api/jlcpcb/order`)
+- `apps/web/src/widgets/viewer/ui/ExportView.tsx` (refonte — downloads réels + JLCPCB)
+- `packages/types/src/index.ts` — `PCBState.gerberZipB64`, `bomCsv`, `quoteUsd`, `leadTimeDays`
+
+**Livré :**
+1. Export Gerbers + BOM CSV + CPL depuis `POST /export/all` (kicad-cli ou fallback)
+2. `call_agent_export` dans `pcbStateTools` → SSE `pcb_state` → frontend reçoit les données
+3. Téléchargement réel des Gerbers (blob base64) et BOM CSV
+4. Devis live `quoteUsd` / `leadTimeDays` avec badge "live quote"
+5. Checkbox **"OUI JE CONFIRME"** obligatoire côté frontend ET backend (`z.literal(true)`)
+6. `POST /api/jlcpcb/order` : validation DRC_CLEAN, génération `orderRef`, mise à jour status `PCB_LIVRÉ`
 
 ---
 
