@@ -6,3 +6,4 @@ kicad-symbols/
 kicad_libs/
 *.log
 freerouting/
+circuit_synth_lib/
