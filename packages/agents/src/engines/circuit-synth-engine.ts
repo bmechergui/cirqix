@@ -827,7 +827,7 @@ export function isCircuitSynthAvailable(): boolean {
 
 /**
  * Validate and auto-correct KiCad symbols against local .kicad_sym libraries.
- * Calls POST /circuit-synth/validate-symbols if KICAD_SERVICE_URL is set.
+ * Calls POST /schematic/validate-symbols if KICAD_SERVICE_URL is set.
  * Returns the schema unchanged if the service is unavailable.
  */
 export async function validateAndCorrectSchema(schema: SchemaJson): Promise<SchemaJson> {
@@ -835,7 +835,7 @@ export async function validateAndCorrectSchema(schema: SchemaJson): Promise<Sche
   if (!serviceUrl) return schema;
 
   try {
-    const res = await fetch(`${serviceUrl}/circuit-synth/validate-symbols`, {
+    const res = await fetch(`${serviceUrl}/schematic/validate-symbols`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ components: schema.components }),
@@ -881,7 +881,7 @@ export async function runCircuitSynthEngine(
   // Try external service first (optional — better quality with pcbnew)
   if (serviceUrl) {
     try {
-      const res = await fetch(`${serviceUrl}/circuit-synth/generate`, {
+      const res = await fetch(`${serviceUrl}/schematic/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

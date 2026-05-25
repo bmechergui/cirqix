@@ -1,7 +1,7 @@
 """
 Layrix KiCad Service — FastAPI headless
 Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step, /export/bom, /simulate
-         /circuit-synth/generate (JSON schema → .kicad_sch + .kicad_pcb — custom Layrix generator, see routers/schematic_gen.py)
+         /schematic/generate (JSON schema → .kicad_sch + .kicad_pcb — custom Layrix generator, see routers/schematic_gen.py)
 """
 
 import os

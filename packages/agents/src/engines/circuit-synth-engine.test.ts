@@ -94,7 +94,7 @@ describe('runCircuitSynthEngine — external service mode', () => {
     vi.restoreAllMocks();
   });
 
-  it('calls /circuit-synth/generate with correct payload when service URL is set', async () => {
+  it('calls /schematic/generate with correct payload when service URL is set', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -109,7 +109,7 @@ describe('runCircuitSynthEngine — external service mode', () => {
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, opts] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://localhost:8000/circuit-synth/generate');
+    expect(url).toBe('http://localhost:8000/schematic/generate');
     expect(opts.method).toBe('POST');
 
     const body = JSON.parse(opts.body as string) as Record<string, unknown>;

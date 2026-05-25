@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Ensure UTF-8 encoding for circuit_synth on Windows
 os.environ.setdefault("PYTHONUTF8", "1")
 
-router = APIRouter(prefix="/circuit-synth", tags=["circuit-synth"])
+router = APIRouter(prefix="/schematic", tags=["schematic"])
 
 # ============================================================
 # Pydantic models
@@ -1379,8 +1379,12 @@ def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
         logger.info("Using fallback S-expression schematic generator")
         sch_content = _generate_schematic_fallback(req.components, req.connections)
 
-    # PCB: do not use S-expression generator. Let the TS fallback in the frontend do it
-    # so that MST routing traces are applied.
+    # PCB: generate from real KiCad footprint files (real footprint outlines, pads, courtyard)
+    # Placement and routing are done later by /place/auto and /route/auto.
+    if not pcb_content:
+        pcb_content = _generate_pcb_sexpr(
+            req.components, req.connections, req.board_width_mm, req.board_height_mm
+        )
 
     return CircuitSynthResponse(
         success=True,
