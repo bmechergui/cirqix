@@ -439,8 +439,11 @@ export async function executeToolStub(
     }
 
     case 'call_agent_placement': {
-      const boardW = Number(input['board_width_mm'] ?? 50);
-      const boardH = Number(input['board_height_mm'] ?? 50);
+      // Use dimensions from schema cache (set by call_agent_schema) when caller
+      // doesn't supply explicit board dimensions — ensures adaptive sizing holds.
+      const cachedDims = _pcbStateCache.get(projectId);
+      const boardW = Number(input['board_width_mm'] ?? cachedDims?.boardW ?? 50);
+      const boardH = Number(input['board_height_mm'] ?? cachedDims?.boardH ?? 40);
 
       // Parse schema_json from input if provided. Fall back to the cached schema
       // from call_agent_schema if the agent passes nothing valid here.

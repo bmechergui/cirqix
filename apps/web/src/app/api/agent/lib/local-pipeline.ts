@@ -92,7 +92,8 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     await updateState('call_agent_erc', erc, 'ERC_CLEAN', 'ERC');
 
     await streamText(controller, encoder, "3. Placing components via Pcbnew...\n");
-    const placement = await executeToolStub('call_agent_placement', { board_width_mm: 50, board_height_mm: 40 }, projectId);
+    // No board_width_mm/board_height_mm — call_agent_placement reads from schema cache.
+    const placement = await executeToolStub('call_agent_placement', {}, projectId);
     await updateState('call_agent_placement', placement, 'PLACEMENT_DONE', 'PLACEMENT');
 
     await streamText(controller, encoder, "4. Routing tracks via Freerouting...\n");
