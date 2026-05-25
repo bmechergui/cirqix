@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                python3-pip \
                python3-dev \
                xvfb \
-               openjdk-17-jre-headless \
+               openjdk-21-jre-headless \
                zip \
                unzip \
            && break || sleep 30; \
@@ -60,7 +60,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Freerouting JAR v2.2.4
 RUN mkdir -p /opt/freerouting && \
     for i in 1 2 3; do \
-        curl -fL https://github.com/freerouting/freerouting/releases/download/v2.2.4/freerouting-2.2.4.jar \
+        curl -fL https://github.com/freerouting/freerouting/releases/download/v2.1.0/freerouting-2.1.0.jar \
             -o /opt/freerouting/freerouting.jar && break || sleep 15; \
     done
 
