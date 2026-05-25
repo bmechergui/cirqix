@@ -3,8 +3,8 @@
  * TSCircuit is permanently removed.
  */
 
-import { runCircuitSynthEngine, isCircuitSynthAvailable } from './circuit-synth-engine';
-export type { CircuitSynthResult } from './circuit-synth-engine';
+import { runCircuitSynthEngine, isCircuitSynthAvailable } from './schematic-engine';
+export type { CircuitSynthResult } from './schematic-engine';
 export { isCircuitSynthAvailable, runCircuitSynthEngine };
 
 // Re-export schema types for consumers

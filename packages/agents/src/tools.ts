@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import type { DesignJson } from '@layrix/types';
 import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
-import { validateAndCorrectSchema } from './engines/circuit-synth-engine';
+import { validateAndCorrectSchema } from './engines/schematic-engine';
 import type { SchemaJson } from './engines/engine-router';
 import { runRealPlacement } from './engines/placement-service';
 import { computeLayout, layoutToPlacements, applyLayoutToPcb } from './engines/placement-fallback';

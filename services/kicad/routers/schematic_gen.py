@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# Ensure UTF-8 encoding for circuit_synth on Windows
 os.environ.setdefault("PYTHONUTF8", "1")
 
 router = APIRouter(prefix="/schematic", tags=["schematic"])
@@ -45,7 +44,7 @@ class SchemaComponent(BaseModel):
     lcsc: Optional[str] = None
 
 
-class CircuitSynthRequest(BaseModel):
+class SchematicRequest(BaseModel):
     components: list[SchemaComponent]
     nets: list[str]
     connections: list[SchemaNet] = Field(default_factory=list)
@@ -54,7 +53,7 @@ class CircuitSynthRequest(BaseModel):
     project_id: str = ""
 
 
-class CircuitSynthResponse(BaseModel):
+class SchematicResponse(BaseModel):
     success: bool
     kicad_sch_content: Optional[str] = None
     kicad_pcb_content: Optional[str] = None
@@ -358,11 +357,11 @@ def _map_symbol(comp: SchemaComponent) -> str:
 
 
 # ============================================================
-# circuit_synth generation (primary path)
+# External library path (primary, optional)
 # ============================================================
 
 def _circuit_synth_available() -> bool:
-    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable."""
+    """Return True if the optional circuit_synth pip package + KICAD_SYMBOL_DIR are usable."""
     if not os.environ.get("KICAD_SYMBOL_DIR"):
         return False
     try:
@@ -372,15 +371,14 @@ def _circuit_synth_available() -> bool:
         return False
 
 
-def _generate_with_circuit_synth(
-    req: "CircuitSynthRequest",
+def _generate_with_cs_lib(
+    req: "SchematicRequest",
     output_dir: Path,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    Use the circuit_synth Python library to generate .kicad_sch + .kicad_pcb
-    with hierarchical placement built-in.
+    Use the optional circuit_synth pip package to generate .kicad_sch + .kicad_pcb.
     Returns (sch_content, pcb_content).
-    Raises on failure so the caller can fall back.
+    Raises on failure so the caller falls back to the Layrix hand-written generator.
     """
     from circuit_synth import circuit as cs_circuit, Component as CSComponent, Net as CSNet
 
@@ -1337,34 +1335,34 @@ def validate_symbols(req: ValidateSymbolsRequest) -> ValidateSymbolsResponse:
     )
 
 
-@router.post("/generate", response_model=CircuitSynthResponse)
-def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
+@router.post("/generate", response_model=SchematicResponse)
+def generate(req: SchematicRequest) -> SchematicResponse:
     """Convert JSON schema → native .kicad_sch + .kicad_pcb files."""
     if not req.components:
-        return CircuitSynthResponse(success=False, error="No components in schema")
+        return SchematicResponse(success=False, error="No components in schema")
 
     sch_content: Optional[str] = None
     pcb_content: Optional[str] = None
 
-    # Primary path: use circuit_synth library (requires KICAD_SYMBOL_DIR + UTF-8 mode)
-    # Run in a thread with a hard 20s timeout — circuit_synth placement can hang.
+    # Primary path: optional circuit_synth pip package (requires KICAD_SYMBOL_DIR + UTF-8 mode)
+    # Run in a thread with a hard 20s timeout — can hang on complex boards.
     _CS_TIMEOUT = 20
     if _circuit_synth_available():
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                    _fut = _pool.submit(_generate_with_circuit_synth, req, Path(tmp_dir))
+                    _fut = _pool.submit(_generate_with_cs_lib, req, Path(tmp_dir))
                     try:
                         sch_content, pcb_content = _fut.result(timeout=_CS_TIMEOUT)
                     except concurrent.futures.TimeoutError:
                         _fut.cancel()
                         raise RuntimeError(
-                            f"circuit_synth timed out after {_CS_TIMEOUT}s"
+                            f"external library timed out after {_CS_TIMEOUT}s"
                         )
             if sch_content:
-                logger.info("circuit_synth schematic generated successfully")
+                logger.info("External library schematic generated successfully")
         except Exception as e:
-            logger.warning(f"circuit_synth generation failed, using fallback: {e}")
+            logger.warning(f"External library generation failed, using Layrix fallback: {e}")
             sch_content = None
 
     # Fallback: hand-written S-expression generator
@@ -1379,7 +1377,7 @@ def generate(req: CircuitSynthRequest) -> CircuitSynthResponse:
             req.components, req.connections, req.board_width_mm, req.board_height_mm
         )
 
-    return CircuitSynthResponse(
+    return SchematicResponse(
         success=True,
         kicad_sch_content=sch_content,
         kicad_pcb_content=pcb_content,

@@ -7,8 +7,8 @@
  *   Then open http://localhost:3333/test-kicad.html in Chrome
  */
 
-import { runCircuitSynthEngine } from './circuit-synth-engine.js';
-import type { SchemaJson } from './circuit-synth-engine.js';
+import { runCircuitSynthEngine } from './schematic-engine.js';
+import type { SchemaJson } from './schematic-engine.js';
 import { writeFileSync } from 'fs';
 import { resolve } from 'path';
 
