@@ -893,7 +893,7 @@ export async function runCircuitSynthEngine(
           board_height_mm: boardHeightMm,
           project_id: projectId,
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (res.ok) {
@@ -903,10 +903,16 @@ export async function runCircuitSynthEngine(
           kicad_pcb_content?: string | null;
           error?: string;
         };
-        if (data.success && data.kicad_sch_content && data.kicad_pcb_content) {
+        if (data.success && data.kicad_sch_content) {
+          // circuit_synth génère uniquement le .kicad_sch — PCB généré par fallback TS
           return {
             kicad_sch_content: data.kicad_sch_content,
-            kicad_pcb_content: data.kicad_pcb_content,
+            kicad_pcb_content: data.kicad_pcb_content ?? generatePCB(
+              schema.components,
+              schema.connections ?? [],
+              boardWidthMm,
+              boardHeightMm
+            ),
           };
         }
       }
