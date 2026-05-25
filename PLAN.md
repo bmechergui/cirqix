@@ -694,13 +694,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 1. Haiku génère JSON schema `{ components, nets, connections }` avec pin names KiCad
 2. `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 3. `_safe_symbol()` dans FastAPI — 2ème filet de sécurité
-4. Dual-mode génération schéma :
-   - Docker actif → `circuit-synth` GitHub v0.12.1 (`kicad-sch-api`) → `.kicad_sch` réel
-   - Docker absent → `schematic_gen.py` (custom Layrix) → `.kicad_sch` S-expression basique
+4. Dual-mode génération :
+   - Docker actif → `kicad_gen.py` : `_generate_with_cs_lib()` (circuit_synth pip local) → `.kicad_sch` + `_generate_pcb_sexpr()` → `.kicad_pcb`
+   - Docker absent → fallback TS inline (`schematic-engine.ts`)
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible
 
-**TODO (Phase 4.5) :** Intégrer `circuit-synth` officiel GitHub dans `requirements.txt` + adapter `schematic_gen.py` pour appeler l'API v0.12.1 quand disponible.
+**✅ circuit_synth installé dans Docker** — `pip install ./circuit_synth` (src layout, PYTHONPATH=/app/circuit_synth/src)
 
 **Skill :** `layrix-circuit-synth`, `layrix-kicad-service`
 
@@ -775,6 +775,19 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 4. Devis live `quoteUsd` / `leadTimeDays` avec badge "live quote"
 5. Checkbox **"OUI JE CONFIRME"** obligatoire côté frontend ET backend (`z.literal(true)`)
 6. `POST /api/jlcpcb/order` : validation DRC_CLEAN, génération `orderRef`, mise à jour status `PCB_LIVRÉ`
+
+---
+
+### Étape 4.x — Refactor nommage + optimisation tokens ✅ (2026-05-26)
+
+**Commits :** `b0923d4` (token opt) · `d2834b3` (rename kicad_gen)
+
+**Livré :**
+1. `circuit-synth-engine.ts` → `schematic-engine.ts` — évite confusion avec pip package `circuit_synth`
+2. `CircuitSynthRequest/Response` → `SchematicRequest/Response` dans le router Python
+3. `schematic_gen.py` → `kicad_gen.py` — le fichier gère `.kicad_sch` + `.kicad_pcb`, pas uniquement le schéma
+4. `circuit_synth` pip installé dans Docker : `pip install ./circuit_synth` (src/ layout, PYTHONPATH fix)
+5. `orchestrator.ts` : strip blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) des `tool_result` envoyés à Sonnet → économie ~70% tokens input (≈ $0.86 → ~$0.25/run schema)
 
 ---
 
