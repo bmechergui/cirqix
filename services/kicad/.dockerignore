@@ -5,3 +5,9 @@ kicad-symbols/
 kicad_libs/
 test_out*.kicad_pcb
 output_*/
+circuit_synth/venv/
+circuit_synth/.venv/
+circuit_synth/__pycache__/
+circuit_synth/**/__pycache__/
+circuit_synth/*.egg-info/
+circuit_synth/uv.lock

@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   kicad:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # circuit_synth/ est copié dans l'image et installé via pip (voir Dockerfile)
     image: layrix-kicad:latest
     container_name: layrix-kicad
     ports:
@@ -11,6 +14,7 @@ services:
       - kicad-jobs:/tmp/kicad-jobs
     environment:
       - PYTHONUNBUFFERED=1
+      - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8766/health']

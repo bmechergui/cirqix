@@ -50,7 +50,8 @@ ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 
 # Add KiCad system Python path so pcbnew is importable by pip-installed uvicorn
-ENV PYTHONPATH=/usr/lib/python3/dist-packages:${PYTHONPATH}
+# /app/circuit_synth/src — real circuit_synth package (src layout)
+ENV PYTHONPATH=/app/circuit_synth/src:/usr/lib/python3/dist-packages:${PYTHONPATH}
 
 WORKDIR /app
 COPY requirements.txt .
@@ -65,6 +66,9 @@ RUN mkdir -p /opt/freerouting && \
     done
 
 COPY . .
+
+# Install circuit_synth from local source (services/kicad/circuit_synth/)
+RUN pip3 install --no-cache-dir ./circuit_synth
 
 RUN mkdir -p /tmp/kicad-jobs
 
