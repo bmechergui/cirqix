@@ -903,16 +903,10 @@ export async function runCircuitSynthEngine(
           kicad_pcb_content?: string | null;
           error?: string;
         };
-        if (data.success && data.kicad_sch_content) {
-          // circuit_synth génère uniquement le .kicad_sch — PCB généré par fallback TS
+        if (data.success && data.kicad_sch_content && data.kicad_pcb_content) {
           return {
             kicad_sch_content: data.kicad_sch_content,
-            kicad_pcb_content: data.kicad_pcb_content ?? generatePCB(
-              schema.components,
-              schema.connections ?? [],
-              boardWidthMm,
-              boardHeightMm
-            ),
+            kicad_pcb_content: data.kicad_pcb_content,
           };
         }
       }
