@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PCBState, PCBStatus } from '@layrix/types';
+import type { AgentStep, PCBState, PCBStatus } from '@layrix/types';
 import { executeToolStub } from '@layrix/agents';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
@@ -39,7 +39,7 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     status: 'INITIAL',
   };
 
-  async function updateState(toolName: string, rawResult: any, statusLabel: PCBStatus, stepName: string) {
+  async function updateState(toolName: string, rawResult: any, statusLabel: PCBStatus, stepName: AgentStep) {
     controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: stepName })));
     
     let kicad_sch_url: string | undefined;

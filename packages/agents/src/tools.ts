@@ -960,15 +960,15 @@ function parseSchemaFromDescription(
   if (complexity === 'simple') {
     return {
       components: [
-        { ref: 'LED1', value: 'LED', footprint: 'LED' },
-        { ref: 'R1', value: '330R', footprint: '0402' },
-        { ref: 'J1', value: 'Conn_2Pin', footprint: '0402' },
+        { ref: 'J1',   value: 'PWR_CONN', footprint: 'Conn_2',   symbol: 'Connector_Generic:Conn_01x02' },
+        { ref: 'R1',   value: '330R',     footprint: '0402',      symbol: 'Device:R' },
+        { ref: 'LED1', value: 'LED_RED',  footprint: 'LED_0805',  symbol: 'Device:LED' },
       ],
-      nets: ['GND', 'VCC', 'NET1'],
+      nets: ['GND', 'VCC', 'NET_R_LED'],
       connections: [
-        { name: 'GND',  pins: [{ ref: 'LED1', pin: 2 }, { ref: 'J1', pin: 2 }] },
-        { name: 'VCC',  pins: [{ ref: 'J1',   pin: 1 }, { ref: 'R1',  pin: 1 }] },
-        { name: 'NET1', pins: [{ ref: 'R1',   pin: 2 }, { ref: 'LED1', pin: 1 }] },
+        { name: 'GND',     pins: [{ ref: 'J1',   pin: 2 }, { ref: 'LED1', pin: 2 }] },
+        { name: 'VCC',     pins: [{ ref: 'J1',   pin: 1 }, { ref: 'R1',   pin: 1 }] },
+        { name: 'NET_R_LED', pins: [{ ref: 'R1', pin: 2 }, { ref: 'LED1', pin: 1 }] },
       ],
     };
   }

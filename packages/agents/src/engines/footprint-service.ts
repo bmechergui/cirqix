@@ -94,7 +94,10 @@ const KICAD_LIB: Array<[RegExp, string]> = [
   [/ATmega32U4/i,              'Package_QFP:TQFP-44_10x10mm_P0.8mm'],
   [/ATMEGA328|ATMEGA2560/i,    'Package_DIP:DIP-28_W7.62mm'],
   [/AMS1117|AP2112/i,          'Package_TO_SOT_SMD:SOT-223-3_TabPin2'],
-  // Connectors
+  // Connectors — short forms (Conn_2, Conn_3…) and KiCad long forms
+  [/\bConn[_\s-]?2\b/i,            'Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical'],
+  [/\bConn[_\s-]?3\b/i,            'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'],
+  [/\bConn[_\s-]?4\b/i,            'Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical'],
   [/PinHeader.*1x02|Conn.*01x02/i, 'Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical'],
   [/PinHeader.*1x03|Conn.*01x03/i, 'Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical'],
   [/PinHeader.*2x05|Conn.*02x05/i, 'Connector_PinHeader_2.54mm:PinHeader_2x05_P2.54mm_Vertical'],
@@ -110,6 +113,10 @@ function lookupKicadLibrary(partNumber: string, packageHint?: string): string | 
   const haystack = `${partNumber} ${packageHint ?? ''}`.trim();
   for (const [pattern, footprint] of KICAD_LIB) {
     if (pattern.test(haystack)) return footprint;
+  }
+  // Connector refs (J1, J2 …) with no package hint → default 2-pin PinHeader
+  if (/^J\d+$/.test(partNumber.trim())) {
+    return 'Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical';
   }
   return null;
 }
