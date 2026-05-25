@@ -130,7 +130,7 @@ export function DrcView({ state }: { state: PCBState }) {
               <>
                 <GroupHeader label="Errors" count={errors.length} color="#ef4444" />
                 <ul className="divide-y divide-[#0f0f0f]">
-                  {errors.map((v) => <DrcRow key={v.id} v={v} />)}
+                  {errors.map((v, i) => <DrcRow key={`e-${i}-${v.id}`} v={v} />)}
                 </ul>
               </>
             )}
@@ -138,7 +138,7 @@ export function DrcView({ state }: { state: PCBState }) {
               <>
                 <GroupHeader label="Warnings" count={warnings.length} color="#f59e0b" />
                 <ul className="divide-y divide-[#0f0f0f]">
-                  {warnings.map((v) => <DrcRow key={v.id} v={v} />)}
+                  {warnings.map((v, i) => <DrcRow key={`w-${i}-${v.id}`} v={v} />)}
                 </ul>
               </>
             )}

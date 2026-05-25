@@ -1,8 +1,8 @@
-import type { PCBState, PCBStatus } from '@layrix/types';
+import type { AgentStep, PCBState, PCBStatus } from '@layrix/types';
 
 export type SseEvent =
   | { type: 'token'; content: string }
-  | { type: 'step'; step: 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT' | null }
+  | { type: 'step'; step: AgentStep }
   | { type: 'status'; status: PCBStatus }
   | { type: 'pcb_state'; state: PCBState }
   | { type: 'error'; message: string }

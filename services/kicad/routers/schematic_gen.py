@@ -362,15 +362,7 @@ def _map_symbol(comp: SchemaComponent) -> str:
 # ============================================================
 
 def _circuit_synth_available() -> bool:
-    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable.
-
-    NOTE: circuit_synth 0.12.1 placement algorithm enters an infinite loop on
-    Windows (bbox loop never converges).  Until a fixed version is released or
-    the service runs in a Linux container, force the fallback on Windows.
-    The fallback (compact stub+label schematic) renders correctly in KiCanvas.
-    """
-    if os.name == "nt":
-        return False
+    """Return True if circuit_synth + KICAD_SYMBOL_DIR are usable."""
     if not os.environ.get("KICAD_SYMBOL_DIR"):
         return False
     try:
@@ -990,11 +982,15 @@ def _read_real_kicad_footprint(
         # 1. Insert (at X Y) after opening footprint
         content = re.sub(r'(\(footprint\s+"[^"]+")', r'\1\n  (at ' + str(x) + ' ' + str(y) + ')', content, count=1)
         
-        # 2. Update Reference
-        content = re.sub(r'\(property\s+"Reference"\s+"[^"]+"', f'(property "Reference" "{comp.ref}"', content)
+        # 2. Update Reference (handles KiCad 8 property and KiCad 7 fp_text)
+        content = re.sub(r'\((?:property\s+"Reference"|fp_text\s+reference)\s+"[^"]+"', 
+                         lambda m: m.group(0).replace(m.group(0).split('"')[-2], comp.ref), 
+                         content)
         
         # 3. Update Value
-        content = re.sub(r'\(property\s+"Value"\s+"[^"]+"', f'(property "Value" "{comp.value}"', content)
+        content = re.sub(r'\((?:property\s+"Value"|fp_text\s+value)\s+"[^"]+"', 
+                         lambda m: m.group(0).replace(m.group(0).split('"')[-2], comp.value), 
+                         content)
         
         # 4. Inject nets into pads
         pads_info = []

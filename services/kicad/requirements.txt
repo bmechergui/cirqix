@@ -8,3 +8,28 @@ httpx==0.27.0
 # Dev/test dependencies
 pytest>=9.0.0
 pytest-cov>=7.0.0
+
+# Circuit Synth dependencies
+numpy
+scipy
+matplotlib
+networkx
+PyYAML
+click
+rich
+loguru
+psutil
+cachetools
+kicad-sch-api
+packaging
+sexpdata
+aiohttp
+aiofiles
+requests
+beautifulsoup4
+lxml
+pyspice
+reportlab
+twine
+openai
+python-dotenv

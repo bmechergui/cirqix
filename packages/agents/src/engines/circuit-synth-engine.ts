@@ -776,6 +776,7 @@ function generatePCB(
       const dims = compDims.get(pin.ref);
       const targetComp = components.find(c => c.ref === pin.ref);
       const targetLibId = targetComp ? footprintToLibId(pin.ref, targetComp.footprint, targetComp.value) : undefined;
+      if (!dims || !pos) return;
       const pad = dims.pads[resolvePinIndex(pin.pin, targetLibId)];
       if (pad) {
         pads.push({ x: +(pos.x + pad.dx).toFixed(3), y: +(pos.y + pad.dy).toFixed(3) });

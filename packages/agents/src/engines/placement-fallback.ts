@@ -84,7 +84,9 @@ function placeCluster(
       icPositions.length > 0 ? icPositions[icIdx]! : [boardW / 2, boardH / 2];
     const radius = CLUSTER_RADIUS_BASE_MM + CLUSTER_RADIUS_STEP_MM * bucketRefs.length;
     bucketRefs.forEach((ref, i) => {
-      const angle = (2 * Math.PI * i) / Math.max(1, bucketRefs.length);
+      // Start at 45° (diagonal) so passives spread nicely.
+      // Starting at 90° or 0° creates 1D columns for n=2.
+      const angle = Math.PI / 4 + (2 * Math.PI * i) / Math.max(1, bucketRefs.length);
       const x = clamp(anchor[0] + radius * Math.cos(angle), MARGIN_MM, boardW - MARGIN_MM);
       const y = clamp(anchor[1] + radius * Math.sin(angle), MARGIN_MM, boardH - MARGIN_MM);
       out[ref] = [x, y, 0];
@@ -158,6 +160,33 @@ export function computeLayout(
   Object.assign(out, placeCluster(passives, icPositions, boardWidthMm, boardHeightMm));
   Object.assign(out, placeConnectors(buckets.CONN, boardWidthMm, boardHeightMm));
   Object.assign(out, placeMisc(buckets.MISC, boardWidthMm, boardHeightMm));
+
+  const refsPl = Object.keys(out);
+  if (refsPl.length > 0) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const ref of refsPl) {
+      const [x, y] = out[ref]!;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const targetX = boardWidthMm / 2;
+    const targetY = boardHeightMm / 2;
+    const dx = targetX - centerX;
+    const dy = targetY - centerY;
+
+    for (const ref of refsPl) {
+      const [x, y, rot] = out[ref]!;
+      const newX = clamp(x + dx, MARGIN_MM, boardWidthMm - MARGIN_MM);
+      const newY = clamp(y + dy, MARGIN_MM, boardHeightMm - MARGIN_MM);
+      out[ref] = [newX, newY, rot];
+    }
+  }
+
   return out;
 }
 
@@ -182,7 +211,7 @@ export function applyLayoutToPcb(kicadPcbContent: string, layout: Layout): strin
       let ref: string | undefined;
       for (let j = 1; j <= 15 && i + j < lines.length; j++) {
         const peek = lines[i + j]!;
-        const m = peek.match(/^\s+\(property "Reference" "([^"]+)"/);
+        const m = peek.match(/^\s+\((?:property "Reference"|fp_text reference)\s+"([^"]+)"/);
         if (m) { ref = m[1]; break; }
         if (/^\s+\(pad /.test(peek)) break;
       }
@@ -197,14 +226,17 @@ export function applyLayoutToPcb(kicadPcbContent: string, layout: Layout): strin
 
     if (pendingPlacement) {
       // Look for the first (at ...) before any property or pad
-      if (/^\s+\(property /.test(line) || /^\s+\(pad /.test(line) || /^\s+\(fp_/.test(line)) {
-        pendingPlacement = null; // stop looking
-      } else if (/\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/.test(line)) {
+      if (/\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/.test(line)) {
         line = line.replace(
           /\(at\s+[\d.+-]+\s+[\d.+-]+(?:\s+[\d.+-]+)?\)/,
           `(at ${pendingPlacement.x.toFixed(3)} ${pendingPlacement.y.toFixed(3)})`
         );
         pendingPlacement = null; // applied
+      } else if (/^\s+\((?:property|pad|fp_)/.test(line) && !line.includes('(fp_text reference')) {
+        // If we hit a property, pad, or fp_ shape (that is NOT the reference we are looking for), 
+        // we missed the (at ...). But since `(at ...)` comes right after `(footprint ...)`,
+        // it shouldn't happen.
+        pendingPlacement = null; // stop looking
       }
     }
 

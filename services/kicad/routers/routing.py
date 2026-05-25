@@ -104,6 +104,12 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
         out_pcb = Path(tmp) / "out.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
         board = pcbnew.LoadBoard(str(in_pcb))
+        # Remove stale tracks — Freerouting's SES output replaces them entirely.
+        # Without this, old tracks (from circuit-synth or a previous routing pass)
+        # survive in the final PCB alongside Freerouting's routes and cause
+        # "Track has unconnected end" DRC violations.
+        for track in list(board.GetTracks()):
+            board.Remove(track)
         pcbnew.ImportSpecctraSES(board, str(ses_path))
         for zone in board.Zones():
             zone.SetFilled(True)
@@ -114,7 +120,12 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
 
 
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
-    """Export a .kicad_pcb byte blob to a Specctra DSN file via pcbnew."""
+    """Export a .kicad_pcb byte blob to a Specctra DSN file via pcbnew.
+
+    All existing tracks are removed before export so Freerouting starts from
+    scratch — without stale TS-generated traces that pointed to pre-placement
+    component positions.
+    """
     try:
         import pcbnew  # type: ignore[import-not-found]
     except ImportError as exc:  # pragma: no cover
@@ -125,6 +136,9 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
         tmp_pcb_path = tmp_pcb.name
     try:
         board = pcbnew.LoadBoard(tmp_pcb_path)
+        # Remove all existing tracks so Freerouting routes from clean pads only.
+        for track in list(board.GetTracks()):
+            board.Remove(track)
         # KiCad 8 uses ExportSpecctraDSN instead of ExportSpecctraSession
         pcbnew.ExportSpecctraDSN(board, str(dsn_path))
     finally:

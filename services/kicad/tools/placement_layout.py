@@ -152,7 +152,9 @@ def _place_cluster(
             (cap_refs, cap_radius, 90.0),
         ):
             for i, ref in enumerate(group_refs):
-                angle = 2 * math.pi * i / max(1, len(group_refs))
+                # Start at 45° (diagonal) so passives spread nicely.
+                # Starting at 90° or 0° creates 1D columns for n=2.
+                angle = math.pi / 4 + 2 * math.pi * i / max(1, len(group_refs))
                 x = _clamp(ax + radius * math.cos(angle), MARGIN_MM, board_w - MARGIN_MM)
                 y = _clamp(ay + radius * math.sin(angle), MARGIN_MM, board_h - MARGIN_MM)
                 out[ref] = (x, y, rotation)
@@ -229,5 +231,26 @@ def compute_layout(
 
     out.update(_place_connectors(buckets["CONN"], board_w_mm, board_h_mm))
     out.update(_place_misc(buckets["MISC"], board_w_mm, board_h_mm))
+
+    # Center the entire bounding box of components
+    if out:
+        min_x = min(pos[0] for pos in out.values())
+        max_x = max(pos[0] for pos in out.values())
+        min_y = min(pos[1] for pos in out.values())
+        max_y = max(pos[1] for pos in out.values())
+        
+        center_x = (min_x + max_x) / 2.0
+        center_y = (min_y + max_y) / 2.0
+        
+        target_cx = board_w_mm / 2.0
+        target_cy = board_h_mm / 2.0
+        
+        dx = target_cx - center_x
+        dy = target_cy - center_y
+        
+        for ref, (x, y, rot) in out.items():
+            new_x = _clamp(x + dx, MARGIN_MM, board_w_mm - MARGIN_MM)
+            new_y = _clamp(y + dy, MARGIN_MM, board_h_mm - MARGIN_MM)
+            out[ref] = (new_x, new_y, rot)
 
     return out
