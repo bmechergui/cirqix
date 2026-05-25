@@ -265,6 +265,27 @@ hidden md:block shrink-0
 **NEVER** taille texte fixe sur heading visible.
 **ALWAYS** tester mentalement mobile 375px avant de valider.
 
+## Organisation des tests
+
+**TOUJOURS** placer les scripts de test dans le dossier `tests/` du package concerné :
+
+```
+packages/agents/src/engines/     ← code source
+packages/agents/src/tests/       ← tests unitaires *.test.ts
+
+services/kicad/tests/            ← tests Python
+apps/web/src/test/               ← tests frontend
+
+scratch/                         ← INTERDIT — jamais de scripts ici
+racine du projet                 ← INTERDIT — jamais de scripts de test à la racine
+```
+
+**NEVER** créer un script de test à la racine du projet, dans `scratch/`, ou en dehors du dossier `tests/`.
+**NEVER** committer des fichiers `test_out*.kicad_pcb`, `output_*/`, ou screenshots de test.
+**ALWAYS** nommer les fichiers de test : `*.test.ts` (TS) ou `test_*.py` (Python).
+
+---
+
 ## Variables d'environnement requises
 
 `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `REDIS_URL`, `LEMON_SQUEEZY_API_KEY`, `KICAD_SERVICE_URL`
