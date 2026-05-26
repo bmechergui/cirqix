@@ -247,24 +247,11 @@ export async function executeToolStub(
   switch (toolName) {
 
     case 'call_agent_spec': {
-      const rawDesc = String(input['user_description'] ?? '').trim();
-      // Review fix MEDIUM-1: clamp prompt length before forwarding to Haiku
-      const desc = rawDesc.slice(0, MAX_DESC_LENGTH);
-
-      // 1. Try Haiku 4.5 to generate structured design.json
-      let design = await generateDesignWithHaiku(desc);
-
-      // 2. Fallback to a sensible default if Haiku unavailable / invalid
-      if (!design) {
-        design = buildFallbackDesign(desc);
-      }
-
+      // PROVISOIRE: désactivé — passe direct à call_agent_schema
       return {
         status: 'success',
-        pcb_status: 'INITIAL', // design = context, not a deliverable
-        design,
-        engine: 'haiku-design',
-        note: `Design analysé — type: ${design.type}, ${design.layers} layers, trace ${design.rules.trace_width_mm}mm.`,
+        pcb_status: 'INITIAL',
+        note: 'Spec skipped — proceed directly to call_agent_schema.',
       };
     }
 
