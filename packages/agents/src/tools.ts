@@ -300,6 +300,10 @@ export async function executeToolStub(
                 error?: string;
               };
 
+              if (!execData.success) {
+                log.warn({ error: execData.error, projectId }, 'Path A: Docker execute returned success=false');
+              }
+
               if (execData.success && execData.kicad_sch_content) {
                 const enrichedComponents = codeResult.footprints.map((c) => ({
                   ...c,
@@ -338,8 +342,10 @@ export async function executeToolStub(
             }
           }
         } catch (err) {
-          log.warn({ err }, 'circuit_synth execute path failed — falling back to JSON schema');
+          log.warn({ err, projectId }, 'Path A: circuit_synth execute failed — falling back to JSON schema');
         }
+      } else {
+        log.warn({ serviceUrl: !!serviceUrl, desc: !!desc }, 'Path A: skipped — missing serviceUrl or desc');
       }
 
       // ── Path B: JSON schema via Haiku (fallback) ──────────────────────────
@@ -351,6 +357,16 @@ export async function executeToolStub(
       }
 
       if (!schema) {
+        // Path A (circuit_synth Python) and Path B (Haiku JSON) both failed.
+        // For complex circuits, returning a fake hardcoded schema would be worse
+        // than an error — Sonnet will retry or prompt the user for clarification.
+        if (complexity === 'complex') {
+          log.error({ projectId, complexity }, 'call_agent_schema: both AI paths failed for complex circuit');
+          return {
+            status: 'error',
+            error: 'Schema generation failed — both circuit_synth Python and JSON Haiku paths failed. Check Docker service and API key, then retry.',
+          };
+        }
         schema = parseSchemaFromDescription(desc, complexity);
       }
 
@@ -975,7 +991,7 @@ async function generateSchemaWithHaiku(description: string): Promise<SchemaJson 
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: `You are a PCB schematic generator. Given a circuit description, return a single JSON object (no markdown, no comments) with exactly these four keys:
 
 "components": array of { "ref": string, "value": string, "footprint": string, "symbol": string, "lcsc"?: string }
@@ -1062,7 +1078,13 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
     });
 
     const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
-    if (!text) return null;
+    if (!text) {
+      log.warn({ stop_reason: response.stop_reason }, 'Path B: Haiku returned empty text');
+      return null;
+    }
+    if (response.stop_reason === 'max_tokens') {
+      log.warn({ len: text.length }, 'Path B: Haiku hit max_tokens — JSON likely truncated');
+    }
 
     // Strip accidental markdown fences if model adds them
     const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
