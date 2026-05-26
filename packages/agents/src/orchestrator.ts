@@ -5,7 +5,7 @@ type ContentBlock = Anthropic.ContentBlock;
 type ToolUseBlock = Anthropic.ToolUseBlock;
 type TextBlock = Anthropic.TextBlock;
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './prompts';
-import { PCB_TOOLS, executeToolStub } from './tools';
+import { ACTIVE_PCB_TOOLS, executeToolStub } from './tools';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
@@ -59,7 +59,7 @@ export async function* runOrchestrator(
       model: ORCHESTRATOR_MODEL,
       max_tokens: MAX_TOKENS,
       system: ORCHESTRATOR_SYSTEM_PROMPT,
-      tools: PCB_TOOLS,
+      tools: ACTIVE_PCB_TOOLS,
       messages,
       stream: true,
     });

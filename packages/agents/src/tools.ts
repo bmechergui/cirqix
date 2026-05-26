@@ -228,6 +228,12 @@ export const PCB_TOOLS: Tool[] = [
   },
 ];
 
+// TEST MODE: only schema generation — stops after schematic is shown
+const _SCHEMA_ONLY_MODE = true;
+export const ACTIVE_PCB_TOOLS = _SCHEMA_ONLY_MODE
+  ? PCB_TOOLS.filter((t) => ['call_agent_spec', 'call_agent_schema', 'ask_user'].includes(t.name))
+  : PCB_TOOLS;
+
 // Persistent PCB state across tool calls within one orchestrator run
 // Keyed by projectId — populated by call_agent_schema and used by placement
 interface PcbStateCacheEntry {
