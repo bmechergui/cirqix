@@ -4,6 +4,7 @@ import type { DesignJson } from '@layrix/types';
 import { runPCBEngine, runCircuitSynthEngine } from './engines/engine-router';
 import { validateAndCorrectSchema } from './engines/schematic-engine';
 import type { SchemaJson } from './engines/engine-router';
+import type { SchemaComponent } from '@layrix/types';
 import { runRealPlacement } from './engines/placement-service';
 import { computeLayout, layoutToPlacements, applyLayoutToPcb } from './engines/placement-fallback';
 import { runRealErc, ErcServiceUnavailableError } from './engines/erc-service';
@@ -270,7 +271,79 @@ export async function executeToolStub(
     case 'call_agent_schema': {
       const desc = String(input['user_description'] ?? '');
       const complexity = String(input['complexity'] ?? 'simple');
+      const serviceUrl = process.env.KICAD_SERVICE_URL;
 
+      // ── Path A: circuit_synth code execution (best quality) ──────────────
+      // Haiku generates Python code with exact KiCad symbol paths + pin names.
+      // Docker executes it → proper multi-pin symbols, real hierarchical labels.
+      if (serviceUrl && desc) {
+        try {
+          const codeResult = await generateSchematicCodeWithHaiku(desc);
+          if (codeResult?.code) {
+            const n = codeResult.footprints.length || 6;
+            const boardW = n <= 5 ? 30 : n <= 12 ? 40 : 50;
+            const boardH = n <= 5 ? 25 : n <= 12 ? 35 : 40;
+
+            const execRes = await fetch(`${serviceUrl}/schematic/execute`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                code: codeResult.code,
+                project_id: projectId,
+                board_width_mm: boardW,
+                board_height_mm: boardH,
+              }),
+              signal: AbortSignal.timeout(60_000),
+            });
+
+            if (execRes.ok) {
+              const execData = await execRes.json() as {
+                success: boolean;
+                kicad_sch_content?: string | null;
+                kicad_pcb_content?: string | null;
+                error?: string;
+              };
+
+              if (execData.success && execData.kicad_sch_content && execData.kicad_pcb_content) {
+                const schema: SchemaJson = {
+                  components: codeResult.footprints,
+                  nets: codeResult.footprints.map((_, i) => `NET_${i}`),
+                  connections: [],
+                };
+                const enrichedComponents = schema.components.map((c) => ({
+                  ...c,
+                  footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
+                }));
+
+                _pcbStateCache.set(projectId, {
+                  schema: { ...schema, components: enrichedComponents },
+                  boardW,
+                  boardH,
+                  kicad_sch_content: execData.kicad_sch_content,
+                  kicad_pcb_content: execData.kicad_pcb_content,
+                });
+
+                return {
+                  status: 'success',
+                  pcb_status: 'SCHEMA_DONE',
+                  components: enrichedComponents,
+                  nets: schema.nets,
+                  connections: [],
+                  engine: 'circuit-synth-code',
+                  kicad_sch_content: execData.kicad_sch_content,
+                  kicad_pcb_content: execData.kicad_pcb_content,
+                  unresolved_footprints: [],
+                  note: `Schéma généré via code circuit_synth — ${enrichedComponents.length} composants, symboles KiCad natifs.`,
+                };
+              }
+            }
+          }
+        } catch (err) {
+          log.warn({ err }, 'circuit_synth execute path failed — falling back to JSON schema');
+        }
+      }
+
+      // ── Path B: JSON schema (fallback) ────────────────────────────────────
       // 1. Try to parse schema_json if orchestrator passes one directly
       let schema: SchemaJson | null = null;
       const schemaJsonRaw = input['schema_json'];
@@ -283,7 +356,7 @@ export async function executeToolStub(
         } catch { /* fall through */ }
       }
 
-      // 2. Call Claude Haiku 4.5 to generate schema from the real description
+      // 2. Call Claude Haiku 4.5 to generate JSON schema
       if (!schema && desc) {
         schema = await generateSchemaWithHaiku(desc);
       }
@@ -963,6 +1036,109 @@ Return ONLY valid JSON. No markdown fences. No explanation.`,
     // Graceful fallback — never let a Haiku failure block the pipeline.
     // Review fix HIGH-2: log warning so silent fallbacks stay observable.
     log.warn({ err }, 'schema agent: Haiku call or JSON parse failed, using fallback');
+    return null;
+  }
+}
+
+// --- circuit_synth code generator ----------------------------------------
+
+interface SchematicCodeResult {
+  code: string;
+  footprints: SchemaComponent[];
+}
+
+async function generateSchematicCodeWithHaiku(description: string): Promise<SchematicCodeResult | null> {
+  const client = getAnthropicClient();
+  if (!client) return null;
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 3000,
+      system: `You are a circuit schematic code generator using the circuit_synth Python library.
+Generate Python code using the @circuit decorator pattern.
+
+circuit_synth API — EXACT pattern:
+\`\`\`python
+from circuit_synth import circuit as cs_circuit, Component, Net
+
+@cs_circuit(name="my_project")
+def build():
+    gnd = Net("GND")
+    vcc = Net("+5V")
+    r1 = Component("Device:R", ref="R", value="10k")  # ref PREFIX (no number) is REQUIRED
+    r1[1] += vcc   # integer pins for passives
+    r1[2] += gnd
+
+circ = build()
+circ.generate_kicad_project(_PROJECT_PATH, force_regenerate=True, generate_pcb=False)
+\`\`\`
+
+_PROJECT_PATH is already defined — use it directly.
+CRITICAL: ref= is REQUIRED in every Component(). Without ref, the component is NOT added to the circuit.
+Use ref PREFIX (no number): ref="R" → auto-becomes R1, R2... | ref="C" → C1, C2... | ref="U_ARD" → U_ARD1
+
+CONNECTOR STRATEGY — use generic connectors for complex ICs (better schematics, no missing pins):
+
+  Arduino Nano (30-pin dual-row) → Component("Connector_Generic:Conn_02x15_Odd_Even", value="Arduino_Nano")
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_2x15_P2.54mm_Vertical"
+    Pins: 1=D12, 2=D11/MOSI, 3=D10/SS, 4=D9, 5=D8, 6=D7, 7=D6, 8=D5, 9=D4,
+          10=D3, 11=D2, 12=GND, 13=RST, 14=RX/D0, 15=TX/D1,
+          16=D13/SCK, 17=3V3, 18=AREF, 19=A0, 20=A1, 21=A2, 22=A3, 23=A4/SDA, 24=A5/SCL,
+          25=A6, 26=A7, 27=+5V, 28=RST, 29=GND, 30=VIN
+
+  BME280/BMP280 module (6-pin) → Component("Connector_Generic:Conn_01x06", value="BME280")
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical"
+    Pins: 1=VCC, 2=GND, 3=SCL, 4=SDA, 5=CSB, 6=SDO
+
+  DHT22/DHT11 (4-pin)  → Component("Connector_Generic:Conn_01x04", value="DHT22")
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+    Pins: 1=VCC, 2=DATA, 3=NC, 4=GND
+
+  OLED I2C 128x64 (4)  → Component("Connector_Generic:Conn_01x04", value="SSD1306_OLED")
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+    Pins: 1=GND, 2=VCC, 3=SCL, 4=SDA
+
+  HC-05 Bluetooth (6)  → Component("Connector_Generic:Conn_01x06", value="HC-05")
+    Pins: 1=STATE, 2=RXD, 3=TXD, 4=GND, 5=VCC, 6=EN
+
+  Any other module N   → Component("Connector_Generic:Conn_01xNN", value="Module_Name")
+
+REAL SYMBOLS for passive/simple components:
+  "Device:R"                      pins: 1, 2
+  "Device:C"                      pins: 1, 2
+  "Device:C_Polarized"            pins: +, -
+  "Device:LED"                    pins: A, K
+  "Device:D"                      pins: A, K
+  "Timer:NE555P"                  pins: GND, TR, Q, R, CV, THR, DIS, VCC
+  "Regulator_Linear:LM1117T-3.3"  pins: GND, OUT, IN
+  "Regulator_Linear:LM1117T-5.0"  pins: GND, OUT, IN
+  "Regulator_Linear:L7805"        pins: VI, GND, VO
+  "Connector_Generic:Conn_01x02"  pins: Pin_1, Pin_2 (power connector)
+
+REF naming: modules → U_NAME1 (e.g. U_ARD1, U_BME1), passives → R1/C1/D1, connectors → J_PWR1
+
+Return ONLY valid JSON (no markdown):
+{
+  "circuit_synth_code": "from circuit_synth import circuit as cs_circuit, Component, Net\\n\\n@cs_circuit(name=\\"project\\")\\ndef build():\\n    gnd = Net(\\"GND\\")\\n    r1 = Component(\\"Device:R\\", ref=\\"R\\", value=\\"10k\\")\\n    r1[1] += gnd\\n\\ncirc = build()\\ncirc.generate_kicad_project(_PROJECT_PATH, force_regenerate=True, generate_pcb=False)",
+  "footprints": [
+    {"ref": "U_ARD1", "value": "Arduino Nano", "footprint": "Connector_PinHeader_2.54mm:PinHeader_2x15_P2.54mm_Vertical", "symbol": "Connector_Generic:Conn_02x15_Odd_Even"},
+    {"ref": "R1", "value": "10k", "footprint": "Resistor_SMD:R_0603_1608Metric", "symbol": "Device:R"}
+  ]
+}`,
+      messages: [{ role: 'user', content: `Circuit: ${description}` }],
+    });
+
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+    if (!text) return null;
+
+    const cleaned = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    const parsed = JSON.parse(cleaned) as { circuit_synth_code: string; footprints: SchemaComponent[] };
+    if (!parsed.circuit_synth_code || !Array.isArray(parsed.footprints)) return null;
+
+    return { code: parsed.circuit_synth_code, footprints: parsed.footprints };
+  } catch (err) {
+    log.warn({ err }, 'circuit_synth code generator: Haiku call failed');
     return null;
   }
 }
