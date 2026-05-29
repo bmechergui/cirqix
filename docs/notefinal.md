@@ -545,6 +545,24 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Statut** : idée notée — priorité faible (cosmétique), à faire après les fonctionnalités critiques.
 
 **Option B — `kicad-tools` (rjwalters) — `kct optimize-placement` (✅ Candidat sérieux)**
+
+> ❓ KiCad doit tourner ? → **NON**
+> ❓ Plusieurs utilisateurs en parallèle ? → **OUI, nativement**
+
+**KiCad requis ?**
+→ Le README dit explicitement : *"require no running KiCad instance"*
+→ Placement, routage, parsing, analyse (thermique/congestion/SI) = **pur Python (numpy)** — zéro KiCad, zéro kicad-cli, zéro GUI
+→ Seuls ERC, DRC et export Gerber appellent le **binaire `kicad-cli`** (one-shot, pas « KiCad qui tourne ») — qu'on utilise déjà dans notre Docker
+→ **Conséquence** : placement + routage sans pcbnew ni Freerouting/Java → image Docker plus légère
+
+**Plusieurs utilisateurs en parallèle ?**
+→ **Bibliothèque sans état** : fichier `.kicad_pcb` en entrée → fichier en sortie, aucun daemon, aucun état global partagé
+→ 1 process/worker par PCB → **massivement parallèle** — colle exactement à notre modèle BullMQ (10 PCBs simultanés)
+→ Contraste avec `pcbnew` : module lourd in-process, non thread-safe → 1 process/job obligatoire
+→ **Mode CPU** (défaut) : scale avec les cœurs CPU, zéro contention entre jobs
+→ **Mode GPU** (optionnel CUDA/Metal) : GPU partagé entre jobs → file GPU nécessaire si activé — rester en CPU pour démarrer
+
+
 → https://github.com/rjwalters/kicad-tools — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
 → Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
 → **Force-directed board-aware** : repulsion edge-to-edge sur outlines, borné au board, `slide_off`, poids configurables.
