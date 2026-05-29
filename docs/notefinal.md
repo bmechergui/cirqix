@@ -529,12 +529,20 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → Combinaison recommandée : LLM (Claude) suggère la stratégie → RL_PCB optimise → pcbnew valide
 **Alternative force_directed — Analyse 2026-05-29**
 
-**Option A — `circuit_synth.component_placement.ForceDirectedLayout` (❌ Écarté)**
+**Option A — `circuit_synth.component_placement.ForceDirectedLayout` (❌ Écarté pour PCB)**
 → Importable et instanciable, mais `fdl.layout(circuit)` plante sur un vrai circuit.
-→ **Erreur de catégorie** : c'est un placeur de *symboles sur schéma* (lisibilité du diagramme), pas de *footprints sur PCB*. Domaine incompatible avec `placement_layout.py`.
+→ **Erreur de catégorie pour le PCB** : c'est un placeur de *symboles sur schéma* (lisibilité du diagramme), pas de *footprints sur PCB*. Domaine incompatible avec `placement_layout.py`.
 → Entrée attendue : objet `Circuit` complet (`.components`, `.get_nets()`) — inexistant dans le pipeline PCB à cette étape.
 → Sortie non bornée au board — composants peuvent sortir du PCB.
 → Code vendoré non maintenu (`PlacementNode.connected_components` non initialisé).
+
+→ **✅ Usage possible : améliorer la lisibilité du SCHÉMA (`.kicad_sch`)**
+→ `ForceDirectedLayout` est conçu pour disposer les *symboles sur la feuille de schéma* — c'est exactement son domaine.
+→ Aujourd'hui `circuit_synth` place les symboles en grille bête → schéma difficile à lire dans KiCanvas.
+→ Corriger le bug (`PlacementNode.connected_components` non initialisé) + fixer `fdl.layout(circuit)` → pourrait améliorer la présentation visuelle du schéma généré.
+→ **Effort** : corriger 1 bug dans le code vendoré + tester sur un circuit réel.
+→ **Impact** : purement cosmétique (schéma plus lisible dans KiCanvas) — aucun effet sur le PCB, le routage ou le DRC.
+→ **Statut** : idée notée — priorité faible (cosmétique), à faire après les fonctionnalités critiques.
 
 **Option B — `kicad-tools` (rjwalters) — `kct optimize-placement` (✅ Candidat sérieux)**
 → https://github.com/rjwalters/kicad-tools — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
