@@ -589,6 +589,29 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
 → **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
 
+**Algorithme placement — `PlacementOptimizer` (physique simulée)**
+→ **Modèle physique** : chaque composant = charge électrique, chaque net = ressort (spring)
+→ **Répulsion** : composants se repoussent comme des charges de même signe (loi de Coulomb) — empêche les chevauchements, garde tout dans le board
+→ **Attraction** : les nets (connexions électriques) tirent les pins connectés l'un vers l'autre (loi de Hooke)
+→ **Paramètres intelligents** :
+  - Nets d'horloge → ressort plus rigide (`clock_net_stiffness: 20`) → pins clock regroupés
+  - Nets d'alimentation → ressort souple (`power_net_stiffness: 5`) → GND/VCC moins contraints
+  - Composants chauds (régulateurs, drivers) → répulsion thermique vers les bords du board
+  - Connecteurs → contrainte de bord (`edge_stiffness`) → restent sur les bords
+→ **Rotation** : composants s'alignent automatiquement à 90° (grille de rotation)
+→ **Convergence** : itère jusqu'à ce que l'énergie totale < seuil ou vitesse max < seuil
+→ **GPU** : calcul des forces O(n²) parallélisé sur GPU (CUDA/Metal) pour grands boards
+
+**Algorithme routage — `Autorouter` (A* avec négociation de congestion)**
+→ **Algorithme de base** : **A\*** (A-star) — pathfinding optimal sur grille de routage
+→ **Multi-couches** : F.Cu, B.Cu (+ couches internes si 4/8 couches) avec gestion des vias
+→ **Heuristiques disponibles** : Manhattan, DirectionBias, CongestionAware (pluggables)
+→ **Négociation de congestion** : si 2 nets se disputent la même zone → coût augmenté → reroutage automatique pour éviter les croisements
+→ **Conscience des classes de nets** : power / clock / audio / digital — règles différentes par classe
+→ **Cache de routage** : sous-problèmes identiques mémorisés → accélération sur boards similaires
+→ **GPU** : expansion de frontières A\* en batch parallèle (4+ nets simultanés) → accélération sur grands boards
+→ **Différence vs Freerouting** : Freerouting = algorithme industriel 30 ans (Spectra DSN), très robuste. `Autorouter` = plus moderne, intégré Python, pas de Java — qualité à valider sur nos circuits
+
 **Option C — Développer notre propre force-directed PCB (🔲 À faire)**
 → Écrire un algorithme force-directed **dans le bon domaine** : coordonnées PCB mm, borné au board, alimenté par les `connections` déjà en cache (`_pcbStateCache`).
 → Intégré directement dans `placement_layout.py` — passe optionnelle après l'algo déterministe actuel.
