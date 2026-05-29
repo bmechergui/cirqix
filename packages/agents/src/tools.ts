@@ -358,16 +358,23 @@ export async function executeToolStub(
 
       if (!schema) {
         // Path A (circuit_synth Python) and Path B (Haiku JSON) both failed.
-        // For complex circuits, returning a fake hardcoded schema would be worse
-        // than an error — Sonnet will retry or prompt the user for clarification.
-        if (complexity === 'complex') {
-          log.error({ projectId, complexity }, 'call_agent_schema: both AI paths failed for complex circuit');
-          return {
-            status: 'error',
-            error: 'Schema generation failed — both circuit_synth Python and JSON Haiku paths failed. Check Docker service and API key, then retry.',
-          };
-        }
-        schema = parseSchemaFromDescription(desc, complexity);
+        // NEVER fabricate a hardcoded schema unrelated to the user's request —
+        // an ATmega328P for a temperature sensor, or a generic LED board for a
+        // voltage divider, looks like success but is wrong, so the user wastes
+        // credits re-iterating. Surface a real, diagnostic error instead so the
+        // actual cause (Docker down, missing API key, truncated JSON) is fixed.
+        const hasApiKey = !!process.env['ANTHROPIC_API_KEY'];
+        const pathA = serviceUrl ? 'failed or unreachable' : 'KICAD_SERVICE_URL not set';
+        const pathB = hasApiKey ? 'invalid or truncated Haiku response' : 'ANTHROPIC_API_KEY not set';
+        log.error(
+          { projectId, complexity, hasApiKey, hasServiceUrl: !!serviceUrl },
+          'call_agent_schema: all schema paths failed — no fabricated fallback'
+        );
+        return {
+          status: 'error',
+          error: `Schema generation failed — Path A (circuit_synth/Docker): ${pathA}; Path B (Haiku JSON): ${pathB}. Fix the cause and retry, or refine the description.`,
+          note: 'Génération du schéma échouée — aucun schéma fabriqué (les deux moteurs IA sont indisponibles). Corrige la cause puis relance.',
+        };
       }
 
       schema = await validateAndCorrectSchema(schema);
@@ -1262,75 +1269,6 @@ Return ONLY valid JSON (no markdown):
     log.warn({ err }, 'circuit_synth code generator: Haiku call failed');
     return null;
   }
-}
-
-// --- Schema parser -------------------------------------------------------
-
-function parseSchemaFromDescription(
-  _description: string,
-  complexity: string
-): SchemaJson {
-  // In Phase 3 this is called AFTER Claude already provided a schema JSON
-  // in the tool input. For cases where Claude only provides a text description,
-  // we generate a plausible default schema based on complexity.
-
-  if (complexity === 'simple') {
-    return {
-      components: [
-        { ref: 'J1',   value: 'PWR_CONN', footprint: 'Conn_2',   symbol: 'Connector_Generic:Conn_01x02' },
-        { ref: 'R1',   value: '330R',     footprint: '0402',      symbol: 'Device:R' },
-        { ref: 'LED1', value: 'LED_RED',  footprint: 'LED_0805',  symbol: 'Device:LED' },
-      ],
-      nets: ['GND', 'VCC', 'NET_R_LED'],
-      connections: [
-        { name: 'GND',     pins: [{ ref: 'J1',   pin: 2 }, { ref: 'LED1', pin: 2 }] },
-        { name: 'VCC',     pins: [{ ref: 'J1',   pin: 1 }, { ref: 'R1',   pin: 1 }] },
-        { name: 'NET_R_LED', pins: [{ ref: 'R1', pin: 2 }, { ref: 'LED1', pin: 1 }] },
-      ],
-    };
-  }
-
-  if (complexity === 'medium') {
-    return {
-      components: [
-        { ref: 'U1',   value: 'ATmega328P', lcsc: 'C14877', footprint: 'TSSOP-8' },
-        { ref: 'C1',   value: '100nF',      footprint: '0402' },
-        { ref: 'C2',   value: '10µF',       footprint: '0805' },
-        { ref: 'R1',   value: '10k',        footprint: '0402' },
-        { ref: 'R2',   value: '10k',        footprint: '0402' },
-        { ref: 'LED1', value: 'LED',        footprint: 'LED' },
-        { ref: 'J1',   value: 'USB-C',      footprint: 'SOT-23' },
-      ],
-      nets: ['GND', '3V3', '5V', 'MOSI', 'MISO', 'SCK', 'SDA', 'SCL'],
-      connections: [
-        { name: 'GND',  pins: [{ ref: 'U1', pin: 8 }, { ref: 'C1', pin: 2 }, { ref: 'C2', pin: 2 }, { ref: 'LED1', pin: 2 }, { ref: 'J1', pin: 3 }] },
-        { name: '3V3',  pins: [{ ref: 'U1', pin: 7 }, { ref: 'C1', pin: 1 }, { ref: 'C2', pin: 1 }, { ref: 'R1',  pin: 1 }, { ref: 'R2', pin: 1 }] },
-        { name: '5V',   pins: [{ ref: 'J1', pin: 1 }] },
-        { name: 'MOSI', pins: [{ ref: 'U1', pin: 3 }] },
-        { name: 'MISO', pins: [{ ref: 'U1', pin: 4 }] },
-        { name: 'SCK',  pins: [{ ref: 'U1', pin: 5 }, { ref: 'R1', pin: 2 }] },
-        { name: 'SDA',  pins: [{ ref: 'U1', pin: 1 }, { ref: 'R2', pin: 2 }] },
-        { name: 'SCL',  pins: [{ ref: 'U1', pin: 2 }, { ref: 'LED1', pin: 1 }] },
-      ],
-    };
-  }
-
-  // complex → route to KiCad (stub for now)
-  return {
-    components: [
-      { ref: 'U1', value: 'ESP32', footprint: 'TSSOP-8' },
-      { ref: 'U2', value: 'LDO-3V3', footprint: 'SOT-23' },
-      ...Array.from({ length: 15 }, (_, i) => ({
-        ref: `C${i + 1}`, value: '100nF', footprint: '0402',
-      })),
-    ],
-    nets: ['GND', '3V3', '5V', 'GPIO0', 'GPIO1', 'GPIO2', 'GPIO3', 'SCL', 'SDA', 'TX', 'RX'],
-    connections: [
-      { name: 'GND', pins: [{ ref: 'U1', pin: 8 }, { ref: 'U2', pin: 2 }, ...Array.from({ length: 15 }, (_, i) => ({ ref: `C${i + 1}`, pin: 2 }))] },
-      { name: '3V3', pins: [{ ref: 'U2', pin: 3 }, ...Array.from({ length: 15 }, (_, i) => ({ ref: `C${i + 1}`, pin: 1 }))] },
-      { name: '5V',  pins: [{ ref: 'U2', pin: 1 }, { ref: 'U1', pin: 7 }] },
-    ],
-  };
 }
 
 // --- PCB helpers ---------------------------------------------------------
