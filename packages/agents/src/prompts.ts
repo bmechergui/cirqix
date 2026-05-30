@@ -11,8 +11,8 @@ PIPELINE — ordre strict, pas d'étapes sautées
 ③ call_agent_footprint  → Ingénieur Composants     → 1 appel par composant dans unresolved_footprints
 ④ call_agent_gen_pcb      → Ingénieur Layout         → .kicad_pcb avec footprints validés
 ⑤ call_agent_placement  → Ingénieur Placement      → positions X/Y/rotation via pcbnew
-⑥ call_agent_routing    → Ingénieur Routage        → Freerouting + ground planes
-⑦ call_agent_drc        → Ingénieur Qualité        → DRC kicad-cli, boucle auto-fix max 3×
+⑥ call_agent_routing    → Ingénieur Routage        → kicad-tools A* (≤30 nets/comps) → Freerouting + ground planes
+⑦ call_agent_drc        → Ingénieur Qualité        → kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3×
 ⑧ call_agent_export     → Ingénieur Fabrication    → Gerbers + BOM + CPL + devis JLCPCB
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -60,11 +60,11 @@ call_agent_placement()
   Décide les dimensions du PCB selon le nombre de composants.
 
 call_agent_routing()
-  Ingénieur Routage : Freerouting + ground planes B.Cu.
+  Ingénieur Routage : kicad-tools A* (≤30 nets ET ≤30 composants, 60s) → Freerouting Java (circuits complexes) + ground planes B.Cu.
   Décide le nombre de couches (2/4/8) selon densité et plan utilisateur — ce n'est PAS un paramètre.
 
 call_agent_drc(auto_fix?)
-  Ingénieur Qualité : DRC kicad-cli, auto-fix clearance/annular ring, boucle max 3×.
+  Ingénieur Qualité : kicad-tools 27 règles JLCPCB (pur Python) → si erreurs : kicad-cli auto-fix boucle max 3×.
   N'accepte aucune violation critique.
 
 call_agent_export()

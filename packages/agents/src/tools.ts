@@ -143,11 +143,12 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_routing',
     description:
-      'Ingénieur Routage — Expert Freerouting et intégrité du signal. ' +
-      'Lance Freerouting sur le .kicad_pcb placé, ajoute les ground planes B.Cu. ' +
+      'Ingénieur Routage — Expert kicad-tools A* et Freerouting. ' +
+      'Pipeline : (1) kicad-tools A* négocié si ≤30 nets ET ≤30 composants (60s), ' +
+      '(2) Freerouting Java pour circuits complexes ou si kicad-tools échoue, ' +
+      '(3) GND plane seulement si Java absent. Ajoute ground planes B.Cu. ' +
       'Décide seul le nombre de couches (2/4/8) selon densité nette, fréquences et plan utilisateur ' +
       '(Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). ' +
-      'Optimise clearance et trace width pour le type de signal (power, signal, HF). ' +
       'Aucun paramètre requis — lit depuis le cache.',
     input_schema: {
       type: 'object' as const,
@@ -158,10 +159,10 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_drc',
     description:
-      'Ingénieur Qualité PCB — Expert DRC kicad-cli. ' +
-      'Exécute le Design Rule Check sur le .kicad_pcb routé : clearance, court-circuits, ' +
-      'annular rings, silk overlap, via drill. ' +
-      'Auto-corrige les violations automatisables, boucle max 3×. ' +
+      'Ingénieur Qualité PCB — Expert DRC JLCPCB. ' +
+      'Pipeline : (1) kicad-tools 27 règles JLCPCB (pur Python, toujours dispo) — ' +
+      '0 erreur → DRC_CLEAN immédiat ; erreurs → (2) kicad-cli pcb drc auto-fix boucle max 3×. ' +
+      'Vérifie : clearance, court-circuits, annular rings, silk overlap, via drill. ' +
       'N\'accepte aucune violation critique (erreur = bloquant). ' +
       'OBLIGATOIRE avant call_agent_export.',
     input_schema: {
@@ -179,7 +180,9 @@ export const PCB_TOOLS: Tool[] = [
     name: 'call_agent_export',
     description:
       'Ingénieur Fabrication — Expert JLCPCB et formats Gerber. ' +
-      'Génère les fichiers de fabrication : Gerbers RS-274X, drill Excellon, BOM JLCPCB, CPL centroïde. ' +
+      'Pipeline : (1) kicad-tools kct export --mfr jlcpcb (GTL/GBL/GKO, BOM LCSC, CPL rotation corrections), ' +
+      '(2) kicad-cli pcb export {gerbers,drill,pos} si kicad-tools échoue, ' +
+      '(3) BOM CSV seulement si kicad-cli absent. ' +
       'Calcule le devis JLCPCB (prix, délai). ' +
       'JAMAIS déclencher la commande sans "OUI JE CONFIRME" explicite de l\'utilisateur. ' +
       'Aucun paramètre requis — lit .kicad_pcb DRC-clean depuis le cache.',
