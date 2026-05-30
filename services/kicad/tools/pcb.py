@@ -255,17 +255,24 @@ def _generate_with_kicad_tools(
 # Public API
 # ============================================================
 
-def _generate_from_sch_python(
+def _generate_with_pcbnew(
     kicad_sch_content: str,
     board_w: float,
     board_h: float,
 ) -> Optional[str]:
-    """Niveau 2 — Python pur depuis .kicad_sch avec vrais footprints.
+    """Niveau 2 — pcbnew direct depuis .kicad_sch.
 
-    Parse le .kicad_sch via kicad-tools Schematic.load(),
-    extrait composants + netlist, génère le .kicad_pcb S-expr
-    avec _generate_pcb_sexpr() qui lit les vrais .kicad_mod.
+    1. Parse .kicad_sch via kicad-tools Schematic.load() + extract_netlist()
+    2. Crée un BOARD pcbnew natif
+    3. Charge les vrais footprints via pcbnew.FootprintLoad()
+    4. Assigne les nets sur les pads
+    5. Sauvegarde → .kicad_pcb
     """
+    try:
+        import pcbnew  # type: ignore
+    except ImportError:
+        raise ImportError("pcbnew non disponible")
+
     import tempfile as _tmp
     from kicad_tools.schematic.models.schematic import Schematic
 
@@ -275,31 +282,106 @@ def _generate_from_sch_python(
 
         sch = Schematic.load(sch_path)
 
-        # Extraire composants (ignorer les symboles power #PWR, #FLG)
-        components: list[SchemaComponent] = []
-        for sym in sch.symbols:
-            if sym.reference.startswith('#'):
-                continue
-            components.append(SchemaComponent(
-                ref=sym.reference,
-                value=sym.value or sym.reference,
-                footprint=sym.footprint or "",
-            ))
+        # Composants (ignorer #PWR, #FLG)
+        symbols = [
+            (sym.reference, sym.value or sym.reference, sym.footprint or "")
+            for sym in sch.symbols
+            if not sym.reference.startswith('#')
+        ]
 
-        # Extraire netlist → SchemaNet
+        # Netlist {net_name: [PinRef]}
         netlist = sch.extract_netlist()
-        connections: list[SchemaNet] = []
-        nets: list[str] = []
-        for net_name, pin_refs in netlist.items():
-            nets.append(net_name)
-            pins = [SchemaPin(ref=p.symbol_ref, pin=str(p.pin)) for p in pin_refs]
-            connections.append(SchemaNet(name=net_name, pins=pins))
 
-        logger.info(
-            "_generate_from_sch_python: %d composants, %d nets",
-            len(components), len(connections),
-        )
-        return _generate_pcb_sexpr(components, connections, board_w, board_h)
+        # Créer le board
+        board = pcbnew.BOARD()
+
+        # Ajouter les nets
+        net_map: dict[str, object] = {}
+        for i, net_name in enumerate(netlist.keys(), start=1):
+            net = pcbnew.NETINFO_ITEM(board, net_name, i)
+            board.Add(net)
+        if hasattr(board, 'SynchronizeNetsAndNetClasses'):
+            board.SynchronizeNetsAndNetClasses(False)
+        for net_name in netlist:
+            n = board.FindNet(net_name)
+            if n:
+                net_map[net_name] = n
+
+        # Ajouter les footprints
+        fp_dir = KICAD_FP_DIR
+        cols = max(1, math.ceil(math.sqrt(len(symbols))))
+        margin_iu = pcbnew.FromMM(5.0)
+        step_iu = pcbnew.FromMM(15.0)
+
+        for i, (ref, value, fp_str) in enumerate(symbols):
+            fp = None
+            if fp_dir and ':' in fp_str:
+                lib_name, fp_name = fp_str.split(':', 1)
+                lib_path = fp_dir / f"{lib_name}.pretty"
+                if lib_path.exists():
+                    try:
+                        fp = pcbnew.FootprintLoad(str(lib_path), fp_name)
+                    except Exception:
+                        fp = None
+
+            if fp is None:
+                fp = pcbnew.FOOTPRINT(board)
+
+            col = i % cols
+            row = i // cols
+            x_iu = margin_iu + col * step_iu
+            y_iu = margin_iu + row * step_iu
+
+            if hasattr(pcbnew, 'VECTOR2I'):
+                fp.SetPosition(pcbnew.VECTOR2I(int(x_iu), int(y_iu)))
+            else:
+                fp.SetPosition(pcbnew.wxPoint(x_iu, y_iu))
+
+            fp.SetReference(ref)
+            fp.SetValue(value)
+
+            # Assigner nets aux pads
+            for pad in fp.Pads():
+                pad_num = str(pad.GetNumber())
+                for net_name, pin_refs in netlist.items():
+                    for pref in pin_refs:
+                        if pref.symbol_ref == ref and str(pref.pin) == pad_num:
+                            net = net_map.get(net_name)
+                            if net:
+                                pad.SetNet(net)
+
+            board.Add(fp)
+
+        # Board outline (Edge.Cuts)
+        bw_iu = pcbnew.FromMM(board_w)
+        bh_iu = pcbnew.FromMM(board_h)
+        edge_layer = 44  # Edge.Cuts
+        for x1, y1, x2, y2 in [
+            (0, 0, bw_iu, 0), (bw_iu, 0, bw_iu, bh_iu),
+            (bw_iu, bh_iu, 0, bh_iu), (0, bh_iu, 0, 0),
+        ]:
+            seg = pcbnew.PCB_SHAPE(board)
+            if hasattr(pcbnew, 'SHAPE_T_SEGMENT'):
+                seg.SetShape(pcbnew.SHAPE_T_SEGMENT)
+            seg.SetLayer(edge_layer)
+            if hasattr(pcbnew, 'VECTOR2I'):
+                seg.SetStart(pcbnew.VECTOR2I(int(x1), int(y1)))
+                seg.SetEnd(pcbnew.VECTOR2I(int(x2), int(y2)))
+            else:
+                seg.SetStart(pcbnew.wxPoint(x1, y1))
+                seg.SetEnd(pcbnew.wxPoint(x2, y2))
+            seg.SetWidth(pcbnew.FromMM(0.05))
+            board.Add(seg)
+
+        # Sauvegarder
+        pcb_path = Path(tmp) / "board.kicad_pcb"
+        pcbnew.SaveBoard(str(pcb_path), board)
+
+        if pcb_path.exists():
+            content = pcb_path.read_text(encoding="utf-8")
+            logger.info("_generate_with_pcbnew: %d composants, %d nets", len(symbols), len(netlist))
+            return content
+        return None
 
 
 def generate_pcb(
@@ -324,15 +406,15 @@ def generate_pcb(
         except Exception as exc:
             logger.warning("generate_pcb: kicad-tools échoué (%s) — niveau 2", exc)
 
-    # Niveau 2 : Python pur depuis .kicad_sch avec vrais footprints
+    # Niveau 2 : pcbnew direct depuis .kicad_sch (vrais footprints + nets natifs)
     if kicad_sch_content:
         try:
-            content = _generate_from_sch_python(kicad_sch_content, board_w, board_h)
+            content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
-                logger.info("generate_pcb: niveau 2 Python pur OK")
+                logger.info("generate_pcb: niveau 2 pcbnew OK")
                 return content
         except Exception as exc:
-            logger.warning("generate_pcb: Python pur échoué (%s) — TypeScript fallback", exc)
+            logger.warning("generate_pcb: pcbnew échoué (%s) — TypeScript fallback", exc)
 
     # Niveau 3 : '' → router retourne success=False → TypeScript prend le relais
     logger.warning("generate_pcb: tous les niveaux Python ont échoué")
