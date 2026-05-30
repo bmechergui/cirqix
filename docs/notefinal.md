@@ -59,9 +59,12 @@ Utilisateur (texte naturel)
      ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
 
 ⑤ call_agent_placement → PLACEMENT_DONE
-     Primaire : POST /place/auto → kicad-tools CMA-ES (cluster-by-net, footprint-aware)
-     Fallback : pcbnew grille (fallback) (Python pur — dans le service Docker)
-     Erreur   : status:'error' si service Docker down (fail fast)
+     POST /place/auto (kicad_pcb_b64)
+     ① kicad-tools CMA-ES place_unplaced(cluster=True, margin=1.5mm)
+        évolutionnaire, cluster-by-net — traces courtes ⭐⭐⭐
+     ② pcbnew grille : LoadBoard() + SetPosition() grille 15mm ⭐
+        si kicad-tools échoue
+     ③ status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
      Path 1 : Freerouting Java .dsn → .ses → .kicad_pcb
@@ -90,7 +93,7 @@ Utilisateur (texte naturel)
 | ERC | `call_agent_erc` | — | kicad-tools validate → kicad-cli sch erc → TS fallback | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
-| Placement | `call_agent_placement` | — | kicad-tools CMA-ES (footprint-aware) → fallback Python grille | `.kicad_pcb` placé |
+| Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | Freerouting Java → kicad-tools A* (≤10 nets) → GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-cli pcb drc auto-fix max 3× → kicad-tools 27 règles (fallback) | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | Gerbers + BOM CSV + CPL + devis JLCPCB | `.zip` b64 + `bom_csv` + `quote_usd` |

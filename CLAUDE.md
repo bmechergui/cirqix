@@ -195,7 +195,10 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement
-     runRealPlacement() → POST /place/auto (kicad-tools CMA-ES place_unplaced + pcbnew resize, base64 I/O)
+     POST /place/auto (kicad_pcb_b64)
+     ① kicad-tools CMA-ES place_unplaced(cluster=True, margin=1.5mm) — cluster-by-net
+     ② pcbnew grille simple : LoadBoard() + SetPosition() 15mm step
+     ③ status:'error' si Docker down (fail fast)
      fallback : pcbnew grille simple
   ⑥ call_agent_routing    → Ingénieur Routage
      runRealRouting() → POST /route/auto

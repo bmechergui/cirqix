@@ -68,7 +68,8 @@ Pipeline 8 agents (ordre strict) :
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb`
    ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
-⑤ `call_agent_placement` → Ingénieur Placement — kicad-tools CMA-ES `place_unplaced` (cluster-by-net) → fallback grille
+⑤ `call_agent_placement` → Ingénieur Placement
+   ① kicad-tools CMA-ES place_unplaced (cluster-by-net) · ② pcbnew grille · ③ error si Docker down
 ⑥ `call_agent_routing` → Ingénieur Routage — Freerouting Java (priorité) → kicad-tools Python A* (fallback ≤10 nets)
 ⑦ `call_agent_drc` → Ingénieur Qualité — kicad-cli DRC auto-fix max 3× → kicad-tools Python DRC 27 règles (fallback)
 ⑧ `call_agent_export` → Ingénieur Fabrication — Gerbers RS-274X + BOM JLCPCB + CPL

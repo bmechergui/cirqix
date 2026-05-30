@@ -62,8 +62,10 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Primaire : Docker kicad_gen.py → .kicad_pcb
      Fallback : runCircuitSynthEngine() TypeScript inline
 
-⑤ call_agent_placement → positions X/Y/rotation (footprint-aware)
-     Primaire : kicad-tools CMA-ES /place/auto
+⑤ call_agent_placement → positions X/Y/rotation
+     ① kicad-tools CMA-ES /place/auto (cluster-by-net, margin 1.5mm)
+     ② pcbnew grille simple (si kicad-tools échoue)
+     ③ error si Docker down
      Fallback : pcbnew grille (fallback) Python (dans le service Docker)
 
 ⑥ call_agent_routing   → traces + plans de masse
