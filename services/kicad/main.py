@@ -1,7 +1,8 @@
 """
 Layrix KiCad Service — FastAPI headless
-Routes : /health, /place, /route, /drc, /drc/fix, /export/gerbers, /export/step, /export/bom, /simulate
-         /schematic/generate (JSON schema → .kicad_sch + .kicad_pcb — custom Layrix generator, see routers/kicad_gen.py)
+Endpoints actifs (tous via routers/) :
+  /health · /schematic/generate · /schematic/execute
+  /place/auto · /erc · /route/auto · /drc/auto · /export/all · /simulate/auto
 """
 
 import os
@@ -21,10 +22,8 @@ if not os.environ.get("KICAD_SYMBOL_DIR"):
             os.environ["KICAD_SYMBOL_DIR"] = _dir
             break
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import Optional
 import os
 import logging
 
@@ -48,37 +47,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ============================================================
-# Modèles Pydantic
-# ============================================================
-
-class RoutingRequest(BaseModel):
-    pcb_path: str
-    output_path: str
-    timeout: int = Field(default=300, ge=30, le=600)
-
-class DRCRequest(BaseModel):
-    pcb_path: str
-
-class DRCFix(BaseModel):
-    type: str  # "widen_track" | "add_via" | "refill_zones" | "apply_teardrops"
-    params: dict = {}
-
-class DRCFixRequest(BaseModel):
-    pcb_path: str
-    fixes: list[DRCFix]
-    output_path: str
-
-class ExportRequest(BaseModel):
-    pcb_path: str
-    output_dir: str
-    project_id: str
-
-class SimulationRequest(BaseModel):
-    netlist_path: str
-    sim_type: str = "transient"  # "dc" | "transient" | "ac" | "noise"
-    output_dir: str
 
 # KiCad file generator router — JSON schema → .kicad_sch (circuit_synth) + .kicad_pcb (Python S-expr)
 from routers.kicad_gen import router as kicad_gen_router  # noqa: E402
@@ -108,10 +76,6 @@ app.include_router(export_router)
 from routers.simulate import router as simulate_router  # noqa: E402
 app.include_router(simulate_router)
 
-# ============================================================
-# Routes
-# ============================================================
-
 @app.get("/health")
 def health():
     return {
@@ -120,49 +84,3 @@ def health():
         "version": "1.0.0",
     }
 
-@app.post("/route")
-def route(req: RoutingRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.routing import route_with_freerouting
-    return route_with_freerouting(req.pcb_path, req.output_path, req.timeout)
-
-@app.post("/drc")
-def drc(req: DRCRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.drc import run_drc
-    return run_drc(req.pcb_path)
-
-@app.post("/drc/fix")
-def drc_fix(req: DRCFixRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.drc import apply_drc_fixes
-    return apply_drc_fixes(req.pcb_path, [f.model_dump() for f in req.fixes], req.output_path)
-
-@app.post("/export/gerbers")
-def export_gerbers(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_gerbers as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/export/step")
-def export_step(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_step as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/export/bom")
-def export_bom(req: ExportRequest):
-    if not PCBNEW_AVAILABLE:
-        raise HTTPException(status_code=503, detail="pcbnew non disponible")
-    from tools.export import export_bom as _export
-    return _export(req.pcb_path, req.output_dir)
-
-@app.post("/simulate")
-def simulate(req: SimulationRequest):
-    from tools.simulation import run_simulation
-    return run_simulation(req.netlist_path, req.sim_type, req.output_dir)
