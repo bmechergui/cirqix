@@ -645,32 +645,32 @@ _INLINE_LIB_SYMBOLS = """
     (power) (pin_names (offset 0)) (in_bom no) (on_board yes)
     (property "Reference" "#PWR" (at 0 -6.35 0) (effects (font (size 1.27 1.27)) hide))
     (property "Value" "GND" (at 0 -3.81 0) (effects (font (size 1.27 1.27))))
-    (symbol "power:GND_0_1"
+    (symbol "GND_0_1"
       (polyline (pts (xy 0 0) (xy 0 -1.27) (xy 1.27 -1.27) (xy 0 -2.54) (xy -1.27 -1.27) (xy 0 -1.27))
         (stroke (width 0) (type default)) (fill (type none))))
-    (symbol "power:GND_1_1"
+    (symbol "GND_1_1"
       (pin power_in line (at 0 0 270) (length 0)
         (name "GND" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
   (symbol "power:VCC"
     (power) (pin_names (offset 0)) (in_bom no) (on_board yes)
     (property "Reference" "#PWR" (at 0 -3.81 0) (effects (font (size 1.27 1.27)) hide))
     (property "Value" "VCC" (at 0 3.81 0) (effects (font (size 1.27 1.27))))
-    (symbol "power:VCC_0_1"
+    (symbol "VCC_0_1"
       (polyline (pts (xy -0.762 1.27) (xy 0 2.54) (xy 0.762 1.27))
         (stroke (width 0) (type default)) (fill (type none)))
       (circle (center 0 1.27) (radius 0.635)
         (stroke (width 0) (type default)) (fill (type none))))
-    (symbol "power:VCC_1_1"
+    (symbol "VCC_1_1"
       (pin power_in line (at 0 0 90) (length 1.27)
         (name "VCC" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
   (symbol "Device:R"
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "R" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "R" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Device:R_0_1"
+    (symbol "R_0_1"
       (rectangle (start -2.032 -0.762) (end 2.032 0.762)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Device:R_1_1"
+    (symbol "R_1_1"
       (pin passive line (at -3.81 0 0) (length 1.778)
         (name "~" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 1.778)
@@ -679,12 +679,12 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "C" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "C" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Device:C_0_1"
+    (symbol "C_0_1"
       (polyline (pts (xy -2.032 0.381) (xy 2.032 0.381))
         (stroke (width 0.508) (type default)) (fill (type none)))
       (polyline (pts (xy -2.032 -0.381) (xy 2.032 -0.381))
         (stroke (width 0.508) (type default)) (fill (type none))))
-    (symbol "Device:C_1_1"
+    (symbol "C_1_1"
       (pin passive line (at -3.81 0 0) (length 1.778)
         (name "+" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 1.778)
@@ -693,12 +693,12 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 0)) (in_bom yes) (on_board yes)
     (property "Reference" "D" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "LED" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Device:LED_0_1"
+    (symbol "LED_0_1"
       (polyline (pts (xy -1.778 -1.778) (xy -1.778 1.778) (xy 1.778 0) (xy -1.778 -1.778))
         (stroke (width 0.254) (type default)) (fill (type none)))
       (polyline (pts (xy 1.778 -1.778) (xy 1.778 1.778))
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Device:LED_1_1"
+    (symbol "LED_1_1"
       (pin passive line (at -3.81 0 0) (length 2.032)
         (name "A" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 2.032)
@@ -707,10 +707,10 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
     (property "Reference" "J" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "Conn_01x02" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Connector_Generic:Conn_01x02_0_1"
+    (symbol "Conn_01x02_0_1"
       (rectangle (start -1.524 -0.762) (end 1.524 0.762)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Connector_Generic:Conn_01x02_1_1"
+    (symbol "Conn_01x02_1_1"
       (pin passive line (at -3.81 0 0) (length 2.286)
         (name "Pin_1" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 2.286)
@@ -719,10 +719,10 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
     (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
     (property "Value" "IC" (at 0 6 0) (effects (font (size 1.27 1.27))))
-    (symbol "Device:IC_0_1"
+    (symbol "IC_0_1"
       (rectangle (start -4 -4.5) (end 4 4.5)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Device:IC_1_1"
+    (symbol "IC_1_1"
       (pin input line (at -5.08 -3.81 0) (length 1.016)
         (name "1" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
       (pin input line (at -5.08 -1.27 0) (length 1.016)
@@ -743,10 +743,10 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
     (property "Reference" "U" (at 0 -6 0) (effects (font (size 1.27 1.27))))
     (property "Value" "NE555P" (at 0 6 0) (effects (font (size 1.27 1.27))))
-    (symbol "Timer:NE555P_0_1"
+    (symbol "NE555P_0_1"
       (rectangle (start -4 -4.5) (end 4 4.5)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Timer:NE555P_1_1"
+    (symbol "NE555P_1_1"
       (pin passive line (at -5.08 -3.81 0) (length 1.016)
         (name "GND" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
       (pin input line (at -5.08 -1.27 0) (length 1.016)
@@ -767,10 +767,10 @@ _INLINE_LIB_SYMBOLS = """
     (pin_numbers hide) (pin_names (offset 0.254)) (in_bom yes) (on_board yes)
     (property "Reference" "U" (at 0 -3.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "VReg" (at 0 3.5 0) (effects (font (size 1.27 1.27))))
-    (symbol "Device:VReg_3Pin_0_1"
+    (symbol "VReg_3Pin_0_1"
       (rectangle (start -3 -1.5) (end 3 1.5)
         (stroke (width 0.254) (type default)) (fill (type none))))
-    (symbol "Device:VReg_3Pin_1_1"
+    (symbol "VReg_3Pin_1_1"
       (pin input line (at -5.08 0 0) (length 2.032)
         (name "IN" (effects (font (size 1.016 1.016)))) (number "1" (effects (font (size 1.016 1.016)))))
       (pin passive line (at 0 3.81 90) (length 2.286)

@@ -89,6 +89,10 @@ def auto_place(
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
     pcb_text = pcb_bytes.decode("utf-8", errors="replace")
 
+    # Réinitialiser les positions des footprints à (0 0) pour que CMA-ES les place
+    # (kicad_gen.py pré-place avec une grille basique — CMA-ES fait mieux)
+    pcb_text = _reset_footprint_positions(pcb_text)
+
     # Injecter le contour Edge.Cuts (manipulation texte S-expression)
     pcb_text = _inject_board_outline(pcb_text, board_width_mm, board_height_mm)
 
@@ -105,8 +109,8 @@ def auto_place(
             result = place_unplaced(
                 str(src),
                 output_path=str(dst),
-                margin=1.5,
-                spacing=1.5,
+                margin=1.0,
+                spacing=1.0,
                 cluster=True,
             )
             placed_refs = result.placed_refs
@@ -125,6 +129,29 @@ def auto_place(
             "placed_count": len(placed_refs),
             "positions": [{"ref": r} for r in placed_refs],
         }
+
+
+def _reset_footprint_positions(pcb_text: str) -> str:
+    """
+    Moves all footprints to (-10, -10) — outside any board boundary —
+    so kicad-tools detects them as "unplaced" and runs CMA-ES on all of them.
+    Handles two S-expression variants:
+      • multiline: (footprint "Ref"\n   (at X Y [rot]))
+      • inline:    (footprint "Ref" ... (at X Y [rot]) ...)
+    """
+    # Multiline variant: (at ...) is the first token on the next line
+    pcb_text = re.sub(
+        r'(\(footprint\s+"[^"]*"\s*\n\s*)\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
+        r'\1(at -10 -10)',
+        pcb_text,
+    )
+    # Inline variant: (at ...) appears later on the same line after other attributes
+    pcb_text = re.sub(
+        r'(\(footprint\s+"[^"]*"(?:\s+\([^()]+\))*\s+)\(at\s+[\d\.\-]+\s+[\d\.\-]+(?:\s+[\d\.\-]+)?\)',
+        r'\1(at -10 -10)',
+        pcb_text,
+    )
+    return pcb_text
 
 
 def _inject_board_outline(pcb_text: str, width_mm: float, height_mm: float) -> str:
