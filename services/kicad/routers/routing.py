@@ -157,36 +157,50 @@ def _count_footprints(pcb_bytes: bytes) -> int:
 
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     """
-    Route via kicad-tools pure Python A* router.
+    Route via kicad-tools pure Python A* negotiated router (Python API).
+
+    Uses load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
+    instead of the CLI subprocess to get real (segment ...) tracks in the PCB.
+    VCC_5V and other power nets are automatically handled as copper-pour zones.
+    Single-pad nets (e.g. Net-(U1-X) from unconnected Arduino pins) are skipped.
+
     Returns (routed_pcb_bytes, routed_percent).
-    Raises RuntimeError on failure or timeout.
-    Only call for simple boards (≤ _PYTHON_ROUTER_MAX_NETS signal nets).
+    Raises RuntimeError on failure.
     """
+    from kicad_tools.router import load_pcb_for_routing, merge_routes_into_pcb
+
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
-        dst = Path(tmp) / "output.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
-        cmd = [
-            sys.executable, "-m", "kicad_tools.cli", "route",
+        router, _ = load_pcb_for_routing(
             str(src),
-            "--output", str(dst),
-            "--strategy", "negotiated",
-            "--per-net-timeout", "30",
-            "--timeout", str(_PYTHON_ROUTER_TIMEOUT_S),
-            "--skip-nets", "GND",
-        ]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=_PYTHON_ROUTER_TIMEOUT_S + 10,
-            check=False,
+            skip_nets=["GND"],
+            validate_drc=False,
+            strict_drc=False,
         )
-        if not dst.exists():
-            raise RuntimeError(
-                f"kicad-tools router produced no output (rc={result.returncode}): "
-                f"{result.stderr[:200]}"
-            )
-        return dst.read_bytes(), 100
+
+        routes = router.route_all_negotiated(
+            timeout=float(_PYTHON_ROUTER_TIMEOUT_S),
+            per_net_timeout=15.0,
+            max_iterations=10,
+        )
+
+        route_sexp = router.to_sexp()
+        pcb_content = pcb_bytes.decode("utf-8", errors="replace")
+        merged = merge_routes_into_pcb(pcb_content, route_sexp)
+
+        stats = router.get_statistics()
+        nets_routed = stats.get("nets_routed", len(routes))
+        nets_total = stats.get("nets_to_route", max(nets_routed, 1))
+        routed_pct = round(nets_routed / nets_total * 100) if nets_total else 100
+
+        seg_count = len(re.findall(r'\(segment[\s\n]', merged))
+        logger.info(
+            "kicad-tools A*: %d segments, %d nets routés (%d%%)",
+            seg_count, nets_routed, routed_pct,
+        )
+        return merged.encode("utf-8"), routed_pct
 
 
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
