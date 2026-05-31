@@ -68,6 +68,103 @@ class RouteAutoResponse(BaseModel):
 # Internal helpers (mocked in tests)
 # ----------------------------------------------------------------------------
 
+def _find_freerouting_api() -> Optional[str]:
+    """Return Freerouting API base URL if the server is reachable, else None."""
+    import urllib.request, urllib.error
+    base = os.environ.get("FREEROUTING_API_URL", "http://127.0.0.1:37864")
+    try:
+        urllib.request.urlopen(f"{base}/api/v1/system/status", timeout=2)
+        return base
+    except Exception:
+        return None
+
+
+def _route_with_freerouting_api(
+    pcb_bytes: bytes,
+    timeout_s: int = _DEFAULT_TIMEOUT_S,
+) -> bytes:
+    """Route via Freerouting persistent REST API server (1 JVM for all users).
+
+    Flow: export DSN → POST session → POST job → upload DSN → PUT start →
+          poll status → GET output (SES) → pcbnew Specctra import.
+    """
+    import json
+    import time
+    import urllib.request, urllib.error
+
+    base = os.environ.get("FREEROUTING_API_URL", "http://127.0.0.1:37864")
+
+    def _api(method: str, path: str, body: Optional[bytes] = None,
+             content_type: str = "application/json") -> dict:
+        req = urllib.request.Request(
+            f"{base}{path}", data=body, method=method,
+            headers={"Content-Type": content_type, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+
+    def _api_raw(method: str, path: str, body: bytes, content_type: str) -> bytes:
+        req = urllib.request.Request(
+            f"{base}{path}", data=body, method=method,
+            headers={"Content-Type": content_type},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dsn_path = Path(tmp) / "board.dsn"
+        ses_path = Path(tmp) / "board.ses"
+
+        # Export PCB → DSN
+        _export_specctra(pcb_bytes, dsn_path)
+
+        # Create session
+        session = _api("POST", "/api/v1/sessions/create", b"{}")
+        session_id = session["id"]
+
+        # Enqueue job
+        job_body = json.dumps({"session_id": session_id}).encode()
+        job = _api("POST", "/api/v1/jobs/enqueue", job_body)
+        job_id = job["id"]
+
+        # Upload DSN (multipart)
+        dsn_bytes = dsn_path.read_bytes()
+        boundary = b"----LayrixBoundary"
+        body = (
+            b"--" + boundary + b"\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="board.dsn"\r\n'
+            b"Content-Type: application/octet-stream\r\n\r\n"
+            + dsn_bytes + b"\r\n"
+            b"--" + boundary + b"--\r\n"
+        )
+        _api_raw("POST", f"/api/v1/jobs/{job_id}/input",
+                 body, f"multipart/form-data; boundary={boundary.decode()}")
+
+        # Start routing
+        _api("PUT", f"/api/v1/jobs/{job_id}/start", b"{}")
+
+        # Poll until done
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            status = _api("GET", f"/api/v1/jobs/{job_id}")
+            state = status.get("state", "")
+            if state == "completed":
+                break
+            if state in ("failed", "cancelled"):
+                raise RuntimeError(f"Freerouting API job {state}")
+            time.sleep(2)
+        else:
+            raise RuntimeError("Freerouting API timeout")
+
+        # Download SES output
+        import base64 as _b64
+        output = _api("GET", f"/api/v1/jobs/{job_id}/output")
+        ses_b64 = output.get("output_file") or output.get("ses") or ""
+        ses_path.write_bytes(_b64.b64decode(ses_b64))
+
+        return _specctra_roundtrip(pcb_bytes, ses_path)
+
+
 def _find_freerouting() -> Optional[tuple[str, str]]:
     """Locate (java, freerouting.jar) or return None when either is absent."""
     java = shutil.which("java")
@@ -345,7 +442,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         net_count, comp_count, is_simple,
     )
 
-    # --- Niveau 1 : kicad-tools A* (circuits simples) ---
+    # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
     if is_simple:
         try:
             new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
@@ -357,9 +454,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 skipped=False,
             )
         except Exception as exc:
-            logger.warning("kicad-tools A* échoué (%s) — Freerouting", exc)
+            logger.warning("kicad-tools A* échoué (%s) — Freerouting API", exc)
 
-    # --- Niveau 2 : Freerouting Java ---
+    # --- Niveau 2 : Freerouting REST API server (1 JVM persistant, meilleure qualité) ---
+    api_url = _find_freerouting_api()
+    if api_url is not None:
+        try:
+            new_pcb = _route_with_freerouting_api(pcb_bytes, req.timeout_s)
+            logger.info("Freerouting API: 100%% routé")
+            return RouteAutoResponse(
+                kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
+                routed_percent=100,
+                layers=req.layers,
+                skipped=False,
+            )
+        except Exception as exc:
+            logger.warning("Freerouting API échoué (%s) — subprocess fallback", exc)
+
+    # --- Niveau 3 : Freerouting subprocess (fallback si API server absent) ---
     paths = _find_freerouting()
     if paths is not None:
         try:

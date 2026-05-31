@@ -59,12 +59,14 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 
-# Freerouting JAR v2.2.4
+# Freerouting JAR v2.1.0 — started as REST API server at port 37864
 RUN mkdir -p /opt/freerouting && \
     for i in 1 2 3; do \
         curl -fL https://github.com/freerouting/freerouting/releases/download/v2.1.0/freerouting-2.1.0.jar \
             -o /opt/freerouting/freerouting.jar && break || sleep 15; \
     done
+
+ENV FREEROUTING_API_URL=http://127.0.0.1:37864
 
 COPY . .
 
@@ -85,6 +87,11 @@ EXPOSE 8766
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8766/health || exit 1
 
-# Start Xvfb (headless display for kicad-cli) then uvicorn on port 8766
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac &\
+# Start Xvfb + Freerouting API server (persistent JVM, 1 instance for all users)
+# then uvicorn on port 8766
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1024x768x24 -ac & \
+     java -jar /opt/freerouting/freerouting.jar \
+         --api_server.enabled=true \
+         --api_server-endpoints=http://127.0.0.1:37864 & \
+     sleep 5 && \
      uvicorn main:app --host 0.0.0.0 --port 8766 --workers 4"]
