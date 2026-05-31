@@ -239,18 +239,11 @@ def _generate_with_kicad_tools(
         sch_path.write_text(kicad_sch_content, encoding="utf-8")
 
         workflow = PCBFromSchematic(sch_path)
-        workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
-        # Auto-spacing: distribute components evenly across the board area.
-        # Avoids overlaps for large footprints (e.g. Arduino UNO R3 = 68×53mm).
-        n_comps = max(1, len(workflow.get_components()))
-        import math as _math
-        cols    = max(2, _math.ceil(n_comps ** 0.5))
-        rows    = _math.ceil(n_comps / cols)
-        spacing = max(15.0, min(
-            (board_w - 10.0) / cols,
-            (board_h - 10.0) / max(1, rows),
-        ))
-        workflow.place_all_components(spacing=spacing, margin=5.0)
+        # Small initial board smaller than the largest footprint.
+        # Forces kct optimize-placement to spread components (overlap penalty).
+        # Final board dimensions are computed by the placement agent.
+        workflow.create_pcb(width=50.0, height=50.0, layers=2, title="Layrix PCB")
+        workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
 

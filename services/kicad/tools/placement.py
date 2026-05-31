@@ -87,35 +87,33 @@ def auto_place(
         dst = Path(tmp) / "output.kicad_pcb"
         src.write_text(pcb_text, encoding="utf-8")
 
-        # Primaire : kct optimize-placement CMA-ES
-        # Utilise signal flow + power domains + proximity priors automatiquement.
-        # Prend les positions grille de place_all_components() et les raffine.
+        # Primaire : kct optimize-placement --strategy cmaes
+        # Placement determines component positions, then we fit the board outline.
         try:
             result = subprocess.run(
                 [
                     sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
                     str(src), "--output", str(dst),
                     "--strategy", "cmaes",
-                    "--max-iterations", "500",
-                    "--time-budget", "120",
-                    "--seed", "force-directed",  # repositionne depuis zéro (pas juste raffiner)
                 ],
                 capture_output=True, text=True, timeout=130, check=False,
             )
-            if dst.exists():
-                output_bytes = dst.read_bytes()
+            placed_src = dst if dst.exists() else None
+            if placed_src:
+                # Fit board outline to actual placed component positions
+                output_bytes = _fit_board_outline_to_components(placed_src.read_bytes())
                 import re as _re
                 fp_count = len(_re.findall(r'\(footprint\s+"', output_bytes.decode("utf-8", errors="replace")))
-                logger.info("kct optimize-placement CMA-ES: %d footprints optimisés", fp_count)
+                logger.info("kct optimize-placement + board fit: %d footprints", fp_count)
                 return {
                     "kicad_pcb_b64": base64.b64encode(output_bytes).decode(),
                     "placed_count": fp_count,
                     "positions": [],
                 }
-            logger.warning("kct optimize-placement: pas de sortie (rc=%d) — %s",
+            logger.warning("kct optimize-placement: no output (rc=%d) %s",
                            result.returncode, result.stderr[:200])
         except Exception as exc:
-            logger.warning("kct optimize-placement échoué (%s) — fallback place_unplaced", exc)
+            logger.warning("kct optimize-placement failed (%s) — fallback", exc)
 
         # Fallback 1 : place_unplaced cluster (pour composants hors-board)
         try:
@@ -186,6 +184,117 @@ def _pcbnew_grid_place(
 
     pcbnew.SaveBoard(dst, board)
     return placed
+
+
+def _fit_board_outline_to_components(pcb_bytes: bytes, margin_mm: float = 10.0) -> bytes:
+    """Create board outline (Edge.Cuts) from actual placed footprint positions.
+
+    Reads all footprint (at x y) positions from the PCB, computes bounding box,
+    adds margin, and replaces Edge.Cuts with a fitted rectangle.
+    Called after kct optimize-placement to define final board dimensions.
+    """
+    import re as _re, uuid as _uuid, tempfile as _tmp
+    text = pcb_bytes.decode("utf-8", errors="replace")
+
+    # Extract footprint (at x y) positions — matches standalone "(at X Y)" lines
+    xs, ys = [], []
+    for m in _re.finditer(r'^\s+\(at\s+([\d.\-]+)\s+([\d.\-]+)\)$', text, _re.MULTILINE):
+        xs.append(float(m.group(1)))
+        ys.append(float(m.group(2)))
+
+    if not xs:
+        logger.warning("_fit_board_outline: no footprint positions found")
+        return pcb_bytes
+
+    x0 = round(min(xs) - margin_mm, 2)
+    y0 = round(min(ys) - margin_mm, 2)
+    x1 = round(max(xs) + margin_mm, 2)
+    y1 = round(max(ys) + margin_mm, 2)
+
+    # Remove old Edge.Cuts
+    text = _re.sub(
+        r'\(gr_(?:rect|line)[^\n]*"Edge\.Cuts"[^\n]*\n?',
+        "", text,
+    )
+    text = _re.sub(
+        r'\(gr_rect\s+\(start[^)]+\)\s+\(end[^)]+\)[\s\S]*?"Edge\.Cuts"[\s\S]*?\)\)',
+        "", text,
+    )
+
+    outline = (
+        f'\n  (gr_rect (start {x0} {y0}) (end {x1} {y1})'
+        f'\n    (stroke (width 0.05) (type solid)) (layer "Edge.Cuts")'
+        f'\n    (uuid "{_uuid.uuid4()}"))\n'
+    )
+    last = text.rfind(")")
+    if last >= 0:
+        text = text[:last] + outline + text[last:]
+
+    logger.info(
+        "_fit_board_outline: %.1f×%.1fmm  (%d comps)",
+        x1 - x0, y1 - y0, len(xs),
+    )
+    return text.encode("utf-8")
+
+
+def _fit_board_to_components(pcb_bytes: bytes, margin_mm: float = 10.0) -> bytes:
+    """Resize board outline to fit placed components with a margin.
+
+    After kct optimize-placement, component positions may not fill the
+    original 500×500mm board. This recalculates Edge.Cuts from the actual
+    bounding box of all footprint reference points + margin_mm.
+    """
+    try:
+        from kicad_tools.schema.pcb import PCB as _PCB
+        import tempfile as _tmp
+
+        with _tmp.TemporaryDirectory() as t:
+            p = Path(t) / "board.kicad_pcb"
+            p.write_bytes(pcb_bytes)
+            pcb = _PCB.load(str(p))
+
+            fps = list(pcb.footprints)
+            if not fps:
+                return pcb_bytes
+
+            xs = [fp.position[0] for fp in fps]
+            ys = [fp.position[1] for fp in fps]
+            x0 = min(xs) - margin_mm
+            y0 = min(ys) - margin_mm
+            x1 = max(xs) + margin_mm
+            y1 = max(ys) + margin_mm
+
+            board_w = round(x1 - x0, 2)
+            board_h = round(y1 - y0, 2)
+
+            # Shift all footprints so board starts at (board_origin)
+            # Then replace Edge.Cuts with the fitted outline
+            text = pcb_bytes.decode("utf-8", errors="replace")
+            text = _replace_edge_cuts(text, x0, y0, x1, y1)
+            logger.info("Board fitted to components: %.1f×%.1fmm", board_w, board_h)
+            return text.encode("utf-8")
+    except Exception as exc:
+        logger.warning("_fit_board_to_components failed (%s) — keeping original", exc)
+        return pcb_bytes
+
+
+def _replace_edge_cuts(pcb_text: str, x0: float, y0: float, x1: float, y1: float) -> str:
+    """Replace existing Edge.Cuts with a rectangle from (x0,y0) to (x1,y1)."""
+    import re as _re
+    # Remove old Edge.Cuts lines/rects
+    pcb_text = _re.sub(
+        r'\(gr_(?:line|rect)[^\)]*"Edge\.Cuts"[^\)]*\)',
+        "", pcb_text, flags=_re.DOTALL,
+    )
+    outline = (
+        f'\n  (gr_rect (start {x0} {y0}) (end {x1} {y1})'
+        f'\n    (stroke (width 0.05) (type solid)) (layer "Edge.Cuts")'
+        f'\n    (uuid "{__import__("uuid").uuid4()}"))\n'
+    )
+    last = pcb_text.rfind(")")
+    if last < 0:
+        return pcb_text + outline
+    return pcb_text[:last] + outline + pcb_text[last:]
 
 
 def _inject_board_outline(pcb_text: str, width_mm: float, height_mm: float) -> str:

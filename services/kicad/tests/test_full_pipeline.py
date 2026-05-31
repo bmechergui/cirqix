@@ -23,7 +23,7 @@ os.environ.setdefault("KICAD_FOOTPRINT_DIR", str(_KICAD / "share/kicad/footprint
 
 SCH_PATH = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test\meteo_arduino\meteo_arduino.kicad_sch")
 OUT_DIR  = SCH_PATH.parent
-BOARD_W, BOARD_H = 200.0, 180.0  # 180mm height: 3 rows × 80mm spacing + 5mm margin
+BOARD_W, BOARD_H = 1000.0, 1000.0  # grand board fictif — contour calculé par le placement
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
