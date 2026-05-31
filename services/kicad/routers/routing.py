@@ -156,14 +156,24 @@ def _count_footprints(pcb_bytes: bytes) -> int:
 
 
 def _extract_board_bbox(pcb_text: str) -> tuple[float, float, float, float] | None:
-    """Extract board bounding box from Edge.Cuts lines/rects. Returns (x0,y0,x1,y1) or None."""
+    """Extract board bounding box from Edge.Cuts gr_rect or gr_line elements only."""
+    # Priority 1: gr_rect on Edge.Cuts (PCBFromSchematic output)
+    m = re.search(
+        r'\(gr_rect\s+\(start\s+([\d.\-]+)\s+([\d.\-]+)\)\s+\(end\s+([\d.\-]+)\s+([\d.\-]+)\)',
+        pcb_text,
+    )
+    if m:
+        return float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))
+
+    # Priority 2: gr_line elements labeled Edge.Cuts
     xs, ys = [], []
-    for m in re.finditer(r'\((?:start|end|at)\s+([\d.\-]+)\s+([\d.\-]+)\)', pcb_text):
-        xs.append(float(m.group(1)))
-        ys.append(float(m.group(2)))
-    if not xs:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
+    for block in re.finditer(r'\(gr_line.*?"Edge\.Cuts".*?\)', pcb_text, re.DOTALL):
+        for c in re.finditer(r'\((?:start|end)\s+([\d.\-]+)\s+([\d.\-]+)\)', block.group()):
+            xs.append(float(c.group(1)))
+            ys.append(float(c.group(2)))
+    if xs:
+        return min(xs), min(ys), max(xs), max(ys)
+    return None
 
 
 def _build_zone_sexp(net_id: int, net_name: str, layer: str,
