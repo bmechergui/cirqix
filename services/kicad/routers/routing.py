@@ -257,9 +257,8 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
         src = Path(tmp) / "input.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
-        router, _ = load_pcb_for_routing(
+        router, net_map = load_pcb_for_routing(
             str(src),
-            skip_nets=["GND"],
             validate_drc=False,
             strict_drc=False,
         )
@@ -270,12 +269,19 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
             max_iterations=10,
         )
 
+        # route_all_negotiated auto-skips GND and VCC_* as "pour nets".
+        # Force-route them as real tracks so KiCad shows 0 unrouted.
+        _POWER_NETS = {"GND", "VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V"}
+        for net_name, net_id in net_map.items():
+            if net_name in _POWER_NETS:
+                try:
+                    router.route_net(net_id)
+                except Exception as exc:
+                    logger.warning("route_net(%s) failed: %s", net_name, exc)
+
         route_sexp = router.to_sexp()
         pcb_content = pcb_bytes.decode("utf-8", errors="replace")
         merged = merge_routes_into_pcb(pcb_content, route_sexp)
-
-        # Add GND plane (B.Cu) + VCC power zone (F.Cu)
-        merged = _add_power_zones(merged)
 
         stats = router.get_statistics()
         nets_routed = stats.get("nets_routed", len(routes))
