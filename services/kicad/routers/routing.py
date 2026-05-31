@@ -155,14 +155,88 @@ def _count_footprints(pcb_bytes: bytes) -> int:
     return len(re.findall(r'\(footprint\s+"', text))
 
 
+def _extract_board_bbox(pcb_text: str) -> tuple[float, float, float, float] | None:
+    """Extract board bounding box from Edge.Cuts lines/rects. Returns (x0,y0,x1,y1) or None."""
+    xs, ys = [], []
+    for m in re.finditer(r'\((?:start|end|at)\s+([\d.\-]+)\s+([\d.\-]+)\)', pcb_text):
+        xs.append(float(m.group(1)))
+        ys.append(float(m.group(2)))
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _build_zone_sexp(net_id: int, net_name: str, layer: str,
+                     x0: float, y0: float, x1: float, y1: float,
+                     inset: float = 0.3) -> str:
+    """Build a filled copper-pour zone S-expression covering the board."""
+    import uuid as _uuid
+    xi0, yi0 = round(x0 + inset, 4), round(y0 + inset, 4)
+    xi1, yi1 = round(x1 - inset, 4), round(y1 - inset, 4)
+    uid = str(_uuid.uuid4())
+    return (
+        f'\n  (zone\n'
+        f'    (net {net_id})\n'
+        f'    (net_name "{net_name}")\n'
+        f'    (layer "{layer}")\n'
+        f'    (uuid "{uid}")\n'
+        f'    (hatch edge 0.5)\n'
+        f'    (connect_pads (clearance 0.3))\n'
+        f'    (min_thickness 0.25)\n'
+        f'    (filled_areas_thickness no)\n'
+        f'    (fill yes (thermal_gap 0.3) (thermal_bridge_width 0.4))\n'
+        f'    (polygon (pts\n'
+        f'      (xy {xi0} {yi0}) (xy {xi0} {yi1})\n'
+        f'      (xy {xi1} {yi1}) (xy {xi1} {yi0})\n'
+        f'    ))\n'
+        f'  )'
+    )
+
+
+def _add_power_zones(pcb_text: str) -> str:
+    """Inject GND (B.Cu) and VCC_5V / +5V (F.Cu) copper-pour zones into the PCB."""
+    bbox = _extract_board_bbox(pcb_text)
+    if not bbox:
+        logger.warning("_add_power_zones: board bbox not found — zones skipped")
+        return pcb_text
+
+    x0, y0, x1, y1 = bbox
+
+    # Extract net IDs from top-level declarations only (lines with exactly 2 indent levels)
+    # Pattern: "  (net N "name")" — top-level nets appear before any footprint block
+    seen: dict[str, tuple[int, str, str]] = {}  # net_name → (id, name, layer)
+    for m in re.finditer(r'^\s{0,4}\(net\s+(\d+)\s+"([^"]+)"\)', pcb_text, re.MULTILINE):
+        nid, name = int(m.group(1)), m.group(2)
+        if name in seen:
+            continue
+        if name == "GND":
+            seen[name] = (nid, name, "B.Cu")
+        elif name in ("VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V"):
+            seen[name] = (nid, name, "F.Cu")
+
+    if not seen:
+        logger.info("_add_power_zones: no GND/VCC nets found")
+        return pcb_text
+
+    zones_sexp = "".join(
+        _build_zone_sexp(*args, x0=x0, y0=y0, x1=x1, y1=y1)
+        for args in seen.values()
+    )
+    last_paren = pcb_text.rfind(")")
+    if last_paren < 0:
+        return pcb_text
+    return pcb_text[:last_paren] + zones_sexp + "\n" + pcb_text[last_paren:]
+
+
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     """
     Route via kicad-tools pure Python A* negotiated router (Python API).
 
-    Uses load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
-    instead of the CLI subprocess to get real (segment ...) tracks in the PCB.
-    VCC_5V and other power nets are automatically handled as copper-pour zones.
-    Single-pad nets (e.g. Net-(U1-X) from unconnected Arduino pins) are skipped.
+    Steps:
+      1. load_pcb_for_routing (skip GND — handled as copper pour)
+      2. route_all_negotiated → real (segment ...) tracks for signal nets
+      3. merge_routes_into_pcb → insert tracks into PCB
+      4. _add_power_zones → inject GND (B.Cu) + VCC_5V (F.Cu) zones
 
     Returns (routed_pcb_bytes, routed_percent).
     Raises RuntimeError on failure.
@@ -190,15 +264,19 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
         pcb_content = pcb_bytes.decode("utf-8", errors="replace")
         merged = merge_routes_into_pcb(pcb_content, route_sexp)
 
+        # Add GND plane (B.Cu) + VCC power zone (F.Cu)
+        merged = _add_power_zones(merged)
+
         stats = router.get_statistics()
         nets_routed = stats.get("nets_routed", len(routes))
         nets_total = stats.get("nets_to_route", max(nets_routed, 1))
         routed_pct = round(nets_routed / nets_total * 100) if nets_total else 100
 
         seg_count = len(re.findall(r'\(segment[\s\n]', merged))
+        zone_count = len(re.findall(r'\(zone[\s\n]', merged))
         logger.info(
-            "kicad-tools A*: %d segments, %d nets routés (%d%%)",
-            seg_count, nets_routed, routed_pct,
+            "kicad-tools A*: %d segments, %d zones, %d nets routés (%d%%)",
+            seg_count, zone_count, nets_routed, routed_pct,
         )
         return merged.encode("utf-8"), routed_pct
 
