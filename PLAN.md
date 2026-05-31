@@ -71,11 +71,11 @@ Pipeline 8 agents (ordre strict) :
 ⑤ `call_agent_placement` → Ingénieur Placement
    ① kicad-tools CMA-ES place_unplaced (cluster-by-net) · ② pcbnew grille · ③ error si Docker down
 ⑥ `call_agent_routing` → Ingénieur Routage
-   ① kicad-tools A* Python (≤30 nets routables ≥2 pads, ≤30 comps, 60s)
-      route_all_negotiated · zones GND B.Cu + VCC F.Cu injectées
+   ① kicad-tools A* negotiated (≤30 nets routables ≥2 pads, ≤30 comps, 60s)
    ② Freerouting REST API (1 JVM persistante Docker port 37864, RAM 400MB fixe)
    ③ Freerouting subprocess (fallback si API absente)
-   ④ GND plane (TypeScript addGroundPlane, fallback final)
+   ④ kicad-tools A* negotiated SANS limite (tous circuits, 120s, si Freerouting absent)
+   ⑤ GND plane (TypeScript addGroundPlane, fallback final)
 ⑦ `call_agent_drc` → Ingénieur Qualité
    ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
 ⑧ `call_agent_export` → Ingénieur Fabrication

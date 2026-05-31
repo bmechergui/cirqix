@@ -68,12 +68,12 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      ③ error si Docker down
      Fallback : pcbnew grille (fallback) Python (dans le service Docker)
 
-⑥ call_agent_routing   → traces + plans de masse
-     ① kicad-tools A* Python (≤30 nets routables ≥2 pads, ≤30 comps, 60s)
-        route_all_negotiated + zones GND/VCC injectées
-     ② Freerouting REST API (1 JVM persistante, port 37864, RAM fixe 400MB)
-     ③ Freerouting subprocess (fallback si API absente)
-     ④ GND plane seulement (fallback final)
+⑥ call_agent_routing   → traces + plans de masse (5 niveaux)
+     ① kicad-tools A* negotiated (≤30 nets, 60s) · zones GND+VCC injectées
+     ② Freerouting REST API (1 JVM persistante port 37864, RAM 400MB fixe)
+     ③ Freerouting subprocess (1 JVM par job, fallback)
+     ④ kicad-tools A* negotiated SANS LIMITE (tous circuits, Freerouting absent)
+     ⑤ GND plane seulement (dernier recours)
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      ① kicad-tools 27 règles JLCPCB (pur Python)

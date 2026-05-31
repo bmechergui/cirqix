@@ -67,14 +67,14 @@ Utilisateur (texte naturel)
      ③ status:'error' si service Docker down (fail fast)
 
 ⑥ call_agent_routing   → ROUTING_DONE
-     ① kicad-tools A* Python     — ≤30 nets routables (≥2 pads), ≤30 composants, timeout 60s
-        API Python : load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
-        GND/VCC auto-skippés comme "pour nets" → zones cuivre injectées après
-     ② Freerouting REST API       — 1 JVM persistant dans Docker, port 37864
+     ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, timeout 60s
+        route_all_negotiated + merge_routes_into_pcb + _add_power_zones (GND B.Cu + VCC F.Cu)
+     ② Freerouting REST API       — 1 JVM persistant Docker port 37864, RAM fixe 400MB
         POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
-        RAM fixe 400MB (vs N×400MB subprocess) — tous les utilisateurs partagent 1 JVM
-     ③ Freerouting subprocess     — fallback si API server absent (kicad-cli Specctra roundtrip)
-     ④ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
+     ③ Freerouting subprocess     — fallback si API absent (1 JVM par job)
+     ④ kicad-tools A* negotiated — TOUS circuits, sans limite nets, timeout plus long
+        Même algorithme que ①, utilisé quand Freerouting absent
+     ⑤ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      ① kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo
@@ -106,7 +106,7 @@ Utilisateur (texte naturel)
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kicad-tools CMA-ES (cluster-by-net) → pcbnew grille → error | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | kicad-tools A* Python (≤30 nets routables) → Freerouting API REST (1 JVM) → subprocess → GND plane | `.kicad_pcb` routé |
+| Routing | `call_agent_routing` | — | ①kicad-tools A*(≤30) → ②Freerouting API(1JVM) → ③Freerouting subprocess → ④kicad-tools A*(tous) → ⑤GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | kicad-tools JLCPCB → kicad-cli standard → BOM CSV | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
@@ -322,20 +322,26 @@ net_count  = _count_routable_nets(pcb_bytes)   # ≥3 occurrences dans le fichie
 comp_count = _count_footprints(pcb_bytes)
 is_simple  = net_count <= 30 and comp_count <= 30
 
-# Niveau 1 : kicad-tools A* Python (circuits simples)
+# Niveau 1 : kicad-tools A* negotiated (circuits simples ≤30 nets)
 if is_simple:
-    → load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
-    → _add_power_zones(merged)  # GND B.Cu + VCC F.Cu zones
+    → load_pcb_for_routing + route_all_negotiated(timeout=60s) + merge_routes_into_pcb
+    → _add_power_zones(merged)  # GND B.Cu + VCC F.Cu
 
-# Niveau 2 : Freerouting REST API (1 JVM persistant)
+# Niveau 2 : Freerouting REST API (1 JVM persistante, tous circuits)
 elif _find_freerouting_api():
     → POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
 
-# Niveau 3 : Freerouting subprocess (fallback)
+# Niveau 3 : Freerouting subprocess (fallback, 1 JVM par job)
 elif _find_freerouting():
     → java -jar freerouting.jar (subprocess)
 
-# Niveau 4 : skipped
+# Niveau 4 : kicad-tools A* negotiated sans limite (tous circuits, Freerouting absent)
+# Même algorithme que niveau 1, pas de contrainte nets/comps, timeout plus long
+else (kicad-tools disponible):
+    → route_all_negotiated(timeout=120s, no is_simple check)
+    → _add_power_zones()
+
+# Niveau 5 : skipped → GND plane seulement
 else:
     → TypeScript addGroundPlane()
 ```

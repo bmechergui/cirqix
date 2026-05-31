@@ -202,13 +202,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      fallback : pcbnew grille simple
   ⑥ call_agent_routing    → Ingénieur Routage
      POST /route/auto
-     ① kicad-tools A* Python  — ≤30 nets routables (≥2 pads, ≥3 occurrences), ≤30 comps
-        load_pcb_for_routing + route_all_negotiated + merge_routes_into_pcb
-        GND/VCC zones injectées via _add_power_zones (B.Cu + F.Cu)
-     ② Freerouting REST API   — 1 JVM persistante port 37864, RAM fixe 400MB pour tous
-        POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
-     ③ Freerouting subprocess — fallback si API server absent
-     ④ skipped=True           → TypeScript addGroundPlane() GND plane B.Cu
+     ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, 60s
+        route_all_negotiated + zones GND B.Cu + VCC F.Cu
+     ② Freerouting REST API      — 1 JVM persistante port 37864, RAM 400MB fixe
+        POST sessions/create → jobs/enqueue → upload DSN → PUT start → GET output (SES)
+     ③ Freerouting subprocess    — fallback si API absent (1 JVM par job)
+     ④ kicad-tools A* negotiated — TOUS circuits sans limite nets, timeout 120s
+        Même algorithme que ①, utilisé quand Freerouting absent
+     ⑤ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
      fallback : routing-fallback.ts (MST pur TS)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
