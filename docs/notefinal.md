@@ -54,11 +54,15 @@ Utilisateur (texte naturel)
      Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
 
 ④ call_agent_gen_pcb   → .kicad_pcb généré avec footprints résolus
-     Netlist résolution — 3 niveaux (tools/pcb.py _generate_with_kicad_tools) :
-     ① kicad-tools Python pur : build_netlist_from_schematic — sans kicad-cli
-        Résout labels hiérarchiques via kicad-sch-api (après fix circuit_synth 2026-06-01)
-     ② kicad-cli : export netlist officiel — si Python pur échoue
-     ③ .kicad_net injecté : circuit_synth netlist direct — vieux schémas (avant fix)
+
+     Architecture netlist (important) :
+     · La netlist est GÉNÉRÉE par call_agent_schema (circuit_synth produit .kicad_sch + .kicad_net)
+     · call_agent_gen_pcb UTILISE le .kicad_sch + la netlist pour créer le .kicad_pcb
+     · Pour LIRE/RÉSOUDRE la netlist depuis le .kicad_sch → 3 niveaux (tools/pcb.py) :
+       ① kicad-tools Python pur : build_netlist_from_schematic — sans kicad-cli
+          Résout labels hiérarchiques via kicad-sch-api (après fix circuit_synth 2026-06-01)
+       ② kicad-cli : export netlist officiel — si Python pur échoue
+       ③ .kicad_net injecté : circuit_synth netlist direct — vieux schémas (avant fix)
      kicad-tools PCBFromSchematic(.kicad_sch) → vrais footprints + nets
      ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
      ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
