@@ -335,71 +335,71 @@ def _add_power_zones(pcb_text: str) -> str:
     return pcb_text[:last_paren] + zones_sexp + "\n" + pcb_text[last_paren:]
 
 
+_POWER_NET_NAMES = ("GND", "VCC_5V", "+5V", "VCC", "VDD", "+3V3", "+3.3V", "VBUS")
+
+
+def _detect_power_nets(pcb_text: str) -> list[str]:
+    """Return power net names present in the PCB (for kct route --power-nets)."""
+    found = set()
+    for m in re.finditer(r'\(net\s+\d+\s+"([^"]+)"\)', pcb_text):
+        if m.group(1) in _POWER_NET_NAMES:
+            found.add(m.group(1))
+    return sorted(found)
+
+
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
-    """
-    Route via kicad-tools pure Python A* negotiated router (Python API).
+    """Route via the official ``kct route`` CLI command.
 
-    Steps:
-      1. load_pcb_for_routing (skip GND — handled as copper pour)
-      2. route_all_negotiated → real (segment ...) tracks for signal nets
-      3. merge_routes_into_pcb → insert tracks into PCB
-      4. _add_power_zones → inject GND (B.Cu) + VCC_5V (F.Cu) zones
+    Uses kicad-tools' own routing rules — signal nets routed as tracks,
+    power nets (GND, VCC_5V…) handled as copper-pour zones via --power-nets.
+    No hand-rolled S-expression manipulation.
 
-    Returns (routed_pcb_bytes, routed_percent).
-    Raises RuntimeError on failure.
+    Returns (routed_pcb_bytes, routed_percent). Raises RuntimeError on failure.
     """
-    from kicad_tools.router import load_pcb_for_routing, merge_routes_into_pcb
+    pcb_text = pcb_bytes.decode("utf-8", errors="replace")
+    power_nets = _detect_power_nets(pcb_text)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
+        dst = Path(tmp) / "output.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
-        # load_pcb_for_routing calls classify_and_apply_rules internally:
-        # - Power nets (GND, VCC_5V, +5V…) → trace 0.5mm, zone fill, is_pour=True
-        # - Clock nets (CLK, SCK…)           → length_critical=True, priority routing
-        # - High-speed (SPI, USB…)           → clearance 0.15mm, coupled routing
-        # - Digital (DHT_DATA, D2…)          → trace 0.2mm standard
-        # All rules are active automatically via net_class_map on the Autorouter.
-        router, net_map = load_pcb_for_routing(
-            str(src),
-            validate_drc=False,
-            strict_drc=False,
-            auto_adjust_grid=True,   # adapt grid to off-grid pads (e.g. Arduino UNO)
+        cmd = [
+            sys.executable, "-m", "kicad_tools.cli", "route",
+            str(src), "--output", str(dst),
+            "--strategy", "negotiated",
+            "--timeout", str(_PYTHON_ROUTER_TIMEOUT_S),
+        ]
+        if power_nets:
+            cmd += ["--power-nets", ",".join(power_nets)]
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=_PYTHON_ROUTER_TIMEOUT_S + 30, check=False,
         )
 
-        # Log active net classes for visibility
-        ncm = getattr(router, "net_class_map", {}) or {}
-        power = [n for n, c in ncm.items() if getattr(c, "is_pour_net", False)]
-        clock = [n for n, c in ncm.items() if getattr(c, "length_critical", False)]
-        if power or clock:
-            logger.info("net classes actives — power: %s | clock: %s", power[:5], clock[:3])
+        if not dst.exists():
+            raise RuntimeError(
+                f"kct route produced no output (rc={result.returncode}): "
+                f"{result.stderr[:200] or result.stdout[-200:]}"
+            )
 
-        routes = router.route_all_negotiated(
-            timeout=float(_PYTHON_ROUTER_TIMEOUT_S),
-            per_net_timeout=15.0,
-            max_iterations=10,
-        )
+        routed = dst.read_bytes()
+        routed_text = routed.decode("utf-8", errors="replace")
+        seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))
+        zone_count = len(re.findall(r'\(zone[\s\n]', routed_text))
 
-        route_sexp = router.to_sexp()
-        pcb_content = pcb_bytes.decode("utf-8", errors="replace")
-        merged = merge_routes_into_pcb(pcb_content, route_sexp)
+        # Parse completion % from CLI output ("Nets routed: N/M")
+        routed_pct = 100
+        m = re.search(r'(\d+)\s*/\s*(\d+)\s+nets', result.stdout)
+        if m and int(m.group(2)) > 0:
+            routed_pct = round(int(m.group(1)) / int(m.group(2)) * 100)
 
-        # kicad-tools auto-skips GND and VCC_* as pour nets.
-        # Add copper-pour zones for them (fills on B press in KiCad).
-        merged = _add_power_zones(merged)
-
-        stats = router.get_statistics()
-        nets_routed = stats.get("nets_routed", len(routes))
-        nets_total = stats.get("nets_to_route", max(nets_routed, 1))
-        routed_pct = round(nets_routed / nets_total * 100) if nets_total else 100
-
-        seg_count = len(re.findall(r'\(segment[\s\n]', merged))
-        zone_count = len(re.findall(r'\(zone[\s\n]', merged))
         logger.info(
-            "kicad-tools A*: %d segments, %d zones, %d nets routés (%d%%)",
-            seg_count, zone_count, nets_routed, routed_pct,
+            "kct route: %d segments, %d zones, power-nets=%s (%d%%)",
+            seg_count, zone_count, power_nets, routed_pct,
         )
-        return merged.encode("utf-8"), routed_pct
+        return routed, routed_pct
 
 
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:

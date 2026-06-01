@@ -23,7 +23,7 @@ os.environ.setdefault("KICAD_FOOTPRINT_DIR", str(_KICAD / "share/kicad/footprint
 
 SCH_PATH = Path(r"C:\Users\Mechegui\Downloads\Kicadmcptest\test\meteo_arduino\meteo_arduino.kicad_sch")
 OUT_DIR  = SCH_PATH.parent
-BOARD_W, BOARD_H = 1000.0, 1000.0  # grand board fictif — contour calculé par le placement
+BOARD_W, BOARD_H = 100.0, 100.0  # assez grand pour Arduino UNO R3 (68×53mm) + composants
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
@@ -100,9 +100,8 @@ def main() -> None:
     print("═" * 60)
     from routers.routing import _route_with_kicad_tools
 
-    # Router depuis le PCB généré (step 1) — pad assignments mieux préservés
-    # Le PCB placé (step 2) peut avoir des coordonnées de pads qui bloquent le routeur
-    routed_bytes, pct = _route_with_kicad_tools(pcb_content.encode("utf-8"))
+    # Router depuis le PCB placé (étape 2) — placement et routage cohérents
+    routed_bytes, pct = _route_with_kicad_tools(placed_bytes)
     routed_content = routed_bytes.decode("utf-8", errors="replace")
 
     routed_path = OUT_DIR / "meteo_arduino_routed.kicad_pcb"
