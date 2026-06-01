@@ -54,7 +54,12 @@ Utilisateur (texte naturel)
      Cascade : KiCad libs → pgvector cache → LCSC/EasyEDA → Haiku IA (3 crédits)
 
 ④ call_agent_gen_pcb   → .kicad_pcb généré avec footprints résolus
-     ① kicad-tools PCBFromSchematic(.kicad_sch) → vrais footprints + nets
+     Netlist résolution — 3 niveaux (tools/pcb.py _generate_with_kicad_tools) :
+     ① kicad-tools Python pur : build_netlist_from_schematic — sans kicad-cli
+        Résout labels hiérarchiques via kicad-sch-api (après fix circuit_synth 2026-06-01)
+     ② kicad-cli : export netlist officiel — si Python pur échoue
+     ③ .kicad_net injecté : circuit_synth netlist direct — vieux schémas (avant fix)
+     kicad-tools PCBFromSchematic(.kicad_sch) → vrais footprints + nets
      ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
      ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
 
@@ -108,7 +113,7 @@ Utilisateur (texte naturel)
 | Schematic | `call_agent_schema` | Haiku 4.5 | circuit_synth Docker → kicad-tools Schematic → TS S-expr | `.kicad_sch` + `unresolved_footprints` |
 | ERC | `call_agent_erc` | — | kicad-tools validate → kicad-cli sch erc → TS fallback | rapport violations ERC |
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
-| PCB Layout | `call_agent_gen_pcb` | — | kicad-tools PCBFromSchematic → pcbnew direct → TS S-expr | `.kicad_pcb` |
+| PCB Layout | `call_agent_gen_pcb` | — | Netlist: ①Python pur ②kicad-cli ③.kicad_net · PCB: ①PCBFromSchematic ②pcbnew ③TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kct optimize-placement (si feasible) → place_unplaced cluster (shields) → pcbnew grille | `.kicad_pcb` placé |
 | Routing | `call_agent_routing` | — | ①kicad-tools A*(≤30) → ②Freerouting API(1JVM) → ③Freerouting subprocess → ④kicad-tools A*(tous) → ⑤GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |

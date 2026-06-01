@@ -190,7 +190,11 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku
      Met à jour _pcbStateCache[projectId].schema.components[ref].footprint
   ④ call_agent_gen_pcb      → Ingénieur Layout — génère .kicad_pcb
-     ① kicad-tools PCBFromSchematic(.kicad_sch) — vrais footprints + nets complets
+     Netlist résolution 3 niveaux (tools/pcb.py _generate_with_kicad_tools) :
+     ① kicad-tools Python pur  — build_netlist_from_schematic, sans kicad-cli
+     ② kicad-cli               — si Python pur échoue (schéma non-standard)
+     ③ .kicad_net injecté      — fallback vieux schémas (avant fix circuit_synth)
+     kicad-tools PCBFromSchematic(.kicad_sch) — vrais footprints + nets complets
      ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript

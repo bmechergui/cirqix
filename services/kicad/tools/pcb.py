@@ -397,22 +397,56 @@ def _generate_with_kicad_tools(
         pcb_path = Path(tmp) / "schematic.kicad_pcb"
         sch_path.write_text(kicad_sch_content, encoding="utf-8")
 
+        # ── Netlist résolution — 3 niveaux ───────────────────────────────────
+        # Niveau 1 : kicad-tools Python pur (build_netlist_from_schematic)
+        #   Pas de kicad-cli. Résout les labels hiérarchiques via kicad-sch-api.
+        #   Fonctionne avec circuit_synth >= fix circuit_loader.py (2026-06-01).
+        # Niveau 2 : kicad-cli netlist export
+        #   Utilisé si Python pur échoue (schéma non-standard, symboles inconnus).
+        # Niveau 3 : .kicad_net circuit_synth injecté directement
+        #   Fallback pour vieux schémas générés avant le fix circuit_loader.py.
+
         workflow = PCBFromSchematic(sch_path)
 
-        # Safety fallback: if a circuit_synth .kicad_net is provided AND kicad-cli
-        # fails to resolve labels (e.g. old schematic before circuit_loader.py fix),
-        # inject the correct netlist directly so pads get the right net assignments.
-        # With the circuit_synth fix (pin_identifier empty-name bug), this fallback
-        # should never be triggered — kicad-cli resolves labels correctly now.
-        if kicad_net_content:
+        netlist_resolved = False
+
+        # Niveau 1 — kicad-tools Python pur (sans kicad-cli)
+        try:
+            from kicad_tools.workflow._netlist import build_netlist_from_schematic as _bns
+            workflow._netlist = _bns(str(sch_path))
+            logger.info("_generate_with_kicad_tools: netlist niveau 1 (Python pur)")
+            netlist_resolved = True
+        except Exception as exc:
+            logger.warning("netlist niveau 1 échoué (%s) — niveau 2 kicad-cli", exc)
+
+        # Niveau 2 — kicad-cli (si Python pur a échoué)
+        if not netlist_resolved:
+            if not _shutil.which("kicad-cli"):
+                for _bin in [
+                    r"C:\Program Files\KiCad\10.99\bin",
+                    r"C:\Program Files\KiCad\9.0\bin",
+                    r"C:\Program Files\KiCad\8.0\bin",
+                    "/usr/bin",
+                ]:
+                    import os as _os
+                    if _os.path.isfile(_os.path.join(_bin, "kicad-cli")) or \
+                       _os.path.isfile(_os.path.join(_bin, "kicad-cli.exe")):
+                        _os.environ["PATH"] = _bin + _os.pathsep + _os.environ.get("PATH", "")
+                        break
+            # PCBFromSchematic appellera export_netlist() → kicad-cli si dispo
+            logger.info("_generate_with_kicad_tools: netlist niveau 2 (kicad-cli)")
+
+        # Niveau 3 — .kicad_net circuit_synth injecté (fallback vieux schémas)
+        if kicad_net_content and not netlist_resolved:
             try:
                 from kicad_tools.operations.netlist import Netlist as _Netlist
                 _net_path = Path(tmp) / "schematic.kicad_net"
                 _net_path.write_text(kicad_net_content, encoding="utf-8")
                 workflow._netlist = _Netlist.load(str(_net_path))
-                logger.info("_generate_with_kicad_tools: circuit_synth netlist injected (fallback)")
+                logger.info("_generate_with_kicad_tools: netlist niveau 3 (.kicad_net injecté)")
             except Exception as exc:
-                logger.warning("netlist injection failed (%s) — using kicad-cli", exc)
+                logger.warning("netlist niveau 3 échoué (%s)", exc)
+
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()

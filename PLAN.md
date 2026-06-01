@@ -67,7 +67,8 @@ Pipeline 8 agents (ordre strict) :
    ① kicad-tools Schematic.validate() — pur Python · ② kicad-cli sch erc · ③ TS fallback
 ③ `call_agent_footprint` → Ingénieur Composants — 1 appel par ref dans `unresolved_footprints`
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb`
-   ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
+   Netlist 3 niveaux : ① kicad-tools Python pur · ② kicad-cli · ③ .kicad_net injecté
+   PCB 3 niveaux : ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
 ⑤ `call_agent_placement` → Ingénieur Placement
    ① kct optimize-placement CMA-ES — SI Final feasible (circuits discrets)
    ② place_unplaced(cluster=True) — fallback shields/modules (Arduino/STM32) + replace_outline fitté
