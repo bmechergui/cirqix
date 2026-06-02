@@ -38,7 +38,7 @@ os.environ.setdefault("KICAD_FOOTPRINT_DIR", str(_KICAD / "share/kicad/footprint
 # Utiliser les copies Layrix patchées (services/kicad/) en priorité sur les versions installées
 _SVC = Path(__file__).parents[1]
 CS_SRC = _SVC / "circuit_synth" / "src"
-KT_SRC = _SVC / "kicad_tools" / "src"
+KT_SRC = _SVC / "kicad-tools" / "src"
 for _p in [str(CS_SRC), str(KT_SRC), str(_SVC)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)

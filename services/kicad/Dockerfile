@@ -40,6 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                openjdk-21-jre-headless \
                zip \
                unzip \
+               cmake \
+               g++ \
+               ninja-build \
            && break || sleep 30; \
        done \
     && rm -rf /var/lib/apt/lists/*
@@ -73,12 +76,17 @@ COPY . .
 # Install circuit_synth from local source (services/kicad/circuit_synth/)
 RUN pip3 install --no-cache-dir ./circuit_synth
 
-# Install kicad-tools from local source (services/kicad/kicad_tools/)
-# Move source out of /app/ first — avoids Python namespace-package shadowing (/app in sys.path would
-# shadow the installed package if the source directory remains at /app/kicad_tools/)
-# extras: placement=CMA-ES, drc=rtree spatial index, geometry=shapely
-RUN mv /app/kicad_tools /tmp/kicad_tools && \
-    pip3 install --no-cache-dir "/tmp/kicad_tools[placement,drc,geometry]"
+# Install kicad-tools (official repo, vendored at services/kicad/kicad-tools/).
+# Move source out of /app/ first — avoids Python namespace-package shadowing
+# (/app in sys.path would shadow the installed package).
+# extras: placement=CMA-ES/optim, drc=rtree, geometry=shapely, native=C++ build deps.
+RUN mv /app/kicad-tools /tmp/kicad-tools && \
+    pip3 install --no-cache-dir -e "/tmp/kicad-tools[placement,drc,geometry,native]"
+
+# Build the C++ router + placement extensions (10-100x faster A*). Non-fatal:
+# falls back to pure Python at runtime if the build fails.
+RUN cd /tmp/kicad-tools && (kct build-native --force || \
+    echo "WARNING: kct build-native failed — using pure-Python router")
 
 RUN mkdir -p /tmp/kicad-jobs
 

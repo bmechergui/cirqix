@@ -20,7 +20,7 @@ import sys as _sys
 # prepending the same source dir here is redundant but harmless.
 _here = os.path.dirname(__file__)
 _patched_dirs: list[str] = []
-for _lib in ["circuit_synth/src", "kicad_tools/src"]:
+for _lib in ["circuit_synth/src", "kicad-tools/src"]:
     _lib_path = os.path.join(_here, _lib)
     if os.path.isdir(_lib_path):
         if _lib_path not in _sys.path:
