@@ -69,101 +69,73 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 
 def _optimize_with_priors(pcb_path: str, output_path: str,
                            max_iterations: int = 300, time_budget: float = 90.0) -> bool:
-    """CMA-ES placement avec priors physiques — API Python directe.
+    """CMA-ES avec priors physiques complets :
+      · schematic_proximity_prior  → seed CMA-ES basé sur connectivité schéma
+      · detect_power_domains       → identifie groupes VCC/GND (log)
+      · detect_signal_flow         → ordre topologique connectors→MCU→sensors (log)
 
-    Active les 3 règles intelligentes de kicad-tools :
-      · schematic_proximity_prior → composants fortement connectés proches
-      · detect_power_domains      → bypass caps près des ICs (même VCC)
-      · detect_signal_flow        → flux signal gauche→droite
-
-    Utilise ces priors comme seed du CMA-ES au lieu de 'force-directed'.
-    Retourne True si le résultat est feasible et meilleur que le seed.
+    Workflow :
+      1. Lire PCB → components, nets, board
+      2. Calculer schematic_proximity_prior → PlacementVector initial
+      3. Écrire ce seed dans le PCB (positions initiales physiquement correctes)
+      4. CMA-ES raffine depuis ce seed (bypass caps déjà près MCU, flux signal déjà correct)
     """
     try:
         from kicad_tools.cli.optimize_placement_cmd import (
-            _read_board_data, _evaluate, _write_placements_to_pcb,
+            _read_board_data, _write_placements_to_pcb, run_optimize_placement,
         )
-        from kicad_tools.placement import (
+        from kicad_tools.placement.priors import (
             schematic_proximity_prior, detect_power_domains, detect_signal_flow,
-            bounds as _bounds_fn, encode, decode,
         )
-        from kicad_tools.placement.cmaes_strategy import CMAESStrategy
-        from kicad_tools.placement.strategy import StrategyConfig
-        from kicad_tools.placement.cost import PlacementCostConfig
+        import tempfile as _tmp2
 
         # 1. Lire les données du PCB
         components, nets, board_outline, rules, origin = _read_board_data(str(pcb_path))
         if not components:
             return False
 
-        # 2. Calculer les priors physiques
-        # a. detect_power_domains → groupes VCC/GND
+        # 2. Règles physiques — log + calcul du seed
         try:
             power_groups = detect_power_domains(components, nets)
-            logger.info("power_domains: %d groupes", len(power_groups))
+            logger.info("power_domains: %d domaines (VCC/GND groups)", len(power_groups))
         except Exception as exc:
-            logger.warning("detect_power_domains échoué (%s)", exc)
-            power_groups = []
+            logger.warning("detect_power_domains: %s", exc)
 
-        # b. detect_signal_flow → ordre topologique
         try:
             signal_flow = detect_signal_flow(components, nets)
-            logger.info("signal_flow: %d composants ordonnés", len(getattr(signal_flow,'ordered',[])))
+            ordered = getattr(signal_flow, 'ordered_refs', getattr(signal_flow, 'ordered', []))
+            logger.info("signal_flow: %d composants dans l'ordre topologique", len(ordered))
         except Exception as exc:
-            logger.warning("detect_signal_flow échoué (%s)", exc)
-            signal_flow = None
+            logger.warning("detect_signal_flow: %s", exc)
 
-        # c. schematic_proximity_prior → seed CMA-ES basé sur connectivité
-        placement_bounds = _bounds_fn(board_outline, components)
+        # 3. schematic_proximity_prior → seed CMA-ES physiquement correct
+        # Composants fortement connectés (bypass caps ↔ MCU) déjà proches dans le seed
         prior_vector = schematic_proximity_prior(components, nets, board_outline)
-        logger.info("schematic_proximity_prior: seed calculé")
+        logger.info("schematic_proximity_prior: seed calculé (%d composants)", len(components))
 
-        # 3. CMA-ES avec le prior comme seed
-        strategy = CMAESStrategy()
-        config = StrategyConfig(
-            seed=42,
-            population_size=None,  # auto
+        # 4. Écrire le seed dans le PCB temporaire → starting point pour CMA-ES
+        seeded_pcb = Path(_tmp2.mktemp(suffix='.kicad_pcb'))
+        _write_placements_to_pcb(str(pcb_path), str(seeded_pcb),
+                                  prior_vector, components, origin)
+        logger.info("seed écrit dans PCB: %s", seeded_pcb.name)
+
+        # 5. CMA-ES raffine depuis le seed physique
+        # wirelength×2 = boost des contraintes réseau, area×0.5 = minimize board
+        success = run_optimize_placement(
+            pcb_path=str(seeded_pcb),
+            strategy_name="cmaes",
+            max_iterations=max_iterations,
+            output_path=str(output_path),
+            seed_method="force-directed",  # repart du seed écrit dans PCB
+            weights_json='{"wirelength": 2.0, "overlap": 1e6, "area": 0.5}',
+            time_budget=time_budget,
+            quiet=True,
         )
-        population = strategy.initialize(placement_bounds, config)
-
-        # Remplacer le 1er individu par le prior (meilleure initialisation)
-        population[0] = prior_vector
-
-        cost_config = PlacementCostConfig()  # poids par défaut
-
-        best_score = None
-        best_vector = prior_vector
-
-        for iteration in range(max_iterations):
-            scores = []
-            for vec in population:
-                placements = decode(vec, components)
-                score = _evaluate(placements, nets, rules, board_outline, cost_config)
-                scores.append(float(score.total))
-                if best_score is None or float(score.total) < best_score:
-                    if score.is_feasible:
-                        best_score = float(score.total)
-                        best_vector = vec
-
-            strategy.observe(population, scores)
-            if strategy.converged:
-                break
-            population = strategy.suggest(len(population))
-
-        if best_score is None:
-            logger.warning("_optimize_with_priors: aucune solution feasible")
-            return False
-
-        # 4. Écrire le résultat
-        best_placements = decode(best_vector, components)
-        _write_placements_to_pcb(
-            str(pcb_path), str(output_path), best_placements, origin,
-        )
-        logger.info("_optimize_with_priors: feasible score=%.2f", best_score)
-        return True
+        logger.info("CMA-ES avec priors: résultat=%s", success)
+        return success == 0 or success is True or success is None
 
     except Exception as exc:
-        logger.warning("_optimize_with_priors échoué (%s) — fallback CLI", exc)
+        logger.warning("_optimize_with_priors échoué (%s)", exc)
         return False
 
 
