@@ -299,28 +299,41 @@ def _set_edge_cuts_rect(pcb_text: str, x0: float, y0: float, x1: float, y1: floa
 
 
 def _fit_board_outline_to_components(pcb_bytes: bytes, margin_mm: float = 10.0) -> bytes:
-    """Create Edge.Cuts rectangle fitted to placed footprint positions + margin."""
+    """Create an Edge.Cuts rectangle fitted to the placed footprints + margin.
+
+    Uses the kicad_tools PCB model to read real footprint positions (not raw
+    ``(at …)`` lines, which also match pad-relative offsets). Only top-level
+    ``(gr_line/gr_rect … "Edge.Cuts" …)`` blocks are replaced — footprints are
+    never touched. Returns the input unchanged if no footprints are found.
+    """
     import uuid as _uuid
+
     text = pcb_bytes.decode("utf-8", errors="replace")
 
-    xs, ys = [], []
-    for m in re.finditer(r'^\s+\(at\s+([\d.\-]+)\s+([\d.\-]+)\)\s*$', text, re.MULTILINE):
-        xs.append(float(m.group(1)))
-        ys.append(float(m.group(2)))
+    try:
+        import tempfile as _tmp
+        from kicad_tools.schema.pcb import PCB
+        with _tmp.NamedTemporaryFile(suffix=".kicad_pcb", mode="wb", delete=False) as _f:
+            _f.write(pcb_bytes)
+            _p = Path(_f.name)
+        pcb = PCB.load(str(_p))
+        _p.unlink(missing_ok=True)
+        xs = [fp.position[0] for fp in pcb.footprints]
+        ys = [fp.position[1] for fp in pcb.footprints]
+    except Exception as exc:  # pragma: no cover - API fallback
+        logger.warning("_fit_board_outline: PCB API failed (%s) — outline unchanged", exc)
+        return pcb_bytes
+
     if not xs:
         return pcb_bytes
 
+    # Footprint anchors + generous margin to cover body/pad extents (Arduino ≈ 35×91mm).
     x0 = round(min(xs) - margin_mm, 2)
     y0 = round(min(ys) - margin_mm, 2)
     x1 = round(max(xs) + margin_mm, 2)
     y1 = round(max(ys) + margin_mm, 2)
 
-    # Remove existing Edge.Cuts (gr_line and gr_rect)
-    text = re.sub(r'\(gr_line[^)]*"Edge\.Cuts"[^)]*\)', "", text, flags=re.DOTALL)
-    text = re.sub(
-        r'\(gr_rect\s+\(start[^)]*\)\s+\(end[^)]*\)[\s\S]*?"Edge\.Cuts"[\s\S]*?\)\)',
-        "", text,
-    )
+    text = _strip_edge_cuts_graphics(text)
     outline = (
         f'\n  (gr_rect (start {x0} {y0}) (end {x1} {y1})'
         f'\n    (stroke (width 0.1) (type solid)) (fill none) (layer "Edge.Cuts")'
@@ -330,6 +343,41 @@ def _fit_board_outline_to_components(pcb_bytes: bytes, margin_mm: float = 10.0) 
     if last >= 0:
         text = text[:last] + outline + text[last:]
     return text.encode("utf-8")
+
+
+def _strip_edge_cuts_graphics(text: str) -> str:
+    """Remove top-level (gr_line …)/(gr_rect …) blocks whose layer is Edge.Cuts.
+
+    Uses balanced-paren scanning (NOT greedy regex) so footprint bodies are
+    never consumed. Footprint outlines use (fp_line …) and are left intact.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("(gr_line", i) or text.startswith("(gr_rect", i):
+            depth = 0
+            j = i
+            while j < n:
+                c = text[j]
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            block = text[i:j]
+            if '"Edge.Cuts"' in block:
+                i = j  # drop this Edge.Cuts graphic
+                continue
+            out.append(block)
+            i = j
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
