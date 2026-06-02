@@ -67,6 +67,106 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 # Mode 2 : auto-placement (I/O base64)
 # ---------------------------------------------------------------------------
 
+def _optimize_with_priors(pcb_path: str, output_path: str,
+                           max_iterations: int = 300, time_budget: float = 90.0) -> bool:
+    """CMA-ES placement avec priors physiques — API Python directe.
+
+    Active les 3 règles intelligentes de kicad-tools :
+      · schematic_proximity_prior → composants fortement connectés proches
+      · detect_power_domains      → bypass caps près des ICs (même VCC)
+      · detect_signal_flow        → flux signal gauche→droite
+
+    Utilise ces priors comme seed du CMA-ES au lieu de 'force-directed'.
+    Retourne True si le résultat est feasible et meilleur que le seed.
+    """
+    try:
+        from kicad_tools.cli.optimize_placement_cmd import (
+            _read_board_data, _evaluate, _write_placements_to_pcb,
+        )
+        from kicad_tools.placement import (
+            schematic_proximity_prior, detect_power_domains, detect_signal_flow,
+            bounds as _bounds_fn, encode, decode,
+        )
+        from kicad_tools.placement.cmaes_strategy import CMAESStrategy
+        from kicad_tools.placement.strategy import StrategyConfig
+        from kicad_tools.placement.cost import PlacementCostConfig
+
+        # 1. Lire les données du PCB
+        components, nets, board_outline, rules, origin = _read_board_data(str(pcb_path))
+        if not components:
+            return False
+
+        # 2. Calculer les priors physiques
+        # a. detect_power_domains → groupes VCC/GND
+        try:
+            power_groups = detect_power_domains(components, nets)
+            logger.info("power_domains: %d groupes", len(power_groups))
+        except Exception as exc:
+            logger.warning("detect_power_domains échoué (%s)", exc)
+            power_groups = []
+
+        # b. detect_signal_flow → ordre topologique
+        try:
+            signal_flow = detect_signal_flow(components, nets)
+            logger.info("signal_flow: %d composants ordonnés", len(getattr(signal_flow,'ordered',[])))
+        except Exception as exc:
+            logger.warning("detect_signal_flow échoué (%s)", exc)
+            signal_flow = None
+
+        # c. schematic_proximity_prior → seed CMA-ES basé sur connectivité
+        placement_bounds = _bounds_fn(board_outline, components)
+        prior_vector = schematic_proximity_prior(components, nets, board_outline)
+        logger.info("schematic_proximity_prior: seed calculé")
+
+        # 3. CMA-ES avec le prior comme seed
+        strategy = CMAESStrategy()
+        config = StrategyConfig(
+            seed=42,
+            population_size=None,  # auto
+        )
+        population = strategy.initialize(placement_bounds, config)
+
+        # Remplacer le 1er individu par le prior (meilleure initialisation)
+        population[0] = prior_vector
+
+        cost_config = PlacementCostConfig()  # poids par défaut
+
+        best_score = None
+        best_vector = prior_vector
+
+        for iteration in range(max_iterations):
+            scores = []
+            for vec in population:
+                placements = decode(vec, components)
+                score = _evaluate(placements, nets, rules, board_outline, cost_config)
+                scores.append(float(score.total))
+                if best_score is None or float(score.total) < best_score:
+                    if score.is_feasible:
+                        best_score = float(score.total)
+                        best_vector = vec
+
+            strategy.observe(population, scores)
+            if strategy.converged:
+                break
+            population = strategy.suggest(len(population))
+
+        if best_score is None:
+            logger.warning("_optimize_with_priors: aucune solution feasible")
+            return False
+
+        # 4. Écrire le résultat
+        best_placements = decode(best_vector, components)
+        _write_placements_to_pcb(
+            str(pcb_path), str(output_path), best_placements, origin,
+        )
+        logger.info("_optimize_with_priors: feasible score=%.2f", best_score)
+        return True
+
+    except Exception as exc:
+        logger.warning("_optimize_with_priors échoué (%s) — fallback CLI", exc)
+        return False
+
+
 def _try_optimize_placement(pcb_bytes: bytes) -> bytes | None:
     """Run `kct optimize-placement --strategy cmaes`.
 
@@ -158,27 +258,33 @@ def auto_place(
             if not dst.exists() or placed_count == 0:
                 raise RuntimeError("place_unplaced n'a rien placé")
 
-            # Étape 2 : kct optimize-placement TOUJOURS pour raffiner
+            # Étape 2 : CMA-ES avec priors physiques (detect_power_domains +
+            # detect_signal_flow + schematic_proximity_prior) pour raffiner
+            # le résultat de place_unplaced avec les contraintes physiques réelles.
             try:
-                opt_r = subprocess.run(
-                    [sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
-                     str(dst), "--output", str(opt), "--strategy", "cmaes"],
-                    capture_output=True, text=True, timeout=90, check=False,
-                )
-                final_line = next(
-                    (l for l in opt_r.stdout.splitlines() if l.strip().startswith("Final:")), ""
-                )
-                feasible = "feasible" in final_line.lower() and "infeasible" not in final_line.lower()
-                import re as _re
-                area_m = _re.search(r'area=([\d.]+)', final_line)
-                area_val = float(area_m.group(1)) if area_m else 0.0
-                if opt.exists() and feasible and area_val > 50.0:
+                ok = _optimize_with_priors(str(dst), str(opt), max_iterations=200, time_budget=60.0)
+                if ok and opt.exists():
                     dst = opt
-                    logger.info("optimize-placement raffiné: %s", final_line.strip()[:70])
+                    logger.info("optimize_with_priors: placement physique activé")
                 else:
-                    logger.info("optimize-placement skipped (area=%.1f) — garder place_unplaced", area_val)
+                    # Fallback : CLI kct optimize-placement sans priors
+                    opt_r = subprocess.run(
+                        [sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
+                         str(dst), "--output", str(opt), "--strategy", "cmaes"],
+                        capture_output=True, text=True, timeout=90, check=False,
+                    )
+                    final_line = next(
+                        (l for l in opt_r.stdout.splitlines() if l.strip().startswith("Final:")), ""
+                    )
+                    import re as _re
+                    area_m = _re.search(r'area=([\d.]+)', final_line)
+                    area_val = float(area_m.group(1)) if area_m else 0.0
+                    feasible = "feasible" in final_line.lower() and "infeasible" not in final_line.lower()
+                    if opt.exists() and feasible and area_val > 50.0:
+                        dst = opt
+                        logger.info("kct optimize-placement CLI: %s", final_line.strip()[:70])
             except Exception as exc:
-                logger.warning("optimize-placement échoué (%s) — garder place_unplaced", exc)
+                logger.warning("optimize échoué (%s) — garder place_unplaced", exc)
 
             return {
                 "kicad_pcb_b64": base64.b64encode(dst.read_bytes()).decode(),
