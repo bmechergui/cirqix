@@ -570,3 +570,15 @@ wire length
 vias count
 overlap penalty
 success/failure routing
+
+
+
+Il existe plusieurs plateformes pour utiliser des GPU pour l’IA et le machine learning : Google Colab/Googe Cloab pro, Kaggle Notebooks, Lightning AI et Hugging Face Spaces (ZeroGPU), qui permettent de tester et apprendre gratuitement avec des limites de ressources. Pour des besoins plus avancés, des solutions comme RunPod, Vast.ai et Modal offrent des GPU à bas coût avec des modèles pay-as-you-go.
+
+Pour aller plus loin en production ou en startup, Google Cloud propose des crédits gratuits et des programmes startups donnant accès à des GPU/TPU puissants et scalables. En résumé, le gratuit suffit pour apprendre et prototyper, mais les solutions cloud deviennent nécessaires dès que tu veux entraîner des modèles lourds ou scaler ton projet.
+
+Colab Pro (~10€ / mois) : La meilleure option confort.
+Les Avantages :
+Intégration Google Drive parfaite : C'est l'argument numéro 1 pour l'Apprentissage par Renforcement (RL). L'entraînement RL prend du temps. Avec Colab, vous pouvez sauvegarder votre modèle (model.pt ou model.onnx) directement sur votre Google Drive à chaque itération. Si ça crashe, vous ne perdez rien.
+Accès à des GPU surpuissants (comme les fameux A100 ou V100) qui accéléreront drastiquement la simulation de votre environnement KiCad virtuel.
+Les sessions peuvent durer jusqu'à 24 heures
