@@ -68,16 +68,24 @@ Utilisateur (texte naturel)
      ③ success=False → TypeScript runCircuitSynthEngine() S-expr inline
 
 ⑤ call_agent_placement → PLACEMENT_DONE
-     POST /place/auto (kicad_pcb_b64)  — UNE solution universelle (discrets + shields)
-     ① kct optimize-placement --strategy cmaes ⭐⭐⭐⭐ — utilisé SI Final feasible
-        Optimal pour circuits discrets (R/C/LED/connecteurs) — bbox pads complète.
-        Détection feasibilité : parse la ligne "Final:" du stdout (INFEASIBLE → fallback).
-     ② place_unplaced(cluster=True, margin=3mm) ⭐⭐⭐ — fallback shields/modules
-        Arduino/STM32 : optimize-placement INFEASIBLE car son modèle overlap = bbox
-        pads et ignore le corps du footprint → empile. place_unplaced fait une grille
-        clusterisée sur board généreux (cols×rows×70mm) puis replace_outline() fitté.
-     ③ pcbnew grille : LoadBoard() + SetPosition() 15mm step ⭐ (si kicad-tools indispo)
-     ④ status:'error' si service Docker down (fail fast)
+     POST /place/auto (kicad_pcb_b64)  — pipeline 3 niveaux (tools/placement.py auto_place)
+
+     Algorithmes kicad-tools (documentation officielle) :
+     · place_unplaced      = "grid-place unplaced components" → GRILLE DÉTERMINISTE
+       Détecte footprints hors-board (-1000,-1000), les place en cellules grille
+       cluster-by-net. Rapide, déterministe, gère tous footprints (Arduino inclus).
+     · kct optimize-placement = "CMA-ES placement optimization" → ÉVOLUTIONNAIRE
+       CMA-ES (Covariance Matrix Adaptation) : optimise positions X/Y/rotation.
+       Nécessite bon starting point — fonctionne depuis le résultat place_unplaced.
+
+     Pipeline Layrix (ordre optimal) :
+     Niveau 1 : kicad-tools
+       a. place_unplaced(cluster=True)        ← grille déterministe cluster-by-net
+          footprints déjà à (-1000,-1000) par call_agent_gen_pcb (pré-unplace)
+       b. kct optimize-placement (CMA-ES)     ← raffine TOUJOURS depuis la grille
+          si result.area > 50mm² (pas stacked) → utilise le résultat optimisé
+     Niveau 2 : pcbnew grille (LoadBoard + SetPosition 15mm)
+     Niveau 3 : TypeScript S-expr (fallback final)
 
 ⑥ call_agent_routing   → ROUTING_DONE
      ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, timeout 60s
