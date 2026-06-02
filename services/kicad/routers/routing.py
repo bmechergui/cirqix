@@ -351,6 +351,16 @@ def _detect_power_nets(pcb_text: str) -> list[str]:
     return sorted(found)
 
 
+def _power_nets_arg(power_nets: list[str]) -> str:
+    """Format power nets as kct '--power-nets NET:LAYER,...'.
+
+    GND → B.Cu, supply rails → F.Cu (standard 2-layer pour convention).
+    kct expects the NET:LAYER form; a bare net list is mis-parsed.
+    """
+    layer_for = lambda n: "B.Cu" if n == "GND" else "F.Cu"
+    return ",".join(f"{n}:{layer_for(n)}" for n in power_nets)
+
+
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     """Route via the official ``kct route`` CLI command.
 
@@ -374,8 +384,9 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
             "--strategy", "negotiated",
             "--timeout", str(_PYTHON_ROUTER_TIMEOUT_S),
         ]
-        if power_nets:
-            cmd += ["--power-nets", ",".join(power_nets)]
+        power_arg = _power_nets_arg(power_nets)
+        if power_arg:
+            cmd += ["--power-nets", power_arg]
 
         result = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
