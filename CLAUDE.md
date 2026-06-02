@@ -210,7 +210,8 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ⑥ call_agent_routing    → Ingénieur Routage
      POST /route/auto
      ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, 60s
-        route_all_negotiated + zones GND B.Cu + VCC F.Cu
+        route_all_negotiated + zones GND B.Cu + VCC F.Cu (--power-nets NET:LAYER)
+        si complétion < 95% → bascule vers Freerouting (avant : retournait 0%)
      ② Freerouting REST API      — 1 JVM persistante port 37864, RAM 400MB fixe
         POST sessions/create → jobs/enqueue → upload DSN → PUT start → GET output (SES)
      ③ Freerouting subprocess    — fallback si API absent (1 JVM par job)

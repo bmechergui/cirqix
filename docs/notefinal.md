@@ -822,6 +822,34 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 
 ---
 
+### 2026-06-02 — Routage 0% : cause racine = pad-collapse du writer CMA-ES
+
+**Décision :** Corriger `_write_placements_to_pcb` (kicad_tools patché) pour ne mettre à jour
+que la position des footprints via le modèle PCB (`update_footprint_position` + `pcb.save`),
+au lieu d'un remplacement texte des lignes `(at …)`.
+
+**Pourquoi :** Le routage retournait 0% (`No path found`) sur tous les circuits passant par
+le CMA-ES `_optimize_with_priors`. Investigation systématique → la regex de l'ancien writer
+matchait **toutes** les lignes `(at …)` d'un footprint (pads inclus) et les remplaçait par la
+position du footprint → **tous les pads empilés sur un seul point** → aucune extrémité distincte
+à router. La taille du board / la grille / les timeouts n'y étaient pour rien. Validé : pipeline
+météo Arduino 0% → **100%** (18 segments).
+
+**Écarté :**
+- Board-fit (réduire le board) — l'hypothèse « board trop grand » était fausse (échec persistant
+  même sur grille 64k cellules). `_fit_board_outline_to_components` corrigé (ne corrompt plus le
+  PCB) mais NON câblé dans auto_place.
+- Build C++ router en Docker — utile pour la vitesse mais non bloquant (le vrai bug était les pads).
+
+**Aussi livré (PR #34) :** cascade `route_auto` bascule vers Freerouting si kicad-tools A* < 95%
+(avant : retournait 0%) ; `--power-nets` au format `NET:LAYER`.
+
+**Fichiers concernés :** `services/kicad/kicad_tools/.../cli/optimize_placement_cmd.py` (patché,
+gitignored, doc `DEPENDENCIES.md`) · `services/kicad/routers/routing.py` ·
+`services/kicad/tests/test_placement_pad_integrity.py` · `test_route_auto_cascade.py`
+
+---
+
 ## Template pour la prochaine décision
 
 ```
