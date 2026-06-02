@@ -33,3 +33,6 @@ reportlab
 twine
 openai
 python-dotenv
+
+# Reasoner LLM (sauvetage routage agentique — tools/reasoning.py)
+anthropic>=0.40.0

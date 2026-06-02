@@ -312,21 +312,35 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
 
         routed_pct = _parse_routed_pct(result.stdout)
 
-        # Étape 4 — sauvetage IA : si le routeur classique laisse des nets
-        # bloqués, `kct reason --auto-route` déplace les composants gênants et
-        # re-route les nets prioritaires (les ~10% "corner cases" agentic).
+        # Étape 4 — sauvetage agentique : si le routeur classique laisse des
+        # nets bloqués (les ~10% corner cases), on confie la carte au reasoner.
+        #   · reasoner LLM (Claude + PCBReasoningAgent) si ANTHROPIC_API_KEY dispo
+        #     → raisonne « C bloque le net → déplace C de 2mm → reroute »
+        #   · sinon `kct reason --auto-route` (heuristique, sans LLM)
         if routed_pct < 100:
-            logger.info("kct route %d%% — sauvetage kct reason --auto-route", routed_pct)
-            reason = subprocess.run(
-                [sys.executable, "-m", "kicad_tools.cli", "reason",
-                 str(dst), "-o", str(dst), "--auto-route"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=_PYTHON_ROUTER_TIMEOUT_S + 60, check=False,
-            )
-            rescued = _parse_routed_pct(reason.stdout)
-            if rescued > routed_pct:
-                routed_pct = rescued
-                logger.info("kct reason: routage relevé à %d%%", routed_pct)
+            from tools import reasoning as _reasoning
+            if _reasoning.available():
+                logger.info("kct route %d%% — sauvetage reasoner LLM (Claude)", routed_pct)
+                try:
+                    rescued_bytes, rescued = _reasoning.route_with_llm(dst.read_bytes())
+                    if rescued > routed_pct:
+                        dst.write_bytes(rescued_bytes)
+                        routed_pct = rescued
+                        logger.info("reasoner LLM: routage relevé à %d%%", routed_pct)
+                except Exception as exc:
+                    logger.warning("reasoner LLM échoué (%s) — heuristique", exc)
+            else:
+                logger.info("kct route %d%% — sauvetage kct reason --auto-route", routed_pct)
+                reason = subprocess.run(
+                    [sys.executable, "-m", "kicad_tools.cli", "reason",
+                     str(dst), "-o", str(dst), "--auto-route"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=_PYTHON_ROUTER_TIMEOUT_S + 60, check=False,
+                )
+                rescued = _parse_routed_pct(reason.stdout)
+                if rescued > routed_pct:
+                    routed_pct = rescued
+                    logger.info("kct reason: routage relevé à %d%%", routed_pct)
 
         # Trust the official router output as-is (no custom S-expr post-processing).
         routed = dst.read_bytes()
