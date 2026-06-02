@@ -850,6 +850,35 @@ gitignored, doc `DEPENDENCIES.md`) · `services/kicad/routers/routing.py` ·
 
 ---
 
+### 2026-06-02 — Placement compact (module à corps décalé) reporté en Phase 6 (RL_PCB)
+
+**Décision :** Ne PAS rendre le CMA-ES kicad_tools « courtyard-aware » par un patch en
+force. `auto_place` garde son comportement actuel (gate courtyard + sélection : CMA-ES
+si faisable, sinon `place_unplaced` étalé). La compacité « pro » (composants serrés
+autour du corps Arduino) est planifiée en Phase 6 via RL_PCB.
+
+**Pourquoi :** Le CMA-ES modélise chaque composant comme une **AABB centrée sur l'origine**
+du footprint. Le corps de l'Arduino est **décalé** (courtyard 75×54mm centré à +24mm en y
+vs origine). Approche « lite » testée = donner au CMA-ES la taille du courtyard en boîte
+centrée symétrique → trop conservateur (81×102) → CMA-ES se déclare infaisable
+(`overlap=0.58mm²`) → retombe sur la grille. Le faire correctement exige un modèle avec
+**offset** touchant 6 fichiers du cœur de l'optimiseur vendoré (vector/geometry/priors/
+seed/slide_off/visualization), sans leur suite de tests → risque/valeur défavorable pour
+un board déjà fabricable.
+
+**Écarté :**
+- Patch « lite » courtyard-size centré (testé, échec : CMA-ES infaisable → grille).
+- Réécriture offset 6 fichiers du CMA-ES vendoré (trop risqué maintenant).
+
+**État livré (PR #34, correct & fabricable) :** pad-collapse corrigé (routage 0%→100%),
+gate courtyard (jamais de board avec chevauchement), cascade Freerouting <95%,
+`--power-nets NET:LAYER`. Placement modules = grille étalée (fils longs mais 0 conflit).
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` (auto_place + sélection) ·
+`PLAN.md` (Phase 6 RL_PCB) · futur : RL_PCB = nouveau candidat dans `_select_best_placement`.
+
+---
+
 ## Template pour la prochaine décision
 
 ```

@@ -838,13 +838,26 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ## Phase 5 — Polish + Launch (Semaine 10)
 
-> **Amélioration placement future (Post-Phase 5) : RL_PCB**
+> **Amélioration placement future (Post-Phase 5 / Phase 6) : RL_PCB**
 > Architecture hybride LLM + Reinforcement Learning pour le placement PCB :
 > - LLM (Sonnet) → analyse schéma, comprend contraintes, suggère stratégie (groupes fonctionnels, faces Top/Bottom, zones sensibles)
 > - RL_PCB → prend les suggestions LLM et optimise mathématiquement les positions X/Y
 > - pcbnew → importe le résultat pour validation DRC
 > Pipeline : `call_agent_schema → LLM strategy → RL_PCB optimizer → pcbnew SetPosition → Freerouting`
 > Actuellement : kicad-tools CMA-ES → fallback pcbnew grille — RL_PCB serait l'upgrade Phase 6+.
+>
+> **Placement compact courtyard-aware — reporté ici (décision 2026-06-02).**
+> État actuel : `auto_place` garantit 0 chevauchement (gate courtyard + sélection),
+> mais pour les circuits avec **module à corps décalé** (Arduino/STM32) il retombe
+> sur `place_unplaced` (grille étalée, fils longs) car le CMA-ES kicad_tools modélise
+> chaque composant comme une **AABB centrée sur l'origine** et ignore l'offset du
+> corps (Arduino : courtyard 75×54mm centré à +24mm en y vs origine). Le rendre
+> vraiment compact (composants serrés autour du corps) exige un **modèle géométrique
+> avec offset** touchant 6 fichiers du cœur kicad_tools (vector/geometry/priors/seed/
+> slide_off/visualization) — risqué sans leur suite de tests. Décision : ne PAS
+> patcher l'optimiseur en force ; traiter la compacité proprement via RL_PCB en
+> Phase 6 (RL_PCB devient simplement un candidat de plus dans la sélection
+> `auto_place` existante). Détails : `docs/notefinal.md` (2026-06-02).
 
 ### Étape 5.1 — Sécurité
 
