@@ -256,6 +256,25 @@ def _count_footprints(pcb_bytes: bytes) -> int:
     return len(re.findall(r'\(footprint\s+"', text))
 
 
+def _parse_routed_pct(stdout: str) -> int:
+    """Parse routing completion % from kct route/reason output.
+
+    Looks for the last "Routed: N/M nets" or "(P%)" line; defaults to 100 when
+    no net needed routing (all power nets poured as zones).
+    """
+    pct = 100
+    matches = re.findall(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', stdout)
+    if matches:
+        done, total = matches[-1]
+        if int(total) > 0:
+            pct = round(int(done) / int(total) * 100)
+    else:
+        m = re.search(r'\((\d+)%\s*\)', stdout)
+        if m:
+            pct = int(m.group(1))
+    return pct
+
+
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
 
@@ -291,20 +310,29 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
                 f"{result.stderr[:200] or result.stdout[-200:]}"
             )
 
+        routed_pct = _parse_routed_pct(result.stdout)
+
+        # Étape 4 — sauvetage IA : si le routeur classique laisse des nets
+        # bloqués, `kct reason --auto-route` déplace les composants gênants et
+        # re-route les nets prioritaires (les ~10% "corner cases" agentic).
+        if routed_pct < 100:
+            logger.info("kct route %d%% — sauvetage kct reason --auto-route", routed_pct)
+            reason = subprocess.run(
+                [sys.executable, "-m", "kicad_tools.cli", "reason",
+                 str(dst), "-o", str(dst), "--auto-route"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=_PYTHON_ROUTER_TIMEOUT_S + 60, check=False,
+            )
+            rescued = _parse_routed_pct(reason.stdout)
+            if rescued > routed_pct:
+                routed_pct = rescued
+                logger.info("kct reason: routage relevé à %d%%", routed_pct)
+
         # Trust the official router output as-is (no custom S-expr post-processing).
-        # Power-net pours / ground planes are the router's responsibility; if a
-        # board needs explicit zones, use the official `kct zones` command.
         routed = dst.read_bytes()
         routed_text = routed.decode("utf-8", errors="replace")
         seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))
         zone_count = len(re.findall(r'\(zone[\s\n]', routed_text))
-
-        # Parse completion % from CLI output ("Routed: N/M nets (P%)")
-        routed_pct = 100
-        m = re.search(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', result.stdout)
-        if m and int(m.group(2)) > 0:
-            routed_pct = round(int(m.group(1)) / int(m.group(2)) * 100)
-
         logger.info("kct route: %d segments, %d zones (%d%%)",
                     seg_count, zone_count, routed_pct)
         return routed, routed_pct
