@@ -198,27 +198,24 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ② pcbnew direct : BOARD() + FootprintLoad() + SetNet() → .kicad_pcb natif
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
-  ⑤ call_agent_placement  → Ingénieur Placement
-     POST /place/auto (kicad_pcb_b64)
-     Pré-requis : footprints déjà hors-board (-1000,-1000) par call_agent_gen_pcb
-     Niveau 1 : kicad-tools
-       a. kct optimize-placement (si Final feasible + area>50mm²) — circuits discrets
-       b. place_unplaced(cluster=True) — sinon (Arduino/STM32, tout circuit)
-     Niveau 2 : pcbnew grille simple — si kicad-tools indisponible
-     Niveau 3 : TypeScript S-expr — fallback final (generate_pcb retourne '')
-     status:'error' si Docker down (fail fast)
-  ⑥ call_agent_routing    → Ingénieur Routage
+  ⑤ call_agent_placement  → Ingénieur Placement   [workflow OFFICIEL kicad-tools]
+     POST /place/auto (kicad_pcb_b64) — le PCB arrive DÉJÀ PLACÉ (call_agent_gen_pcb)
+     PlacementOptimizer.from_pcb(pcb, fixed_refs=<connecteurs J*/P*>,
+                                 enable_clustering=True)  ← API Python réelle
+       · fixed_refs        → connecteurs ancrés
+       · enable_clustering → regroupe les grappes (caps/quartz près du MCU = "grouping")
+       · run() + snap_rotations_to_90() + write_to_pcb()
+     Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
+     ⚠️ set_weights/add_group/lock/optimize/save de la doc N'EXISTENT PAS — vraie API ci-dessus
+  ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
      POST /route/auto
-     ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, 60s
-        route_all_negotiated + zones GND B.Cu + VCC F.Cu (--power-nets NET:LAYER)
-        si complétion < 95% → bascule vers Freerouting (avant : retournait 0%)
-     ② Freerouting REST API      — 1 JVM persistante port 37864, RAM 400MB fixe
-        POST sessions/create → jobs/enqueue → upload DSN → PUT start → GET output (SES)
-     ③ Freerouting subprocess    — fallback si API absent (1 JVM par job)
-     ④ kicad-tools A* negotiated — TOUS circuits sans limite nets, timeout 120s
-        Même algorithme que ①, utilisé quand Freerouting absent
-     ⑤ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
-     fallback : routing-fallback.ts (MST pur TS)
+     ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
+        pour les power nets en zones + route les signaux + escalade couches)
+     ② Sauvetage agentique si complétion < 100% (les ~10% corner cases) :
+        · reasoner LLM — PCBReasoningAgent + Claude Haiku (tools/reasoning.py)
+          si ANTHROPIC_API_KEY → "C bloque le net → déplace C de 2mm → reroute"
+        · sinon kct reason --auto-route (heuristique, sans LLM)
+     ③ Freerouting REST API / subprocess — fallback historique (port 37864)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
      ① kicad-tools Python DRC 27 règles JLCPCB — pur Python, toujours dispo
@@ -240,7 +237,13 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel :** `kct optimize-placement --strategy cmaes` SI feasible (circuits discrets) → fallback `place_unplaced(cluster=True)` pour shields/modules (Arduino/STM32 — optimize-placement INFEASIBLE car son modèle overlap = bbox pads, ignore le corps) → fallback pcbnew grille. Board fitté via `replace_outline()`.
+**Placement actuel (workflow OFFICIEL kicad-tools, depuis 2026-06-03) :** le PCB arrive
+déjà placé (call_agent_gen_pcb ne déplace plus à -1000) ; `PlacementOptimizer.from_pcb(
+pcb, fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()`.
+Le clustering regroupe les grappes électriques (caps/quartz près du MCU). **Aucun algo
+custom** (pin-adjacent/gate/HPWL supprimés). ⚠️ L'API doc `set_weights/add_group/optimize`
+n'existe PAS — utiliser la vraie API. Routage rapide (gros boards) = backend C++
+`kct build-native` (Docker). Voir `docs/notefinal.md` (décision 2026-06-03).
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
@@ -466,13 +469,18 @@ Ces deux librairies sont dans `services/kicad/` (gitignorées, documentées dans
     Sans ce fix : Device:R et Device:C → tous labels au même pin (pin 1) → R1.pin2=unconnected
   - `kicad/schematic/geometry_utils.py` — fallback index-based pour pin.number absent (défensif)
 
-### kicad_tools v0.13.0
-- **Source :** github.com/rjwalters/kicad-tools
-- **Install :** `pip install -e "/tmp/kicad_tools[placement,drc,geometry]"` (Docker)
-- **Patches Layrix :**
-  - `cli/route_cmd.py` `_write_routed_pcb()` — **fix fsync Windows (2026-06-01)**
-    Ouverture en mode écriture pour fsync → `with open(tmp, "w") as f: f.write(); f.flush(); os.fsync()`
-    Sans ce fix : OSError [Errno 9] Bad file descriptor sur Windows → .tmp orphelin → 0 segments routés
+### kicad-tools (dépôt officiel complet, depuis 2026-06-03)
+- **Source :** github.com/rjwalters/kicad-tools — **dépôt entier vendoré** dans
+  `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
+- **Import :** `kicad-tools/src` sur le sys.path → `import kicad_tools`.
+- **Install Docker :** `pip install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
+  puis `kct build-native` (backend C++ A*, 10-100× ; besoin cmake+g++).
+- **Workflow utilisé :** placement `PlacementOptimizer` (clustering + connecteurs ancrés) ·
+  routage `kct route --auto-layers --auto-fix` + `kct reason` (LLM/heuristique).
+- **Patch Layrix :** `src/.../cli/route_cmd.py` `_write_routed_pcb()` — **fix fsync Windows
+    (2026-06-02)** : `os.fsync` sur handle `"rb"` read-only → OSError [Errno 9] cassait
+    tout build/route sur Windows. Fix : write+fsync même handle writable, best-effort
+    (`try/except OSError`). Inoffensif en Docker/Linux. Voir `services/kicad/DEPENDENCIES.md`.
 
 **Règle :** après `git pull` d'une de ces libs, ré-appliquer les patches et ré-installer en éditable.
 

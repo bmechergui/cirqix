@@ -69,16 +69,16 @@ Pipeline 8 agents (ordre strict) :
 ④ `call_agent_gen_pcb` → Ingénieur Layout — génère `.kicad_pcb`
    Netlist 3 niveaux : ① kicad-tools Python pur · ② kicad-cli · ③ .kicad_net injecté
    PCB 3 niveaux : ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
-⑤ `call_agent_placement` → Ingénieur Placement
-   ① kct optimize-placement CMA-ES — SI Final feasible (circuits discrets)
-   ② place_unplaced(cluster=True) — fallback shields/modules (Arduino/STM32) + replace_outline fitté
-   ③ pcbnew grille · ④ error si Docker down
-⑥ `call_agent_routing` → Ingénieur Routage
-   ① kicad-tools A* negotiated (≤30 nets routables ≥2 pads, ≤30 comps, 60s)
-   ② Freerouting REST API (1 JVM persistante Docker port 37864, RAM 400MB fixe)
-   ③ Freerouting subprocess (fallback si API absente)
-   ④ kicad-tools A* negotiated SANS limite (tous circuits, 120s, si Freerouting absent)
-   ⑤ GND plane (TypeScript addGroundPlane, fallback final)
+⑤ `call_agent_placement` → Ingénieur Placement  [OFFICIEL kicad-tools]
+   Le PCB arrive déjà placé (call_agent_gen_pcb ne déplace plus à -1000).
+   `PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>, enable_clustering=True)`
+   + run() + snap_rotations_to_90() + write_to_pcb() — clustering regroupe les grappes
+   (caps/quartz près du MCU). Filet : place_unplaced si footprints hors-carte.
+⑥ `call_agent_routing` → Ingénieur Routage  [OFFICIEL kicad-tools]
+   ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
+   ② Sauvetage agentique si < 100% : reasoner LLM (PCBReasoningAgent + Claude Haiku,
+      si ANTHROPIC_API_KEY) sinon kct reason --auto-route (heuristique)
+   ③ Freerouting REST API / subprocess (fallback historique, port 37864)
 ⑦ `call_agent_drc` → Ingénieur Qualité
    ① kicad-tools 27 règles JLCPCB · ② kicad-cli auto-fix max 3× · ③ skipped
 ⑧ `call_agent_export` → Ingénieur Fabrication

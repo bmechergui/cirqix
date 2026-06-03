@@ -879,6 +879,49 @@ gate courtyard (jamais de board avec chevauchement), cascade Freerouting <95%,
 
 ---
 
+### 2026-06-02 → 2026-06-03 — Migration vers le workflow OFFICIEL kicad-tools
+
+**Décision :** Abandonner tout notre code de placement/routage custom (pin-adjacent,
+gate HPWL, zones manuelles, `_add_supply_traces`, board-fit…) et **déléguer au dépôt
+officiel kicad-tools** (API + CLI). On vendore le dépôt complet `services/kicad/kicad-tools/`.
+
+**Flux entre agents corrigé (conforme au pipeline officiel) :**
+- `call_agent_gen_pcb` (`tools/pcb.py`) → PCB **"unrouted"** = footprints **placés**
+  (suppression du pré-déplacement à -1000 ; `workflow.place_all_components` place déjà).
+- `call_agent_placement` (`tools/placement.py`) → `PlacementOptimizer.from_pcb(pcb,
+  fixed_refs=<connecteurs J*/P*>, enable_clustering=True)` + `run()` +
+  `snap_rotations_to_90()` + `write_to_pcb()`. Le clustering regroupe les grappes
+  électriques (caps/quartz près du MCU) — équivalent `--grouping` voulu.
+- `call_agent_routing` (`routers/routing.py`) → `kct route --auto-layers --auto-fix
+  --seed` puis **sauvetage agentique** : reasoner LLM (`PCBReasoningAgent` + Claude
+  Haiku, `tools/reasoning.py`) si `ANTHROPIC_API_KEY`, sinon `kct reason --auto-route`.
+
+**Pourquoi :** notre code custom cassait à chaque évolution du package et
+réimplémentait mal ce que le dépôt fait déjà (testé sur ses benchmarks). Validé :
+board 01 = ERC/Route/DRC/MFG PASS ; STM32 17 comps = 0 conflit, caps clusterisés.
+
+**Écarté :**
+- API de la doc (`set_weights/add_group/optimize/lock/save`) — **N'EXISTE PAS** dans
+  le code réel (vérifié). Vraie API = `from_pcb/run/write_to_pcb/snap_*`.
+- Flags CLI `--thermal/--grouping` sur `optimize-placement` — **inexistants** (sur
+  `placement optimize` force-directed seulement). On passe par l'API Python.
+- Remplacer `tools/pcb.py` par `kct create-pcb` — gardé notre gen, juste sans -1000.
+
+**Patch obligatoire (Windows) :** `kicad-tools/src/.../cli/route_cmd.py` `_write_routed_pcb`
+— `os.fsync` sur handle read-only → `OSError [Errno 9]` cassait tout build/route sur
+Windows ; fix write+fsync même handle (best-effort). Inoffensif en Docker/Linux.
+Voir `DEPENDENCIES.md`.
+
+**Reste (non bloquant, → Docker) :** backend C++ (`kct build-native`, 10-100× ;
+pas de compilateur en local Windows) ; reasoner LLM actif seulement avec la clé.
+
+**Fichiers concernés :** `services/kicad/{tools/pcb.py, tools/placement.py,
+tools/reasoning.py, routers/routing.py, main.py, Dockerfile, requirements.txt,
+DEPENDENCIES.md, .gitignore}` · `services/kicad/scripts/{optimiseur_pro.py,
+pipeline_pro.sh}` (démo versionnée).
+
+---
+
 ## Template pour la prochaine décision
 
 ```
