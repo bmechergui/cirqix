@@ -27,6 +27,7 @@ export type SSEEvent =
   | { type: 'step'; step: string }
   | { type: 'tool_call'; tool: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool: string; summary: string }
+  | { type: 'reasoning'; steps: string[] }
   | { type: 'pcb_state'; projectId: string; state: Record<string, unknown> }
   | { type: 'iteration'; count: number }
   | { type: 'done'; fullText: string }
@@ -165,6 +166,14 @@ export async function* runOrchestrator(
         tool: tool.name,
         summary: String(result['note'] ?? JSON.stringify(result).slice(0, 100)),
       };
+
+      // Reasoner IA : remonter les actions LLM pour affichage temps-réel UI/SSE
+      if (tool.name === 'call_agent_reason' && Array.isArray(result['reasoning_steps'])) {
+        const steps = (result['reasoning_steps'] as unknown[]).filter(
+          (s): s is string => typeof s === 'string',
+        );
+        if (steps.length > 0) yield { type: 'reasoning', steps };
+      }
 
       // Emit pcb_state so the frontend viewer can update in real-time
       const pcbStateTools = new Set([

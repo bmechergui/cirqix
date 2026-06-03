@@ -74,6 +74,14 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
           case 'pcb_state':
             setPcbState(projectId, ev.state);
             break;
+          case 'reasoning': {
+            // Reasoner IA — affiche les actions de déblocage du routage en direct
+            const block =
+              '\n\n🤖 **Reasoner IA — déblocage du routage :**\n' +
+              ev.steps.map((s) => `  ${s}`).join('\n');
+            patchLastAssistantMessage(projectId, block);
+            break;
+          }
           case 'status': {
             const stageMap = {
               INITIAL: 'IDEA',

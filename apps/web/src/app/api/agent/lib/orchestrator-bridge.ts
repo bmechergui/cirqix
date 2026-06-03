@@ -55,6 +55,13 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
         }
 
+        case 'reasoning':
+          // Actions du reasoner IA (déblocage routage) → affichage temps-réel UI
+          controller.enqueue(
+            encoder.encode(encodeSse({ type: 'reasoning', steps: ev.steps }))
+          );
+          break;
+
         case 'pcb_state': {
           const raw = ev.state as OrchestratorPcbState;
 

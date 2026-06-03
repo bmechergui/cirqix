@@ -5,6 +5,7 @@ export type SseEvent =
   | { type: 'step'; step: AgentStep }
   | { type: 'status'; status: PCBStatus }
   | { type: 'pcb_state'; state: PCBState }
+  | { type: 'reasoning'; steps: string[] }
   | { type: 'error'; message: string }
   | { type: 'done' };
 
