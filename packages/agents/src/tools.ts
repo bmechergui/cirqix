@@ -253,7 +253,11 @@ export const PCB_TOOLS: Tool[] = [
   },
 ];
 
-export const ACTIVE_PCB_TOOLS = PCB_TOOLS;
+// call_agent_reason est déclenché DÉTERMINISTE­MENT par l'orchestrateur après
+// call_agent_routing (si routed_percent < 100) — pas par Sonnet. On le retire donc
+// des outils exposés au LLM pour garantir zéro double-appel. Son handler reste actif
+// dans executeToolStub (l'orchestrateur l'appelle par code). Voir orchestrator.ts.
+export const ACTIVE_PCB_TOOLS = PCB_TOOLS.filter((t) => t.name !== 'call_agent_reason');
 
 // Persistent PCB state across tool calls within one orchestrator run
 // Keyed by projectId — populated by call_agent_schema and used by placement
@@ -786,7 +790,7 @@ export async function executeToolStub(
             `Routage kicad-tools ${service.routedPercent}% — ${schema.nets.length} nets, ` +
             `${service.layers} couches.` +
             (service.routedPercent < 100
-              ? ' Nets bloqués → appeler call_agent_reason.'
+              ? ' Nets bloqués → reasoner auto-déclenché par l\'orchestrateur.'
               : ''),
         };
       } catch (err) {
