@@ -60,6 +60,16 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     ⚠️ **Critique pour l'agent reasoner Layrix en prod** : Docker a kicad-cli →
     zone fill systématique ; passage de l'image à KiCad 9/10 = crash garanti
     du `/reason/auto` sur tout PCB avec zones, sans ce patch.
+  - `src/kicad_tools/reasoning/interpreter.py` — **fix layer_count 4/6 couches (2026-06-09)**
+    → `InterpreterConfig.layer_count = 2` hardcodé : sur un board 4/6 couches
+    (nos plans Pro/Pro Max), toute commande `route_net` du reasoner crashait
+    (`Layer value not in stack`, le grid ne modélisait que F.Cu/B.Cu).
+    Fix : promotion automatique de `layer_count` depuis `PCBState.layers`
+    (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
+  - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
+    rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
+    Contournement : retirer les zones avant `route_net`, les redéfinir après via
+    `define_zone` (même ordre que `kct route`). Voir `examples/stm32-validation/`.
 
 > Note : le pad-collapse de l'ancienne version (`optimize_placement_cmd._write_placements_to_pcb`)
 > n'existe **plus** dans cette version officielle — on délègue le placement à l'API

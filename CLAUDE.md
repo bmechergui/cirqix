@@ -378,6 +378,12 @@ services/kicad/scripts/
 **Ces scripts ne sont PAS appelés par les agents en production.** Les agents appellent directement les endpoints FastAPI (`/place/auto`, `/route/auto`, `/drc/auto`...) via `tools/placement.py`, `tools/routing.py`, etc.
 **NEVER** ajouter des scripts de validation dans `services/kicad/kicad-tools/scripts/` — réserver à `services/kicad/scripts/`.
 
+`driver_llm.py` = driver manuel du PCBReasoningAgent (`state` → décision LLM → `exec` batches JSON) — référence d'usage : `services/kicad/examples/stm32-validation/`.
+
+## Exemples de référence (services/kicad/examples/)
+
+`examples/<cas>/` = cas d'étude complet input→output (board, batches, README, résultat attendu dans `expected/`). Pas des tests automatisés — jamais de `test_*.py` ici. Les outputs intermédiaires régénérables ne sont jamais committés ; seuls `input/`, `batches/`, `README.md` et `expected/` (1 board final + 1 rendu) le sont.
+
 ---
 
 ## Variables d'environnement requises
