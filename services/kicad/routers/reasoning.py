@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from tools import reasoning
+from tools import kct_route, reasoning
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reasoning"])
@@ -32,7 +32,10 @@ _REASON_TIMEOUT_S = 120
 
 class ReasonAutoRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description=".kicad_pcb routé partiellement, base64")
-    max_steps: int = Field(default=15, ge=1, le=40)
+    max_steps: int = Field(default=15, ge=1, le=40,
+                           description="legacy — utilisé uniquement par la voie heuristique/full-LLM")
+    max_iterations: int = Field(default=3, ge=1, le=5,
+                                description="itérations placement-feedback (déplace → reroute)")
 
 
 class ReasonAutoResponse(BaseModel):
@@ -51,17 +54,22 @@ def reason_auto(req: ReasonAutoRequest) -> ReasonAutoResponse:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
-    # Voie 1 : reasoner LLM (Claude Haiku + PCBReasoningAgent)
+    # Voie 1 : boucle placement-feedback (le LLM déplace, kct route reroute).
+    # Validée sur examples/stm32-validation : 22% → 92% en déplaçant D1/R2.
     if reasoning.available():
         try:
-            out_bytes, pct, steps = reasoning.route_with_llm(pcb_bytes, max_steps=req.max_steps)
-            logger.info("reasoner LLM: %d%% (%d actions)", pct, len(steps))
+            out_bytes, pct, steps = reasoning.rescue_with_placement_feedback(
+                pcb_bytes,
+                route_fn=kct_route.route_kct,
+                max_iterations=req.max_iterations,
+            )
+            logger.info("reasoner placement-feedback: %d%% (%d étapes)", pct, len(steps))
             return ReasonAutoResponse(
                 kicad_pcb_b64=base64.b64encode(out_bytes).decode("ascii"),
                 routed_percent=pct, steps=steps, used_llm=True,
             )
         except Exception as exc:
-            logger.warning("reasoner LLM échoué (%s) — heuristique", exc)
+            logger.warning("reasoner placement-feedback échoué (%s) — heuristique", exc)
 
     # Voie 2 : heuristique officielle `kct reason --auto-route` (sans LLM)
     with tempfile.TemporaryDirectory() as tmp:

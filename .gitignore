@@ -79,3 +79,4 @@ validation-output/
 
 # Stray KiCad test-output dirs — absolute test paths accidentally created at repo root
 *Kicadmcptest*/
+.history/

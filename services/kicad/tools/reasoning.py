@@ -66,11 +66,12 @@ def _extract_json(text: str) -> dict | None:
         return None
 
 
-def _claude_decider(model: str):
+def _claude_decider(model: str, system: str = _SYSTEM_PROMPT):
     """Décideur par défaut : un appel Claude (Haiku) → une commande JSON dict.
 
     Isolé pour permettre l'injection d'un décideur déterministe dans les tests
-    (sans ANTHROPIC_API_KEY).
+    (sans ANTHROPIC_API_KEY). ``system`` permet de restreindre le vocabulaire
+    (boucle placement-feedback : place_component/delete_trace uniquement).
     """
     import anthropic
 
@@ -80,7 +81,7 @@ def _claude_decider(model: str):
         resp = client.messages.create(
             model=model,
             max_tokens=512,
-            system=[{"type": "text", "text": _SYSTEM_PROMPT,
+            system=[{"type": "text", "text": system,
                      "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": prompt}],
         )
@@ -116,6 +117,12 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
                    model: str = _MODEL, *,
                    decide=None) -> tuple[bytes, int, list[str]]:
     """Sauvetage de routage par le reasoner LLM (Claude + PCBReasoningAgent).
+
+    ⚠ Conservé volontairement (pas de caller en prod) : mode "full LLM" où le
+    LLM route lui-même — utile en debug manuel et comme filet si la boucle
+    placement-feedback (``rescue_with_placement_feedback``, voie primaire de
+    /reason/auto) devait être désactivée. Voir examples/stm32-validation pour
+    la comparaison des deux approches (22% full-LLM-router vs 92% feedback).
 
     Retourne (pcb_bytes, routed_percent, steps_log). ``steps_log`` décrit chaque
     action IA en français pour l'affichage UI/SSE. ``decide`` est le décideur
@@ -171,6 +178,148 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
         prog = agent.get_progress()
         pct = round(prog.nets_routed / prog.nets_total * 100) if prog.nets_total else 100
         return out.read_bytes(), pct, steps_log
+
+
+# ---------------------------------------------------------------------------
+# Boucle placement-feedback — le LLM déplace, kct route reroute
+# (validée sur examples/stm32-validation : 22% → 92% en déplaçant D1/R2)
+# ---------------------------------------------------------------------------
+
+_MAX_ITERATIONS = 3
+_MAX_MOVES_PER_ITER = 4
+_ALLOWED_FEEDBACK_COMMANDS = frozenset({"place_component", "delete_trace"})
+
+_PLACEMENT_SYSTEM_PROMPT = """\
+Tu es un ingénieur placement PCB. Le routeur automatique a échoué sur certains \
+nets : son analyse d'échec t'indique QUELS composants bloquent QUELS chemins.
+
+Ton SEUL levier est le placement. À chaque tour, réponds par UNE commande JSON \
+(rien d'autre) :
+- {"type":"place_component","ref":"D1","at":[x,y]}  ou  {"ref":"D1","near":"U1","offset":[3,0]}
+- {"type":"delete_trace","net":"NOM","delete_all_routing":true}
+
+INTERDIT : route_net, add_via, define_zone — le routage appartient au routeur \
+négocié qui repassera après tes déplacements.
+
+Stratégie : suis les suggestions du routeur (« Move D1 north… ») ; déplace les \
+petits composants (R, C, D) hors des couloirs bloqués, de quelques mm seulement ; \
+n'empile jamais deux composants. Si plus rien d'utile à déplacer, réponds null."""
+
+
+def _nets_of_ref(agent, ref: str) -> list[str]:
+    """Nets connectés aux pads d'un composant (pour le nettoyage déterministe)."""
+    comp = agent.state.components.get(ref)
+    if not comp:
+        return []
+    return sorted({p.net for p in comp.pads if p.net})
+
+
+def rescue_with_placement_feedback(
+    pcb_bytes: bytes,
+    *,
+    route_fn,
+    max_iterations: int = _MAX_ITERATIONS,
+    max_moves_per_iter: int = _MAX_MOVES_PER_ITER,
+    decide=None,
+    model: str = _MODEL,
+) -> tuple[bytes, int, list[str]]:
+    """Sauvetage de routage : le LLM DÉPLACE, le vrai routeur ROUTE.
+
+    Boucle (max ``max_iterations``) :
+      1. ``route_fn(pcb) -> (routed_bytes, pct, failure_analysis)`` — routeur
+         négocié complet (kct route) ;
+      2. si pct = 100 → terminé ; sinon le LLM décide jusqu'à
+         ``max_moves_per_iter`` déplacements (place_component / delete_trace
+         uniquement — jamais route_net) à partir de l'analyse d'échec ;
+      3. nettoyage DÉTERMINISTE des traces des nets du composant déplacé
+         (leçon stm32-validation : traces orphelines après déplacement) ;
+      4. re-route au tour suivant.
+
+    Garde anti-régression : renvoie toujours le MEILLEUR (bytes, pct) rencontré.
+    """
+    from kicad_tools.reasoning import PCBReasoningAgent
+
+    steps_log: list[str] = []
+    if decide is None:
+        decide = _claude_decider(model, system=_PLACEMENT_SYSTEM_PROMPT)
+
+    best_bytes, best_pct = pcb_bytes, -1
+    current = pcb_bytes
+
+    with tempfile.TemporaryDirectory() as tmp:
+        board = Path(tmp) / "board.kicad_pcb"
+
+        for iteration in range(1, max_iterations + 1):
+            routed, pct, analysis = route_fn(current)
+            steps_log.append(f"Itération {iteration}/{max_iterations} : routage {pct}%")
+            if pct > best_pct:
+                best_bytes, best_pct = routed, pct
+            if pct >= 100:
+                steps_log.append(f"✓ Routage complet à l'itération {iteration}")
+                break
+            if iteration == max_iterations:
+                break  # plus de re-routage possible — inutile de déplacer encore
+
+            # --- Le LLM décide des déplacements sur le board routé ------------
+            board.write_bytes(routed)
+            agent = PCBReasoningAgent.from_pcb(str(board))
+
+            moved_refs: list[str] = []
+            for _ in range(max_moves_per_iter):
+                prompt = (agent.get_prompt()
+                          + "\n## Analyse d'échec du routeur\n" + analysis)
+                try:
+                    command = decide(prompt)
+                except Exception as exc:
+                    logger.warning("placement-feedback: décision échouée (%s)", exc)
+                    steps_log.append(f"⚠ Appel IA échoué : {exc}")
+                    return best_bytes, best_pct, steps_log
+                if not command:
+                    break
+
+                ctype = command.get("type")
+                if ctype not in _ALLOWED_FEEDBACK_COMMANDS:
+                    steps_log.append(
+                        f"✗ Commande {ctype} interdite (le routage appartient à kct route)")
+                    continue
+
+                try:
+                    result, _diag = agent.execute_dict(command)
+                except Exception:
+                    steps_log.append(f"⚠ Commande invalide ({ctype}) — ignorée")
+                    continue
+
+                ok = "✓" if result.success else "✗"
+                steps_log.append(f"{ok} {_describe(command)}")
+                if result.success and ctype == "place_component":
+                    moved_refs.append(command.get("ref", ""))
+
+            if not moved_refs:
+                steps_log.append("Aucun déplacement utile — arrêt")
+                break
+
+            # --- Nettoyage déterministe des traces orphelines ---------------
+            for ref in moved_refs:
+                for net in _nets_of_ref(agent, ref):
+                    try:
+                        agent.execute_dict({"type": "delete_trace", "net": net,
+                                            "delete_all_routing": True})
+                        steps_log.append(
+                            f"♻ Nettoie les traces orphelines de {net} ({ref} déplacé)")
+                    except Exception:
+                        logger.warning("nettoyage orphelin %s/%s échoué", ref, net)
+
+            # Pas de _refresh_agent ici : save() sérialise le board interne de
+            # l'interpréteur (toujours juste), pas agent.state — et cette boucle
+            # n'appelle jamais is_complete()/get_progress() sur l'agent, contrairement
+            # à route_with_llm. Si on ajoute un tel check un jour : resync d'abord.
+            agent.save(str(board))
+            current = board.read_bytes()
+
+    if best_pct < 0:
+        best_bytes, best_pct = pcb_bytes, 0
+    steps_log.append(f"Sauvetage terminé : meilleur résultat conservé ({best_pct}%)")
+    return best_bytes, best_pct, steps_log
 
 
 def _describe(command: dict) -> str:
