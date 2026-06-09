@@ -354,16 +354,29 @@ hidden md:block shrink-0
 packages/agents/src/engines/     ← code source
 packages/agents/src/tests/       ← tests unitaires *.test.ts
 
-services/kicad/tests/            ← tests Python
+services/kicad/tests/            ← tests Python FastAPI (nos routers)
 apps/web/src/test/               ← tests frontend
 
 scratch/                         ← INTERDIT — jamais de scripts ici
 racine du projet                 ← INTERDIT — jamais de scripts de test à la racine
+services/kicad/kicad-tools/      ← INTERDIT — jamais ajouter de tests ici (lib upstream)
 ```
 
 **NEVER** créer un script de test à la racine du projet, dans `scratch/`, ou en dehors du dossier `tests/`.
+**NEVER** créer ou modifier des fichiers dans `services/kicad/kicad-tools/tests/` — c'est la lib upstream vendorée, pas notre code.
 **NEVER** committer des fichiers `test_out*.kicad_pcb`, `output_*/`, ou screenshots de test.
 **ALWAYS** nommer les fichiers de test : `*.test.ts` (TS) ou `test_*.py` (Python).
+
+## Scripts de validation manuelle (services/kicad/scripts/)
+
+```
+services/kicad/scripts/
+├── pipeline_pro.sh       ← pipeline bout-en-bout local (validation manuelle, pas prod)
+└── optimiseur_pro.py     ← démo PlacementOptimizer (référence, pas prod)
+```
+
+**Ces scripts ne sont PAS appelés par les agents en production.** Les agents appellent directement les endpoints FastAPI (`/place/auto`, `/route/auto`, `/drc/auto`...) via `tools/placement.py`, `tools/routing.py`, etc.
+**NEVER** ajouter des scripts de validation dans `services/kicad/kicad-tools/scripts/` — réserver à `services/kicad/scripts/`.
 
 ---
 

@@ -38,6 +38,15 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     best‑effort (`try/except OSError`). Sans ce fix : `kct build`/`kct route`
     échouent sur Windows (preuve : board 01 du repo échouait 0/1, passe 13/13 après).
     **En Docker (Linux) ce bug n'existe pas** — le patch est inoffensif là-bas.
+  - Sortie console routeur — **fix charmap Windows (2026-06-09)**
+    → les emojis (`⚠️`, `🔶`, `🔴`, `✓`, `✅`, `❌`) dans les logs du routeur crashaient
+    le routage en plein milieu sur Windows (console cp1252) :
+    `'charmap' codec can't encode character '⚠'` → attempts interrompus à ~66-77%.
+    Fix : remplacés par ASCII (`[!]`, `[#]`, `[X]`, `[ok]`, `[OK]`) dans
+    `router/fine_pitch.py`, `router/core.py`, `router/algorithms/two_phase.py`,
+    `router/algorithms/monte_carlo.py`, `cli/route_cmd.py`.
+    Ceinture : exporter `PYTHONIOENCODING=utf-8` avant `kct route` en local Windows.
+    **En Docker (Linux, UTF-8) ce bug n'existe pas** — patch inoffensif là-bas.
 
 > Note : le pad-collapse de l'ancienne version (`optimize_placement_cmd._write_placements_to_pcb`)
 > n'existe **plus** dans cette version officielle — on délègue le placement à l'API
@@ -49,7 +58,7 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools (ré-appliquer le patch fsync après pull — voir ci-dessus)
+# kicad-tools (ré-appliquer les patches fsync + charmap après pull — voir ci-dessus)
 cd services/kicad/kicad-tools && git pull && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 
