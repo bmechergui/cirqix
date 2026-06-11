@@ -385,6 +385,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 
 `examples/<cas>/` = cas d'étude complet input→output (board, batches, README, résultat attendu dans `expected/`). Pas des tests automatisés — jamais de `test_*.py` ici. Les outputs intermédiaires régénérables ne sont jamais committés ; seuls `input/`, `batches/`, `README.md` et `expected/` (1 board final + 1 rendu) le sont.
 
+**Règle : 1 dossier = 1 cas = 1 question.** Cas existants :
+- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb`
+- `stm32-full-pipeline/` — les 8 agents depuis un JSON circuit → Gerbers (`run_full_pipeline.py`, driver LLM rôles 1+2)
+
 ---
 
 ## Variables d'environnement requises

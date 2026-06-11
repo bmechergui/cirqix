@@ -1,5 +1,10 @@
 # Exemple de référence — Validation pipeline STM32 (input → output)
 
+> **1 dossier = 1 cas = 1 question.** Ce cas : « placement → routage → sauvetage
+> marchent-ils sur un board donné ? » (agents ④→⑥b, part d'un `.kicad_pcb`).
+> Pour le pipeline COMPLET 8 agents depuis un JSON (« description → Gerbers »),
+> voir `../stm32-full-pipeline/`.
+
 > Cas d'étude complet exécuté le 2026-06-09 sur Windows (local, sans Docker) :
 > **placement optimiseur → kct route → driver LLM** sur un devboard
 > STM32F103C8T6 (Blue Pill, LQFP-48 0.5mm — le cas de stress du routage).

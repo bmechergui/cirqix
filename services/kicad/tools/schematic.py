@@ -855,10 +855,15 @@ def _generate_with_kicad_tools(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
 ) -> Optional[str]:
-    """kicad-tools Schematic class → .kicad_sch. Returns None on failure."""
+    """kicad-tools Schematic class → .kicad_sch. Returns None on failure.
+
+    ``title`` est positionnel-obligatoire depuis le dépôt officiel kicad-tools
+    (vendoré 2026-06-03) — ``Schematic()`` nu → TypeError (bug trouvé par
+    examples/stm32-validation/run_full_pipeline.py le 2026-06-11).
+    """
     from kicad_tools.schematic.models.schematic import Schematic
 
-    sch = Schematic()
+    sch = Schematic(title=_derive_title(components))
 
     col_step = 55.0
     row_step = 35.0
