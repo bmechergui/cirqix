@@ -14,7 +14,7 @@ project:
     Minimal STM32F103C8 "Blue Pill" style development board demonstrating
     programmatic schematic generation with kicad-tools.
   artifacts:
-    schematic: "output/stm32_devboard.kicad_sch"
+    schematic: "../output/stm32_devboard.kicad_sch"
 
 intent:
   summary: |

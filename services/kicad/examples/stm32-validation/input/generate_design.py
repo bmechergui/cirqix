@@ -1318,7 +1318,7 @@ def main() -> int:
     if len(sys.argv) > 1:
         output_dir = Path(sys.argv[1])
     else:
-        output_dir = Path(__file__).parent / "output"
+        output_dir = Path(__file__).parent.parent / "output"
 
     try:
         # Step 1: Create project file
