@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
+
+from tools import kct_route
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -256,73 +258,16 @@ def _count_footprints(pcb_bytes: bytes) -> int:
     return len(re.findall(r'\(footprint\s+"', text))
 
 
-def _parse_routed_pct(stdout: str) -> int:
-    """Parse routing completion % from kct route/reason output.
-
-    Looks for the last "Routed: N/M nets" or "(P%)" line; defaults to 100 when
-    no net needed routing (all power nets poured as zones).
-    """
-    pct = 100
-    matches = re.findall(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', stdout)
-    if matches:
-        done, total = matches[-1]
-        if int(total) > 0:
-            pct = round(int(done) / int(total) * 100)
-    else:
-        m = re.search(r'\((\d+)%\s*\)', stdout)
-        if m:
-            pct = int(m.group(1))
-    return pct
-
-
 def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
-    """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
+    """Route via the official ``kct route`` CLI — délégué à tools/kct_route.
 
-    Delegates entirely to kicad-tools — it routes signal nets and pours power
-    nets as copper zones itself. Output is returned as-is (no custom S-expr
-    post-processing). Returns (routed_pcb_bytes, routed_percent).
-    Raises RuntimeError on failure.
+    Pas de sauvetage ici : si routed_pct < 100, l'orchestrateur appelle
+    explicitement l'agent reasoner (POST /reason/auto) — étape visible UI.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "input.kicad_pcb"
-        dst = Path(tmp) / "output.kicad_pcb"
-        src.write_bytes(pcb_bytes)
-
-        # Official kicad-tools recipe: let kct route auto-pour power nets
-        # (GND→B.Cu, VCC→F.Cu) and route signal nets, escalating layers and
-        # auto-fixing DRC. --seed makes it deterministic.
-        cmd = [
-            sys.executable, "-m", "kicad_tools.cli", "route",
-            str(src), "-o", str(dst),
-            "--strategy", "negotiated",
-            "--auto-layers", "--auto-fix",
-            "--seed", "42",
-            "--timeout", str(_PYTHON_ROUTER_TIMEOUT_S),
-        ]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=_PYTHON_ROUTER_TIMEOUT_S + 60, check=False,
-        )
-
-        if not dst.exists():
-            raise RuntimeError(
-                f"kct route produced no output (rc={result.returncode}): "
-                f"{result.stderr[:200] or result.stdout[-200:]}"
-            )
-
-        routed_pct = _parse_routed_pct(result.stdout)
-
-        # Pas de sauvetage ici : si routed_pct < 100, l'orchestrateur appelle
-        # explicitement l'agent reasoner (POST /reason/auto) — étape visible UI.
-
-        # Trust the official router output as-is (no custom S-expr post-processing).
-        routed = dst.read_bytes()
-        routed_text = routed.decode("utf-8", errors="replace")
-        seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))
-        zone_count = len(re.findall(r'\(zone[\s\n]', routed_text))
-        logger.info("kct route: %d segments, %d zones (%d%%)",
-                    seg_count, zone_count, routed_pct)
-        return routed, routed_pct
+    routed, routed_pct, _analysis = kct_route.route_kct(
+        pcb_bytes, timeout_s=_PYTHON_ROUTER_TIMEOUT_S
+    )
+    return routed, routed_pct
 
 
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:

@@ -79,3 +79,8 @@ validation-output/
 
 # Stray KiCad test-output dirs — absolute test paths accidentally created at repo root
 *Kicadmcptest*/
+.history/
+services/kicad/examples/*/output/
+
+# KiCad GUI lock files (created when a board is opened in the GUI)
+*.lck

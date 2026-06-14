@@ -855,10 +855,15 @@ def _generate_with_kicad_tools(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
 ) -> Optional[str]:
-    """kicad-tools Schematic class → .kicad_sch. Returns None on failure."""
+    """kicad-tools Schematic class → .kicad_sch. Returns None on failure.
+
+    ``title`` est positionnel-obligatoire depuis le dépôt officiel kicad-tools
+    (vendoré 2026-06-03) — ``Schematic()`` nu → TypeError (bug trouvé par
+    examples/stm32-validation/run_full_pipeline.py le 2026-06-11).
+    """
     from kicad_tools.schematic.models.schematic import Schematic
 
-    sch = Schematic()
+    sch = Schematic(title=_derive_title(components))
 
     col_step = 55.0
     row_step = 35.0
@@ -866,14 +871,15 @@ def _generate_with_kicad_tools(
     margin_y = 25.0
     cols = max(1, math.ceil(math.sqrt(len(components))))
 
-    sym_positions: dict[str, tuple[float, float]] = {}
+    # SymbolInstance expose pin_position(pin) → endpoint absolu après placement.
+    sym_instances: dict[str, object] = {}
 
     for i, comp in enumerate(components):
         x = margin_x + (i % cols) * col_step
         y = margin_y + (i // cols) * row_step
         lib_id = _safe_symbol(_map_symbol(comp))
         try:
-            sch.add_symbol(
+            sym_instances[comp.ref] = sch.add_symbol(
                 lib_id=lib_id,
                 x=x, y=y,
                 ref=comp.ref,
@@ -881,24 +887,33 @@ def _generate_with_kicad_tools(
                 footprint=_expand_footprint(comp),
                 snap=True,
             )
-            sym_positions[comp.ref] = (x, y)
         except Exception as exc:
             logger.warning("kicad-tools add_symbol %s (%s): %s", comp.ref, lib_id, exc)
 
-    label_idx: dict[str, int] = {}
+    # Poser chaque label de net À LA POSITION EXACTE de la pin (pin_position).
+    # Un offset arbitraire laisse le label déconnecté → extract_netlist() isole
+    # chaque pin dans son propre Net-(REF-PinN) → netlist PCB fragmenté
+    # (83 nets au lieu de 12, routage bloqué à 0%). snap=False : pin_position
+    # est déjà précis, un re-snap décalerait le label hors de la pin.
     for conn in connections:
         for pin in conn.pins:
-            pos = sym_positions.get(pin.ref)
-            if pos is None:
+            sym = sym_instances.get(pin.ref)
+            if sym is None:
                 continue
-            n = label_idx.get(pin.ref, 0)
-            lx = pos[0] + 8.0
-            ly = pos[1] + n * 2.54
-            label_idx[pin.ref] = n + 1
             try:
-                sch.add_label(conn.name, lx, ly, validate_connection=False)
-            except Exception:
-                pass
+                lx, ly = sym.pin_position(str(pin.pin))
+            except Exception as exc:
+                logger.warning(
+                    "kicad-tools pin_position %s.%s introuvable: %s",
+                    pin.ref, pin.pin, exc,
+                )
+                continue
+            try:
+                sch.add_label(
+                    conn.name, lx, ly, snap=False, validate_connection=False,
+                )
+            except Exception as exc:
+                logger.warning("kicad-tools add_label %s @%s: %s", conn.name, pin.ref, exc)
 
     content = sch.to_sexp()
     return content if content else None

@@ -411,8 +411,12 @@ def _generate_with_kicad_tools(
         netlist_resolved = False
 
         # Niveau 1 — kicad-tools Python pur (sans kicad-cli)
+        # Le module est `kicad_tools.operations.netlist` (PAS `workflow._netlist`,
+        # qui n'existe pas dans le dépôt officiel vendoré → ModuleNotFoundError
+        # à 100% → fallback kicad-cli systématique → netlist fragmenté). Voir
+        # tests/test_pcb_netlist.py + mémoire project-netlist-niveau1-broken.
         try:
-            from kicad_tools.workflow._netlist import build_netlist_from_schematic as _bns
+            from kicad_tools.operations.netlist import build_netlist_from_schematic as _bns
             workflow._netlist = _bns(str(sch_path))
             logger.info("_generate_with_kicad_tools: netlist niveau 1 (Python pur)")
             netlist_resolved = True

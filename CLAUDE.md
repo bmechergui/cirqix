@@ -354,16 +354,40 @@ hidden md:block shrink-0
 packages/agents/src/engines/     ← code source
 packages/agents/src/tests/       ← tests unitaires *.test.ts
 
-services/kicad/tests/            ← tests Python
+services/kicad/tests/            ← tests Python FastAPI (nos routers)
 apps/web/src/test/               ← tests frontend
 
 scratch/                         ← INTERDIT — jamais de scripts ici
 racine du projet                 ← INTERDIT — jamais de scripts de test à la racine
+services/kicad/kicad-tools/      ← INTERDIT — jamais ajouter de tests ici (lib upstream)
 ```
 
 **NEVER** créer un script de test à la racine du projet, dans `scratch/`, ou en dehors du dossier `tests/`.
+**NEVER** créer ou modifier des fichiers dans `services/kicad/kicad-tools/tests/` — c'est la lib upstream vendorée, pas notre code.
 **NEVER** committer des fichiers `test_out*.kicad_pcb`, `output_*/`, ou screenshots de test.
 **ALWAYS** nommer les fichiers de test : `*.test.ts` (TS) ou `test_*.py` (Python).
+
+## Scripts de validation manuelle (services/kicad/scripts/)
+
+```
+services/kicad/scripts/
+└── driver_llm.py     ← driver manuel du PCBReasoningAgent (state → décision LLM → exec batches JSON)
+```
+
+**Ces scripts ne sont PAS appelés par les agents en production.** Les agents appellent directement les endpoints FastAPI (`/place/auto`, `/route/auto`, `/drc/auto`...) via `tools/placement.py`, `tools/routing.py`, etc.
+**NEVER** ajouter des scripts de validation dans `services/kicad/kicad-tools/scripts/` — réserver à `services/kicad/scripts/`.
+
+Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validation/`.
+(`pipeline_pro.sh` et `optimiseur_pro.py` supprimés le 2026-06-11 — remplacés par
+`examples/*/run_agent_chain.py`, qui rejoue la chaîne agents via les fonctions de prod.)
+
+## Exemples de référence (services/kicad/examples/)
+
+`examples/<cas>/` = cas d'étude complet input→output (board, batches, README, résultat attendu dans `expected/`). Pas des tests automatisés — jamais de `test_*.py` ici. Les outputs intermédiaires régénérables ne sont jamais committés ; seuls `input/`, `batches/`, `README.md` et `expected/` (1 board final + 1 rendu) le sont.
+
+**Règle : 1 dossier = 1 cas = 1 question.** Cas existants :
+- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb`
+- `stm32-full-pipeline/` — les 8 agents depuis un JSON circuit → Gerbers (`run_full_pipeline.py`, driver LLM rôles 1+2)
 
 ---
 
