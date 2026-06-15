@@ -92,8 +92,10 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     Phase 2 CMA-ES), la Phase 1 serait jetée. Fix : ajout de
     `seed_method="current"` (+ helper `_build_current_seed`) qui construit le
     vecteur seed `[x,y,rot,side]` depuis les positions courantes du PCB
-    (`fp.position` board-relative = repère optimiseur). Ainsi Phase 1 **nourrit**
-    Phase 2. Voir `tools/placement.auto_place`.
+    (`fp.position` board-relative = repère optimiseur). **+ `cli/parser.py`** :
+    ajouter `"current"` aux `choices` du flag `--seed` (sinon argparse rejette
+    `kct optimize-placement --seed current`). Ainsi Phase 1 **nourrit** Phase 2.
+    `tools/placement.auto_place` invoque la CLI en subprocess (`--seed current`).
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
@@ -114,7 +116,8 @@ cd services/kicad/circuit_synth && git pull && pip install -e .
 #   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
 #   4. writer CMA-ES        (cli/optimize_placement_cmd.py _write_placements_to_pcb 2-pass)
-#   5. seed=current         (cli/optimize_placement_cmd.py _generate_seed + _build_current_seed)
+#   5. seed=current         (cli/optimize_placement_cmd.py _generate_seed + _build_current_seed
+#                            ET cli/parser.py : "current" dans les choices de --seed)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```

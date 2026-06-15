@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -131,7 +134,6 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
 
         from kicad_tools.schema.pcb import PCB
         from kicad_tools.optim import PlacementOptimizer
-        from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
 
         pcb = PCB.load(str(src))
 
@@ -155,23 +157,46 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                           if fp.reference in conn}
         logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
 
-        # ── Phase 2 : CMA-ES seedé depuis Phase 1 (seed=current) ──
+        # ── Phase 2 : CMA-ES via la CLI officielle (seed=current depuis Phase 1) ──
+        # « kct optimize-placement --strategy cmaes --seed current » : le génétique
+        # raffine DEPUIS la Phase 1 (--seed current = patch Layrix #6 ; sans ça
+        # CMA-ES re-seede force-directed et jette la Phase 1). PYTHONUTF8=1 évite
+        # un crash charmap des logs sur console Windows. --allow-infeasible : on
+        # garde le meilleur placement même légèrement infaisable (routeur/DRC aval).
         try:
-            rc = run_optimize_placement(
-                str(interm),
-                strategy_name="cmaes",
-                seed_method="current",
-                max_iterations=_CMAES_MAX_ITERATIONS,
-                time_budget=_CMAES_TIME_BUDGET_S,
-                output_path=str(out),
-                allow_infeasible=True,
-                quiet=True,
+            # kicad_tools est importable par le subprocess : pip-installé en
+            # Docker, sinon via kicad-tools/src ajouté au PYTHONPATH (inoffensif
+            # en Docker où ce chemin n'existe pas).
+            _kt_src = Path(__file__).resolve().parent.parent / "kicad-tools" / "src"
+            _pythonpath = os.pathsep.join(
+                p for p in (str(_kt_src), os.environ.get("PYTHONPATH", "")) if p
             )
-            logger.info("Phase 2 - CMA-ES (seed=current) terminé (rc=%s)", rc)
+            env = {
+                **os.environ,
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONPATH": _pythonpath,
+            }
+            subprocess.run(
+                [
+                    sys.executable, "-m", "kicad_tools.cli", "optimize-placement",
+                    str(interm), "--output", str(out),
+                    "--strategy", "cmaes",
+                    "--max-iterations", str(_CMAES_MAX_ITERATIONS),
+                    "--time-budget", str(_CMAES_TIME_BUDGET_S),
+                    "--seed", "current",
+                    "--allow-infeasible", "--quiet",
+                ],
+                check=True, capture_output=True, text=True, env=env,
+                timeout=_CMAES_TIME_BUDGET_S + 60,
+            )
+            logger.info("Phase 2 - CMA-ES (seed=current) terminé")
             if not out.exists():
                 raise RuntimeError("optimize-placement n'a produit aucun output")
         except Exception as exc:
-            logger.warning("Phase 2 - CMA-ES échoué (%s) — placement Phase 1 conservé", exc)
+            stderr = getattr(exc, "stderr", "") or ""
+            logger.warning("Phase 2 - CMA-ES échoué (%s) %s — placement Phase 1 conservé",
+                           exc, stderr[:300])
             out.write_bytes(interm.read_bytes())
 
         # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──
