@@ -84,6 +84,16 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     Fix : writer 2 passes — passe 1 mappe chaque bloc footprint → (ref, index du
     1er `(at)`), passe 2 réécrit ce `(at)`. **Critique pour l'agent placement
     Layrix** (`tools/placement.auto_place`) qui délègue le raffinement à CMA-ES.
+  - `src/kicad_tools/cli/optimize_placement_cmd.py` `_generate_seed` /
+    `_build_current_seed` — **fix seed=current (2026-06-15)**
+    → `seed_method` officiel ne connaît que `force-directed`/`random` → CMA-ES
+    re-génère TOUJOURS son seed et **ignore le placement d'entrée**. Pour notre
+    agent placement 2-phases (Phase 1 PlacementOptimizer clustering+ancrage →
+    Phase 2 CMA-ES), la Phase 1 serait jetée. Fix : ajout de
+    `seed_method="current"` (+ helper `_build_current_seed`) qui construit le
+    vecteur seed `[x,y,rot,side]` depuis les positions courantes du PCB
+    (`fp.position` board-relative = repère optimiseur). Ainsi Phase 1 **nourrit**
+    Phase 2. Voir `tools/placement.auto_place`.
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
@@ -99,11 +109,12 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 4 patches LIB :
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 5 patches LIB :
 #   1. fsync Windows        (cli/route_cmd.py _write_routed_pcb)
 #   2. reasoning name-only  (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c     (reasoning/interpreter.py promotion depuis PCBState.layers)
 #   4. writer CMA-ES        (cli/optimize_placement_cmd.py _write_placements_to_pcb 2-pass)
+#   5. seed=current         (cli/optimize_placement_cmd.py _generate_seed + _build_current_seed)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```

@@ -351,30 +351,6 @@ def _snap_labels_to_pins(sch_content: str, tolerance_mm: float = 8.0) -> str:
     return processed
 
 
-def _initial_force_directed_placement(pcb_path: Path) -> None:
-    """Placement initial force-directed via ``PlacementOptimizer`` (sans ancrage).
-
-    Remplace le débordement possible de la grille ``place_all_components`` par un
-    placement force-directed qui garde tous les composants dans le contour
-    Edge.Cuts. Aucun connecteur ancré (tous mobiles). Best-effort : sur échec,
-    le placement grille est conservé. L'agent placement (⑤) raffine ensuite en
-    CMA-ES (``tools/placement.auto_place``).
-    """
-    try:
-        from kicad_tools.schema.pcb import PCB
-        from kicad_tools.optim import PlacementOptimizer
-
-        pcb = PCB.load(str(pcb_path))
-        opt = PlacementOptimizer.from_pcb(pcb, fixed_refs=[], enable_clustering=True)
-        opt.run(iterations=1000)
-        opt.snap_rotations_to_90()
-        opt.write_to_pcb(pcb)
-        pcb.save(str(pcb_path))
-        logger.info("gen_pcb: placement initial force-directed appliqué")
-    except Exception as exc:
-        logger.warning("gen_pcb: PlacementOptimizer échoué (%s) — grille conservée", exc)
-
-
 def _generate_with_kicad_tools(
     kicad_sch_content: str,
     board_w: float,
@@ -477,14 +453,12 @@ def _generate_with_kicad_tools(
 
         workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
         # Place les footprints SUR la carte (fichier "unrouted" = placé, sans pistes).
-        # ① grille place_all_components (positions de départ)
-        # ② PlacementOptimizer force-directed → placement initial propre (garde
-        #    tout dans le contour, corrige le débordement grille). L'agent
-        #    placement (⑤) raffine ensuite en CMA-ES (tous composants mobiles).
+        # Placement de départ par grille uniquement : l'agent placement (⑤) fait
+        # le vrai placement en 2 phases — Phase 1 PlacementOptimizer (clustering +
+        # connecteurs ancrés) puis Phase 2 CMA-ES (raffinement seed=current).
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
-        _initial_force_directed_placement(pcb_path)
 
         if not pcb_path.exists():
             return None

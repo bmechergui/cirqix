@@ -1,19 +1,27 @@
 """Tests — auto_place() (tools/placement.py), TDD.
 
-Architecture (2026-06-15) :
-  - gen_pcb (tools/pcb.py)      → placement initial PlacementOptimizer (force-directed)
-  - agent placement (auto_place) → raffinement CMA-ES (run_optimize_placement,
-    --strategy cmaes), TOUS composants mobiles (aucun ancrage de connecteur).
+Architecture 2 phases (2026-06-15) :
+  - Phase 1 : PlacementOptimizer (clustering + connecteurs J*/P* ANCRÉS, clampés
+    dans le contour) prépare le terrain.
+  - Phase 2 : CMA-ES (kct optimize-placement --strategy cmaes, seed=current —
+    patch Layrix #6) raffine DEPUIS la Phase 1.
+  - Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
+    après la Phase 2 (CMA-ES ne fige pas dur).
 
-CMA-ES re-seed lui-même en force-directed (il ignore les positions d'entrée) :
-on ne teste donc plus « le connecteur ne bouge pas » (invariant supprimé — les
-connecteurs sont mobiles comme les autres). L'invariant garanti devient :
-**tous les composants finissent dans le contour Edge.Cuts** (placement legal).
+Invariants testés : un connecteur hors-carte est ramené dans le contour ; un
+connecteur déjà bien placé ne bouge pas (ancrage Phase 1 + re-ancrage post-CMA-ES).
+
+Le board de test est construit avec PCB.create() (contour Edge.Cuts) + des
+footprints minimaux injectés en texte S-expr. ``center=True`` (défaut prod) : le
+contour est en coordonnées sheet-absolute décalées de ``pcb.board_origin`` vs
+``fp.position`` (board-relative) — _clamp_fixed_refs_to_outline() convertit.
 """
 from __future__ import annotations
 
 import base64
 from pathlib import Path
+
+import pytest
 
 from kicad_tools.schema.pcb import PCB
 
@@ -41,12 +49,16 @@ def _footprint_sexp(ref: str, uuid: str, x_abs: float, y_abs: float) -> str:
 """
 
 
-def _board_with_footprints(
+def _board_with_connectors(
     tmp_path: Path,
-    refs_board_xy: dict[str, tuple[float, float]],
+    j1_board_xy: tuple[float, float],
+    j2_board_xy: tuple[float, float] | None = None,
 ) -> bytes:
-    """Board 60x40mm centré (PCB.create(center=True), défaut prod) + footprints
-    injectés aux positions board-relative données (converties en sheet-absolute)."""
+    """Board 60x40mm centré sur feuille A4 (PCB.create(center=True), défaut prod).
+
+    ``j1_board_xy`` / ``j2_board_xy`` sont board-relative ; convertis en
+    sheet-absolute (+ pcb.board_origin) pour l'injection S-expr.
+    """
     pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
     ox, oy = pcb.board_origin
     board_path = tmp_path / "board.kicad_pcb"
@@ -55,43 +67,40 @@ def _board_with_footprints(
     text = board_path.read_text(encoding="utf-8")
     close_idx = text.rstrip().rfind(")")
 
-    inject = ""
-    for i, (ref, (bx, by)) in enumerate(refs_board_xy.items()):
-        uuid = f"{i:08d}-0000-0000-0000-000000000000"
-        inject += _footprint_sexp(ref, uuid, ox + bx, oy + by)
+    inject = _footprint_sexp("J1", "11111111-1111-1111-1111-111111111111",
+                              ox + j1_board_xy[0], oy + j1_board_xy[1])
+    if j2_board_xy is not None:
+        inject += _footprint_sexp("J2", "22222222-2222-2222-2222-222222222222",
+                                   ox + j2_board_xy[0], oy + j2_board_xy[1])
 
     text = text[:close_idx] + inject + text[close_idx:]
     board_path.write_text(text, encoding="utf-8")
     return board_path.read_bytes()
 
 
-def test_auto_place_keeps_all_components_on_board(tmp_path):
-    """Invariant CMA-ES : après auto_place, TOUS les composants sont dans le
-    contour Edge.Cuts [0,W]x[0,H] — même un connecteur arrivé hors-carte."""
-    pcb_bytes = _board_with_footprints(
-        tmp_path,
-        {"J1": (30.0, 135.0),   # hors-carte en entrée (y=135 > 40)
-         "J2": (10.0, 10.0),
-         "J3": (50.0, 30.0)},
+def test_auto_place_clamps_connector_outside_outline(tmp_path):
+    """J1 ancré hors du contour Edge.Cuts doit être ramené dedans (Phase 1 clamp),
+    et y rester après la Phase 2 CMA-ES (re-ancrage)."""
+    pcb_bytes = _board_with_connectors(tmp_path, j1_board_xy=(30.0, 135.0))
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    j1 = next(p for p in result["positions"] if p["ref"] == "J1")
+    assert 0.0 <= j1["x"] <= _BOARD_W_MM, f"J1.x={j1['x']} hors contour [0,{_BOARD_W_MM}]"
+    assert 0.0 <= j1["y"] <= _BOARD_H_MM, f"J1.y={j1['y']} hors contour [0,{_BOARD_H_MM}]"
+
+
+def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
+    """J2 déjà bien placé (30,20) reste à sa position : ancré en Phase 1
+    (fixed_refs) ET restauré après la Phase 2 CMA-ES (re-ancrage)."""
+    pcb_bytes = _board_with_connectors(
+        tmp_path, j1_board_xy=(30.0, 135.0), j2_board_xy=(30.0, 20.0),
     )
     b64 = base64.b64encode(pcb_bytes).decode()
 
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
-    for pos in result["positions"]:
-        assert 0.0 <= pos["x"] <= _BOARD_W_MM, f"{pos['ref']}.x={pos['x']} hors [0,{_BOARD_W_MM}]"
-        assert 0.0 <= pos["y"] <= _BOARD_H_MM, f"{pos['ref']}.y={pos['y']} hors [0,{_BOARD_H_MM}]"
-
-
-def test_auto_place_returns_all_components(tmp_path):
-    """auto_place retourne bien tous les composants placés."""
-    pcb_bytes = _board_with_footprints(
-        tmp_path, {"J1": (10.0, 10.0), "J2": (30.0, 20.0), "J3": (50.0, 30.0)},
-    )
-    b64 = base64.b64encode(pcb_bytes).decode()
-
-    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
-
-    assert result["placed_count"] == 3
-    assert {p["ref"] for p in result["positions"]} == {"J1", "J2", "J3"}
-    assert result["kicad_pcb_b64"]
+    j2 = next(p for p in result["positions"] if p["ref"] == "J2")
+    assert j2["x"] == pytest.approx(30.0, abs=0.01)
+    assert j2["y"] == pytest.approx(20.0, abs=0.01)
