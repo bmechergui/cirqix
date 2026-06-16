@@ -18,6 +18,8 @@ import math
 import tempfile
 from pathlib import Path
 
+from kicad_tools.explain.mistakes import is_bypass_cap as _kt_is_bypass_cap
+
 logger = logging.getLogger(__name__)
 
 # Seuil en mm : cap à plus de X mm du MCU après Phase 1 → repositionné pour Phase 2
@@ -122,6 +124,21 @@ def _restore_bypass_caps_near_mcu(
     return changed
 
 
+def _is_bypass_cap(fp) -> bool:
+    """Vrai si fp est un condensateur de découplage, en déléguant à kicad-tools.
+
+    kicad-tools `is_bypass_cap(reference, value)` identifie par VALEUR (100nF, 10nF,
+    1uF...) — plus précis qu'un filtre topologique. Exclut les bulk caps (100uF)
+    qui ne doivent pas être snappés près d'un IC.
+    Critère minimal : 2 pads (bypass cap SMD passif).
+    """
+    if not fp.pads or len(fp.pads) != 2:
+        return False
+    ref = fp.reference or ""
+    val = fp.value if hasattr(fp, "value") else ""
+    return _kt_is_bypass_cap(ref, val or "")
+
+
 def _snap_bypass_caps_to_ics(
     pcb,
     initial_positions: dict[str, tuple[float, float]],
@@ -134,8 +151,9 @@ def _snap_bypass_caps_to_ics(
 ) -> bool:
     """Snappe les condensateurs de découplage encore loin de leur IC owner après Phase 2.
 
-    Seuls les caps (ref[0]=='C') sont traités — résistances, diodes, cristaux
-    ont des contraintes de placement fonctionnelles spécifiques.
+    Détection via kicad-tools `is_bypass_cap(reference, value)` — identifie par
+    VALUE (100nF, 10nF, 1uF...), plus précis qu'un filtre de topologie réseau.
+    Exclut les bulk caps (100uF) qui ont des contraintes différentes.
 
     IC owner = IC (≥3 pads) partageant ≥1 net avec le cap ET le plus proche de la
     position INITIALE du cap (positions Phase 2 des ICs exclues — elles ont bougé).
@@ -158,10 +176,8 @@ def _snap_bypass_caps_to_ics(
     ic_snap_idx: dict[str, int] = {}
 
     for fp in pcb.footprints:
-        # Seulement les condensateurs (convention KiCad : ref commence par C)
-        if not fp.reference or fp.reference[0] != 'C':
-            continue
-        if not fp.pads or len(fp.pads) != 2:
+        # Condensateurs de découplage uniquement (kicad-tools is_bypass_cap)
+        if not _is_bypass_cap(fp):
             continue
 
         fp_nets = {str(p.net) for p in fp.pads if p.net}

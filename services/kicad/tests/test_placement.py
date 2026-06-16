@@ -30,6 +30,7 @@ from kicad_tools.schema.pcb import PCB
 from tools.placement import (
     auto_place,
     _find_mcu_footprint,
+    _is_bypass_cap,
     _restore_bypass_caps_near_mcu,
     _snap_bypass_caps_to_ics,
 )
@@ -95,9 +96,10 @@ def _make_pad(net: int) -> object:
     return p
 
 
-def _make_fp(ref: str, x: float, y: float, pad_nets: list[int]) -> object:
+def _make_fp(ref: str, x: float, y: float, pad_nets: list[int], value: str = "100nF") -> object:
     fp = types.SimpleNamespace()
     fp.reference = ref
+    fp.value = value
     fp.position = (x, y)
     fp.pads = [_make_pad(n) for n in pad_nets]
     return fp
@@ -107,6 +109,34 @@ def _make_pcb(footprints: list) -> object:
     pcb = types.SimpleNamespace()
     pcb.footprints = footprints
     return pcb
+
+
+# ---------------------------------------------------------------------------
+# Tests unitaires — _is_bypass_cap (wrapper kicad-tools is_bypass_cap)
+# ---------------------------------------------------------------------------
+
+def test_is_bypass_cap_true_for_100nf():
+    """C12 avec valeur 100nF → bypass cap détecté via kicad-tools."""
+    fp = _make_fp("C12", 0, 0, [2, 3], value="100nF")
+    assert _is_bypass_cap(fp) is True
+
+
+def test_is_bypass_cap_false_for_resistor():
+    """R1 (résistance, ref commence par R) → pas un bypass cap même si value=100nF."""
+    fp = _make_fp("R1", 0, 0, [2, 5], value="100nF")
+    assert _is_bypass_cap(fp) is False
+
+
+def test_is_bypass_cap_false_for_bulk_cap():
+    """C1 avec valeur 100uF → bulk cap, pas un bypass cap (value hors liste)."""
+    fp = _make_fp("C1", 0, 0, [1, 3], value="100uF")
+    assert _is_bypass_cap(fp) is False
+
+
+def test_is_bypass_cap_false_for_non_2pad():
+    """Composant IC avec value 100nF mais 4 pads → pas un bypass cap (>2 pads)."""
+    fp = _make_fp("C99", 0, 0, [2, 3, 4, 5], value="100nF")
+    assert _is_bypass_cap(fp) is False
 
 
 # ---------------------------------------------------------------------------
