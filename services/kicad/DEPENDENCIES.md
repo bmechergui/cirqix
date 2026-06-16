@@ -78,17 +78,22 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     (uniquement vers le haut — une restriction explicite de l'appelant reste honorée).
   - `src/kicad_tools/cli/optimize_placement_cmd.py` — **2 patches CMA-ES (ré-ajoutés 2026-06-16)**
     Phase 2 = CMA-ES via `run_optimize_placement(seed_method="current")` →
-    2 correctifs requis :
+    5 correctifs dans ce fichier (à ré-appliquer après chaque update upstream) :
     1. **Writer 2-pass** `_write_placements_to_pcb` — KiCad 8/9 : `(at ...)` apparaît
-       AVANT `(property "Reference" ...)` → le writer single-pass upstream ne met
-       jamais à jour les positions (current_ref=None au moment de (at ...)). Fix :
-       Pass 1 scanne les footprint blocks pour collecter (at_line_idx, ref) ;
-       Pass 2 patch ces lignes en sortie.
+       AVANT `fp_text reference` dans le S-expr → writer single-pass ne met jamais à
+       jour les positions. Fix : Pass 1 collecte (at_line_idx, ref) par footprint bloc ;
+       Pass 2 patch ces lignes. Regex `_FP_RE_OLD` : supprimer `\s` final (absent
+       après `.strip()` sur KiCad 8/9 — sinon aucun footprint reconnu).
     2. **Seed "current"** `_generate_seed` — ajoute `seed_method='current'` : encode
-       les positions actuelles du PCB (Phase 1) comme vecteur initial CMA-ES, via
-       `PCB.load(pcb_path)` + `encode(PlacedComponent list)`. Sans ce patch, CMA-ES
-       repart d'un seed force-directed → ignore Phase 1 et re-place tout de zéro.
-       `run_optimize_placement` passe `pcb_path` + `board_origin` à `_generate_seed`.
+       positions Phase 1 comme vecteur initial CMA-ES. `fp.position` est déjà
+       board-relative (PCB API soustrait board_origin) → NE PAS soustraire à nouveau.
+    3. **Clamping per-dimension** dans `_generate_seed` — CMAwM exige mean[i] ∈
+       [lower[i], upper[i]]. Clamp via `placement_bounds` passé depuis
+       `run_optimize_placement` (grands footprints J1/U2 ont des bornes > marge fixe).
+    4. **Signature étendue** `_generate_seed` — paramètres `pcb_path`, `board_origin`,
+       `placement_bounds` ajoutés (kwonly).
+    5. **Appel étendu** dans `run_optimize_placement` — passe `pcb_path`, `board_origin`,
+       `placement_bounds` à `_generate_seed` pour seed_method="current".
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
