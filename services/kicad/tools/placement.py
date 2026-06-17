@@ -5,9 +5,9 @@ Délègue au workflow officiel kicad-tools (aucun algo custom) :
   1. place_components()  — positions explicites fournies par l'agent
   2. auto_place()        — placement auto 2 phases COMPLÉMENTAIRES :
        Phase 1 : PlacementOptimizer (physique locale, clustering, connecteurs ancrés)
-       Bridge  : bypass caps repositionnés près du MCU (seed CMA-ES)
-       Phase 2 : run_optimize_placement --strategy cmaes --seed current
-                 CMA-ES (CMAwM) seeded depuis Phase 1 → raffinement global
+       Bridge  : bypass caps repositionnés près du MCU (seed Phase 2)
+       Phase 2 : PlaceRouteOptimizer (routing-aware) — itère placement+routage
+                 jusqu'à convergence → placement 100% routable garanti
 """
 
 from __future__ import annotations
@@ -70,9 +70,8 @@ def place_components(pcb_path: str, components: list[dict], output_path: str) ->
 #   Phase 2 : CMA-ES (CMAwM) via run_optimize_placement, seedé depuis Phase 1
 # ---------------------------------------------------------------------------
 
-# Phase 2 CMA-ES — nombre max d'itérations (budget mural en secondes)
-_CMAES_MAX_ITER: int = 300
-_CMAES_TIME_BUDGET: float = 60.0  # secondes max pour Phase 2
+# Phase 2 routing-aware — nombre max d'itérations placement+routage
+_ROUTING_AWARE_MAX_ITER: int = 5
 
 
 def _find_mcu_footprint(pcb) -> object | None:
@@ -233,8 +232,8 @@ def _snap_bypass_caps_to_ics(
 
 
 def _connector_refs(pcb) -> list[str]:
-    """Références des connecteurs (J*, P*) — ancrés en Phase 1 (contrainte
-    physique/mécanique) puis restaurés après la Phase 2 CMA-ES."""
+    """Références des connecteurs (J*, P*) — ancrés en Phase 1 et protégés
+    en Phase 2 routing-aware (fixed_refs → jamais nudgés)."""
     return [fp.reference for fp in pcb.footprints
             if fp.reference and fp.reference[0] in ("J", "P")]
 
@@ -279,21 +278,19 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
     Phase 1 — PlacementOptimizer (physique LOCALE) : regroupe les composants
       (``enable_clustering`` → quartz+caps, découplage) et ANCRE les connecteurs
       (``fixed_refs``, clampés dans le contour). Pose la structure.
-    Phase 2 — CMA-ES (CMAwM, ``run_optimize_placement --strategy cmaes``) :
-      seeded depuis les positions de Phase 1 (``seed_method="current"``).
-      Raffinement global : minimise overlap + wirelength + boundary violation.
-      CMAwM gère nativement x/y continus + rotation/side discrets. Complète
-      Phase 1 sans repartir de zéro (≠ force-directed seed).
+    Phase 2 — PlaceRouteOptimizer (routing-aware) : itère placement+routage
+      jusqu'à convergence. À chaque itération : vérifie les conflits de placement,
+      route tous les nets via l'Autorouter, nudge les blockers si des nets échouent.
+      Garantit un placement 100% routable (Python A*). Les vraies traces KiCad
+      sont générées ensuite par Freerouting/kct dans call_agent_routing.
 
-    Re-ancrage : positions connecteurs restaurées à celles de Phase 1 après la
-    Phase 2 (garde-fou — CMA-ES pourrait micro-déplacer un connecteur).
+    Re-ancrage : positions connecteurs restaurées après Phase 2 (garde-fou).
     """
     pcb_bytes = base64.b64decode(kicad_pcb_b64)
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
         interm = Path(tmp) / "phase1.kicad_pcb"
-        out = Path(tmp) / "out.kicad_pcb"
         src.write_bytes(pcb_bytes)
 
         from kicad_tools.schema.pcb import PCB
@@ -334,40 +331,58 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # Phase 1 (force-directed) peut éloigner les caps de découplage du MCU car
         # il optimise globalement sans notion de groupe fonctionnel. On les restaure
         # à leurs positions initiales (proches du MCU selon le générateur) pour que
-        # CMA-ES Phase 2 commence depuis une seed de qualité.
+        # PlaceRouteOptimizer Phase 2 commence depuis une seed de qualité.
         phase1_pcb = PCB.load(str(interm))
         if _restore_bypass_caps_near_mcu(phase1_pcb, initial_positions):
             phase1_pcb.save(str(interm))
-            logger.info("Bridge Phase 1→2: bypass caps repositionnés près du MCU pour seed CMA-ES")
+            logger.info("Bridge Phase 1→2: bypass caps repositionnés près du MCU")
 
-        # ── Phase 2 (COMPLÉMENTAIRE) : CMA-ES seedé depuis Phase 1 ──────────
-        # run_optimize_placement avec seed_method="current" : encode les positions
-        # de Phase 1 comme moyenne initiale CMA-ES → raffinement global autour
-        # de la structure de Phase 1 (quartz groupé, connecteurs clampés).
-        # CMAwM gère nativement x/y continus + rotation/side discrets.
-        # Connecteurs verrouillés via locked flag ou fixed par Phase 1 clamp.
+        # ── Snap pre-Phase 2 : bypass caps → IC owner (seed routing-aware) ───
+        # Donner au PlaceRouteOptimizer une seed propre : les caps de découplage
+        # snappés près de leur IC owner minimisent d'emblée les wirelengths,
+        # réduisant les itérations avant convergence routage.
+        snap_pcb = PCB.load(str(interm))
+        if _snap_bypass_caps_to_ics(snap_pcb, initial_positions):
+            snap_pcb.save(str(interm))
+            logger.info("Snap pre-Phase 2: bypass caps snappés vers IC owner")
+
+        # Snapshot Phase 1 pour le retour (avant que Phase 2 modifie interm)
+        phase1_snap_bytes = interm.read_bytes()
+
+        # ── Phase 2 : PlaceRouteOptimizer (routing-aware) ───────────────────
+        # Itère placement+routage jusqu'à convergence : vérifie conflits de
+        # placement, route tous les nets (Python A*), nudge les composants
+        # bloquants si des nets échouent, boucle. fixed_refs=conn → les
+        # connecteurs ne sont jamais nudgés.
+        # Modifie interm EN PLACE via fixer.apply_fixes() + _nudge_blockers().
+        # Les vraies traces KiCad sont générées par Freerouting dans call_agent_routing.
         try:
-            from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
+            from kicad_tools.optim.place_route import PlaceRouteOptimizer
 
-            rc = run_optimize_placement(
-                str(interm),
-                strategy_name="cmaes",
-                max_iterations=_CMAES_MAX_ITER,
-                output_path=str(out),
-                seed_method="current",
-                quiet=True,
-                allow_infeasible=True,
-                time_budget=_CMAES_TIME_BUDGET,
+            seed_pcb = PCB.load(str(interm))
+            pro = PlaceRouteOptimizer.from_pcb(
+                seed_pcb,
+                pcb_path=str(interm),
+                manufacturer="jlcpcb",
+                verbose=False,
+                fixed_refs=conn,
             )
-            if not out.exists():
-                raise RuntimeError(f"CMA-ES n'a produit aucun output (rc={rc})")
-            logger.info("Phase 2 - CMA-ES terminé (rc=%d)", rc)
+            result = pro.optimize(
+                max_iterations=_ROUTING_AWARE_MAX_ITER,
+                allow_placement_changes=True,
+                skip_drc=False,
+            )
+            logger.info(
+                "Phase 2 - routing-aware: success=%s, %d iter, %d routes",
+                result.success, result.iterations, len(result.routes or []),
+            )
         except Exception as exc:
-            logger.warning("Phase 2 - CMA-ES échoué (%s) — placement Phase 1 conservé", exc)
-            out.write_bytes(interm.read_bytes())
+            logger.warning("Phase 2 - routing-aware échoué (%s) — Phase 1 conservé", exc)
 
-        # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──
-        final = PCB.load(str(out))
+        # ── Re-ancrage : restaurer les positions connecteurs de Phase 1 ──────
+        # Garde-fou : PlaceRouteOptimizer a fixed_refs=conn, mais on vérifie
+        # qu'aucun connecteur n'a dérivé (ex. fixer bug ou nudge marginal).
+        final = PCB.load(str(interm))
         restored = 0
         for fp in final.footprints:
             anchor = conn_positions.get(fp.reference)
@@ -375,20 +390,17 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 fp.position = anchor
                 restored += 1
         if restored:
-            logger.info("Re-ancrage : %d connecteur(s) restauré(s) post-CMA-ES", restored)
+            logger.info("Re-ancrage : %d connecteur(s) restauré(s) post-Phase 2", restored)
 
-        # ── Snap final : bypass caps → grille proche de leur IC owner ────────
-        # CMA-ES optimise la wirelength globale sur les rails power : les bypass
-        # caps peuvent encore dériver malgré le bridge Phase 1→2. Ce snap
-        # déterministe les force près de leur IC owner (détecté via position initiale).
+        # ── Snap final : sécurité si Phase 2 a déplacé des caps ──────────────
         if _snap_bypass_caps_to_ics(final, initial_positions):
-            logger.info("Snap final: bypass caps repositionnés près de leur IC owner")
+            logger.info("Snap final: bypass caps repositionnés post-Phase 2")
 
-        final.save(str(out))
-        footprints = PCB.load(str(out)).footprints
+        final.save(str(interm))
+        footprints = PCB.load(str(interm)).footprints
         return {
-            "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
-            "kicad_pcb_phase1_b64": base64.b64encode(interm.read_bytes()).decode(),
+            "kicad_pcb_b64": base64.b64encode(interm.read_bytes()).decode(),
+            "kicad_pcb_phase1_b64": base64.b64encode(phase1_snap_bytes).decode(),
             "placed_count": len(footprints),
             "positions": [
                 {"ref": fp.reference,

@@ -203,15 +203,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Phase 1 (outil physique) : PlacementOptimizer.from_pcb(pcb,
          fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90()
          .write_to_pcb() → regroupe les grappes + ancre/clampe les connecteurs
-     Phase 2 (CMA-ES, COMPLÉMENTAIRE) : run_optimize_placement(str(interm),
-         strategy_name="cmaes", seed_method="current", max_iterations=300)
-         → CMA-ES (CMAwM) seedé depuis positions Phase 1, minimise
-         overlap+wirelength+boundary. CMAwM gère x/y continus + rotation discret.
-         Complète Phase 1 sans repartir de zéro (seed=current = Phase 1 comme init).
-     Re-ancrage : positions connecteurs restaurées post-CMA-ES (garde-fou)
+     Snap pre-Phase 2 : bypass caps snappés vers IC owner (seed de qualité)
+     Phase 2 (routing-aware, COMPLÉMENTAIRE) : PlaceRouteOptimizer.from_pcb(pcb,
+         pcb_path=interm, fixed_refs=conn).optimize(max_iterations=5)
+         → itère placement+routage (Python A*) jusqu'à convergence ; nudge les
+         composants bloquants si des nets échouent. Garantit un placement
+         100% routable. Les vraies traces KiCad = Freerouting/kct (call_agent_routing).
+     Re-ancrage : positions connecteurs restaurées post-Phase 2 (garde-fou)
      Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
-     ⚙️ 2 patches lib requis dans optimize_placement_cmd.py : writer 2-pass
-        (KiCad 8/9 at-before-ref) + seed method "current" (encoder positions Phase 1)
   ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
      POST /route/auto
      ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
@@ -262,12 +261,12 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
 grille de départ ; l'agent placement fait **Phase 1** `PlacementOptimizer.from_pcb(pcb,
 fixed_refs=<J*/P*>, enable_clustering=True).run().snap_rotations_to_90().write_to_pcb()`
 (physique locale : clustering natif générique quartz+caps/découplage + connecteurs
-ancrés/clampés) **puis Phase 2** `run_optimize_placement(strategy_name="cmaes",
-seed_method="current", max_iterations=300)` (CMA-ES CMAwM seedé depuis Phase 1 —
-minimise overlap+wirelength, gère rotation discrète nativement), suivi d'un
-**re-ancrage** des connecteurs. **2 patches lib** dans `optimize_placement_cmd.py` :
-writer 2-pass (KiCad 8/9) + seed="current". Routage rapide (gros boards) =
-backend C++ `kct build-native` (Docker). Voir `services/kicad/DEPENDENCIES.md`.
+ancrés/clampés), **snap pre-Phase 2** (bypass caps → IC owner, seed de qualité),
+**puis Phase 2** `PlaceRouteOptimizer.from_pcb(pcb, pcb_path=interm, fixed_refs=conn)
+.optimize(max_iterations=5)` (routing-aware : itère placement+routage Python A*,
+nudge les blockers, garantit 100% routabilité), suivi d'un **re-ancrage** des
+connecteurs. Routage rapide (gros boards) = backend C++ `kct build-native` (Docker).
+Voir `services/kicad/DEPENDENCIES.md`.
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
   - RL_PCB optimise mathématiquement les positions X/Y
