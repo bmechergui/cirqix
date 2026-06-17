@@ -312,6 +312,50 @@ def _add_bypass_cap_clusters(
     return added
 
 
+def _snap_timing_cluster_to_mcu(
+    pcb,
+    timing_refs: set[str],
+    *,
+    threshold_mm: float = 10.0,
+    offset_mm: float = 7.0,
+    col_spacing_mm: float = 3.0,
+) -> bool:
+    """Repositionne cristal + caps de charge près du MCU après Phase 1.
+
+    La TIMING cluster spring ne converge pas toujours si la position initiale
+    est déjà trop éloignée (>10mm). On utilise les TIMING cluster members de
+    kicad-tools (cristal, load caps) détectés en Phase 1 — PAS un filtre
+    générique 2-pads pour éviter d'inclure des résistances de pull-down, etc.
+    """
+    mcu = _find_mcu_footprint(pcb)
+    if not mcu or not timing_refs:
+        return False
+
+    mcu_x, mcu_y = mcu.position
+    changed = False
+    idx = 0
+
+    for fp in pcb.footprints:
+        if fp.reference not in timing_refs:
+            continue
+        dist = math.sqrt((fp.position[0] - mcu_x) ** 2 + (fp.position[1] - mcu_y) ** 2)
+        if dist <= threshold_mm:
+            continue
+        col = idx % 3
+        row = idx // 3
+        new_x = mcu_x - offset_mm + col * col_spacing_mm
+        new_y = mcu_y - offset_mm + row * col_spacing_mm
+        logger.info(
+            "snap timing %s → MCU: (%.1f,%.1f) Δ=%.1fmm → (%.1f,%.1f)",
+            fp.reference, fp.position[0], fp.position[1], dist, new_x, new_y,
+        )
+        fp.position = (new_x, new_y)
+        idx += 1
+        changed = True
+
+    return changed
+
+
 def _connector_refs(pcb) -> list[str]:
     """Références des connecteurs (J*, P*) — ancrés en Phase 1 et protégés
     en Phase 2 routing-aware (fixed_refs → jamais nudgés)."""
@@ -412,17 +456,29 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         conn_positions = {fp.reference: fp.position
                           for fp in PCB.load(str(interm)).footprints
                           if fp.reference in conn}
-        logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
+        # Extraire les membres TIMING (cristal + load caps) pour le bridge
+        from kicad_tools.optim.clustering import ClusterType
+        timing_refs: set[str] = {
+            m for c in opt.clusters
+            if c.cluster_type == ClusterType.TIMING
+            for m in c.members
+        }
+        logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés, timing=%s",
+                    len(conn), timing_refs)
 
-        # ── Bridge Phase 1→2 : bypass caps repositionnés près du MCU ─────────
-        # Phase 1 (force-directed) peut éloigner les caps de découplage du MCU car
-        # il optimise globalement sans notion de groupe fonctionnel. On les restaure
-        # à leurs positions initiales (proches du MCU selon le générateur) pour que
-        # PlaceRouteOptimizer Phase 2 commence depuis une seed de qualité.
+        # ── Bridge Phase 1→2 : repositionnement fonctionnel ─────────────────
         phase1_pcb = PCB.load(str(interm))
+        bridge_changed = False
+        # Bypass caps dérivés loin du MCU → restaurer à la position initiale
         if _restore_bypass_caps_near_mcu(phase1_pcb, initial_positions):
+            bridge_changed = True
+            logger.info("Bridge: bypass caps restaurés près du MCU")
+        # Cristal + load caps trop loin du MCU → snap explicite (seed TIMING)
+        if _snap_timing_cluster_to_mcu(phase1_pcb, timing_refs):
+            bridge_changed = True
+            logger.info("Bridge: cristal/load caps snappés près du MCU")
+        if bridge_changed:
             phase1_pcb.save(str(interm))
-            logger.info("Bridge Phase 1→2: bypass caps repositionnés près du MCU")
 
         # ── Snap pre-Phase 2 : bypass caps → IC owner (seed routing-aware) ───
         # Donner au PlaceRouteOptimizer une seed propre : les caps de découplage
