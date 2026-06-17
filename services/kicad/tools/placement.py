@@ -144,7 +144,7 @@ def _snap_bypass_caps_to_ics(
     initial_positions: dict[str, tuple[float, float]],
     *,
     max_dist_mm: float = 10.0,
-    snap_offset_mm: float = 3.5,
+    snap_offset_mm: float = 2.0,
     col_spacing_mm: float = 2.5,
     row_spacing_mm: float = 2.5,
     max_initial_dist_mm: float = 20.0,
@@ -213,12 +213,16 @@ def _snap_bypass_caps_to_ics(
         if dist <= max_dist_mm:
             continue
 
+        # Offset vertical = demi-étendue pads de l'IC + snap_offset → caps SOUS
+        # le corps de l'IC, hors de ses pads (zéro court-circuit, même sur LQFP).
+        _ox, oy = _ic_pad_extent(owner)
+
         # Placement en grille sous l'IC owner
         idx = ic_snap_idx.get(owner.reference, 0)
         col = idx % 4
         row = idx // 4
         new_x = ic_x - (col_spacing_mm * 1.5) + col * col_spacing_mm
-        new_y = ic_y + snap_offset_mm + row * row_spacing_mm
+        new_y = ic_y + oy + snap_offset_mm + row * row_spacing_mm
 
         logger.info(
             "snap bypass %s → %s: (%.1f,%.1f) Δ=%.1fmm → (%.1f,%.1f)",
@@ -273,6 +277,59 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
     return clamped
 
 
+def _ic_pad_extent(ic) -> tuple[float, float]:
+    """Demi-étendue (rx, ry) des pads de l'IC autour de son centre, en mm.
+
+    Sert à calculer un offset de snap qui place les caps HORS du corps de l'IC
+    (évite les courts-circuits : caps posés sur les pads du MCU). Générique :
+    lit les positions de pads relatives au centre du footprint.
+    """
+    xs = [abs(p.position[0]) for p in ic.pads if hasattr(p, "position") and p.position]
+    ys = [abs(p.position[1]) for p in ic.pads if hasattr(p, "position") and p.position]
+    return (max(xs) if xs else 2.0, max(ys) if ys else 2.0)
+
+
+def _snap_timing_group_to_mcu(
+    pcb,
+    *,
+    clearance_mm: float = 2.0,
+    cap_pitch_mm: float = 3.0,
+) -> bool:
+    """Snappe le quartz (Y*/X*) + ses load caps en colonne à GAUCHE du MCU.
+
+    Déterministe (≠ force-directed mou) : garantit quartz collé au MCU. L'offset
+    horizontal = demi-étendue des pads du MCU + clearance + marge → les composants
+    timing sont posés hors du corps du MCU (zéro court-circuit). Générique :
+    détecte le quartz par convention de ref (Y*/X*) et ses load caps par net partagé.
+    """
+    mcu = _find_mcu_footprint(pcb)
+    if mcu is None:
+        return False
+
+    crystal = next((fp for fp in pcb.footprints
+                    if (fp.reference or "")[:1] in ("Y", "X") and fp.pads), None)
+    if crystal is None:
+        return False
+
+    crystal_nets = {str(p.net) for p in crystal.pads if p.net}
+    # load caps = caps 2 pads partageant ≥1 net avec le quartz
+    load_caps = [fp for fp in pcb.footprints
+                 if (fp.reference or "")[:1] == "C" and fp.pads and len(fp.pads) == 2
+                 and {str(p.net) for p in fp.pads if p.net} & crystal_nets]
+
+    mcu_x, mcu_y = mcu.position
+    rx, _ry = _ic_pad_extent(mcu)
+    base_x = mcu_x - rx - clearance_mm - 1.0  # 1mm = demi-largeur cap ~0402
+
+    group = [crystal] + load_caps
+    start_y = mcu_y - (len(group) - 1) * cap_pitch_mm / 2.0
+    for i, fp in enumerate(group):
+        fp.position = (base_x, start_y + i * cap_pitch_mm)
+        logger.info("snap timing %s → gauche MCU (%.1f,%.1f)",
+                    fp.reference, fp.position[0], fp.position[1])
+    return True
+
+
 def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
     """Placement en 2 phases COMPLÉMENTAIRES (agent placement ⑤).
 
@@ -324,11 +381,23 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         opt.run(iterations=1000)
         opt.snap_rotations_to_90()
         opt.write_to_pcb(pcb)
+
+        # ── Snap déterministe Phase 1 : groupes fonctionnels collés à leur IC ──
+        # Le force-directed ne respecte PAS les contraintes de groupement (springs
+        # GND dominent). On place donc DÉTERMINISTIQUEMENT, hors du corps de l'IC :
+        #   - quartz + load caps → colonne à gauche du MCU
+        #   - bypass caps → grille sous leur IC owner
+        # Offsets calculés sur la taille réelle de l'IC → zéro court-circuit.
+        if _snap_timing_group_to_mcu(pcb):
+            logger.info("Phase 1: quartz + load caps snappés à gauche du MCU")
+        if _snap_bypass_caps_to_ics(pcb, initial_positions):
+            logger.info("Phase 1: bypass caps snappés en grille près de leur IC")
+
         pcb.save(str(interm))
         conn_positions = {fp.reference: fp.position
                           for fp in PCB.load(str(interm)).footprints
                           if fp.reference in conn}
-        logger.info("Phase 1 - PlacementOptimizer: clustering + %d connecteurs ancrés", len(conn))
+        logger.info("Phase 1 - PlacementOptimizer: clustering + snap + %d connecteurs ancrés", len(conn))
 
         # ── Bridge Phase 1→2 : bypass caps repositionnés près du MCU ─────────
         # Phase 1 (force-directed) peut éloigner les caps de découplage du MCU car
