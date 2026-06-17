@@ -1,23 +1,21 @@
 """Tests — auto_place() + helpers (tools/placement.py), TDD.
 
-Architecture 3 phases COMPLÉMENTAIRES + bridge :
+Architecture 2 phases COMPLÉMENTAIRES + bridge :
   - Phase 1 : PlacementOptimizer (clustering natif + connecteurs J*/P* ANCRÉS,
     clampés dans le contour) — physique locale, pose la structure.
   - Bridge  : _restore_bypass_caps_near_mcu() — repositionne les caps de
     découplage qui ont dérivé loin du MCU (seed de qualité pour Phase 2).
-  - Phase 2 : EvolutionaryPlacementOptimizer (GA, sans C++) — résout les
-    overlaps laissés par Phase 1, affine le wirelength.
-  - Phase 3 : PlaceRouteOptimizer (routing-aware, C++ requis) — itère
-    placement+routage jusqu'à convergence si kct build-native est disponible.
+  - Phase 2 : CMA-ES via run_optimize_placement (seed_method="current") —
+    raffinement global seeded depuis bridge, minimise overlap+wirelength.
   - Re-ancrage : les connecteurs sont restaurés à leurs positions de Phase 1
-    après Phase 2/3 (garde-fou).
+    après la Phase 2 (garde-fou).
 
 Invariants testés :
   - _find_mcu_footprint : retourne le footprint avec le plus de pads (>10)
   - _restore_bypass_caps_near_mcu : repositionne les caps loin du MCU,
     ne touche pas les caps proches, ni les composants hors-réseau MCU
   - auto_place : connecteur hors-carte → ramené dans le contour ;
-    connecteur bien placé → position stable post-Phase 2/3.
+    connecteur bien placé → position stable post-CMA-ES.
 """
 from __future__ import annotations
 
@@ -293,7 +291,7 @@ def test_snap_bypass_caps_no_ics():
 
 def test_auto_place_clamps_connector_outside_outline(tmp_path):
     """J1 ancré hors du contour Edge.Cuts doit être ramené dedans (Phase 1 clamp),
-    et y rester après la Phase 2 routing-aware (re-ancrage)."""
+    et y rester après la Phase 2 CMA-ES seed=current (re-ancrage)."""
     pcb_bytes = _board_with_connectors(tmp_path, j1_board_xy=(30.0, 135.0))
     b64 = base64.b64encode(pcb_bytes).decode()
 
@@ -306,7 +304,7 @@ def test_auto_place_clamps_connector_outside_outline(tmp_path):
 
 def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     """J2 déjà bien placé (30,20) reste à sa position : ancré en Phase 1
-    (fixed_refs) ET restauré post-Phase 2 routing-aware (re-ancrage)."""
+    (fixed_refs) ET restauré post-CMA-ES Phase 2 seed=current (re-ancrage)."""
     pcb_bytes = _board_with_connectors(
         tmp_path, j1_board_xy=(30.0, 135.0), j2_board_xy=(30.0, 20.0),
     )
