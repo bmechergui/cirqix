@@ -626,3 +626,153 @@ C'est la fonctionnalité la plus innovante de kicad-tools. Au lieu d'utiliser de
 ## Note — KiBot (export pipeline)
 
 En combinant un agent IA avec KiBot, on obtient un combo puissant : l'IA génère la config YAML pour JLCPCB (panelisation, Gerbers, BOM), et KiBot exécute les binaires KiCad en tâche de fond sans manipuler l'API Python. KiBot gère les rapports DRC, l'export Gerbers, le drill, la BOM LCSC et le CPL — exactement ce dont Layrix a besoin pour automatiser le pipeline fabrication de A à Z.
+
+ Voici le déroulé exact, étape par étape, tracé dans le code source réel (de la
+  commande jusqu'à la sauvegarde) :
+
+  kct placement optimize --strategy hybrid --cluster
+
+  ÉTAPE 0 — Préparation (cmd_optimize, placement_cmd.py)
+
+  1. Charge le .kicad_pcb
+  2. Parse --fixed J1 → liste des refs ancrées
+  3. Construit WorkflowConfig(strategy="hybrid", enable_clustering=True,
+  generations=100, population=50, iterations=1000)
+  4. Appelle OptimizationWorkflow(pcb, config).run()
+
+  ÉTAPE 1 — Dispatch (run(), workflow.py)
+
+  strategy == "hybrid" → appelle _run_hybrid()
+
+  ÉTAPE 2 — Construction du modèle (from_pcb, avec --cluster)
+
+  1. Convertit chaque footprint → objet Component (x, y, rotation, pads)
+  2. create_springs_from_nets() → 1 ressort par connexion de net (les pins d'un
+  même net s'attirent)
+  3. --cluster → detect_functional_clusters() analyse le schéma → ajoute des
+  ressorts forts (stiffness=50) entre cap+IC, quartz+load caps
+  (POWER/TIMING/INTERFACE/DRIVER)
+  4. Les fixed_refs (J1) sont marqués immobiles
+
+  ÉTAPE 3 — Phase 1 : Recherche globale par Algorithme Génétique (optimize())
+
+  (100 générations, population 50)
+  1. Initialise une population de ~50 placements candidats
+  2. Boucle sur 100 générations :
+    - Évalue la fitness de chaque candidat = score multi-objectif :
+  -(wirelength×0.1 + conflits×100 + hors_carte×500 − alignement×5 + routabilité)
+    - Trie par fitness, garde les 5 élites intacts
+    - Tournament selection → choisit les parents
+    - Spatial crossover → croise 2 parents = enfant
+    - Gaussian mutation → bouge les positions (σ=1mm) + rotations 90°
+  3. Retourne le meilleur individu (meilleure macro-architecture)
+  4. _apply_individual(best) → applique ses positions aux composants
+
+  ÉTAPE 4 — Phase 2 : Raffinement local physique (PlacementOptimizer.run)
+
+  (1000 itérations force-directed)
+  1. Crée un optimiseur physique, réutilise les mêmes ressorts (nets + clusters)
+  2. Simulation de ressorts sur 1000 itérations :
+    - ressorts de net → rapprochent les composants connectés
+    - répulsion (charge électrostatique) → écarte ceux qui se chevauchent
+    - affine au millimètre près
+  3. Snap final : positions sur grille 0.127mm, rotations sur 90°
+
+  ÉTAPE 5 — Résultat (OptimizationResult)
+
+  1. Calcule wire_length_mm et energy
+  2. (dans auto_place) pcb.save() → écrit X/Y/Rotation dans le .kicad_pcb
+
+  ---
+  Résumé visuel du flux
+
+  PCB → [from_pcb + clusters] → ressorts (nets + cap/IC)
+          │
+          ▼
+     Phase 1 : GA (100 gén × 50 indiv)        ← macro-architecture globale
+     évalue fitness, croise, mute, sélectionne
+          │ meilleur individu
+          ▼
+     Phase 2 : ressorts physique (1000 iter)  ← affinage mm par mm
+     attraction nets + répulsion overlaps
+          │
+          ▼
+     snap grille 0.127mm + rotation 90° → save .kicad_pcb
+
+  Point clé : le GA (Phase 1) trouve où poser chaque bloc globalement ; la
+  physique (Phase 2) affine localement. Les clusters cap/IC sont des ressorts dans
+  les deux phases — forts mais battables par les rails GND, d'où l'espacement de
+  13-28mm qu'on a constaté.
+
+
+
+  C'est le "God-Tier Pipeline". Vous venez de fusionner toutes les technologies de pointe de l'IA et de l'ingénierie électronique en un seul flux de travail ultime.
+
+Si vous deviez construire l'usine de création de PCB la plus avancée du monde, voici à quoi ressemblerait ce pipeline complet étape par étape :
+
+PARTIE 1 : LE PLACEMENT (Construire la ville)
+1. La Stratégie Macro ➔ L'Architecte (Modèle RL) L'IA d'Apprentissage par Renforcement (RL) lit le schéma. Grâce à son intuition acquise en observant des milliers de cartes humaines, elle dépose les blocs principaux (Processeur au centre, Alimentation en haut, Connecteurs sur les bords). Elle comprend les flux de données.
+
+2. Le Regroupement Logique ➔ La Physique (Algorithme Hybride) Le RL n'est pas parfait sur les petits détails. L'algorithme Hybride prend le relais. Il active les "Super Ressorts" de Layrix. Tous les condensateurs de découplage qui s'étaient un peu éloignés sont "aspirés" vers leurs puces respectives par la physique. Les clusters sont maintenant parfaits et respectent l'électronique.
+
+3. Le Micro-Raffinement ➔ Le Mathématicien (CMA-ES) On lance le CMA-ES en mode seed="current". Il prend la carte, calcule sa matrice géante, et commence à "vibrer". Il décale les puces d'un demi-millimètre, les tourne de quelques degrés, aligne parfaitement les broches et élimine 100% des chevauchements. [FIN DU PLACEMENT : La carte est géométriquement parfaite]
+
+PARTIE 2 : LE ROUTAGE (Tirer les câbles)
+4. La Stratégie de Câblage ➔ Le Général (Modèle RL / Agent Reason) La carte est prête à être routée. Le modèle RL analyse la carte et donne des ordres tactiques stricts pour les signaux critiques : "Attention, le signal USB_D+ est fragile. Trace-le tout droit en priorité, et éloigne la ligne d'horloge MCLK vers le Sud".
+
+5. L'Exécution Critique ➔ Le Tireur d'Élite (Algorithme A)* L'algorithme A* écoute les ordres du RL. Il trace les pistes critiques (USB, Alimentation, Horloge) avec des lignes droites et des angles parfaits. Aucune déviation, aucune erreur. Une fois tracées, le système verrouille (Lock) ces pistes d'or pour que personne n'y touche.
+
+6. Le Nettoyage de Masse ➔ Le Bulldozer (Freerouting) Il reste 300 petits fils inutiles à connecter (boutons, LEDs, résistances). On exporte la carte dans Freerouting. Il fonce dans le tas avec son algorithme "Push and Shove". Il esquive avec respect les pistes critiques (verrouillées par l'A*), mais bouscule tout le reste pour s'assurer que la carte est routée à 100%. [FIN DU ROUTAGE : Le circuit est connecté à 100%]
+
+Résultat : Vous obtenez une carte conçue avec l'intuition d'un ingénieur expert (RL), le respect des règles électriques (Hybride/A*), la perfection géométrique (CMA-ES) et complétée en quelques secondes (Freerouting). C'est le flux de travail absolu de l'industrie du futur !
+
+
+
+C'est le projet ultime ! Puisque kicad-tools (kct) possède déjà toute la logique mathématique, construire un modèle RL par-dessus est tout à fait réalisable.
+
+Pour faire cela en Python, la norme industrielle est d'utiliser deux bibliothèques : Gymnasium (l'ancien OpenAI Gym, pour créer le "Simulateur") et Stable Baselines3 (pour l'algorithme RL, souvent "PPO").
+
+Voici le plan de bataille exact pour coder cela en utilisant le code source de Layrix :
+
+1. Le Simulateur RL pour le PLACEMENT
+L'objectif est d'entraîner l'IA à poser les puces pour minimiser la longueur des fils.
+
+Le Fichier à créer : placement_env.py (qui hérite de gymnasium.Env)
+Observation Space (Ce que l'IA "voit") : Vous créez un vecteur contenant les dimensions de la carte (board_bounds) et les positions X/Y actuelles de chaque composant.
+Action Space (Ce que l'IA "fait") : Vous définissez les actions possibles. Par exemple : Choisir le composant 
+i
+i et le déplacer de 
++
+1
+m
+m
++1mm ou 
+−
+1
+m
+m
+−1mm en X ou Y.
+Le Coeur (La fonction step()) :
+L'IA choisit une action (déplacer la puce U1).
+Vous importez le calculateur natif de Layrix : from kicad_tools.optim.evolutionary import EvolutionaryPlacementOptimizer.
+Vous appelez sa méthode _evaluate_fitness(). Cette méthode calcule déjà toute la physique de KiCad (les croisements de fils, les ressorts des clusters, les chevauchements).
+La Récompense (Reward) : Si le score de _evaluate_fitness() s'améliore, vous donnez Reward = +10. S'il se dégrade, Reward = -5.
+L'IA PPO (Proximal Policy Optimization) va jouer à ce jeu des millions de fois jusqu'à comprendre la logique !
+2. Le Simulateur RL pour le ROUTAGE
+Ici, l'objectif est d'entraîner l'IA à jouer au jeu du "Snake" pour relier la pastille A à la pastille B.
+
+Le Fichier à créer : routing_env.py (qui hérite de gymnasium.Env)
+Observation Space (L'écran du jeu) : Vous utilisez le code natif de l'Agent Reason ! Vous importez RoutingGrid depuis kicad_tools.reasoning.interpreter. Cela vous donne une magnifique grille 2D où 0 = Vide, 1 = Obstacle (une autre piste), et 2 = Objectif. Vous donnez cette "image" à l'IA.
+Action Space (La manette) : L'IA a 5 boutons : Haut, Bas, Gauche, Droite, Percer un Via.
+Le Coeur (La fonction step()) :
+L'IA appuie sur "Haut".
+Vous avancez la position du fil sur la grille virtuelle.
+La Récompense (Reward) :
+Si l'IA avance sur une case vide : Reward = -1 (pour l'obliger à faire le chemin le plus court).
+Si l'IA percute un mur ou une autre piste : Reward = -100 et "Game Over" (on recommence l'épisode).
+Si l'IA touche la pastille cible : Reward = +1000 et "Victoire !".
+Une fois que l'IA a gagné la partie dans le simulateur, vous utilisez la commande native RouteNetCommand de Layrix pour que le fil soit officiellement dessiné sur le vrai fichier .kicad_pcb.
+Pourquoi c'est très réaliste à coder ?
+Normalement, le plus dur en RL, c'est de coder le moteur physique (détecter si deux puces se touchent, ou si un fil en coupe un autre). Mais vous n'avez pas à le faire ! Les modules evolutionary.py (pour les collisions) et interpreter.py (pour les grilles de routage) de Layrix font déjà tout le calcul lourd.
+
+Votre seul travail serait d'écrire le "Gym Environment" (le script Python de 150 lignes qui relie les bibliothèques RL à ces fichiers Layrix) !
