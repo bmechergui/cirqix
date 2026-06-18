@@ -18,12 +18,15 @@ from pathlib import Path
 
 import pytest
 
+from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
+from kicad_tools.placement.conflict import ConflictSeverity
 from kicad_tools.schema.pcb import PCB
 
 from tools.placement import (
     auto_place,
     _connector_refs,
     _clamp_fixed_refs_to_outline,
+    _resolve_remaining_conflicts,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -222,3 +225,46 @@ def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
     assert j2["x"] == pytest.approx(30.0, abs=0.5)
     assert j2["y"] == pytest.approx(20.0, abs=0.5)
+
+
+# ---------------------------------------------------------------------------
+# Tests — _resolve_remaining_conflicts (kct placement fix natif)
+# ---------------------------------------------------------------------------
+
+def test_resolve_remaining_conflicts_removes_pad_clearance_errors(tmp_path):
+    """_resolve_remaining_conflicts (kct placement fix natif) doit éliminer les
+    conflits ERROR (pad clearance / hole ≤0 — risque de court-circuit réel).
+
+    L'optimiseur ``hybrid+cluster`` est stochastique (pas de seed fixe) : sur le
+    board STM32 réel, un benchmark de 5 runs a donné 8/0/3/0/5 conflits selon le
+    tirage. Ce test ne dépend PAS du GA — il construit directement un board en
+    conflit (3 résistances empilées) pour vérifier que la passe de réparation
+    native (PlacementFixer.iterative_fix, ~0.05s, pas de ré-exécution GA) est
+    déterministe et efficace.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    board_path = tmp_path / "overlap.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    before, after = _resolve_remaining_conflicts(board_path, anchored=[])
+
+    assert before > 0, "le board de test devrait avoir des conflits ERROR au départ"
+    assert after == 0, f"conflits ERROR (court-circuit) non résolus : {after}"
+
+
+def test_auto_place_result_has_no_error_conflicts(tmp_path):
+    """Régression : le board renvoyé par auto_place ne doit JAMAIS contenir de
+    conflit ERROR (pad clearance / hole ≤0), même quand le GA stochastique en
+    laisse — la réparation native est chaînée automatiquement dans auto_place.
+    """
+    pcb_bytes = _board_with_movable_components(tmp_path)
+    b64 = base64.b64encode(pcb_bytes).decode()
+
+    result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
+
+    out_path = tmp_path / "result.kicad_pcb"
+    out_path.write_bytes(base64.b64decode(result["kicad_pcb_b64"]))
+
+    conflicts = PlacementAnalyzer().find_conflicts(str(out_path), DesignRules())
+    errors = [c for c in conflicts if c.severity == ConflictSeverity.ERROR]
+    assert not errors, f"conflits ERROR restants après auto_place : {errors}"

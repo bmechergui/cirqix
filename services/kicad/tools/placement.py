@@ -71,6 +71,39 @@ def _connector_refs(pcb) -> list[str]:
             if fp.reference and fp.reference[0] in ("J", "P")]
 
 
+def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
+    """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
+
+    ``OptimizationWorkflow`` (hybrid+cluster) est stochastique (pas de seed
+    fixe) : un benchmark de 5 runs sur le board STM32 a donné 8/0/3/0/5
+    conflits selon le tirage. Plutôt que relancer le GA (~98s/run — un
+    best-of-N serait inutilisable en synchrone), on chaîne une passe de
+    réparation locale qui ne déplace que les composants en conflit
+    (≤0.1s, pas de ré-optimisation globale) : élimine les conflits ERROR
+    (pad clearance / hole ≤0 — risque de court-circuit réel), conformément
+    à la règle CLAUDE.md « commande native avant algo custom ».
+
+    Retourne ``(erreurs_avant, erreurs_après)``.
+    """
+    from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
+    from kicad_tools.placement.conflict import ConflictSeverity
+    from kicad_tools.placement.fixer import FixStrategy, PlacementFixer
+
+    rules = DesignRules()
+    before = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
+    n_errors_before = sum(1 for c in before if c.severity == ConflictSeverity.ERROR)
+
+    if n_errors_before == 0:
+        return 0, 0
+
+    fixer = PlacementFixer(strategy=FixStrategy.SPREAD, anchored=set(anchored))
+    fixer.iterative_fix(str(pcb_path), rules=rules, output_path=str(pcb_path), max_passes=10)
+
+    after = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
+    n_errors_after = sum(1 for c in after if c.severity == ConflictSeverity.ERROR)
+    return n_errors_before, n_errors_after
+
+
 def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0) -> list[str]:
     """Ramène les footprints ``fixed_refs`` à l'intérieur du contour Edge.Cuts.
 
@@ -173,6 +206,14 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         )
 
         pcb.save(str(out))
+
+        n_err_before, n_err_after = _resolve_remaining_conflicts(out, conn)
+        if n_err_before:
+            logger.info(
+                "auto_place: kct placement fix natif — %d erreur(s) court-circuit -> %d après réparation",
+                n_err_before, n_err_after,
+            )
+
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
