@@ -1087,6 +1087,48 @@ docs (`DEPENDENCIES.md`, `CLAUDE.md`). PR #36, commits 8b13e74 + 7676c4d + suiv.
 
 ---
 
+### 2026-06-18 — Placement = natif kicad-tools ACCEPTÉ + bug write_to_pcb corrigé
+
+**Décision :** accepter le placement **100% natif kicad-tools** tel quel — un seul
+appel `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
+enable_clustering=True, fixed_refs=<J*/P*>, generations=100, population=50,
+iterations=1000)).run()` puis **`.write_to_pcb()`** puis `pcb.save()`. La stratégie
+`hybrid` enchaîne en INTERNE la phase évolutionnaire (GA, groupement) + le
+raffinement physique force-directed. **Pas de snap déterministe** : les bypass
+caps/quartz finissent à 13-28mm du MCU — accepté comme routable.
+
+**Bug critique corrigé (commit 243b26f) :** `auto_place` appelait
+`OptimizationWorkflow(...).run()` puis `pcb.save()` **sans `write_to_pcb()`**.
+`run()` calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB →
+placement **no-op** (0/17 composant déplacé, board sauvé identique à la
+génération — repéré visuellement sur le rendu). Régression introduite par
+`d43ab8b` (« auto_place 100% natif ») : le refactor vers `OptimizationWorkflow`
+a perdu l'appel `write_to_pcb()` que faisait l'ancienne version
+(`PlacementOptimizer...run().write_to_pcb()`). Fix : garder la réf workflow +
+`workflow.write_to_pcb()` avant `save()`. Validé : **16/17 composants déplacés**
+sur le board STM32 (vs 0 avant).
+
+**Pourquoi accepter le natif sans snap :** le snap déterministe collait Y1 à
+7.8mm mais c'est du code custom à maintenir hors API native. Choix produit :
+rester 100% natif (règle CLAUDE.md « usage natif kicad-tools »), placement
+routable suffisant pour avancer. L'adjacence serrée « pro » est reportée en
+Phase 6 (RL_PCB), pas via un patch snap.
+
+**Écarté :**
+- Réintroduire le snap déterministe (`c462178` `_snap_*`) — code custom, retiré.
+- Re-benchmarker les optimiseurs natifs pour l'adjacence — déjà fait
+  (force-directed ~20mm, hybrid 15mm, cmaes 14.4mm, EVO 14mm), tous à 10-15mm.
+
+**Test de garde (TDD) :** `test_auto_place_actually_moves_movable_components` —
+3 résistances mobiles empilées doivent être séparées (RED sans `write_to_pcb`,
+GREEN avec). Comble le trou : les tests existants ne couvraient que les
+connecteurs (`fixed_refs`, immobiles par design) → le no-op passait inaperçu.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. PR #36, commit 243b26f.
+
+---
+
 ## Template pour la prochaine décision
 
 ```
