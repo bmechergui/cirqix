@@ -25,20 +25,36 @@ _ROUTE_TIMEOUT_S: int = 60
 def parse_routed_pct(stdout: str) -> int:
     """Parse routing completion % from kct route/reason output.
 
-    Looks for the last "Routed: N/M nets" or "(P%)" line; defaults to 100 when
-    no net needed routing (all power nets poured as zones).
+    kct route emits a definitive final tally ``Nets routed: N/M`` (the last
+    occurrence is the best/final result; earlier ones are per-attempt
+    progress). We anchor on that rather than on a bare ``(P%)`` token, because
+    the stdout is full of intermediate progress percentages — grabbing the
+    first ``(NN%)`` under-reported a 56% routing as 11%/22% and could make
+    routers/routing.py reject a good result below ``_MIN_ROUTED_PCT``.
+
+    Order of preference:
+      1. last ``Nets routed: N/M`` (current kct wording)
+      2. last ``Routed: N/M nets`` (older kct wording, back-compat)
+      3. ``Best result NN%`` / ``(NN% connected|completion)`` summary
+      4. default 100 when nothing needed routing (all power poured as zones)
+
+    Note: ``Unrouted: 1/9`` contains the substring "routed" — the explicit
+    ``Nets routed`` / ``Routed: ... nets`` anchors avoid matching it.
     """
-    pct = 100
-    matches = re.findall(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', stdout)
-    if matches:
-        done, total = matches[-1]
-        if int(total) > 0:
-            pct = round(int(done) / int(total) * 100)
-    else:
-        m = re.search(r'\((\d+)%\s*\)', stdout)
-        if m:
-            pct = int(m.group(1))
-    return pct
+    tally = re.findall(r'Nets routed:\s*(\d+)\s*/\s*(\d+)', stdout)
+    if not tally:
+        tally = re.findall(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', stdout)
+    if tally:
+        done, total = tally[-1]
+        return round(int(done) / int(total) * 100) if int(total) > 0 else 100
+
+    m = re.search(r'Best result\s+(\d+)%', stdout)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'\((\d+)%\s*(?:connected|completion)\)', stdout)
+    if m:
+        return int(m.group(1))
+    return 100
 
 
 def extract_failure_analysis(stdout: str) -> str:
