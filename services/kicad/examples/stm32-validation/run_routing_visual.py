@@ -2,19 +2,23 @@
 """Route + FINIT (qualité layout) le board STM32 depuis le PLACEMENT FINAL
 (output/phase3/3_final.kicad_pcb) — pour inspection visuelle dans KiCad.
 
-Chaîne 100% native kicad-tools, trois étapes de qualité de routage :
+Chaîne 100% native kicad-tools, qualité de routage :
 
-  ① kct route            — route les signaux (escalade native de couches si le
-                           backend C++ est dispo, sinon 2 couches en local)
-  ② kct optimize-traces  — remplace les coins 90° par des chamfers 45°
-                           (--chamfer-size 0.5) : JAMAIS d'angle droit
-  ③ kct zones fill       — REMPLIT le plan de masse GND (cuivre rouge F.Cu +
-                           bleu B.Cu) au lieu du chevelu ; nécessite kicad-cli
+  ① kct route            — route TOUS les signaux + VCC en PISTES (+5V/+3.3V
+                           renommés en noms non-power le temps du routage, sinon
+                           kct route les coule en plan et les exclut du routage),
+                           seul GND coulé en plan. Escalade native de couches si
+                           backend C++ dispo, sinon 2 couches en local.
+  ② kct optimize-traces  — coins 90° → chamfers 45° (--chamfer-size 0.5)
+  ③ kct zones add GND    — plan de masse GND sur la face manquante → GND sur
+                           F.Cu ET B.Cu (top + bottom). PAS de plan VCC.
+  ④ kct zones fill       — remplit les plans GND autour de toutes les pistes ;
+                           nécessite kicad-cli
 
 Sorties (dans output/routage/) :
-  4_routed.kicad_pcb   <- board final propre (45° + plan GND rempli)
-  4_routed.png         <- rendu top (kicad-cli) pour vérif visuelle rapide
-  report.txt           <- métriques qualité (90° vs 45°, plan rempli, couches)
+  4_routed.kicad_pcb       <- board final (VCC en pistes, GND top+bottom, 45°)
+  4_routed_top/bottom.png  <- rendus 2 faces (kicad-cli)
+  report.txt               <- métriques (coins 45°/90°, plans GND, VCC pistes)
 
 Détails d'implémentation Windows :
   • kicad-cli n'est pas dans le PATH → détecté dans C:\\Program Files\\KiCad\\*\\bin
@@ -92,6 +96,47 @@ def _copper_layers(pcb: Path) -> int:
     return len(re.findall(r'"(?:F|B|In\d+)\.Cu"', scope)) or 2
 
 
+def _zone_layers_for_net(pcb: Path, net: str) -> set[str]:
+    """Couches cuivre portant déjà une zone du net donné (ex. {'B.Cu'})."""
+    t = pcb.read_text(encoding="utf-8", errors="replace")
+    layers: set[str] = set()
+    for m in re.finditer(r"\(zone\b", t):
+        blk = t[m.start():m.start() + 300]
+        z_net = re.search(r'\(net "([^"]*)"', blk)
+        z_layer = re.search(r'\(layer "([^"]+)"', blk)
+        if z_net and z_layer and z_net.group(1) == net:
+            layers.add(z_layer.group(1))
+    return layers
+
+
+# VCC routé en PISTES (pas en plan) : kct route classe +5V/+3.3V comme nets
+# « power » par leur NOM et les coule en zones (auto_pour) + les exclut du
+# routage. On les renomme en noms non-power AVANT le routage → le routeur les
+# traite en signaux (pistes) ; on renomme en sens inverse APRÈS. Seul GND reste
+# coulé en plan. (Connectivité préservée : les pads référencent le net par
+# NUMÉRO, pas par nom — seul le label change.)
+_VCC_RENAME = {"+5V": "P5V0", "+3.3V": "P3V3"}
+
+
+def _rename_nets(text: str, mapping: dict[str, str]) -> str:
+    for old, new in mapping.items():
+        text = re.sub(rf'\(net (\d+) "{re.escape(old)}"\)', rf'(net \1 "{new}")', text)
+    return text
+
+
+def _segments_for_nets(pcb: Path, nets: tuple[str, ...]) -> dict[str, int]:
+    """Nombre de segments de piste par net nommé (pour vérifier VCC en pistes)."""
+    from collections import Counter
+    t = pcb.read_text(encoding="utf-8", errors="replace")
+    netmap = dict(re.findall(r'\(net (\d+) "([^"]*)"', t))
+    counts: Counter = Counter()
+    for blk in re.findall(r"\(segment\b.*?\n\s*\)", t, re.DOTALL):
+        nn = re.search(r"\(net (\d+)\)", blk)
+        if nn:
+            counts[netmap.get(nn.group(1), nn.group(1))] += 1
+    return {n: counts.get(n, 0) for n in nets}
+
+
 def _angle_stats(pcb: Path) -> dict[str, int]:
     """Classe les VRAIS COINS de piste (2 segments d'un même net/layer qui se
     rejoignent) par angle de virage : 90° (angle droit, à éviter), 45° (chamfer,
@@ -159,16 +204,20 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "in.kicad_pcb"
         board = Path(tmp) / "routed.kicad_pcb"
-        src.write_bytes(placed.read_bytes())
+        # VCC renommés en noms non-power → routés en PISTES (pas en plan).
+        src.write_text(
+            _rename_nets(placed.read_text(encoding="utf-8", errors="replace"), _VCC_RENAME),
+            encoding="utf-8",
+        )
 
-        # ── ① ROUTE ──────────────────────────────────────────────────────
+        # ── ① ROUTE (VCC en pistes, seul GND coulé) ──────────────────────
         if native:
             route_flags = ["--auto-layers", "--max-layers", "6"]
             route_timeout = 300
         else:
             route_flags = ["--layers", "2"]  # local : 2 couches, rapide et viewable
             route_timeout = 150
-        print(f"① kct route {' '.join(route_flags)} --auto-fix")
+        print(f"① kct route {' '.join(route_flags)} --auto-fix (VCC en pistes)")
         r = _run(
             [sys.executable, "-m", "kicad_tools.cli", "route", str(src),
              "-o", str(board), *route_flags, "--auto-fix", "--seed", "42",
@@ -184,6 +233,12 @@ def main() -> int:
                 print("Échec : route n'a produit aucun board.")
                 print((r.stderr or r.stdout)[-300:])
                 return 1
+        # Renomme les VCC en sens inverse (P5V0→+5V, P3V3→+3.3V).
+        board.write_text(
+            _rename_nets(board.read_text(encoding="utf-8", errors="replace"),
+                         {v: k for k, v in _VCC_RENAME.items()}),
+            encoding="utf-8",
+        )
         print(f"   -> {routed_pct}% · {_angle_stats(board)['segments']} segments\n")
 
         # ── ② OPTIMIZE-TRACES (45°) ──────────────────────────────────────
@@ -193,14 +248,34 @@ def main() -> int:
         s = _angle_stats(board)
         print(f"   -> coins 45°={s['corner_45']} · coins 90°={s['corner_90']}\n")
 
-        # ── ③ ZONES FILL (plan GND) ──────────────────────────────────────
+        # ── ③ PLAN DE MASSE GND sur F.Cu ET B.Cu ─────────────────────────
+        # `kct route` coule déjà GND sur une face (souvent B.Cu) ; on AJOUTE
+        # le plan GND sur la face manquante → plan de masse top + bottom.
+        # zones add exige -o (ne réécrit pas en place) → fichier temp distinct.
+        have = _zone_layers_for_net(board, "GND")
+        print(f"③ plan GND — déjà sur {sorted(have) or 'aucune face'}")
+        for layer in ("F.Cu", "B.Cu"):
+            if layer in have:
+                continue
+            withz = board.with_name(f"with_gnd_{layer.replace('.', '_')}.kicad_pcb")
+            rz = _run([sys.executable, "-m", "kicad_tools.cli", "zones", "add",
+                       str(board), "--net", "GND", "--layer", layer,
+                       "--priority", "0", "-o", str(withz)], timeout_s=60)
+            if withz.exists():
+                shutil.copy(str(withz), str(board))
+                print(f"   + plan GND ajouté sur {layer}")
+            else:
+                print(f"   ! échec ajout GND {layer}: {(rz.stderr or rz.stdout)[-120:]}")
+        print(f"   -> plan GND sur {sorted(_zone_layers_for_net(board, 'GND'))}\n")
+
+        # ── ④ ZONES FILL (remplit GND top+bottom + power islands) ────────
         if _KICAD_BIN:
-            print("③ kct zones fill (remplit le plan de masse GND)")
+            print("④ kct zones fill (remplit les plans GND + îlots power)")
             _run([sys.executable, "-m", "kicad_tools.cli", "zones", "fill",
                   str(board)], timeout_s=120)
             print(f"   -> {_angle_stats(board)['filled_polygon']} polygones remplis\n")
         else:
-            print("③ zones fill SAUTÉ (kicad-cli absent)\n")
+            print("④ zones fill SAUTÉ (kicad-cli absent — plans non remplis)\n")
 
         # ── Copie du board propre + rendu PNG ────────────────────────────
         final = out / "4_routed.kicad_pcb"
@@ -217,20 +292,25 @@ def main() -> int:
             print(f"Échec : copie du board vers {final} a disparu.")
             return 1
 
-        png = out / "4_routed.png"
         if _KICAD_BIN:
-            rp = _run([str(_KICAD_BIN / "kicad-cli.exe"), "pcb", "render",
-                       "--side", "top", "-o", str(png), str(final)], timeout_s=120)
-            if rp.returncode != 0:
-                print(f"   (rendu PNG échoué : {(rp.stderr or '').strip()[-160:]})")
+            for side, dst in (("top", out / "4_routed_top.png"),
+                              ("bottom", out / "4_routed_bottom.png")):
+                rp = _run([str(_KICAD_BIN / "kicad-cli.exe"), "pcb", "render",
+                           "--side", side, "-o", str(dst), str(final)], timeout_s=120)
+                if rp.returncode != 0:
+                    print(f"   (rendu {side} échoué : {(rp.stderr or '').strip()[-140:]})")
 
     stats = _angle_stats(final)
     n_layers = _copper_layers(final)
+    gnd_layers = sorted(_zone_layers_for_net(final, "GND"))
+    both_planes = {"F.Cu", "B.Cu"}.issubset(set(gnd_layers))
+    vcc = _segments_for_nets(final, ("+5V", "+3.3V"))
+    vcc_zones = _zone_layers_for_net(final, "+5V") | _zone_layers_for_net(final, "+3.3V")
     report = [
-        "ROUTAGE STM32 — qualité (route → optimize-traces 45° → zones fill GND)",
+        "ROUTAGE STM32 — VCC en pistes · plan GND top+bottom · 45°",
         "=" * 64,
         f"Input            : {placed.name} (placement final auto_place)",
-        f"Output           : {final.name}  (+ {png.name})",
+        f"Output           : {final.name}  (+ 4_routed_top.png, 4_routed_bottom.png)",
         f"kicad-cli        : {_KICAD_BIN or 'ABSENT'}",
         f"Backend C++      : {'dispo' if native else 'absent (2 couches local)'}",
         "",
@@ -239,7 +319,11 @@ def main() -> int:
         f"Segments         : {stats['segments']}  (vias {stats['vias']})",
         f"Coins 45° (bon)  : {stats['corner_45']}",
         f"Coins 90° (à éviter) : {stats['corner_90']}",
-        f"Plan GND rempli  : {stats['filled_polygon']} polygones "
+        f"Plan GND         : {', '.join(gnd_layers) or 'aucun'} "
+        f"({'top + bottom OK' if both_planes else 'INCOMPLET'})",
+        f"VCC en pistes    : +5V={vcc['+5V']} seg · +3.3V={vcc['+3.3V']} seg "
+        f"({'PAS de plan VCC OK' if not vcc_zones else 'reste un plan: ' + ', '.join(vcc_zones)})",
+        f"Polygones remplis: {stats['filled_polygon']} "
         f"({'OUI' if stats['filled_polygon'] else 'NON — kicad-cli manquant'})",
     ]
     (out / "report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
@@ -247,10 +331,10 @@ def main() -> int:
     print("=" * 64)
     print(f"Board   : {final}")
     if _KICAD_BIN:
-        print(f"Rendu   : {png}")
+        print(f"Rendus  : {out / '4_routed_top.png'} + 4_routed_bottom.png")
     print(f"Rapport : {out / 'report.txt'}")
-    print(f"Qualité : {stats['corner_45']} coins 45° · {stats['corner_90']} coins 90° · "
-          f"plan GND {'rempli' if stats['filled_polygon'] else 'VIDE'}")
+    print(f"Qualité : plan GND {', '.join(gnd_layers)} · {stats['corner_45']} coins 45° · "
+          f"{stats['corner_90']} coins 90°")
     return 0
 
 
