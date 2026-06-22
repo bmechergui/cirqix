@@ -1309,9 +1309,123 @@ coexistent dans le même fichier.**
 (paramétrage de `run_optimize_placement`, `_max_displacement_mm` est une
 comparaison Python pure, pas un algo de placement).
 
+**Précision — quand l'Inspecteur tourne-t-il exactement :** l'Inspecteur
+(`_resolve_remaining_conflicts`) n'est PAS appelé symétriquement "après
+chaque étape" — il tourne au plus 2 fois dans `auto_place()` :
+
+```python
+# Pass 1 — TOUJOURS, après l'Architecte
+_resolve_remaining_conflicts(out, conn)
+pre_cmaes_bytes = out.read_bytes()          # snapshot garanti 0 ERROR
+pre_cmaes_positions = {...}                  # pour le filet Option B
+
+refine = _refine_with_cmaes(out, conn, ...)  # ② Géomètre (CMA-ES)
+
+# Pass 2 — SEULEMENT si refine["refined"] est True
+if refine["refined"]:
+    n_err_before, n_err_after = _resolve_remaining_conflicts(out, conn)
+    if n_err_after > 0:
+        out.write_bytes(pre_cmaes_bytes)     # revert (compte ERROR)
+    else:
+        max_disp = _max_displacement_mm(...)
+        if max_disp > _CMAES_MAX_DISPLACEMENT_MM:
+            out.write_bytes(pre_cmaes_bytes) # revert (Option B)
+```
+
+| Étape | Inspecteur tourne ? |
+|---|---|
+| ① Architecte | toujours (pass 1) — garantit 0 ERROR avant de tenter le Géomètre |
+| ② Géomètre (CMA-ES) | seulement si `refine["refined"] == True` (le CLI natif a réussi) |
+| CMA-ES échoue/lève une exception | pas de pass 2 — le board reste celui du pass 1 (déjà 0 ERROR) |
+| CMA-ES réussit mais pass 2 trouve encore des ERROR | board pré-CMA-ES (pass 1) restauré |
+| CMA-ES réussit, pass 2 → 0 ERROR, mais déplacement > seuil | board pré-CMA-ES (pass 1) restauré aussi (Option B) |
+
+Le board livré n'est donc réellement le résultat du Géomètre QUE dans le cas :
+CMA-ES réussi → Inspecteur pass 2 ramène 0 ERROR → déplacement ≤ seuil. Dans
+tous les autres cas, c'est le board garanti par le pass 1 (Architecte +
+Inspecteur) qui est livré tel quel. Observé en pratique sur le run STM32
+réel (`run_phase3_visual.py`, 2026-06-19) : pass 2 a réparé 1 ERROR → 0, le
+filet Option B ne s'est pas déclenché (pas de warning "restauré" dans les
+logs) → le board final est bien celui du Géomètre nettoyé.
+
 **Fichiers concernés :** `services/kicad/tools/placement.py` +
 `services/kicad/tests/test_placement.py` + `CLAUDE.md`. Branche
 `feat/placement-cmaes`, PR #36.
+
+---
+
+### 2026-06-22 — Stratégie de routage = `negotiated` par défaut (agent + projet)
+
+**Décision :** `kct route --strategy negotiated` est la stratégie de routage par
+défaut PARTOUT — dans l'agent de prod (`tools/kct_route.py::_run_kct_route`,
+`--strategy negotiated`) et pour tout le projet. Les 3 autres stratégies
+(`basic`, `monte-carlo`, `evolutionary`) ne sont pas utilisées.
+
+**Pourquoi :** benchmark des 4 stratégies sur le board STM32 placé réel
+(`output/phase3/3_final.kicad_pcb`, 2 couches, seed 42, timeout 120s, routeur
+Python local — pas de backend C++) :
+
+| Stratégie      | Routé | Temps          | Verdict |
+|----------------|-------|----------------|---------|
+| basic          | —     | timeout >240s  | inutilisable — A* net-par-net sans rip-up, bloque sur board dense |
+| **negotiated** | **56%** | **67s**      | **seule rapide ET viable → défaut** |
+| monte-carlo    | —     | trop lente     | exhaustive (N essais randomisés) — hors budget agent |
+| evolutionary   | —     | trop lente     | métaheuristique — hors budget agent |
+
+`negotiated` est le meilleur compromis qualité/temps pour le budget agentique
+(~60s/routage). C'est aussi le défaut de kicad-tools.
+
+**Comment marche `negotiated` — DEUX NIVEAUX (clé pour lever la confusion)**
+
+On lit à la fois « negotiated ≈ Freerouting » ET « negotiated utilise A* ». Les
+DEUX sont vrais : ce sont deux niveaux DIFFÉRENTS de l'algorithme.
+
+```
+┌─────────────────────────────────────────────┐
+│  NIVEAU 1 — la BOUCLE (la « stratégie »)     │  ← « proche de Freerouting »
+│  rip-up & reroute + pénalités de congestion  │
+│  = algorithme PathFinder (1995)              │
+├─────────────────────────────────────────────┤
+│  NIVEAU 2 — la RECHERCHE d'un net (A*)        │  ← « utilise A* »
+│  trouve le chemin le plus court d'UN net     │
+└─────────────────────────────────────────────┘
+```
+
+**NIVEAU 1 — la BOUCLE (= la « stratégie »)** : rip-up & reroute + pénalités de
+congestion. C'est l'algorithme **PathFinder** (McMurchie & Ebeling, 1995, routage
+FPGA). Principe : on route TOUS les nets une 1ʳᵉ fois en autorisant les
+chevauchements (overlap) ; puis à chaque itération on AUGMENTE le coût des
+cellules surchargées → les nets « négocient » l'espace, les moins contraints
+cèdent et se re-routent ailleurs (rip-up & reroute). On itère jusqu'à 0 overlap.
+C'est CE niveau qui ressemble à Freerouting (lui aussi fait du *negotiated
+congestion routing*).
+
+**NIVEAU 2 — la RECHERCHE d'UN net (= A*)** : chaque fois qu'on (re)route un net,
+on cherche son plus court chemin sur la grille, pondéré par les coûts de
+congestion du niveau 1. C'est un **A\*** classique (heuristique distance de
+Manhattan). C'est CE niveau qui « utilise A* ».
+
+**Le lien :** NIVEAU 1 décide QUI route et avec quelles pénalités (la boucle qui
+négocie) ; NIVEAU 2 trouve COMMENT router un net donné (le pathfinding). A* est
+le moteur de recherche APPELÉ par la boucle PathFinder — pas une alternative à
+elle. D'où la confusion levée :
+- `basic` = NIVEAU 2 SEUL (A* net par net, sans la boucle de négociation) →
+  bloque vite sur les boards denses (premier net routé « égoïstement » barre la
+  route aux suivants, aucun rip-up pour corriger) → le timeout du benchmark.
+- `negotiated` = NIVEAU 1 **+** NIVEAU 2 → les nets se réorganisent → bien plus
+  de complétion.
+
+**Backend C++ :** le NIVEAU 2 (A*) a un backend C++ (`router_cpp.*.so`, build
+`kct build-native`) 10-100× plus rapide que le Python pur. En local sans ce
+backend, le 56%/67s ci-dessus est un PLANCHER ; en Docker prod (C++ + escalade
+`--auto-layers`) le routage va beaucoup plus loin / plus vite.
+
+**Écarté :** `basic` (pas de rip-up → échoue sur dense), `monte-carlo` /
+`evolutionary` (exhaustifs/métaheuristiques → trop lents pour le budget agent).
+
+**Fichiers concernés :** `services/kicad/tools/kct_route.py`
+(`_run_kct_route` → `--strategy negotiated`, déjà en place). Benchmark sur
+`examples/stm32-validation/output/phase3/3_final.kicad_pcb`.
 
 ---
 
