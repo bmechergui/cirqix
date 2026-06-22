@@ -21,7 +21,7 @@ import pytest
 import tools.placement as placement_module
 
 from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
-from kicad_tools.placement.conflict import ConflictSeverity
+from kicad_tools.placement.conflict import ConflictSeverity, ConflictType
 from kicad_tools.schema.pcb import PCB
 
 from tools.placement import (
@@ -97,6 +97,33 @@ def _board_with_movable_components(tmp_path: Path) -> bytes:
     for i, ref in enumerate(("R1", "R2", "R3")):
         uuid = f"3333333{i}-3333-3333-3333-333333333333"
         inject += _resistor_sexp(ref, uuid, ox + 30.0, oy + 20.0, net=1)
+
+    text = text[:close_idx] + inject + text[close_idx:]
+    board_path.write_text(text, encoding="utf-8")
+    return board_path.read_bytes()
+
+
+def _board_with_courtyard_overlap(tmp_path: Path) -> bytes:
+    """Board 60x40mm avec R1/R2 espacés de façon à ce que SEUL le courtyard
+    chevauche (WARNING), SANS chevauchement de pads (0 ERROR).
+
+    Reproduit le cas réel R1-R2 du board STM32 (courtyard_overlap ~0.2-0.3mm) :
+    pads R_0402 à ±0.5mm (size 0.6) → pads_bbox large de 1.6mm, courtyard
+    (pads_bbox + 0.25mm) large de 2.1mm. À 1.9mm d'écart entre centres, les
+    pads sont séparés de 0.3mm (pas d'ERROR) mais les courtyards se chevauchent
+    de ~0.2mm (courtyard_overlap WARNING). Composants same-net (SIG) → le
+    courtyard_overlap est net-agnostique, déclenché de toute façon.
+    """
+    pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
+    ox, oy = pcb.board_origin
+    board_path = tmp_path / "board.kicad_pcb"
+    pcb.save(str(board_path))
+
+    text = board_path.read_text(encoding="utf-8")
+    close_idx = text.rstrip().rfind(")")
+
+    inject = _resistor_sexp("R1", "44444441-4444-4444-4444-444444444441", ox + 30.0, oy + 20.0, net=1)
+    inject += _resistor_sexp("R2", "44444442-4444-4444-4444-444444444442", ox + 31.9, oy + 20.0, net=1)
 
     text = text[:close_idx] + inject + text[close_idx:]
     board_path.write_text(text, encoding="utf-8")
@@ -280,6 +307,40 @@ def test_resolve_remaining_conflicts_removes_pad_clearance_errors(tmp_path):
     assert after == 0, f"conflits ERROR (court-circuit) non résolus : {after}"
 
 
+def test_resolve_remaining_conflicts_also_clears_courtyard_warnings(tmp_path):
+    """Régression : _resolve_remaining_conflicts doit AUSSI éliminer les conflits
+    WARNING (courtyard_overlap), pas seulement les ERROR.
+
+    Avant ce fix, la passe de réparation retournait immédiatement (0, 0) dès
+    qu'il n'y avait aucun ERROR, ignorant les chevauchements de courtyard — le
+    cas R1-R2 du board STM32 qui sortait en « 0 ERROR / 1 WARNING ».
+
+    Board construit avec R1/R2 espacés : SEUL le courtyard chevauche (WARNING),
+    aucun chevauchement de pads (0 ERROR). Le fixer natif (PlacementFixer.
+    iterative_fix → _calc_courtyard_fix) doit écarter les composants et ramener
+    le board à 0 ERROR ET 0 WARNING — 100% natif, zéro algo custom.
+    """
+    pcb_bytes = _board_with_courtyard_overlap(tmp_path)
+    board_path = tmp_path / "courtyard.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    # Pré-condition : ≥1 courtyard_overlap WARNING, 0 ERROR.
+    conflicts_before = PlacementAnalyzer().find_conflicts(str(board_path), DesignRules())
+    warns_before = [c for c in conflicts_before if c.severity == ConflictSeverity.WARNING]
+    errors_before = [c for c in conflicts_before if c.severity == ConflictSeverity.ERROR]
+    assert any(c.type == ConflictType.COURTYARD_OVERLAP for c in warns_before), \
+        "le board de test devrait avoir un courtyard_overlap WARNING au départ"
+    assert not errors_before, "le board de test ne doit pas avoir d'ERROR (pads non chevauchants)"
+
+    _resolve_remaining_conflicts(board_path, anchored=[])
+
+    conflicts_after = PlacementAnalyzer().find_conflicts(str(board_path), DesignRules())
+    warns_after = [c for c in conflicts_after if c.severity == ConflictSeverity.WARNING]
+    errors_after = [c for c in conflicts_after if c.severity == ConflictSeverity.ERROR]
+    assert not errors_after, f"conflits ERROR restants : {errors_after}"
+    assert not warns_after, f"conflits WARNING (courtyard_overlap) restants : {warns_after}"
+
+
 def test_auto_place_result_has_no_error_conflicts(tmp_path):
     """Régression : le board renvoyé par auto_place ne doit JAMAIS contenir de
     conflit ERROR (pad clearance / hole ≤0), même quand le GA stochastique en
@@ -295,7 +356,9 @@ def test_auto_place_result_has_no_error_conflicts(tmp_path):
 
     conflicts = PlacementAnalyzer().find_conflicts(str(out_path), DesignRules())
     errors = [c for c in conflicts if c.severity == ConflictSeverity.ERROR]
+    warnings = [c for c in conflicts if c.severity == ConflictSeverity.WARNING]
     assert not errors, f"conflits ERROR restants après auto_place : {errors}"
+    assert not warnings, f"conflits WARNING restants après auto_place : {warnings}"
 
 
 # ---------------------------------------------------------------------------

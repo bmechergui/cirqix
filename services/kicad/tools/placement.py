@@ -88,10 +88,17 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     best-of-N serait inutilisable en synchrone), on chaîne une passe de
     réparation locale qui ne déplace que les composants en conflit
     (≤0.1s, pas de ré-optimisation globale) : élimine les conflits ERROR
-    (pad clearance / hole ≤0 — risque de court-circuit réel), conformément
-    à la règle CLAUDE.md « commande native avant algo custom ».
+    (pad clearance / hole ≤0 — risque de court-circuit réel) ET les WARNING
+    résorbables (courtyard_overlap, pad_clearance/hole/edge en WARNING), via
+    la logique native du fixer (_calc_courtyard_fix, etc.). Conformément à la
+    règle CLAUDE.md « commande native avant algo custom ». Avant ce fix, seuls
+    les ERROR déclenchaient le fixer → un board « 0 ERROR / N courtyard_overlap »
+    (cas R1-R2 du STM32) sortait non-réparé.
 
-    Retourne ``(erreurs_avant, erreurs_après)``.
+    Retourne ``(erreurs_avant, erreurs_après)`` — comptes ERROR uniquement,
+    conservés pour la décision de revert CMA-ES (keyée sur les ERROR, pas les
+    WARNING : un courtyard résiduel n'est pas un court-circuit, le fixer le
+    nettoie sans risque).
     """
     from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
     from kicad_tools.placement.conflict import ConflictSeverity
@@ -100,8 +107,15 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     rules = DesignRules()
     before = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
     n_errors_before = sum(1 for c in before if c.severity == ConflictSeverity.ERROR)
+    # Le fixer natif résout aussi les WARNING (courtyard_overlap via
+    # _calc_courtyard_fix) : on le déclenche dès qu'il y a un conflit
+    # résorbable (ERROR ou WARNING), pas seulement sur ERROR.
+    n_fixable_before = sum(
+        1 for c in before
+        if c.severity in (ConflictSeverity.ERROR, ConflictSeverity.WARNING)
+    )
 
-    if n_errors_before == 0:
+    if n_fixable_before == 0:
         return 0, 0
 
     fixer = PlacementFixer(strategy=FixStrategy.SPREAD, anchored=set(anchored))
@@ -109,6 +123,17 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
 
     after = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
     n_errors_after = sum(1 for c in after if c.severity == ConflictSeverity.ERROR)
+    n_warnings_after = sum(1 for c in after if c.severity == ConflictSeverity.WARNING)
+    if n_errors_after or n_warnings_after:
+        # Observabilité : le fixer natif n'a pas tout résorbé (ex: courtyard
+        # entre 2 composants anchored qu'il ne peut pas déplacer). Le retour
+        # reste keyé ERROR (le revert CMA-ES ne se déclenche pas sur un WARNING
+        # résiduel — ce n'est pas un court-circuit), mais on laisse une trace.
+        logger.info(
+            "_resolve_remaining_conflicts: %d ERROR / %d WARNING résiduels "
+            "(avant fix: %d ERROR / %d résorbables)",
+            n_errors_after, n_warnings_after, n_errors_before, n_fixable_before,
+        )
     return n_errors_before, n_errors_after
 
 
