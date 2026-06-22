@@ -183,6 +183,26 @@ def test_route_kct_ensures_gnd_both_planes(monkeypatch):
     assert "bytes" in called  # le plan GND 2 faces est bien appliqué
 
 
+def test_run_kct_route_escalates_layers_until_100pct(monkeypatch):
+    # negotiated + auto-layers + min-completion 1.0 → escalade automatique des
+    # couches jusqu'à 100% routé (le défaut lib min-completion 0.95 s'arrête à
+    # 95%). PAS de --max-layers : on laisse le défaut (escalade sans plafond fixé).
+    captured: dict[str, list[str]] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(kct_route.subprocess, "run", fake_subprocess_run)
+    kct_route._run_kct_route(Path("in.kicad_pcb"), Path("out.kicad_pcb"), 60)
+    cmd = captured["cmd"]
+    assert "--auto-layers" in cmd
+    assert "--min-completion" in cmd
+    assert cmd[cmd.index("--min-completion") + 1] == "1.0"
+    assert "--max-layers" not in cmd  # pas de plafond fixé (auto-layers seul)
+    assert "--strategy" in cmd and cmd[cmd.index("--strategy") + 1] == "negotiated"
+
+
 def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     captured: dict[str, str] = {}
 

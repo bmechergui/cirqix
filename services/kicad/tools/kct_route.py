@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 _ROUTE_TIMEOUT_S: int = 60
 
+# Escalade de couches : --auto-layers active l'escalade automatique ; on NE fixe
+# PAS --max-layers (plafond) → le routeur utilise son défaut (4 couches, l'outil
+# ne supporte que 2/4/6, pas d'« illimité »). --min-completion fixe la CIBLE de
+# l'escalade : défaut lib = 0.95 (s'arrête à 95%, trop tôt) → on vise 100% du
+# routable, donc le routeur escalade jusqu'à la couche minimale qui route tout
+# (board simple reste en 2 couches, dense monte à 4).
+_MIN_COMPLETION: str = "1.0"
+
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
 _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 
@@ -177,12 +185,16 @@ def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
 
 
 def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.CompletedProcess[str]:
-    """Lance ``kct route`` (negotiated, auto-layers, auto-fix, seed déterministe)."""
+    """Lance ``kct route`` : stratégie ``negotiated`` + escalade de couches
+    automatique jusqu'à 100% routé (``--auto-layers`` + ``--min-completion 1.0``,
+    sans plafond ``--max-layers`` → défaut 4), auto-fix DRC, seed déterministe."""
     cmd = [
         sys.executable, "-m", "kicad_tools.cli", "route",
         str(src), "-o", str(dst),
         "--strategy", "negotiated",
-        "--auto-layers", "--auto-fix",
+        "--auto-layers",
+        "--min-completion", _MIN_COMPLETION,
+        "--auto-fix",
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
