@@ -1,5 +1,5 @@
 """
-Layrix KiCad Service — FastAPI headless
+Cirqix KiCad Service — FastAPI headless
 Endpoints actifs (tous via routers/) :
   /health
   /schematic/execute · /schematic/generate · /schematic/validate-symbols
@@ -10,7 +10,7 @@ Endpoints actifs (tous via routers/) :
 import os
 import sys as _sys
 
-# Use Layrix-patched copies of circuit_synth and kicad_tools (in services/kicad/).
+# Use Cirqix-patched copies of circuit_synth and kicad_tools (in services/kicad/).
 # These contain bug fixes and extensions not in the original packages.
 # Priority: local patched copy → installed package.
 # PYTHONPATH is updated too so CLI subprocesses (`python -m kicad_tools.cli route`
@@ -95,7 +95,7 @@ except ImportError:
     logging.warning("pcbnew non disponible — mode simulation activé")
 
 app = FastAPI(
-    title="Layrix KiCad Service",
+    title="Cirqix KiCad Service",
     version="1.0.0",
     description="Microservice headless KiCad : placement, routage Freerouting, DRC, export Gerbers",
 )

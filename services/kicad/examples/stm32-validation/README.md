@@ -16,7 +16,8 @@
 
 ## Le board
 
-`input/generate_design.py` (copie du board `04-stm32-devboard` de kicad-tools) :
+`input/generate_design.py` (Générateur géométrique "Phase 0") :
+Son rôle est purement géométrique : il génère le schéma et le `.kicad_pcb` brut, mais sans aucune intelligence de routage ou de placement. Ce script est **appelé automatiquement en sous-processus** par notre orchestrateur principal `run_agent_chain.py`.
 - U2 STM32F103C8T6 (LQFP-48, pitch 0.5mm) — Y1 quartz 8 MHz + C10/C11 20pF
 - U1 AMS1117-3.3 LDO + C1-C3 — C12-C16 bypass — J1 header SWD 6 pins
 - R1/D1 LED utilisateur — R2 pull-down BOOT0
@@ -31,15 +32,15 @@ export KICAD_SYMBOL_DIR="C:\Program Files\KiCad\<ver>\share\kicad\symbols"
 export KICAD_FOOTPRINT_DIR="C:\Program Files\KiCad\<ver>\share\kicad\footprints"
 export PATH="$PATH:/c/Program Files/KiCad/<ver>/bin"   # kicad-cli pour DRC/Gerbers
 
-# 1. Générer schéma + PCB initial
-python -m kicad_tools.cli build <dossier_board> --step schematic
+# 1. Pipeline Automatisé (Génération → Placement → Routage)
+# L'orchestrateur appelle générator_design.py en interne (Etape 0), puis place (Etape 1) et route (Etape 2).
+# Les fichiers générés sont automatiquement triés dans des sous-dossiers :
+# out_dir/0_generation, out_dir/1_placement, et out_dir/2_routing.
+python services/kicad/examples/stm32-validation/run_agent_chain.py <out_dir>
 
-# 2. Chaîne agents prod : placement optimiseur → kct route (→ --rescue, voir plus bas)
-python services/kicad/examples/stm32-validation/run_agent_chain.py <gen.kicad_pcb> <out_dir>
-
-# 3. Driver LLM (Claude joue le LLM) : état → décision → exécution → diagnostic
-python services/kicad/scripts/driver_llm.py state  <board_routé.kicad_pcb>
-python services/kicad/scripts/driver_llm.py exec   <in.kicad_pcb> <out.kicad_pcb> batches/batch1.json
+# 2. Driver LLM (Claude) lit l'analyse dans <out_dir>/2_routing/routing_analysis.txt
+# et écrit son batch (ex: my_decisions.json), puis lance la boucle de sauvetage (Étape 4) :
+python services/kicad/examples/stm32-validation/run_agent_chain.py <out_dir> --rescue my_decisions.json
 ```
 
 ## Les batches du driver LLM (`batches/`)
@@ -65,7 +66,7 @@ le petit routeur A* du reasoner route net par net **sans négociation de conflit
 (contrairement au routeur principal). Le concept est prouvé, pas la qualité des pistes.
 
 Leçon : l'échec du routage était un **problème de placement**, pas de routeur —
-exactement le rôle de `call_agent_reason` dans le pipeline Layrix. En prod, le bon
+exactement le rôle de `call_agent_reason` dans le pipeline Cirqix. En prod, le bon
 enchaînement est : **reasoner déplace les composants → on relance `kct route`**
 (routeur négocié complet), pas « le reasoner route lui-même ». Le backend C++
 (`kct build-native`, Docker) accélère mais ne résout pas un couloir bloqué.
@@ -96,15 +97,22 @@ enchaînement est : **reasoner déplace les composants → on relance `kct route
 > qu'exécutent les endpoints `/place/auto`, `/route/auto`, `/reason/auto`.
 
 ```bash
-# Étapes 1→3 : gen → placement optimiseur → kct route (s'arrête sur l'analyse d'échec)
-python run_agent_chain.py <gen.kicad_pcb> output/chain
-# Le driver LLM (Claude Code) lit output/chain/3_routing_analysis.txt,
+# Étapes 0→2 : generation (via generate_design.py) → placement optimiseur → kct route
+python run_agent_chain.py output/chain
+
+# Le script crée automatiquement une arborescence propre étape par étape :
+#  - 0_generation/  (Contient stm32_devboard.kicad_pcb brut et le schéma générés par generate_design.py)
+#  - 1_placement/   (PCB placé + placement.log)
+#  - 2_routing/     (PCB routé + routing_analysis.txt si le routeur bloque)
+
+# Le driver LLM (Moi, l'IA) lit 2_routing/routing_analysis.txt,
 # écrit decisions.json (place_component/delete_trace), puis :
-python run_agent_chain.py <gen.kicad_pcb> output/chain --rescue decisions.json
+python run_agent_chain.py output/chain --rescue decisions.json
+# -> Ce qui génère le dossier 3_rescue/ (batch json, logs, et pcb sauvé)
 ```
 
-`run_feedback_loop.py` teste la boucle `rescue_with_placement_feedback` seule,
-même pattern « moi = le LLM » (décisions servies depuis un JSON, sans clé API).
+> Note sur `run_feedback_loop.py` :
+> C'est un tout petit script de test indépendant. Il importe exactement la même fonction (`rescue_with_placement_feedback`), mais il sert uniquement si un développeur veut tester la boucle de sauvetage toute seule (sans passer par la génération, le placement, etc.), avec le même pattern « moi = le LLM » (décisions servies depuis un JSON, sans clé API).
 
 ### Bug #5 trouvé par cette validation — kct route ne rippe pas l'existant
 

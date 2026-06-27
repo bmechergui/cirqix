@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { FileText, Network, ListTree, Cable, Cpu, Zap, Plug } from 'lucide-react';
-import type { PCBState, SchemaComponent } from '@layrix/types';
+import type { PCBState, SchemaComponent } from '@cirqix/types';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
 import { SchematicGraph } from './SchematicGraph';

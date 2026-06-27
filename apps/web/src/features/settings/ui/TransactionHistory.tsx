@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CREDIT_COSTS } from '@layrix/types';
+import { CREDIT_COSTS } from '@cirqix/types';
 
 interface Transaction {
   id: string;

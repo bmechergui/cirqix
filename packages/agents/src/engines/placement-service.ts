@@ -10,7 +10,7 @@
 import pino from 'pino';
 
 const log = pino({
-  name: 'layrix.agents.placement-service',
+  name: 'cirqix.agents.placement-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 

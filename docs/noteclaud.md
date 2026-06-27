@@ -1,4 +1,4 @@
-# Layrix — Pipeline Validation (step by step)
+# Cirqix — Pipeline Validation (step by step)
 
 > Ce document est mis à jour après chaque step validé ensemble.
 > Dernière mise à jour : 2026-05-26
@@ -43,7 +43,7 @@ const MAX_TOKENS         = 4096                  // par réponse
 ### System Prompt (résumé — mis à jour 2026-05-26)
 
 ```
-Tu es le Chef de Projet PCB Senior de Layrix.ai. 15 ans d'expérience.
+Tu es le Chef de Projet PCB Senior de Cirqix.ai. 15 ans d'expérience.
 
 PIPELINE (ordre strict, max 15 itérations) :
   ① call_agent_schema     → .kicad_sch + unresolved_footprints
@@ -438,7 +438,7 @@ INITIAL  →  INITIAL  (pas de changement — design = contexte seulement)
 ### Validations réalisées ✅
 
 ```
-✅ DesignJson interface ajouté dans @layrix/types (source de vérité)
+✅ DesignJson interface ajouté dans @cirqix/types (source de vérité)
 ✅ AgentAction enum étendu avec 'design'
 ✅ AgentStep enum étendu avec 'DESIGN'
 ✅ CREDIT_COSTS.design = 0.5 crédit
@@ -597,10 +597,10 @@ INITIAL  →  SCHEMA_DONE
    - power:VCC (flèche + cercle) sur VCC/VDD/VBUS/+5V/+3V3/+3.3V/+12V
 ✅ Helper _is_power_net(name) — détection automatique des rails power
 ✅ Title block rempli :
-   - title : "Layrix — {nom du composant principal}"
+   - title : "Cirqix — {nom du composant principal}"
    - date  : ISO YYYY-MM-DD
    - rev   : "1.0"
-   - company : "Layrix.ai"
+   - company : "Cirqix.ai"
 ✅ Net-labels texte conservés pour les nets non-power (VIN, VOUT, GPIO2…)
 ✅ 21 tests pytest passent (TDD : RED → GREEN)
 ✅ Vérifié visuellement sur LM7805 / NE555 / ESP32 (Chrome DevTools)

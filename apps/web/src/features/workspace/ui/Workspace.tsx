@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 import { ChatRail } from './ChatRail';
 import { Timeline } from './Timeline';
 import { WorkspaceHeader } from './WorkspaceHeader';

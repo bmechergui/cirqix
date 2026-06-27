@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 import { statusToStage, type PcbStage } from '@/entities/project';
 import { useAppStore } from '@/shared/store/app-store';
 import { IdeaView } from './IdeaView';

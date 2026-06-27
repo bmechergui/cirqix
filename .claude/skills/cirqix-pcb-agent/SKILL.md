@@ -1,10 +1,10 @@
 ---
-name: layrix-pcb-agent
+name: cirqix-pcb-agent
 description: This skill should be used when the user asks to "implémenter la boucle agentique PCB", "orchestrer les agents Claude", "configurer le streaming SSE", "créer l'orchestrateur", "gérer les états du PCB" or mentions boucle agentique, orchestrateur, Sonnet/Haiku agents, SSE, Redis, machine d'états PCB.
 version: 0.1.0
 ---
 
-# Layrix — Boucle Agentique PCB
+# Cirqix — Boucle Agentique PCB
 
 ## Machine d'états
 ```
@@ -127,7 +127,7 @@ export async function POST(req: Request) {
 ## Redis — persistance état
 
 ```typescript
-const KEY = (id: string) => `layrix:project:${id}:state`;
+const KEY = (id: string) => `cirqix:project:${id}:state`;
 
 export const saveProjectState = (id: string, state: PCBState) =>
   redis.setex(KEY(id), 86400, JSON.stringify(state)); // TTL 24h

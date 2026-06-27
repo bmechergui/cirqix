@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayrixLogo } from '@/shared/ui/layrix-logo';
+import { CirqixLogo } from '@/shared/ui/cirqix-logo';
 import { LayoutDashboard, Settings, HelpCircle, CreditCard } from 'lucide-react';
 import { Separator } from '@/shared/ui/separator';
 
@@ -21,7 +21,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-3">
         <Link href="/">
-          <LayrixLogo variant="icon" height={32} />
+          <CirqixLogo variant="icon" height={32} />
         </Link>
       </div>
 

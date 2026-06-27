@@ -4,7 +4,7 @@
  * so KiCanvas can render them without external symbol libraries.
  *
  * Usage:
- *   pnpm --filter @layrix/agents exec tsx src/engines/test-visual.mts
+ *   pnpm --filter @cirqix/agents exec tsx src/engines/test-visual.mts
  */
 
 import { writeFileSync } from 'fs';

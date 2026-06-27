@@ -11,7 +11,7 @@ import {
   Palette, 
   Info 
 } from 'lucide-react';
-import type { SchemaComponent, SchemaNet } from '@layrix/types';
+import type { SchemaComponent, SchemaNet } from '@cirqix/types';
 import { buildSchematicLayout, netColor, type SchematicNode } from '../lib/schematic-layout';
 
 interface SchematicGraphProps {

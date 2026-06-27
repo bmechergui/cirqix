@@ -1,7 +1,7 @@
 import pino from 'pino';
-import type { SimulationData, SimulationVector } from '@layrix/types';
+import type { SimulationData, SimulationVector } from '@cirqix/types';
 
-const log = pino({ name: 'layrix.agents.simulation-service', level: process.env['LOG_LEVEL'] ?? 'info' });
+const log = pino({ name: 'cirqix.agents.simulation-service', level: process.env['LOG_LEVEL'] ?? 'info' });
 
 export class SimulationServiceUnavailableError extends Error {
   constructor(msg: string) {

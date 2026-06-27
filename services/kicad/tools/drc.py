@@ -1,4 +1,4 @@
-"""DRC (Design Rule Check) utilities for the Layrix KiCad service.
+"""DRC (Design Rule Check) utilities for the Cirqix KiCad service.
 
 Two pure functions consumed by ``routers/drc.py``:
 
@@ -26,7 +26,7 @@ def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli pcb drc --format json`` report.
 
     Returns a list of violation dicts matching the ``DRCViolation`` TypeScript
-    interface from ``@layrix/types``. Tolerant — returns ``[]`` on any parsing
+    interface from ``@cirqix/types``. Tolerant — returns ``[]`` on any parsing
     failure. Promotes ``unconnected_items`` and ``schematic_parity`` sections
     to violations alongside the main ``violations`` array.
     """

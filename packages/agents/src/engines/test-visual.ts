@@ -3,7 +3,7 @@
  * and writes a self-contained HTML file that loads KiCanvas for inspection.
  *
  * Usage:
- *   pnpm --filter @layrix/agents exec tsx src/engines/test-visual.ts
+ *   pnpm --filter @cirqix/agents exec tsx src/engines/test-visual.ts
  *   Then open http://localhost:3333/test-kicad.html in Chrome
  */
 
@@ -54,7 +54,7 @@ const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Layrix — Circuit-Synth Visual Test</title>
+  <title>Cirqix — Circuit-Synth Visual Test</title>
   <script type="module" src="/kicanvas.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }

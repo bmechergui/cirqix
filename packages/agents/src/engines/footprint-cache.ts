@@ -9,11 +9,11 @@
  * Cache writes (upsert) are fire-and-forget and never block the cascade.
  */
 
-import { createAdminSupabaseClient } from '@layrix/db';
+import { createAdminSupabaseClient } from '@cirqix/db';
 import pino from 'pino';
 import type { FootprintResult, FootprintSource } from './footprint-service';
 
-const log = pino({ name: 'layrix.agents.footprint-cache', level: process.env['LOG_LEVEL'] ?? 'info' });
+const log = pino({ name: 'cirqix.agents.footprint-cache', level: process.env['LOG_LEVEL'] ?? 'info' });
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
 const EMBEDDING_DIMS = 1536;
@@ -58,7 +58,7 @@ function rowToResult(row: FootprintRow): FootprintResult {
     footprint_name: row.name,
     source: (row.source ?? 'kicad_official') as FootprintSource,
     ...(row.kicad_mod ? { kicad_mod: row.kicad_mod } : {}),
-    note: `Footprint cache Layrix (${row.source ?? 'kicad_official'}) : "${row.part_number ?? row.name}".`,
+    note: `Footprint cache Cirqix (${row.source ?? 'kicad_official'}) : "${row.part_number ?? row.name}".`,
   };
 }
 

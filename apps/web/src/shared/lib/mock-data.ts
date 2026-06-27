@@ -1,5 +1,5 @@
-export type { PCBStatus, Plan, Project, Message, Credits } from '@layrix/types';
-import type { Project, Message, Credits } from '@layrix/types';
+export type { PCBStatus, Plan, Project, Message, Credits } from '@cirqix/types';
+import type { Project, Message, Credits } from '@cirqix/types';
 
 export const MOCK_PROJECTS: Project[] = [
   { id: '1', name: 'ESP32 Weather Station', description: 'BLE + WiFi, BME280, SSD1306 OLED, LiPo', status: 'DRC_CLEAN', iteration_count: 7, created_at: '2026-03-25', updated_at: '2026-03-27' },

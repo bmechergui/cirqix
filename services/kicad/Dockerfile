@@ -1,5 +1,5 @@
 # ============================================================
-# Layrix KiCad Service — Docker headless
+# Cirqix KiCad Service — Docker headless
 # Base : KiCad 8.0 + Python 3.11 + FastAPI + Freerouting
 # Port : 8766 (matches KICAD_SERVICE_URL in .env.local)
 # ============================================================

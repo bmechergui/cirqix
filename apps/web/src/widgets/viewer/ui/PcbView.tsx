@@ -13,7 +13,7 @@ import {
   Cpu,
   Info
 } from 'lucide-react';
-import type { PCBState } from '@layrix/types';
+import type { PCBState } from '@cirqix/types';
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
@@ -557,7 +557,7 @@ function BoardCanvas({
         fontFamily="ui-monospace, monospace" 
         letterSpacing="0.12em"
       >
-        LAYRIX.AI · {widthMm}×{heightMm} mm · {placed.length} COMPONENTS{showRouting ? ` · ${visibleTraces.length} COPPER TRACES` : ''}
+        CIRQIX.AI · {widthMm}×{heightMm} mm · {placed.length} COMPONENTS{showRouting ? ` · ${visibleTraces.length} COPPER TRACES` : ''}
       </text>
     </svg>
   );

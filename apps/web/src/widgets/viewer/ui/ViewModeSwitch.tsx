@@ -36,11 +36,11 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
         <span>Native</span>
       </button>
 
-      {/* Layrix spec button */}
+      {/* Cirqix spec button */}
       <button
         type="button"
         onClick={() => onChange('spec')}
-        title="Layrix view — netlist, components, diagram"
+        title="Cirqix view — netlist, components, diagram"
         className={cn(
           'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all duration-150',
           mode === 'spec'
@@ -49,7 +49,7 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
         )}
       >
         <LayoutList size={10} className="shrink-0" />
-        <span>Layrix</span>
+        <span>Cirqix</span>
       </button>
     </div>
   );

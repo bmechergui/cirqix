@@ -1,4 +1,4 @@
-# Layrix — Registre des Skills
+# Cirqix — Registre des Skills
 
 > Fichier de référence : tous les skills utilisés dans ce projet.
 > Mettre à jour après chaque installation ou création de skill.
@@ -6,19 +6,19 @@
 
 ---
 
-## Skills Layrix (locaux — `.claude/skills/`)
+## Skills Cirqix (locaux — `.claude/skills/`)
 
 | Skill | Fichier | Description | Invoquer quand |
 |-------|---------|-------------|----------------|
-| `layrix-prompt-improver` | `layrix-prompt-improver/SKILL.md` | Améliore tout prompt — 9D matrix, XML, contexte Layrix Phase 2, détection skill | **TOUJOURS en premier** |
-| `layrix-pcb-agent` | `layrix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
-| `layrix-footprint` | `layrix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
-| `layrix-kicad-service` | `layrix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
-| `layrix-viewer` | `layrix-viewer/SKILL.md` | KiCanvas (viewer natif .kicad_sch + .kicad_pcb) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / schéma / rendu KiCanvas |
-| `layrix-credits` | `layrix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Pro/Pro Max, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
-| `layrix-drc` | `layrix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
-| `layrix-frontend-verify` | `layrix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
-| `layrix-circuit-synth` | `layrix-circuit-synth/SKILL.md` | Génération `.kicad_sch` via circuit_synth Python : `@circuit` pattern, mapping symbol (Device:R/Timer:NE555P/etc.), KICAD_SYMBOL_DIR setup, erreurs classiques + fixes, router FastAPI primary/fallback | **Toute génération schéma KiCad** — circuit_synth, mapping symbol, pin names, setup libs |
+| `cirqix-prompt-improver` | `cirqix-prompt-improver/SKILL.md` | Améliore tout prompt — 9D matrix, XML, contexte Cirqix Phase 2, détection skill | **TOUJOURS en premier** |
+| `cirqix-pcb-agent` | `cirqix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
+| `cirqix-footprint` | `cirqix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
+| `cirqix-kicad-service` | `cirqix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
+| `cirqix-viewer` | `cirqix-viewer/SKILL.md` | KiCanvas (viewer natif .kicad_sch + .kicad_pcb) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / schéma / rendu KiCanvas |
+| `cirqix-credits` | `cirqix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Pro/Pro Max, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
+| `cirqix-drc` | `cirqix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
+| `cirqix-frontend-verify` | `cirqix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
+| `cirqix-circuit-synth` | `cirqix-circuit-synth/SKILL.md` | Génération `.kicad_sch` via circuit_synth Python : `@circuit` pattern, mapping symbol (Device:R/Timer:NE555P/etc.), KICAD_SYMBOL_DIR setup, erreurs classiques + fixes, router FastAPI primary/fallback | **Toute génération schéma KiCad** — circuit_synth, mapping symbol, pin names, setup libs |
 
 ---
 
@@ -34,14 +34,14 @@
 
 ---
 
-## Skills Stack Layrix (installés depuis skills.sh)
+## Skills Stack Cirqix (installés depuis skills.sh)
 
 | Skill | Source | Installs | Description | Invoquer quand |
 |-------|--------|----------|-------------|----------------|
 | `nextjs-supabase-auth` | sickn33 | 3.7K | Next.js + Supabase Auth — middleware, RLS, sessions, routes protégées | Auth, login, sessions |
 | `turborepo` | vercel/turborepo | 13.7K | Turborepo monorepo — configuration, pipelines, packages partagés | Setup monorepo, packages |
 | `bullmq-specialist` | davila7 | 180 | BullMQ + Redis — workers, queues, jobs, retry, concurrency | Files d'attente, jobs KiCad |
-| `prompt-master` | nidhinjs | — | Optimisation prompts pour tout outil IA — matrice 9D, XML, signal words | Avant toute tâche (avec layrix-prompt-improver) |
+| `prompt-master` | nidhinjs | — | Optimisation prompts pour tout outil IA — matrice 9D, XML, signal words | Avant toute tâche (avec cirqix-prompt-improver) |
 
 ---
 
@@ -98,7 +98,7 @@ npx skills add owner/repo@skill -g -y
 ### 3. Créer avec skill-creator (priorité 3)
 ```bash
 # Invoquer : /skill-creator:skill-creator
-# Créer dans : .claude/skills/layrix-xxx.md
+# Créer dans : .claude/skills/cirqix-xxx.md
 # Puis ajouter dans ce fichier + CLAUDE.md
 ```
 
@@ -110,8 +110,8 @@ npx skills add owner/repo@skill -g -y
 
 | Skill | Changement |
 |-------|-----------|
-| `layrix-viewer` | Mis à jour : PixiJS → KiCanvas (rendu .kicad_sch + .kicad_pcb natifs) |
-| `layrix-pcb-agent` | Mis à jour : moteur TSCircuit → Circuit-Synth (Python KiCad) |
+| `cirqix-viewer` | Mis à jour : PixiJS → KiCanvas (rendu .kicad_sch + .kicad_pcb natifs) |
+| `cirqix-pcb-agent` | Mis à jour : moteur TSCircuit → Circuit-Synth (Python KiCad) |
 | `tscircuit` | Déprécié — garde comme fallback uniquement |
 
 ---
@@ -120,13 +120,13 @@ npx skills add owner/repo@skill -g -y
 
 | Date | Skill | Source | Raison |
 |------|-------|--------|--------|
-| 2026-03-28 | `layrix-pcb-agent` | skill-creator | Boucle agentique PCB Layrix |
-| 2026-03-28 | `layrix-footprint` | skill-creator | Cascade 8 étapes footprint |
-| 2026-03-28 | `layrix-kicad-service` | skill-creator | Microservice Python KiCad |
-| 2026-03-28 | `layrix-viewer` | skill-creator | Viewer PixiJS + Three.js |
-| 2026-03-28 | `layrix-credits` | skill-creator | Système crédits Supabase |
-| 2026-03-28 | `layrix-drc` | skill-creator | Boucle DRC correction auto |
-| 2026-03-28 | `layrix-prompt-improver` | skill-creator | Amélioration prompts Layrix |
+| 2026-03-28 | `cirqix-pcb-agent` | skill-creator | Boucle agentique PCB Cirqix |
+| 2026-03-28 | `cirqix-footprint` | skill-creator | Cascade 8 étapes footprint |
+| 2026-03-28 | `cirqix-kicad-service` | skill-creator | Microservice Python KiCad |
+| 2026-03-28 | `cirqix-viewer` | skill-creator | Viewer PixiJS + Three.js |
+| 2026-03-28 | `cirqix-credits` | skill-creator | Système crédits Supabase |
+| 2026-03-28 | `cirqix-drc` | skill-creator | Boucle DRC correction auto |
+| 2026-03-28 | `cirqix-prompt-improver` | skill-creator | Amélioration prompts Cirqix |
 | 2026-03-28 | `prompt-master` | nidhinjs/prompt-master | Optimisation prompts universelle |
 | 2026-03-28 | `tscircuit` | tscircuit/skill | Moteur PCB <20 composants |
 | 2026-03-28 | `eda-pcb` | l3wi/claude-eda | EDA/PCB général |

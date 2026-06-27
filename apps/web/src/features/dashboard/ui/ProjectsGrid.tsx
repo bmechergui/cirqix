@@ -17,7 +17,7 @@ function EmptyState() {
           No projects yet
         </h2>
         <p className="text-sm text-muted-foreground">
-          Start with a sentence. Layrix turns it into a manufacturable PCB.
+          Start with a sentence. Cirqix turns it into a manufacturable PCB.
         </p>
       </div>
       <NewProjectDialog />

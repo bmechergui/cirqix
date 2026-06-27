@@ -1,4 +1,4 @@
-"""ERC (Electrical Rules Check) utilities for the Layrix KiCad service.
+"""ERC (Electrical Rules Check) utilities for the Cirqix KiCad service.
 
 Two pure functions consumed by ``routers/erc.py``:
 
@@ -37,7 +37,7 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli sch erc --format json`` report.
 
     Returns a list of violation dicts matching the ``ERCViolation`` TypeScript
-    interface from ``@layrix/types`` (id, severity, message, type, ref, pin,
+    interface from ``@cirqix/types`` (id, severity, message, type, ref, pin,
     x_mm, y_mm). Tolerant — returns ``[]`` on any parsing failure.
     """
     try:

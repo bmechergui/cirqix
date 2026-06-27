@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
-import type { PCBState } from '@layrix/types';
+import type { PCBState } from '@cirqix/types';
 
 const BUCKET = 'kicad-files';
 const SIGNED_URL_TTL = 60 * 60; // 1h

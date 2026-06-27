@@ -1,7 +1,7 @@
 'use client';
 
 import { ShieldCheck, ShieldAlert, AlertTriangle, Info } from 'lucide-react';
-import type { DRCViolation, PCBState } from '@layrix/types';
+import type { DRCViolation, PCBState } from '@cirqix/types';
 import { StageHeader } from './StageHeader';
 import { PcbView } from './PcbView';
 

@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
       # circuit_synth/ + kicad-tools/ sont copiés dans l'image (fallback prod sans mount).
       # En dev les bind-mounts ci-dessous rendent le code éditable LIVE depuis l'hôte.
-    image: layrix-kicad:latest
-    container_name: layrix-kicad
+    image: cirqix-kicad:latest
+    container_name: cirqix-kicad
     ports:
       - '8766:8766'
     volumes:

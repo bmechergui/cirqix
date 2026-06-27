@@ -1,4 +1,4 @@
-export type { Project, PCBStatus } from '@layrix/types';
+export type { Project, PCBStatus } from '@cirqix/types';
 
 export const PCB_STAGE_ORDER = [
   'IDEA',
@@ -13,7 +13,7 @@ export const PCB_STAGE_ORDER = [
 
 export type PcbStage = (typeof PCB_STAGE_ORDER)[number];
 
-import type { PCBStatus } from '@layrix/types';
+import type { PCBStatus } from '@cirqix/types';
 
 export function statusToStage(status: PCBStatus): PcbStage {
   switch (status) {

@@ -1,4 +1,4 @@
-import type { AgentStep, PCBState, PCBStatus } from '@layrix/types';
+import type { AgentStep, PCBState, PCBStatus } from '@cirqix/types';
 
 export type SseEvent =
   | { type: 'token'; content: string }

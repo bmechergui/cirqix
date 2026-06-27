@@ -1,4 +1,4 @@
-// Types partagés Layrix — source de vérité unique
+// Types partagés Cirqix — source de vérité unique
 
 export type PCBStatus =
   | 'INITIAL'

@@ -1,5 +1,5 @@
 ---
-name: layrix-quality-gate
+name: cirqix-quality-gate
 version: 1.0.0
 description: Grille de validation obligatoire avant chaque transition de pipeline PCB. Bloque la progression si les critères de qualité ne sont pas atteints. Invoquer après chaque étape agentique.
 ---

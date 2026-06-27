@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PCBState, SchemaComponent, SchemaNet } from '@layrix/types';
+import type { PCBState, SchemaComponent, SchemaNet } from '@cirqix/types';
 import { encodeSse } from './sse';
 
 interface SimulatedSchema {

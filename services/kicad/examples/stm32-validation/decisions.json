@@ -1,0 +1,12 @@
+[
+  {
+    "type": "place_component",
+    "ref": "D1",
+    "at": [148.0, 105.0]
+  },
+  {
+    "type": "place_component",
+    "ref": "R2",
+    "at": [147.0, 135.0]
+  }
+]

@@ -15,7 +15,7 @@ export const FEATURES: Feature[] = [
     icon: Zap,
     label: 'AGENT_CORE',
     title: 'Autonomous Agent',
-    desc: 'Describe your circuit. Layrix plans, routes, fixes DRC violations and delivers Gerbers — no human intervention.',
+    desc: 'Describe your circuit. Cirqix plans, routes, fixes DRC violations and delivers Gerbers — no human intervention.',
     accent: 'primary',
   },
   {
@@ -29,7 +29,7 @@ export const FEATURES: Feature[] = [
     icon: Cpu,
     label: 'FOOTPRINT_AI',
     title: 'Auto Footprint',
-    desc: 'Missing footprint? Layrix searches SnapMagic, reads the datasheet with Vision AI and generates it automatically.',
+    desc: 'Missing footprint? Cirqix searches SnapMagic, reads the datasheet with Vision AI and generates it automatically.',
     accent: 'copper',
   },
   {
@@ -74,7 +74,7 @@ export const HOW_IT_WORKS_STEPS: Step[] = [
   {
     num: '02',
     title: 'Design',
-    desc: 'The Layrix agent autonomously creates the schematic, places components, routes traces and fixes all DRC violations.',
+    desc: 'The Cirqix agent autonomously creates the schematic, places components, routes traces and fixes all DRC violations.',
     label: 'AGENT_RUN',
   },
   {
@@ -179,7 +179,7 @@ export interface ComparisonTool {
 }
 
 export const COMPARISON_TOOLS: ComparisonTool[] = [
-  { name: 'Layrix',  values: [true, true, true, true, true, true, true],    price: 'from 0€' },
+  { name: 'Cirqix',  values: [true, true, true, true, true, true, true],    price: 'from 0€' },
   { name: 'Flux.ai', values: [false, true, false, false, true, false, false], price: '$99/mo' },
   { name: 'Quilter', values: [true, false, true, false, false, false, false], price: '$49/mo' },
   { name: 'KiCad',   values: [false, false, false, false, true, true, false], price: 'Free' },

@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/utils",
+  "name": "@cirqix/utils",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
@@ -12,7 +12,7 @@
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
-    "@layrix/config-typescript": "workspace:*",
+    "@cirqix/config-typescript": "workspace:*",
     "typescript": "^5.5.0"
   }
 }

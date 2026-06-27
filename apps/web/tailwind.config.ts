@@ -18,7 +18,7 @@ const config: Config = {
         border: '#2e2e2e',
         input: '#2e2e2e',
         ring: '#00C2FF',
-        // Layrix custom
+        // Cirqix custom
         'bg-base': '#080808',
         'bg-1': '#111111',
         'bg-2': '#1a1a1a',

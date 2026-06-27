@@ -1,5 +1,5 @@
 """
-Layrix — Reasoning LLM (sauvetage de routage agentique)
+Cirqix — Reasoning LLM (sauvetage de routage agentique)
 
 Quand le routeur classique (`kct route`) laisse des nets bloqués, on confie la
 carte au reasoner LLM officiel de kicad-tools (`PCBReasoningAgent`) piloté par
@@ -268,6 +268,7 @@ def rescue_with_placement_feedback(
     max_moves_per_iter: int = _MAX_MOVES_PER_ITER,
     decide=None,
     model: str = _MODEL,
+    log_dir: Path | str | None = None,
 ) -> tuple[bytes, int, list[str]]:
     """Sauvetage de routage : le LLM DÉPLACE, le vrai routeur ROUTE.
 
@@ -318,6 +319,7 @@ def rescue_with_placement_feedback(
             agent = PCBReasoningAgent.from_pcb(str(board))
 
             moved_refs: list[str] = []
+            batch_commands = []
             for _ in range(max_moves_per_iter):
                 prompt = (agent.get_prompt()
                           + "\n## Analyse d'échec du routeur\n" + analysis)
@@ -344,8 +346,14 @@ def rescue_with_placement_feedback(
 
                 ok = "✓" if result.success else "✗"
                 steps_log.append(f"{ok} {_describe(command)}")
+                batch_commands.append(command)
+                
                 if result.success and ctype == "place_component":
                     moved_refs.append(command.get("ref", ""))
+
+            if log_dir and batch_commands:
+                batch_file = Path(log_dir) / f"batch_iter{iteration}.json"
+                batch_file.write_text(json.dumps(batch_commands, indent=2), encoding="utf-8")
 
             if not moved_refs:
                 steps_log.append("Aucun déplacement utile — arrêt")

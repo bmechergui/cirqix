@@ -1,7 +1,7 @@
 'use client';
 
 import { Sparkles, Terminal, Cpu, Settings } from 'lucide-react';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 
 export function IdeaView({ project }: { project: Project }) {
   return (

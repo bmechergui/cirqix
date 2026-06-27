@@ -77,7 +77,7 @@ export function NewProjectDialog() {
         <DialogHeader>
           <DialogTitle>Start a new PCB</DialogTitle>
           <DialogDescription>
-            Describe what you want and Layrix designs it.
+            Describe what you want and Cirqix designs it.
           </DialogDescription>
         </DialogHeader>
 

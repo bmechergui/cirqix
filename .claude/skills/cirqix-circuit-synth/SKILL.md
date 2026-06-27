@@ -1,5 +1,5 @@
 ---
-name: layrix-circuit-synth
+name: cirqix-circuit-synth
 description: >
   Use this skill whenever the user mentions "circuit-synth", "générer un schéma KiCad",
   "netlist Python", "schéma KiCad depuis JSON", "@circuit decorator", "Device:R", "Timer:NE555P",
@@ -8,11 +8,11 @@ description: >
   Also invoke when the user modifies services/kicad/routers/circuit_synth.py or
   services/kicad/test_ne555_circuit_synth.py, or when circuit-synth generation fails.
   This skill encodes all production experience from integrating the circuit-synth Python library
-  into the Layrix KiCad microservice — use it proactively before writing any circuit-synth code.
+  into the Cirqix KiCad microservice — use it proactively before writing any circuit-synth code.
 version: 1.0.0
 ---
 
-# Layrix — Circuit-Synth : génération de schematics KiCad en Python
+# Cirqix — Circuit-Synth : génération de schematics KiCad en Python
 
 ## Vue d'ensemble
 

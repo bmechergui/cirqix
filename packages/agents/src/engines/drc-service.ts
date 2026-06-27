@@ -7,10 +7,10 @@
  */
 
 import pino from 'pino';
-import type { DRCViolation } from '@layrix/types';
+import type { DRCViolation } from '@cirqix/types';
 
 const log = pino({
-  name: 'layrix.agents.drc-service',
+  name: 'cirqix.agents.drc-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 

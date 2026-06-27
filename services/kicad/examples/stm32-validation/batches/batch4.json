@@ -1,4 +1,0 @@
-[
-  {"type": "define_zone", "net": "GND", "layer": "B.Cu", "bounds": [100.3, 100.3, 159.7, 139.7], "priority": 1},
-  {"type": "define_zone", "net": "+3.3V", "layer": "In2.Cu", "bounds": [100.3, 100.3, 159.7, 139.7], "priority": 0}
-]

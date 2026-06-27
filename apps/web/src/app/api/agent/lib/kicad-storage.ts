@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { logger } from '@layrix/logger';
+import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'kicad-storage' });
 

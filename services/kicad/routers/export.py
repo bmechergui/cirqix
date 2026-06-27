@@ -41,7 +41,7 @@ _KICAD_CLI_TIMEOUT_S: int = 60
 
 class ExportAllRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description=".kicad_pcb encoded as base64")
-    project_id: str = Field(default="layrix-pcb", description="Project identifier for filenames")
+    project_id: str = Field(default="cirqix-pcb", description="Project identifier for filenames")
 
 
 class ExportAllResponse(BaseModel):

@@ -8,10 +8,10 @@
  */
 
 import pino from 'pino';
-import type { ERCViolation } from '@layrix/types';
+import type { ERCViolation } from '@cirqix/types';
 
 const log = pino({
-  name: 'layrix.agents.erc-service',
+  name: 'cirqix.agents.erc-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 

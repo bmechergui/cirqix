@@ -1,10 +1,10 @@
 ---
-name: layrix-viewer
+name: cirqix-viewer
 description: This skill should be used when the user asks to "implémenter le viewer PCB", "afficher le schéma KiCanvas", "viewer KiCad dans le navigateur", "afficher le viewer 3D", "sélectionner un composant dans le viewer" or mentions KiCanvas, Three.js, STEP, .kicad_sch, .kicad_pcb, rendu PCB.
 version: 0.2.0
 ---
 
-# Layrix — Viewer PCB
+# Cirqix — Viewer PCB
 
 ## Architecture viewer
 
@@ -27,7 +27,7 @@ storage/{userId}/{projectId}/board.kicad_pcb
 ### Installation
 
 ```bash
-pnpm --filter @layrix/web add @kicanvas/kicanvas
+pnpm --filter @cirqix/web add @kicanvas/kicanvas
 ```
 
 ### Wrapper React

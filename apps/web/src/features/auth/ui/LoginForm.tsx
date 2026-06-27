@@ -44,7 +44,7 @@ export function LoginForm() {
     <div className="bg-[#0f0f0f] border border-border rounded-2xl p-8 space-y-6">
       <div className="space-y-1 text-center">
         <h1 className="text-xl font-bold text-foreground">Welcome back</h1>
-        <p className="text-sm text-muted-foreground">Sign in to your Layrix account</p>
+        <p className="text-sm text-muted-foreground">Sign in to your Cirqix account</p>
       </div>
 
       <Button

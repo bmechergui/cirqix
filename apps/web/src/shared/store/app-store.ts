@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Credits, Project, Message, PCBState, AgentStep } from '@layrix/types';
+import type { Credits, Project, Message, PCBState, AgentStep } from '@cirqix/types';
 import { createSupabaseBrowserClient } from '@/shared/lib/supabase-browser';
 import type { PcbStage } from '@/entities/project';
 

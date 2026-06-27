@@ -1,5 +1,5 @@
 """
-Layrix — PCB HTTP endpoint
+Cirqix — PCB HTTP endpoint
 POST /pcb/generate → JSON schema → .kicad_pcb
 """
 

@@ -1,4 +1,4 @@
-# Layrix — Journal de Décisions
+# Cirqix — Journal de Décisions
 
 > Chaque décision prise ensemble est documentée ici : ce qu'on a décidé, pourquoi, et ce qu'on a écarté.
 > Mis à jour au fil des conversations.
@@ -78,7 +78,7 @@ Utilisateur (texte naturel)
        CMA-ES (Covariance Matrix Adaptation) : optimise positions X/Y/rotation.
        Nécessite bon starting point — fonctionne depuis le résultat place_unplaced.
 
-     Pipeline Layrix (ordre optimal) :
+     Pipeline Cirqix (ordre optimal) :
      Niveau 1 : kicad-tools
        a. place_unplaced(cluster=True)        ← grille déterministe cluster-by-net
           footprints déjà à (-1000,-1000) par call_agent_gen_pcb (pré-unplace)
@@ -207,7 +207,7 @@ ask_user({
 
 ### Engines — Moteurs de génération KiCad
 
-#### Layrix Schematic Generator — Architecture dual-mode (Phase 4+)
+#### Cirqix Schematic Generator — Architecture dual-mode (Phase 4+)
 
 ```
 Fichier TS  : packages/agents/src/engines/circuit-synth-engine.ts   (fallback si Docker absent)
@@ -226,7 +226,7 @@ pip install git+https://github.com/circuit-synth/circuit-synth.git
 
 Backend Docker ABSENT
         ↓
-schematic_gen.py (fallback custom Layrix)
+schematic_gen.py (fallback custom Cirqix)
 → S-expression Python/TS → .kicad_sch basique ✅
 ```
 
@@ -333,7 +333,7 @@ FREEROUTING_API_URL=http://127.0.0.1:37864       # défini dans Dockerfile
 
 **Bug corrigé 2026-05-31 :** `KICAD_FOOTPRINT_DIR` manquant → kicad-tools PCBFromSchematic ne chargeait pas les footprints → 0 composant placé dans le PCB. Fixé dans `main.py` (auto-detect) et `docker-compose.yml`.
 
-**Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Layrix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
+**Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Cirqix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
 
 #### Pipeline routing — 4 niveaux (mis à jour 2026-05-31)
 
@@ -454,7 +454,7 @@ L'agent analyse densité, signaux et contraintes (alimentation/masse séparées,
 `call_agent_export` → génère les Gerbers, BOM CSV et CPL pour JLCPCB, puis obtient un devis. Confirmation "OUI JE CONFIRME" obligatoire avant commande — jamais automatique.
 
 **Version avancée — CLI-Anything pour autres outils EDA :**
-[CLI-Anything (HKUDS)](https://github.com/HKUDS/CLI-Anything) transforme n'importe quel logiciel en CLI accessible aux agents IA. Non utilisé pour Layrix MVP car KiCad dispose déjà de `pcbnew` (API Python officielle) qui est plus direct. Potentiellement utile si on veut piloter d'autres outils EDA sans API Python (Altium, Eagle, OrCAD) dans une version future multi-EDA. KiCad GUI headless (lancer KiCad sans afficher l'interface) n'est pas nécessaire — pcbnew fait la même chose directement en code.
+[CLI-Anything (HKUDS)](https://github.com/HKUDS/CLI-Anything) transforme n'importe quel logiciel en CLI accessible aux agents IA. Non utilisé pour Cirqix MVP car KiCad dispose déjà de `pcbnew` (API Python officielle) qui est plus direct. Potentiellement utile si on veut piloter d'autres outils EDA sans API Python (Altium, Eagle, OrCAD) dans une version future multi-EDA. KiCad GUI headless (lancer KiCad sans afficher l'interface) n'est pas nécessaire — pcbnew fait la même chose directement en code.
 
 **Version avancée — Circuit-Synth TS autonome :**
 À terme, on pourrait utiliser uniquement la solution TypeScript `circuit-synth-engine.ts`, en s'inspirant du code open source Python `circuit_synth` pour enrichir le générateur S-expressions TS. Cela éliminerait la dépendance FastAPI pour la génération de base et simplifierait le déploiement. La bibliothèque Python resterait uniquement pour pcbnew (placement réel, DRC, export Gerbers) — pas pour la génération de fichiers KiCad.
@@ -558,7 +558,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Raison technique :** TSCircuit génère du `circuit-json` (format JSON custom de tscircuit.io), pas du `.kicad_sch` / `.kicad_pcb` natif. Il faudrait un convertisseur `circuit-json → KiCad` — non officiel, perd des informations (symboles, annotations, design rules KiCad). Circuit-Synth produit directement des S-expressions KiCad 7 — format natif, lisible par KiCad et KiCanvas sans conversion.
 
-**Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Layrix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
+**Raison projet :** TSCircuit déprécié depuis la v0.3.0 de Cirqix. Dépendances supprimées : `circuit-json`, `circuit-json-to-gerber`, export `tscircuit-engine`.
 
 ---
 
@@ -598,7 +598,7 @@ SKiDL produit un fichier `.net` (format KiCad XML ou SPICE). Circuit-Synth atten
 
 **Décision :** Implémenter la simulation SPICE complète via le pipeline : `call_agent_simulation` → `POST /simulate/auto` (base64 .kicad_sch) → kicad-cli SPICE export → ngspice batch → parsing tabular output → vecteurs `SimulationData` → `SimulationView` Recharts.
 
-**Pourquoi :** La simulation SPICE valide électriquement le circuit AVANT la fabrication — c'est une étape critique qui différencie Layrix des outils qui génèrent juste du PCB sans vérification fonctionnelle. ngspice est disponible dans le Docker KiCad existant.
+**Pourquoi :** La simulation SPICE valide électriquement le circuit AVANT la fabrication — c'est une étape critique qui différencie Cirqix des outils qui génèrent juste du PCB sans vérification fonctionnelle. ngspice est disponible dans le Docker KiCad existant.
 
 **Fallback :** Quand ngspice ou kicad-cli est indisponible (dev local), des waveformes synthétiques RC/AC réalistes sont retournées pour que le pipeline reste fonctionnel et que l'UI reste testable.
 
@@ -750,20 +750,20 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → Pour un PCB de 100 composants → ~5000 paires → CPU commence à ralentir (quelques secondes).
 → **Mode GPU** : `kicad-tools` envoie ces calculs de forces sur la carte graphique (NVIDIA CUDA ou Apple Metal) qui les fait tous en parallèle → 10-50× plus rapide sur grands PCBs.
 → `pip install kicad-tools[cuda]` (NVIDIA) ou `kicad-tools[metal]` (Mac Apple Silicon).
-→ **Pour Layrix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
+→ **Pour Cirqix** : nos PCBs = 5-30 composants en moyenne → CPU suffit largement. GPU = optimisation future si on supporte des PCBs >100 composants.
 
 
 → 
  — MIT, PyPI `kicad-tools` v0.13.0, Python 3.10+, actif (push 2026-05-29)
 → Tagline : *"Tools for AI agents to work with KiCad projects"* — conçu exactement pour notre cas d'usage.
 → **Force-directed board-aware** : repulsion edge-to-edge sur outlines, borné au board, `slide_off`, poids configurables.
-→ Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Layrix.
+→ Contrat parfait : `.kicad_pcb` en entrée → `.kicad_pcb` en sortie — identique au flux `/place/auto` de Cirqix.
 → **Sans KiCad ni kicad-cli** pour le placement/routage — pur Python (numpy). Seuls DRC/Gerber utilisent kicad-cli (déjà présent).
 → **Multi-utilisateurs natif** : aucun état global, aucun daemon — 1 process/job, parallélisable comme BullMQ (10 PCBs simultanés).
 → Accélération GPU optionnelle (CUDA/Metal) — CPU pur suffit pour démarrer.
 → Couvre aussi : routeur natif C++, DRC avec règles fabricant JLCPCB intégrées, analyse congestion/thermique/SI, serveur MCP.
 → **Risque** : Beta, 1 mainteneur, 30 ⭐ → vendorer + pinner la version comme circuit_synth.
-→ **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Layrix réel avant intégration.
+→ **Prochaine étape décidée** : spike isolé — tester `kct optimize-placement` sur un `.kicad_pcb` Cirqix réel avant intégration.
 
 **Algorithme placement — `PlacementOptimizer` (physique simulée)**
 → **Modèle physique** : chaque composant = charge électrique, chaque net = ressort (spring)
@@ -794,7 +794,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → **Principe** : chaque net = force attractive entre les composants connectés ; chaque paire de composants = force répulsive ; itérations jusqu'à convergence.
 → **Avantages** :
   - Zéro dépendance externe — pur Python (numpy), même env Docker actuel
-  - Contrôle total : paramètres Layrix-specific (bypass caps restent à <2mm des ICs, connecteurs ancrés aux bords)
+  - Contrôle total : paramètres Cirqix-specific (bypass caps restent à <2mm des ICs, connecteurs ancrés aux bords)
   - Pas de vendoring à maintenir
   - Peut être GPU-accéléré (numpy → cupy) si besoin plus tard
 → **Entrée** : `refs: list[str]`, `connections: list[{name, pins}]`, `board_w_mm`, `board_h_mm`
@@ -810,7 +810,7 @@ Pour l'acheter : contacter Circuit Synth à contact@circuitsynth.com (pas de pri
 → Contrat identique au flux actuel : `.kicad_pcb` en entrée → `.kicad_pcb` routé en sortie
 → **Avantage vs Freerouting** : pas de dépendance Java/openjdk-17, démarrage instantané (pas de JVM warmup), même parallélisation multi-users
 → **Risque** : qualité du routage C++ vs Freerouting (30 ans d'algorithme industriel) — à valider sur circuits réels avec % routé + DRC clean
-→ **Statut** : non testé sur Layrix — à inclure dans le spike `kicad-tools`
+→ **Statut** : non testé sur Cirqix — à inclure dans le spike `kicad-tools`
 
 **Fichiers concernés :**
 - `packages/agents/src/tools.ts` — `call_agent_placement` + `call_agent_routing`
@@ -985,6 +985,447 @@ code+LLM (risque double-spend) → on retire le tool de la liste à la place.
 **Fichiers concernés :** `packages/agents/src/{orchestrator.ts (shouldRescueRouting,
 mergeRescueIntoRouting, trigger), tools.ts (filtre ACTIVE_PCB_TOOLS + note),
 prompts.ts (reasoner = automatique), tests/orchestrator-reason.test.ts}`. Commit 13b919c.
+
+---
+
+### 2026-06-14 — Netlist PCB fragmenté → RÉSOLU à la racine
+
+**Décision :** corriger la fragmentation du netlist (83 nets au lieu de ~12, routage
+bloqué ~0%) à deux endroits : (1) `tools/schematic.py` pose les labels de net À LA
+POSITION EXACTE de la pin via `sym.pin_position()` (au lieu d'un offset arbitraire
+`symbol_x+8`) ; (2) `tools/pcb.py` niveau-1 importe `kicad_tools.operations.netlist`
+(le bon module) au lieu de `kicad_tools.workflow._netlist` (inexistant).
+
+**Pourquoi :** les labels hors-pin → `extract_netlist()` isolait chaque pin dans son
+propre `Net-(REF-PinN)`. ET l'import niveau-1 cassé → fallback kicad-cli systématique
+qui fragmentait aussi. Les deux causes empêchaient tout routage réel.
+
+**Écarté :** patcher kicad-cli ; le vrai fix est en amont (schéma + import).
+
+**Fichiers concernés :** `services/kicad/tools/{schematic.py, pcb.py}` +
+`tests/{test_schematic_fallback.py, test_pcb_netlist.py}`. PR #35, commit ef64e4f.
+
+---
+
+### 2026-06-14 — Update kicad-tools → main HEAD + patch charmap déplacé hors lib
+
+**Décision :** mettre à jour le snapshot vendoré kicad-tools (gitignoré) vers
+`main` HEAD (commit upstream fda275d, ~718 fichiers routeur). Le patch charmap
+Windows est DÉPLACÉ de la lib vers notre wrapper `tools/kct_route.py` (force
+`PYTHONUTF8=1` dans l'env du subprocess kct) — durable, survit aux updates.
+
+**Pourquoi :** récupérer les correctifs routeur upstream ; éviter de re-scrubber les
+emojis dans ~5 fichiers `router/*` à chaque update (whack-a-mole).
+
+**Écarté :** rester sur le tag v0.13.0 (avril) = plus ancien que notre snapshot
+(downgrade). Mesure de qualité routage en local impossible (pas de backend C++).
+
+**Fichiers concernés :** `services/kicad/{tools/kct_route.py, DEPENDENCIES.md}` +
+kicad-tools/ (gitignoré). PR #35, commit 73129f8.
+
+---
+
+### 2026-06-15 — Placement en 2 phases dans l'agent (PlacementOptimizer → CMA-ES)
+
+**Décision :** l'agent placement (⑤) fait DEUX phases. Phase 1 = `PlacementOptimizer`
+(outil physique : clustering + connecteurs J*/P* ancrés et clampés dans le contour)
+prépare le terrain. Phase 2 = `kct optimize-placement --strategy cmaes` (500 itérations,
+`seed_method="current"`) raffine DEPUIS la Phase 1. Connecteurs restaurés (re-ancrage)
+après la Phase 2. gen_pcb ne fait plus qu'une grille de départ.
+
+**Pourquoi :** combiner placement physique (groupes + contraintes mécaniques) et
+optimisation génétique (wirelength). 2 bugs lib bloquaient ce flux, corrigés :
+- **patch #5** `_write_placements_to_pcb` 2-pass : le writer officiel n'écrivait
+  JAMAIS les positions CMA-ES (`(at)` précède `(property Reference)` en KiCad 8/9
+  → ref inconnue au moment du `(at)`) → CMA-ES tournait en no-op silencieux.
+- **patch #6** `seed_method="current"` : le seed officiel ne connaît que
+  force-directed/random → CMA-ES re-seedait et JETAIT la Phase 1. Ajout d'un seed
+  construit depuis `fp.position` (board-relative) → Phase 1 nourrit Phase 2.
+
+**Écarté :** force-directed dans gen_pcb (redondant, CMA-ES re-seede) ; CMA-ES seul
+sans Phase 1 (perd le clustering + l'ancrage mécanique des connecteurs).
+
+**Fichiers concernés :** `services/kicad/tools/{placement.py, pcb.py}` +
+`tests/test_placement.py` + 2 patches kicad-tools (gitignoré, doc DEPENDENCIES.md
+#5/#6). PR #36, commits 9919f54 + a300283. ⚠️ kicad-tools a désormais **5 patches lib**.
+
+---
+
+### 2026-06-16 — Phase 2 placement = EvolutionaryPlacementOptimizer (natif, retrait 2 patches)
+
+**Décision :** la Phase 2 de l'agent placement passe de CMA-ES
+(`kct optimize-placement --strategy cmaes --seed current`) à
+`EvolutionaryPlacementOptimizer.optimize_hybrid()` (API native kicad-tools).
+Phase 1 (PlacementOptimizer, physique locale, clustering générique +
+connecteurs ancrés) et Phase 2 (GA global, fitness ROUTABILITÉ, `enable_clustering`
+qui PRÉSERVE les clusters) sont désormais **complémentaires**. Hardcodes de
+groupes (U2/Y1/C10…) retirés → clustering natif générique sur tout board.
+
+**Pourquoi :** CMA-ES `optimize-placement` minimise le wirelength seul → tassait
+le board (cramped), dégradait la Phase 1 (l'utilisateur l'a vu visuellement) et
+n'améliorait pas le routage (Phase 1 et Phase 2 routaient pareil, 33%).
+`EvolutionaryPlacementOptimizer` a la routabilité dans sa fitness (récompense
+l'espacement → pas de tassement) et préserve les clusters fonctionnels détectés
+(TIMING quartz+caps, POWER découplage…). **Bénéfice maintenance** : on n'appelle
+plus `kct optimize-placement` → les **2 patches lib CMA-ES (#4 writer 2-pass,
+#5 seed=current) sont SUPPRIMÉS** → kicad-tools repasse de 5 à **3 patches**.
+
+**Écarté :** patcher CMA-ES pour le rendre cluster-aware (block-groups) — risqué
+et inutile, l'EVO natif fait déjà mieux (routabilité incluse). Garder les 2
+patches CMA-ES « au cas où » — dette inutile, lib remise pure upstream.
+
+**Note clé (routage) :** le plafond 33%/75% en local n'est PAS le placement —
+c'est le **backend C++ non compilé** (pas de g++/cl en local). Prouvé : le board
+benchmark *facile* du dépôt (`charlieplex`, 100% attendu) tombe à 75% en Python
+pur. Le dépôt route à 100% car il compile le C++ (`kct build-native`). Cirqix le
+compile en Docker (Dockerfile) → validation routage = Docker, pas local.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`tests/test_placement.py` + `tools/pcb.py` (commentaire) + reverts lib
+(`cli/optimize_placement_cmd.py`, `cli/parser.py` → purs upstream) +
+docs (`DEPENDENCIES.md`, `CLAUDE.md`). PR #36, commits 8b13e74 + 7676c4d + suiv.
+
+---
+
+### 2026-06-18 — Placement = natif kicad-tools ACCEPTÉ + bug write_to_pcb corrigé
+
+**Décision :** accepter le placement **100% natif kicad-tools** tel quel — un seul
+appel `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
+enable_clustering=True, fixed_refs=<J*/P*>, generations=100, population=50,
+iterations=1000)).run()` puis **`.write_to_pcb()`** puis `pcb.save()`. La stratégie
+`hybrid` enchaîne en INTERNE la phase évolutionnaire (GA, groupement) + le
+raffinement physique force-directed. **Pas de snap déterministe** : les bypass
+caps/quartz finissent à 13-28mm du MCU — accepté comme routable.
+
+**Bug critique corrigé (commit 243b26f) :** `auto_place` appelait
+`OptimizationWorkflow(...).run()` puis `pcb.save()` **sans `write_to_pcb()`**.
+`run()` calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB →
+placement **no-op** (0/17 composant déplacé, board sauvé identique à la
+génération — repéré visuellement sur le rendu). Régression introduite par
+`d43ab8b` (« auto_place 100% natif ») : le refactor vers `OptimizationWorkflow`
+a perdu l'appel `write_to_pcb()` que faisait l'ancienne version
+(`PlacementOptimizer...run().write_to_pcb()`). Fix : garder la réf workflow +
+`workflow.write_to_pcb()` avant `save()`. Validé : **16/17 composants déplacés**
+sur le board STM32 (vs 0 avant).
+
+**Pourquoi accepter le natif sans snap :** le snap déterministe collait Y1 à
+7.8mm mais c'est du code custom à maintenir hors API native. Choix produit :
+rester 100% natif (règle CLAUDE.md « usage natif kicad-tools »), placement
+routable suffisant pour avancer. L'adjacence serrée « pro » est reportée en
+Phase 6 (RL_PCB), pas via un patch snap.
+
+**Écarté :**
+- Réintroduire le snap déterministe (`c462178` `_snap_*`) — code custom, retiré.
+- Re-benchmarker les optimiseurs natifs pour l'adjacence — déjà fait
+  (force-directed ~20mm, hybrid 15mm, cmaes 14.4mm, EVO 14mm), tous à 10-15mm.
+
+**Test de garde (TDD) :** `test_auto_place_actually_moves_movable_components` —
+3 résistances mobiles empilées doivent être séparées (RED sans `write_to_pcb`,
+GREEN avec). Comble le trou : les tests existants ne couvraient que les
+connecteurs (`fixed_refs`, immobiles par design) → le no-op passait inaperçu.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. PR #36, commit 243b26f.
+
+---
+
+### 2026-06-18 (suite) — Non-déterminisme hybrid+cluster → kct placement fix natif chaîné
+
+**Constat :** `OptimizationWorkflow` (hybrid+cluster) n'a pas de seed fixe.
+Variance test : 5 runs sur le board STM32 réel (même input) →
+**8 / 0 / 3 / 0 / 5 conflits** détectés par `PlacementAnalyzer.find_conflicts()`
+(`kct placement check`), dont des erreurs ERROR (pad clearance ≤0 = court-circuit
+réel). Conclusion : l'algo natif est correct mais **stochastique** — explique
+les deux observations contradictoires de l'utilisateur (« hier c'était top » /
+« aujourd'hui il y a un problème ») : les deux étaient vrais, simplement des
+tirages différents du même process.
+
+**Décision :** chaîner une réparation native **après** l'optimisation plutôt que
+la relancer. `tools/placement.py::_resolve_remaining_conflicts()` appelle
+`PlacementAnalyzer.find_conflicts()` puis, si erreurs ERROR détectées,
+`PlacementFixer(strategy=SPREAD, anchored=<connecteurs>).iterative_fix()`
+(équivalent `kct placement fix` — passes locales de nudge, ~0.05-0.1s).
+
+**Écarté : best-of-N (relancer le GA jusqu'à 0 conflit).** Mesuré : 1 run complet
+`auto_place` sur le board STM32 = **97-105s**. Un best-of-6-8 aurait coûté
+10-13min — inutilisable en synchrone dans le pipeline agent. La réparation
+locale coûte ~0.1s contre 98s pour un nouveau run GA : 1000× moins cher pour
+le même résultat (0 erreur).
+
+**Validé :** 3 runs complets `auto_place` sur le board STM32 réel = **0 conflit
+/ 0 erreur** sur les 3 (vs 8/0/3/0/5 sans le fix). 100% natif
+(`PlacementAnalyzer` + `PlacementFixer` kicad-tools), zéro algo custom.
+
+**Limite non couverte :** la qualité du clustering (cap↔IC, quartz↔MCU) varie
+aussi d'un run à l'autre (run3 du variance test : caps à 20-27mm d'un IC) —
+`PlacementFixer` ne corrige que les **conflits** (overlap physique), pas la
+**qualité** de regroupement fonctionnel. Ce n'est pas un conflit détectable par
+`find_conflicts()`, donc hors scope de ce fix — relève de la limite déjà
+acceptée de `detect_functional_clusters` (caps 13-28mm du MCU, voir entrée
+précédente).
+
+**Test de garde (TDD) :** `test_resolve_remaining_conflicts_removes_pad_clearance_errors`
+(déterministe, sans GA — 3 résistances empilées construites directement) +
+`test_auto_place_result_has_no_error_conflicts` (intégration, via `auto_place`).
+RED confirmé (ImportError) avant l'implémentation, GREEN après (8/8 tests).
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. Commit `d16c50d`.
+
+---
+
+### 2026-06-18 (suite) — Phase 3 « Géomètre » CMA-ES + filet de sécurité revert
+
+**Contexte :** demande utilisateur d'ajouter une étape CMA-ES finale, en référence
+à `docs/cirqix-full-resume.md` (« Le Mathématicien — décale les puces d'un
+demi-millimètre… élimine 100% des chevauchements »). Avant cette session, le
+CMA-ES avait déjà été essayé (Phase 2, 2026-06-15/16) puis retiré au profit de
+l'EVO natif seul (`c462178`, `095d564`).
+
+**Décision :** réintroduire le CMA-ES, mais comme **3e étape de raffinement**
+(Géomètre) après Architecte (hybrid+cluster) + Inspecteur — pas un remplacement.
+`tools/placement.py::_refine_with_cmaes()` appelle `run_optimize_placement(
+seed_method="current")` sur le board déjà placé, puis restaure la position des
+connecteurs (le CLI natif n'a pas de verrouillage par référence).
+
+**TDD :** `test_refine_with_cmaes_separates_overlap_and_preserves_anchored` +
+`test_auto_place_keeps_connector_anchored_with_cmaes_step` — RED (ImportError)
+puis GREEN.
+
+**Benchmark 1 — pipeline complet (GA aléatoire + CMA-ES, board STM32 réel,
+17 composants) :** le CMA-ES a introduit 17 conflits que l'Inspecteur (10 passes)
+n'a PAS pu résorber entièrement (oscillation 17→15→12→6→2→5→3→5→2→6→5,
+**3 ERROR résiduels**) — régression contre l'invariant « 0 erreur garanti »
+établi à l'entrée précédente. Détectée avant livraison grâce à la vérification
+explicite des conflits post-CMA-ES (pas juste post-Architecte).
+
+**Décision corrective :** filet de sécurité dans `auto_place()` — snapshot du
+board juste après Architecte+Inspecteur (0 erreur garanti), tentative CMA-ES,
+ré-Inspecteur ; si des ERROR subsistent, restauration du snapshot (le CMA-ES
+est purement et simplement annulé pour ce run). Test de garde :
+`test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain` (RED confirmé
+sur l'implémentation sans filet, GREEN après). Suite complète : 11/11.
+
+**Benchmark 2 — ablation contrôlée (CMA-ES seul, sur un board STM32 déjà
+placé+fixé par l'Architecte, 0 erreur en entrée) :** isole l'effet du CMA-ES
+sans le bruit du tirage aléatoire du GA entre deux runs.
+- Avant : 0 ERROR / 0 WARNING.
+- CMA-ES brut (9.4s) : 1 ERROR / 6 WARNING — le modèle de faisabilité interne
+  du CMA-ES (AABB) ne coïncide pas exactement avec `DesignRules` de
+  `PlacementAnalyzer`.
+- Après Inspecteur : 0 ERROR / 2 WARNING (1 erreur réparée, 0.05-0.1s).
+- Adjacence : 8/10 paires resserrées — Y1-U2 16.73→7.50mm (-9.23), C11-Y1
+  17.47→13.34mm (-4.13), C1-U1 8.37→4.51mm (-3.86), C2-U1 10.09→6.87mm
+  (-3.22). 2 légèrement dégradées : C13-U2 +1.13mm, C3-U1 +1.36mm.
+
+**Vérité sur la citation `cirqix-full-resume.md` :** « élimine 100% des
+chevauchements » n'est PAS littéralement vrai pour le CMA-ES seul (il en
+introduit, mesuré ci-dessus) — c'est le **pipeline complet avec filet de
+sécurité** qui garantit 0 ERROR livré, pas le CMA-ES isolément. « Aligne
+parfaitement les broches » n'a pas été mesuré (seule l'adjacence centre à
+centre l'a été) — affirmation non vérifiée, à ne pas répéter comme un fait
+établi sans benchmark dédié.
+
+**Écarté :**
+- Best-of-N sur le CMA-ES (relancer jusqu'à 0 conflit) — même raisonnement
+  que l'entrée précédente pour le GA : trop lent en synchrone.
+- Verrouillage natif par référence dans le CLI CMA-ES — pas exposé par
+  `run_optimize_placement` ; contournement par restauration post-hoc retenu.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md` +
+`services/kicad/DEPENDENCIES.md`. Branche `feat/placement-cmaes`, PR #36.
+
+---
+
+### 2026-06-19 — Bug max_iterations non plafonné + filet de sécurité Option B
+
+**Symptôme observé :** « Architecte good, Final bad » — le board issu de
+l'Architecte (① + Inspecteur) était propre, mais le board final livré par
+`auto_place()` (après Géomètre + ré-Inspecteur) était visuellement dégradé,
+malgré 0 ERROR / 0 WARNING rapportés. Le filet de sécurité de l'entrée
+précédente (basé sur le compte d'ERROR) ne s'est PAS déclenché — ce qui a
+mis en doute, à tort, le bénéfice du seed `"current"` lui-même.
+
+**Cause racine identifiée :** `_refine_with_cmaes()` appelait
+`run_optimize_placement(seed_method="current", time_budget=20.0, ...)` SANS
+plafonner `max_iterations` — défaut de la lib = 1000. Vérification dans
+`kicad_tools/placement/cmaes_strategy.py` : `seed_method="current"` seede
+bien correctement la moyenne initiale du CMA-ES sur la position issue de
+l'Architecte (le seed n'était pas le problème). Mais le budget de 20s
+laissait largement le temps à 1000 itérations de dériver loin de ce point de
+départ : benchmark réel (board STM32, 17 composants, repartant du même run
+GA Architecte) → déplacement moyen 7.5mm, max 15mm (jusqu'à 68mm observé sur
+un autre run). PAS un micro-raffinement sub-mm comme documenté avant ce fix.
+
+**Fix root-cause :** constante `_CMAES_MAX_ITERATIONS = 30`, passée en kwarg
+à `run_optimize_placement`. Benchmark après fix : 2.1-3.1mm moyen,
+4.0-11.8mm max, stable sur 5 essais déterministes (board fixture de test :
+~9mm à 1000 itérations contre ~5mm à 30).
+
+**TDD :** test renommé `test_refine_with_cmaes_passes_bounded_max_iterations_kwarg`
+(wiring, mocké — insuffisant seul, cf. code review ci-dessous) + nouveau
+`test_refine_with_cmaes_keeps_displacement_small` (comportemental, CMA-ES
+réel non mocké, seuil `< 6.0mm` validé empiriquement avant d'écrire
+l'assertion).
+
+**Option B — filet de sécurité additionnel, orthogonal au filet ERROR :**
+même avec le fix root-cause en place, le compte d'ERROR seul ne peut
+structurellement pas détecter une dérive silencieuse "0 ERROR mais board
+dégradé" — c'est exactement le symptôme du bug ci-dessus. Ajout de
+`_max_displacement_mm(before_positions, pcb_path, exclude)` : compare la
+position de chaque footprint non-ancré entre le snapshot pré-CMA-ES et le
+board final. Nouvelle constante `_CMAES_MAX_DISPLACEMENT_MM = 20.0` — si
+dépassée, revert vers le snapshot pré-CMA-ES MÊME SI l'Inspecteur rapporte
+0 ERROR. TDD : RED confirmé en désactivant temporairement le check
+(`if max_disp > seuil` → `if False`), test échouant comme prévu
+(`assert 60.1 == 30.099 ± 0.01`), puis GREEN avec le check actif.
+Garde de régression : `test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold`.
+
+**Code review (avant merge) :** 1 HIGH trouvé et corrigé —
+`_max_displacement_mm()` ignorait silencieusement toute référence présente
+sur le board après coup mais absente du snapshot `before_positions`
+(renommage/ajout inattendu côté CLI natif) — exactement le genre de cas
+qu'un filet de sécurité ne doit jamais exclure silencieusement. Fix :
+référence non-matchée → déplacement traité comme infini (`float("inf")`),
+revert garanti. Couvre aussi le cas dégénéré `before_positions={}`. Tests :
+`test_max_displacement_mm_treats_unmatched_ref_as_infinite`,
+`test_max_displacement_mm_empty_before_positions_with_tracked_refs_is_unsafe`.
+3 MEDIUM / 2 LOW notés comme follow-ups non bloquants (duplication de
+benchmark chiffré CLAUDE.md vs commentaire code — acceptée, CLAUDE.md est
+un résumé humain séparé du commentaire source de vérité ; fichier proche de
+la limite 400 lignes — à surveiller).
+
+**Incident opérateur (sans perte finale) :** pendant la vérification RED
+manuelle, un `git checkout -- tools/placement.py` mal ciblé (censé annuler
+uniquement la patch de sabotage temporaire `if False`) a restauré TOUT le
+fichier à son dernier état committé, effaçant tout le travail non-committé
+de la session (fix max_iterations + Option B). Reconstruit intégralement à
+l'identique. **Règle retenue : ne jamais utiliser `git checkout -- <fichier>`
+pour annuler une édition précise quand d'autres éditions non-committées
+coexistent dans le même fichier.**
+
+**État final :** 17/17 tests `test_placement.py` verts. 100% natif
+(paramétrage de `run_optimize_placement`, `_max_displacement_mm` est une
+comparaison Python pure, pas un algo de placement).
+
+**Précision — quand l'Inspecteur tourne-t-il exactement :** l'Inspecteur
+(`_resolve_remaining_conflicts`) n'est PAS appelé symétriquement "après
+chaque étape" — il tourne au plus 2 fois dans `auto_place()` :
+
+```python
+# Pass 1 — TOUJOURS, après l'Architecte
+_resolve_remaining_conflicts(out, conn)
+pre_cmaes_bytes = out.read_bytes()          # snapshot garanti 0 ERROR
+pre_cmaes_positions = {...}                  # pour le filet Option B
+
+refine = _refine_with_cmaes(out, conn, ...)  # ② Géomètre (CMA-ES)
+
+# Pass 2 — SEULEMENT si refine["refined"] est True
+if refine["refined"]:
+    n_err_before, n_err_after = _resolve_remaining_conflicts(out, conn)
+    if n_err_after > 0:
+        out.write_bytes(pre_cmaes_bytes)     # revert (compte ERROR)
+    else:
+        max_disp = _max_displacement_mm(...)
+        if max_disp > _CMAES_MAX_DISPLACEMENT_MM:
+            out.write_bytes(pre_cmaes_bytes) # revert (Option B)
+```
+
+| Étape | Inspecteur tourne ? |
+|---|---|
+| ① Architecte | toujours (pass 1) — garantit 0 ERROR avant de tenter le Géomètre |
+| ② Géomètre (CMA-ES) | seulement si `refine["refined"] == True` (le CLI natif a réussi) |
+| CMA-ES échoue/lève une exception | pas de pass 2 — le board reste celui du pass 1 (déjà 0 ERROR) |
+| CMA-ES réussit mais pass 2 trouve encore des ERROR | board pré-CMA-ES (pass 1) restauré |
+| CMA-ES réussit, pass 2 → 0 ERROR, mais déplacement > seuil | board pré-CMA-ES (pass 1) restauré aussi (Option B) |
+
+Le board livré n'est donc réellement le résultat du Géomètre QUE dans le cas :
+CMA-ES réussi → Inspecteur pass 2 ramène 0 ERROR → déplacement ≤ seuil. Dans
+tous les autres cas, c'est le board garanti par le pass 1 (Architecte +
+Inspecteur) qui est livré tel quel. Observé en pratique sur le run STM32
+réel (`run_phase3_visual.py`, 2026-06-19) : pass 2 a réparé 1 ERROR → 0, le
+filet Option B ne s'est pas déclenché (pas de warning "restauré" dans les
+logs) → le board final est bien celui du Géomètre nettoyé.
+
+**Fichiers concernés :** `services/kicad/tools/placement.py` +
+`services/kicad/tests/test_placement.py` + `CLAUDE.md`. Branche
+`feat/placement-cmaes`, PR #36.
+
+---
+
+### 2026-06-22 — Stratégie de routage = `negotiated` par défaut (agent + projet)
+
+**Décision :** `kct route --strategy negotiated` est la stratégie de routage par
+défaut PARTOUT — dans l'agent de prod (`tools/kct_route.py::_run_kct_route`,
+`--strategy negotiated`) et pour tout le projet. Les 3 autres stratégies
+(`basic`, `monte-carlo`, `evolutionary`) ne sont pas utilisées.
+
+**Pourquoi :** benchmark des 4 stratégies sur le board STM32 placé réel
+(`output/phase3/3_final.kicad_pcb`, 2 couches, seed 42, timeout 120s, routeur
+Python local — pas de backend C++) :
+
+| Stratégie      | Routé | Temps          | Verdict |
+|----------------|-------|----------------|---------|
+| basic          | —     | timeout >240s  | inutilisable — A* net-par-net sans rip-up, bloque sur board dense |
+| **negotiated** | **56%** | **67s**      | **seule rapide ET viable → défaut** |
+| monte-carlo    | —     | trop lente     | exhaustive (N essais randomisés) — hors budget agent |
+| evolutionary   | —     | trop lente     | métaheuristique — hors budget agent |
+
+`negotiated` est le meilleur compromis qualité/temps pour le budget agentique
+(~60s/routage). C'est aussi le défaut de kicad-tools.
+
+**Comment marche `negotiated` — DEUX NIVEAUX (clé pour lever la confusion)**
+
+On lit à la fois « negotiated ≈ Freerouting » ET « negotiated utilise A* ». Les
+DEUX sont vrais : ce sont deux niveaux DIFFÉRENTS de l'algorithme.
+
+```
+┌─────────────────────────────────────────────┐
+│  NIVEAU 1 — la BOUCLE (la « stratégie »)     │  ← « proche de Freerouting »
+│  rip-up & reroute + pénalités de congestion  │
+│  = algorithme PathFinder (1995)              │
+├─────────────────────────────────────────────┤
+│  NIVEAU 2 — la RECHERCHE d'un net (A*)        │  ← « utilise A* »
+│  trouve le chemin le plus court d'UN net     │
+└─────────────────────────────────────────────┘
+```
+
+**NIVEAU 1 — la BOUCLE (= la « stratégie »)** : rip-up & reroute + pénalités de
+congestion. C'est l'algorithme **PathFinder** (McMurchie & Ebeling, 1995, routage
+FPGA). Principe : on route TOUS les nets une 1ʳᵉ fois en autorisant les
+chevauchements (overlap) ; puis à chaque itération on AUGMENTE le coût des
+cellules surchargées → les nets « négocient » l'espace, les moins contraints
+cèdent et se re-routent ailleurs (rip-up & reroute). On itère jusqu'à 0 overlap.
+C'est CE niveau qui ressemble à Freerouting (lui aussi fait du *negotiated
+congestion routing*).
+
+**NIVEAU 2 — la RECHERCHE d'UN net (= A*)** : chaque fois qu'on (re)route un net,
+on cherche son plus court chemin sur la grille, pondéré par les coûts de
+congestion du niveau 1. C'est un **A\*** classique (heuristique distance de
+Manhattan). C'est CE niveau qui « utilise A* ».
+
+**Le lien :** NIVEAU 1 décide QUI route et avec quelles pénalités (la boucle qui
+négocie) ; NIVEAU 2 trouve COMMENT router un net donné (le pathfinding). A* est
+le moteur de recherche APPELÉ par la boucle PathFinder — pas une alternative à
+elle. D'où la confusion levée :
+- `basic` = NIVEAU 2 SEUL (A* net par net, sans la boucle de négociation) →
+  bloque vite sur les boards denses (premier net routé « égoïstement » barre la
+  route aux suivants, aucun rip-up pour corriger) → le timeout du benchmark.
+- `negotiated` = NIVEAU 1 **+** NIVEAU 2 → les nets se réorganisent → bien plus
+  de complétion.
+
+**Backend C++ :** le NIVEAU 2 (A*) a un backend C++ (`router_cpp.*.so`, build
+`kct build-native`) 10-100× plus rapide que le Python pur. En local sans ce
+backend, le 56%/67s ci-dessus est un PLANCHER ; en Docker prod (C++ + escalade
+`--auto-layers`) le routage va beaucoup plus loin / plus vite.
+
+**Écarté :** `basic` (pas de rip-up → échoue sur dense), `monte-carlo` /
+`evolutionary` (exhaustifs/métaheuristiques → trop lents pour le budget agent).
+
+**Fichiers concernés :** `services/kicad/tools/kct_route.py`
+(`_run_kct_route` → `--strategy negotiated`, déjà en place). Benchmark sur
+`examples/stm32-validation/output/phase3/3_final.kicad_pcb`.
 
 ---
 

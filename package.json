@@ -1,5 +1,5 @@
 {
-  "name": "layrix",
+  "name": "cirqix",
   "private": true,
   "scripts": {
     "build": "turbo run build",

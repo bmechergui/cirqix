@@ -1,4 +1,4 @@
-# Layrix Architecture — Agents & Engines (corrigée & alignée CLAUDE.md)
+# Cirqix Architecture — Agents & Engines (corrigée & alignée CLAUDE.md)
 
 > **Historique :** ce document a été réécrit le 2026-04-17 après critique
 > architecturale. La version précédente proposait 12 agents LLM + tscircuit +
@@ -11,7 +11,7 @@
 
 ## 🧠 1. Vision globale
 
-Layrix est une plateforme SaaS d'IA qui transforme un **prompt utilisateur**
+Cirqix est une plateforme SaaS d'IA qui transforme un **prompt utilisateur**
 en **projet KiCad prêt fabrication** (JLCPCB).
 
 **Pipeline haut niveau :**
@@ -75,7 +75,7 @@ DRC_CLEAN         ← DRC Agent (boucle max 3×)
 PCB_LIVRÉ         ← Export (Gerbers + BOM + STEP) + JLCPCB order
 ```
 
-À chaque transition : **déduction crédits** (`layrix-credits` skill) + **update** `iteration_count`.
+À chaque transition : **déduction crédits** (`cirqix-credits` skill) + **update** `iteration_count`.
 
 ---
 
@@ -166,7 +166,7 @@ PCB_LIVRÉ         ← Export (Gerbers + BOM + STEP) + JLCPCB order
 ---
 
 ### 4.4 Footprint Agent — Haiku 4.5
-> ✅ Cascade 8 étapes (skill `layrix-footprint`)
+> ✅ Cascade 8 étapes (skill `cirqix-footprint`)
 
 **Rôle :** pour chaque composant, trouver un footprint KiCad valide + LCSC part number.
 
@@ -418,8 +418,8 @@ Plan Maker (100 crédits/mois 25€) → **~8 PCBs/mois**.
 Voir `CLAUDE.md §Architecture frontend` pour la structure FSD complète.
 
 **Points clés :**
-- `apps/web/src/app/(marketing)/` → landing + pricing + waitlist (layrix.ai)
-- `apps/web/src/app/(dashboard)/` → chat + viewer split layout (layrix.ai/dashboard)
+- `apps/web/src/app/(marketing)/` → landing + pricing + waitlist (cirqix.ai)
+- `apps/web/src/app/(dashboard)/` → chat + viewer split layout (cirqix.ai/dashboard)
 - `widgets/viewer/` → ViewerPanel + KiCanvasViewer + PixiCanvas + Three.js
 - `features/dashboard/ui/` → ChatPanel, Sidebar, ProjectCard, StatusBadge
 - State : Zustand store (`shared/store/app-store.ts`)
@@ -467,7 +467,7 @@ Tables principales :
 
 ## 🧪 13. Tests
 
-Voir `rules/common/testing.md` — 80% coverage min, TDD obligatoire (règle Layrix).
+Voir `rules/common/testing.md` — 80% coverage min, TDD obligatoire (règle Cirqix).
 
 Niveaux :
 1. **Unit** — chaque agent isolé (mock Claude SDK)
@@ -504,9 +504,9 @@ KiCad     = final output 🏭    (Gerbers + BOM + STEP)
 | 8 | Pas de boucle DRC | **Boucle DRC max 3×** avec fix auto | DRC failures courantes → corriger placement/routing |
 | 9 | Pas d'état machine | **PCBStatus explicite** (INITIAL→...→PCB_LIVRÉ) | Reprise session + idempotence |
 | 10 | JSON v1/v2 sous-spécifiés | **PCBState TypeScript complet** avec `kicad_sch_url`/`kicad_pcb_url` | Signed URLs Supabase pour KiCanvas |
-| 11 | Footprint Agent simpliste | **Cascade 8 étapes** (LCSC→SnapMagic→Octopart→pgvector RAG→...) | CLAUDE.md skill `layrix-footprint` |
+| 11 | Footprint Agent simpliste | **Cascade 8 étapes** (LCSC→SnapMagic→Octopart→pgvector RAG→...) | CLAUDE.md skill `cirqix-footprint` |
 | 12 | Validation Agent = DRC + SKiDL | **DRC Agent** (pas SKiDL ici — SKiDL = ERC schéma, pas DRC PCB) | Confusion ERC vs DRC |
-| 13 | Pas de gestion crédits | **Vérifier AVANT, déduire APRÈS** chaque appel | Skill `layrix-credits` + éviter debit sur échec |
+| 13 | Pas de gestion crédits | **Vérifier AVANT, déduire APRÈS** chaque appel | Skill `cirqix-credits` + éviter debit sur échec |
 | 14 | Pas de confirmation JLCPCB | **"OUI JE CONFIRME" obligatoire** | CLAUDE.md règle absolue |
 
 ---
@@ -515,7 +515,7 @@ KiCad     = final output 🏭    (Gerbers + BOM + STEP)
 
 - `CLAUDE.md` — règles absolues, workflow, stack
 - `PLAN.md` — phases d'implémentation (Phase 2 ✓, Phase 3 en cours)
-- `docs/layrix-full-resume.md` — vision produit + business model
+- `docs/cirqix-full-resume.md` — vision produit + business model
 - `docs/agentdescription.md` — system prompts exacts des agents
 - `.claude/SKILLS.md` — registre des skills disponibles
 - `docs/design/design-system.md` — tokens UI, couleurs, composants

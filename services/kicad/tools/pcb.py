@@ -1,5 +1,5 @@
 """
-Layrix — PCB generation
+Cirqix — PCB generation
 Converts components + nets → .kicad_pcb S-expression.
 
 Public API
@@ -451,10 +451,11 @@ def _generate_with_kicad_tools(
             except Exception as exc:
                 logger.warning("netlist niveau 3 échoué (%s)", exc)
 
-        workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Layrix PCB")
+        workflow.create_pcb(width=board_w, height=board_h, layers=2, title="Cirqix PCB")
         # Place les footprints SUR la carte (fichier "unrouted" = placé, sans pistes).
-        # L'agent placement (PlacementOptimizer) raffine ensuite ce placement ;
-        # plus de pré-déplacement à (-1000,-1000) — workflow officiel kicad-tools.
+        # Placement de départ par grille uniquement : l'agent placement (⑤) fait
+        # le vrai placement en 2 phases — Phase 1 PlacementOptimizer (clustering +
+        # connecteurs ancrés) puis Phase 2 EvolutionaryPlacementOptimizer (GA).
         workflow.place_all_components(spacing=15.0, margin=5.0)
         workflow.assign_nets()
         workflow.save(pcb_path)
@@ -749,7 +750,7 @@ def _generate_pcb_sexpr(
 ) -> str:
     """Generate .kicad_pcb S-expression from components + nets."""
     lines: list[str] = []
-    lines.append('(kicad_pcb (version 20240108) (generator "layrix-circuit-synth")')
+    lines.append('(kicad_pcb (version 20240108) (generator "cirqix-circuit-synth")')
     lines.append('  (general (thickness 1.6))')
     lines.append('  (paper "A4")')
     lines.append('  (layers')

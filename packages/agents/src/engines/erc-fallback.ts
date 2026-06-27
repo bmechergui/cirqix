@@ -12,7 +12,7 @@
  * issues to the user before proceeding to placement.
  */
 
-import type { ERCViolation } from '@layrix/types';
+import type { ERCViolation } from '@cirqix/types';
 import type { SchemaJson } from './engine-router';
 
 export interface ErcFallbackResult {

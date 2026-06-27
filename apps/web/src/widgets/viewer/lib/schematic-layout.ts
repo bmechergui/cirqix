@@ -1,4 +1,4 @@
-import type { SchemaComponent, SchemaNet } from '@layrix/types';
+import type { SchemaComponent, SchemaNet } from '@cirqix/types';
 
 export type Role = 'INPUT' | 'IC' | 'PASSIVE' | 'OUTPUT';
 

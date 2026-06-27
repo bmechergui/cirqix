@@ -9,7 +9,7 @@
 import pino from 'pino';
 
 const log = pino({
-  name: 'layrix.agents.reasoning-service',
+  name: 'cirqix.agents.reasoning-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 

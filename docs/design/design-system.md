@@ -1,4 +1,4 @@
-# Layrix.ai — Design System
+# Cirqix.ai — Design System
 
 > Inspiré du logo : fond noir PCB, traces de circuit, typographie géométrique bold, étincelle IA.
 > Dark mode first. Précision technique. Premium accessible.
@@ -550,4 +550,4 @@ Warning            : text-amber-500 bg-amber-500
 
 ---
 
-*Design System — Layrix.ai — v1.0 — 2026-03-27*
+*Design System — Cirqix.ai — v1.0 — 2026-03-27*

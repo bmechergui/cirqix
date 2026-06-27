@@ -1,10 +1,10 @@
 ---
-name: layrix-credits
+name: cirqix-credits
 description: This skill should be used when the user asks to "gérer les crédits", "déduire des crédits", "vérifier le solde", "implémenter le système de crédits", "créer la table credits Supabase", "ajouter un top-up", "configurer les plans Free/Pro/Pro Max" or mentions credits, balance, plans, or middleware de crédits.
 version: 0.1.0
 ---
 
-# Layrix — Système de Crédits
+# Cirqix — Système de Crédits
 
 ## Tarifs par action
 
@@ -196,8 +196,8 @@ $$;
 
 ```typescript
 // apps/api/src/middleware/credits.ts
-import { checkCredits, deductCredits } from "@layrix/agents/credits";
-import type { CreditAction } from "@layrix/agents/credits/costs";
+import { checkCredits, deductCredits } from "@cirqix/agents/credits";
+import type { CreditAction } from "@cirqix/agents/credits/costs";
 
 export function withCredits(action: CreditAction) {
   return async function creditMiddleware(req: Request, userId: string, projectId?: string) {

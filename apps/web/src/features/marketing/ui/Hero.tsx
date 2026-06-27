@@ -137,7 +137,7 @@ export function Hero() {
             </h1>
 
             <p className="text-base text-muted-foreground mb-10 leading-relaxed max-w-md">
-              Describe your circuit in plain English. Layrix generates a DRC-clean PCB,
+              Describe your circuit in plain English. Cirqix generates a DRC-clean PCB,
               exports Gerbers, and orders from JLCPCB — fully&nbsp;autonomously.
             </p>
 

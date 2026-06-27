@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/agents",
+  "name": "@cirqix/agents",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
-    "@layrix/db": "workspace:*",
-    "@layrix/types": "workspace:*",
+    "@cirqix/db": "workspace:*",
+    "@cirqix/types": "workspace:*",
     "bullmq": "^5.0.0",
     "ioredis": "^5.3.0",
     "jszip": "^3.10.1",
@@ -23,7 +23,7 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@layrix/config-typescript": "workspace:*",
+    "@cirqix/config-typescript": "workspace:*",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }

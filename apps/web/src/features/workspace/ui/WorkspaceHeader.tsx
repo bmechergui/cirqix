@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 import { StatusBadge } from '@/features/dashboard/ui/StatusBadge';
 import { CreditsBadge } from '@/features/dashboard/ui/CreditsBadge';
 import { UserMenu } from '@/features/dashboard/ui/UserMenu';

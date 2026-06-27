@@ -1,10 +1,10 @@
-# Layrix.ai — AI PCB Design Agent
+# Cirqix.ai — AI PCB Design Agent
 
 > **From idea to manufacturable PCB, autonomously**
 
-Layrix is a 100% cloud SaaS for PCB design powered by natural language. Describe your circuit, the AI agent generates a DRC-clean PCB, exports Gerbers, and orders from JLCPCB — fully autonomously.
+Cirqix is a 100% cloud SaaS for PCB design powered by natural language. Describe your circuit, the AI agent generates a DRC-clean PCB, exports Gerbers, and orders from JLCPCB — fully autonomously.
 
-[![CI](https://github.com/bmechergui/layrix/actions/workflows/ci.yml/badge.svg)](https://github.com/bmechergui/layrix/actions/workflows/ci.yml)
+[![CI](https://github.com/bmechergui/cirqix/actions/workflows/ci.yml/badge.svg)](https://github.com/bmechergui/cirqix/actions/workflows/ci.yml)
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)
 ![Turborepo](https://img.shields.io/badge/Turborepo-monorepo-EF4444?logo=turborepo)
@@ -47,12 +47,12 @@ User prompt → 8 AI Agents → Schematic → ERC → Footprints → PCB → Pla
 ## Monorepo Structure
 
 ```
-layrix/
+cirqix/
 ├── apps/
 │   └── web/                          # Next.js 15 app — port 3333
 │       ├── src/app/
-│       │   ├── (marketing)/          # layrix.ai — landing, pricing, waitlist
-│       │   ├── (workspace)/          # layrix.ai/dashboard — auth required
+│       │   ├── (marketing)/          # cirqix.ai — landing, pricing, waitlist
+│       │   ├── (workspace)/          # cirqix.ai/dashboard — auth required
 │       │   └── api/                  # API Routes: /agent (SSE), /jlcpcb/order, /webhooks
 │       ├── src/features/             # FSD: auth, chat-agent, credits, dashboard, marketing
 │       ├── src/widgets/viewer/       # KiCanvas viewer (schematic + PCB) + Three.js 3D
@@ -63,7 +63,7 @@ layrix/
 │   ├── agents/                       # Claude SDK — orchestrator + 8 specialists + engines
 │   │   └── src/engines/              # schematic-engine · placement-service · routing-service
 │   │                                 # drc-service · export-service · footprint-service
-│   ├── types/                        # @layrix/types — single source of truth
+│   ├── types/                        # @cirqix/types — single source of truth
 │   ├── db/                           # Supabase client + migrations
 │   ├── logger/                       # Pino logger
 │   ├── utils/                        # cn() helpers
@@ -95,8 +95,8 @@ npm install -g pnpm   # install pnpm if needed
 ### Install
 
 ```bash
-git clone https://github.com/bmechergui/layrix.git
-cd layrix
+git clone https://github.com/bmechergui/cirqix.git
+cd cirqix
 pnpm install          # always use pnpm — never npm install
 ```
 
@@ -120,7 +120,7 @@ LEMON_SQUEEZY_API_KEY=
 KICAD_SERVICE_URL=http://localhost:8766
 
 # Agent mode: 'simulator' (no API calls) or 'orchestrator' (real Claude + Circuit-Synth)
-LAYRIX_AGENT_MODE=orchestrator
+CIRQIX_AGENT_MODE=orchestrator
 ```
 
 ### Dev
@@ -211,4 +211,4 @@ See [PLAN.md](./PLAN.md) for the full detailed plan.
 
 ## License
 
-Private — All rights reserved © 2026 Layrix Technologies
+Private — All rights reserved © 2026 Cirqix Technologies

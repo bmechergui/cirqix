@@ -1,7 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { Workspace } from '@/features/workspace/ui/Workspace';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 
 export const dynamic = 'force-dynamic';
 

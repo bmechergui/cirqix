@@ -53,7 +53,7 @@ def main() -> int:
 
     pcb_bytes = Path(board_in).read_bytes()
     out_bytes, pct, steps = rescue_with_placement_feedback(
-        pcb_bytes, route_fn=route_fn, max_iterations=3, decide=decide,
+        pcb_bytes, route_fn=route_fn, max_iterations=3, decide=decide, log_dir=out_dir
     )
 
     (out_dir / "final.kicad_pcb").write_bytes(out_bytes)

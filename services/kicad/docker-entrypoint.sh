@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-# Layrix KiCad Service — entrypoint
+# Cirqix KiCad Service — entrypoint
 #
 # kicad-tools est installé en ÉDITABLE depuis /opt/kicad-tools. En dev ce
 # chemin est un bind-mount de l'hôte (services/kicad/kicad-tools) → le code

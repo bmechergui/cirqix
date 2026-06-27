@@ -9,6 +9,10 @@ commands.json = liste de dicts {"type": "place_component"|"route_net"|"delete_tr
 """
 import json
 import sys
+from pathlib import Path
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_SERVICE_ROOT / "kicad-tools" / "src"))
 
 from kicad_tools.reasoning.agent import PCBReasoningAgent
 

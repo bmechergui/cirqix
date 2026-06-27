@@ -15,7 +15,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { lookupFootprintCache, cacheFootprintResult } from './footprint-cache';
 
-const log = pino({ name: 'layrix.agents.footprint-service', level: process.env['LOG_LEVEL'] ?? 'info' });
+const log = pino({ name: 'cirqix.agents.footprint-service', level: process.env['LOG_LEVEL'] ?? 'info' });
 
 const TIMEOUT_MS = 8_000;
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';

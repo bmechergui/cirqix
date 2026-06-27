@@ -1,10 +1,10 @@
 ---
-name: layrix-kicad-service
+name: cirqix-kicad-service
 description: This skill should be used when the user asks to "implémenter le microservice KiCad", "configurer FastAPI pcbnew", "lancer le routage Freerouting", "exporter les Gerbers", "dockeriser KiCad" or mentions pcbnew, Freerouting, placement, routage, DSN, SES, Gerbers, Docker KiCad.
 version: 0.1.0
 ---
 
-# Layrix — Microservice KiCad (services/kicad/)
+# Cirqix — Microservice KiCad (services/kicad/)
 
 ## Structure
 
@@ -33,7 +33,7 @@ from tools.routing import route_with_freerouting
 from tools.drc import run_drc, apply_drc_fixes
 from tools.export import export_gerbers, export_step, export_bom
 
-app = FastAPI(title="Layrix KiCad Service")
+app = FastAPI(title="Cirqix KiCad Service")
 
 class PlacementRequest(BaseModel):
     pcb_path: str

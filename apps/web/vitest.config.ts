@@ -23,8 +23,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@layrix/types': path.resolve(__dirname, '../../packages/types/src/index.ts'),
-      '@layrix/agents': path.resolve(__dirname, '../../packages/agents/src/index.ts'),
+      '@cirqix/types': path.resolve(__dirname, '../../packages/types/src/index.ts'),
+      '@cirqix/agents': path.resolve(__dirname, '../../packages/agents/src/index.ts'),
     },
   },
 });

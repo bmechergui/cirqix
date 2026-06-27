@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
-import type { PCBState } from '@layrix/types';
+import type { PCBState } from '@cirqix/types';
 
 const View3D = dynamic(() => import('./View3D').then((m) => ({ default: m.View3D })), {
   ssr: false,

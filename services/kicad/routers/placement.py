@@ -1,5 +1,5 @@
 """
-Layrix — Router placement
+Cirqix — Router placement
 POST /place         → placement explicite (coordonnées fournies par l'agent)
 POST /place/auto    → auto-placement grille (I/O base64, pas de filesystem partagé)
 """

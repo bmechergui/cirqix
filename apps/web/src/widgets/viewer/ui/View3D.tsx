@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
-import type { PCBState } from '@layrix/types';
+import type { PCBState } from '@cirqix/types';
 import { layoutBoard, type PlacedComponent } from '../lib/layout-engine';
 import { StageHeader } from './StageHeader';
 import { Box } from 'lucide-react';

@@ -1,5 +1,5 @@
 """
-Layrix — Schematic HTTP endpoints
+Cirqix — Schematic HTTP endpoints
 POST /schematic/execute          → execute circuit_synth Python code → .kicad_sch
 POST /schematic/generate         → JSON schema → .kicad_sch
 POST /schematic/validate-symbols → validate KiCad symbol ids

@@ -4,7 +4,7 @@ import type { SchemaJson } from '../engines/engine-router';
 
 // --- Module-level singletons (review fix HIGH-1: avoid recreating per call) ---
 
-export const log = pino({ name: 'layrix.agents.tools', level: process.env['LOG_LEVEL'] ?? 'info' });
+export const log = pino({ name: 'cirqix.agents.tools', level: process.env['LOG_LEVEL'] ?? 'info' });
 
 let _anthropic: Anthropic | null = null;
 export function getAnthropicClient(): Anthropic | null {

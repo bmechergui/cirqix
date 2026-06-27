@@ -1,12 +1,12 @@
-// Types agentiques — types partagés importés depuis @layrix/types
+// Types agentiques — types partagés importés depuis @cirqix/types
 export type {
   PCBStatus,
   PCBState,
   DRCViolation,
   AgentAction,
   AgentStep,
-} from '@layrix/types';
-export { CREDIT_COSTS } from '@layrix/types';
+} from '@cirqix/types';
+export { CREDIT_COSTS } from '@cirqix/types';
 
 // Types spécifiques à la couche agents
 export interface AgentMessage {

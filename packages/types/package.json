@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/types",
+  "name": "@cirqix/types",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
@@ -8,7 +8,7 @@
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
-    "@layrix/config-typescript": "workspace:*",
+    "@cirqix/config-typescript": "workspace:*",
     "typescript": "^5.5.0"
   }
 }

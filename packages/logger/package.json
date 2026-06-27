@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/logger",
+  "name": "@cirqix/logger",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
@@ -11,7 +11,7 @@
     "pino": "^9.0.0"
   },
   "devDependencies": {
-    "@layrix/config-typescript": "workspace:*",
+    "@cirqix/config-typescript": "workspace:*",
     "@types/node": "^20.0.0",
     "typescript": "^5.5.0"
   }

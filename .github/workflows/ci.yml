@@ -86,11 +86,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build KiCad Docker image
-        run: docker build -t layrix-kicad:test ./services/kicad
+        run: docker build -t cirqix-kicad:test ./services/kicad
 
       - name: Test /health endpoint
         run: |
-          docker run -d --name kicad-test -p 8000:8000 layrix-kicad:test
+          docker run -d --name kicad-test -p 8000:8000 cirqix-kicad:test
           sleep 5
           curl -f http://localhost:8000/health
           docker stop kicad-test

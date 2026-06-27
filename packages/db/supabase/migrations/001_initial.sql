@@ -1,5 +1,5 @@
 -- ============================================================
--- Layrix — Migration initiale
+-- Cirqix — Migration initiale
 -- Extensions, tables, RLS, triggers
 -- ============================================================
 

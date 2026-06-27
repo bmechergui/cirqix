@@ -1,9 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { AgentStep, PCBState, PCBStatus } from '@layrix/types';
-import { executeToolStub } from '@layrix/agents';
+import type { AgentStep, PCBState, PCBStatus } from '@cirqix/types';
+import { executeToolStub } from '@cirqix/agents';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
-import { logger } from '@layrix/logger';
+import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'local-pipeline' });
 

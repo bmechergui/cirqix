@@ -18,6 +18,9 @@ build
 .env.production.local
 .env*.local
 
+# Local shell aliases (contiennent des clés API — jamais commités)
+*.local.ps1
+
 # MCP project config (contains access tokens — never commit)
 .mcp.json
 

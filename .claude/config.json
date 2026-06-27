@@ -3,7 +3,7 @@
   "model": "claude-sonnet-4-6",
   "temperature": 0.1,
   "workflow": {
-    "alwaysStartWith": ["layrix-prompt-improver"],
+    "alwaysStartWith": ["cirqix-prompt-improver"],
     "requireTypeCheck": true,
     "autoCommitPR": true,
     "skillsDir": ".claude/skills"

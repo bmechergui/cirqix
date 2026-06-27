@@ -12,7 +12,7 @@
 import pino from 'pino';
 
 const log = pino({
-  name: 'layrix.agents.routing-service',
+  name: 'cirqix.agents.routing-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 

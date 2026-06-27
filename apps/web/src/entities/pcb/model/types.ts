@@ -8,6 +8,6 @@ export type {
   DRCViolation,
   AgentStep,
   AgentAction,
-} from '@layrix/types';
+} from '@cirqix/types';
 
-export { CREDIT_COSTS } from '@layrix/types';
+export { CREDIT_COSTS } from '@cirqix/types';

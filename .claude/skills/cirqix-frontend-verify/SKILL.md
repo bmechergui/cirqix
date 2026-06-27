@@ -1,7 +1,7 @@
 ---
-name: layrix-frontend-verify
+name: cirqix-frontend-verify
 description: >
-  Vérifie visuellement le frontend Layrix (apps/web) pour détecter les chevauchements d'éléments,
+  Vérifie visuellement le frontend Cirqix (apps/web) pour détecter les chevauchements d'éléments,
   overlaps, problèmes de layout, textes superposés, et bugs visuels dans les composants marketing
   et dashboard. Utilise Chrome DevTools MCP pour capturer des screenshots et inspecter chaque section.
   Invoquer OBLIGATOIREMENT quand : l'utilisateur signale un chevauchement, un overlap, un problème
@@ -11,7 +11,7 @@ description: >
   pour valider qu'il n'y a pas de régression visuelle.
 ---
 
-# Layrix — Frontend Verify
+# Cirqix — Frontend Verify
 
 ## Objectif
 
@@ -31,7 +31,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3333
 Si le code retourné n'est pas `200` :
 ```bash
 # Démarrer depuis la racine du monorepo
-cd C:/Users/Mechegui/Desktop/dev/layrix
+cd C:/Users/Mechegui/Desktop/dev/cirqix
 pnpm dev
 # Attendre ~10s que le serveur démarre
 ```
@@ -152,7 +152,7 @@ Flexbox sans flex-wrap sur mobile
 Produire un rapport structuré avec ce format exact :
 
 ```
-## Rapport Layrix Frontend Verify
+## Rapport Cirqix Frontend Verify
 Date : [date]
 Pages analysées : Marketing (/), Dashboard (/dashboard)
 Breakpoints testés : Mobile 375px | Tablet 768px | Desktop 1440px
@@ -221,7 +221,7 @@ Si l'utilisateur choisit A, B ou C → appliquer les corrections en respectant :
 
 ---
 
-## Contexte design system Layrix
+## Contexte design system Cirqix
 
 Références obligatoires avant de proposer des corrections :
 
@@ -242,7 +242,7 @@ xl : 1280px
 2xl : 1536px
 ```
 
-**Patterns responsive corrects pour Layrix**
+**Patterns responsive corrects pour Cirqix**
 ```tsx
 // Texte responsive
 className="text-3xl md:text-5xl xl:text-7xl"

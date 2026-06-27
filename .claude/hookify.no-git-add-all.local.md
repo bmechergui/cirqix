@@ -6,7 +6,7 @@ pattern: "git add -A|git add \."
 action: block
 ---
 
-⛔ BLOQUÉ — `git add -A` et `git add .` sont interdits dans Layrix.
+⛔ BLOQUÉ — `git add -A` et `git add .` sont interdits dans Cirqix.
 
 TOUJOURS utiliser : `git add <fichiers spécifiques>`
 

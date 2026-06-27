@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/shared/ui/button';
-import { LayrixLogo } from '@/shared/ui/layrix-logo';
+import { CirqixLogo } from '@/shared/ui/cirqix-logo';
 import { Menu, X } from 'lucide-react';
 
 const NAV_LINKS = [
@@ -32,7 +32,7 @@ export function Navbar() {
 
         {/* Logo */}
         <Link href="/" className="flex items-center">
-          <LayrixLogo height={32} />
+          <CirqixLogo height={32} />
         </Link>
 
         {/* Desktop nav links */}

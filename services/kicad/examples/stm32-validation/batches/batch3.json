@@ -1,7 +1,0 @@
-[
-  {"type": "route_net", "net": "NRST", "minimize_vias": false, "max_vias": 4},
-  {"type": "route_net", "net": "OSC_OUT", "minimize_vias": false, "max_vias": 4},
-  {"type": "route_net", "net": "+5V", "minimize_vias": false, "max_vias": 4, "trace_width": 0.4},
-  {"type": "route_net", "net": "+3.3V", "minimize_vias": false, "max_vias": 10, "trace_width": 0.4},
-  {"type": "route_net", "net": "GND", "minimize_vias": false, "max_vias": 16, "trace_width": 0.4}
-]

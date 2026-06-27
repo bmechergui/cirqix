@@ -43,10 +43,15 @@ _DEFAULT_TIMEOUT_S: int = 300
 
 _KICAD_TOOLS_MAX_NETS: int = 30
 _KICAD_TOOLS_MAX_COMPS: int = 30
-_PYTHON_ROUTER_TIMEOUT_S: int = 60
+# Budget du routeur kicad-tools (passé à route_kct). 300s = budget « 4 couches » :
+# route_kct escalade jusqu'à 4 couches (--auto-layers) en visant 100%
+# (--min-completion 1.0) → la tentative 4L a besoin de temps. Plafond, pas
+# attente fixe (kct rend la main dès 100%). Aligné sur _DEFAULT_TIMEOUT_S.
+_PYTHON_ROUTER_TIMEOUT_S: int = 300
 
-# Below this completion %, prefer Freerouting (higher quality) when available.
-# Matches kct's own --min-completion 0.95 default.
+# En dessous de ce % de complétion, préférer Freerouting (si dispo) au résultat
+# kicad-tools. (route_kct vise lui-même 100% via --min-completion 1.0 ; ce seuil
+# reste le garde-fou d'acceptation côté routeur.)
 _MIN_ROUTED_PCT: int = 95
 
 
@@ -135,7 +140,7 @@ def _route_with_freerouting_api(
 
         # Upload DSN (multipart)
         dsn_bytes = dsn_path.read_bytes()
-        boundary = b"----LayrixBoundary"
+        boundary = b"----CirqixBoundary"
         body = (
             b"--" + boundary + b"\r\n"
             b'Content-Disposition: form-data; name="file"; filename="board.dsn"\r\n'

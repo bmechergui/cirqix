@@ -8,7 +8,7 @@
  * TSCircuit is NEVER used — this is the sole engine.
  */
 
-import type { SchemaJson, SchemaComponent, SchemaNet } from '@layrix/types';
+import type { SchemaJson, SchemaComponent, SchemaNet } from '@cirqix/types';
 
 export type { SchemaJson };
 
@@ -592,7 +592,7 @@ function generateSchematic(
   const paperW = Math.max(100, Math.max(...xs) + MARGIN * 2);
   const paperH = Math.max(80,  Math.max(...ys) + MARGIN * 2 + 20);
 
-  lines.push(`(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "${uuidv4()}")`);
+  lines.push(`(kicad_sch (version 20230121) (generator "cirqix-circuit-synth") (uuid "${uuidv4()}")`);
   lines.push(`  (paper "User" ${paperW} ${paperH})`);
   lines.push(`  (lib_symbols${INLINE_LIB_SYMBOLS}\n  )`);
 
@@ -694,7 +694,7 @@ function generatePCB(
   boardH: number
 ): string {
   const lines: string[] = [];
-  lines.push('(kicad_pcb (version 20221018) (generator "layrix-circuit-synth")');
+  lines.push('(kicad_pcb (version 20221018) (generator "cirqix-circuit-synth")');
   lines.push('  (general (thickness 1.6))');
   // Custom paper = board dimensions → KiCanvas auto-fits to the board, not a huge A4 page
   lines.push(`  (paper "User" ${boardW + 10} ${boardH + 10})`);

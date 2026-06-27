@@ -3,7 +3,7 @@
 import { Bot, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Message } from '@layrix/types';
+import type { Message } from '@cirqix/types';
 
 interface MessageBubbleProps {
   msg: Message;

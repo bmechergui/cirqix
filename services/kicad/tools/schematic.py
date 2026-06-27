@@ -1,5 +1,5 @@
 """
-Layrix — Schematic generation
+Cirqix — Schematic generation
 Primary  : circuit_synth pip (_generate_with_cs_lib)
 Fallback : S-expression hand-written generator (_generate_schematic_fallback)
 
@@ -362,7 +362,7 @@ def _generate_with_cs_lib(
     """circuit_synth pip → .kicad_sch. Returns None on failure."""
     from circuit_synth import circuit as cs_circuit, Component as CSComponent, Net as CSNet
 
-    project_name = project_id or "layrix_pcb"
+    project_name = project_id or "cirqix_pcb"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     @cs_circuit(name=project_name)
@@ -505,12 +505,12 @@ def _today_iso() -> str:
 
 def _derive_title(components: list[SchemaComponent]) -> str:
     if not components:
-        return "Layrix Project"
+        return "Cirqix Project"
     primary = next((c for c in components if c.ref.upper().startswith("U")), components[0])
-    raw = (primary.value or "Layrix Project").strip().replace('"', "")
+    raw = (primary.value or "Cirqix Project").strip().replace('"', "")
     if len(raw) > 60:
         raw = raw[:57] + "..."
-    return f"Layrix — {raw}"
+    return f"Cirqix — {raw}"
 
 
 def _simple_lib_id(comp: SchemaComponent) -> str:
@@ -766,7 +766,7 @@ def _generate_schematic_fallback(
     origin_y = margin_top
 
     lines: list[str] = []
-    lines.append(f'(kicad_sch (version 20230121) (generator "layrix-circuit-synth") (uuid "{_uuid4()}")')
+    lines.append(f'(kicad_sch (version 20230121) (generator "cirqix-circuit-synth") (uuid "{_uuid4()}")')
     lines.append(f'  (paper "User" {paper_w} {paper_h})')
 
     title_str = _derive_title(components)
@@ -775,7 +775,7 @@ def _generate_schematic_fallback(
     lines.append(f'    (title "{title_str}")')
     lines.append(f'    (date "{today_iso}")')
     lines.append('    (rev "1.0")')
-    lines.append('    (company "Layrix.ai")')
+    lines.append('    (company "Cirqix.ai")')
     lines.append('  )')
     lines.append(f'  (lib_symbols{_INLINE_LIB_SYMBOLS}  )')
 

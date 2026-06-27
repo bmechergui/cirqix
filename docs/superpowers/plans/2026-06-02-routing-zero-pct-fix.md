@@ -475,7 +475,7 @@ RUN kct build-native --check || true
 
 - [ ] **Step 3: Verify the build locally (best effort)**
 
-Run: `cd services/kicad && docker build -t layrix-kicad-test .`
+Run: `cd services/kicad && docker build -t cirqix-kicad-test .`
 Expected: build succeeds; `kct build-native --check` line prints that the C++ router is available. If Docker is unavailable in this environment, document that this step must be verified in CI/deploy.
 
 - [ ] **Step 4: Commit**

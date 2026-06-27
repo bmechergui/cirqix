@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { CircuitBoard, MoreHorizontal, Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import type { Project } from '@layrix/types';
+import type { Project } from '@cirqix/types';
 import { Button } from '@/shared/ui/button';
 import { StatusBadge } from './StatusBadge';
 

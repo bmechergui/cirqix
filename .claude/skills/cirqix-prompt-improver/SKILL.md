@@ -1,7 +1,7 @@
 ---
-name: layrix-prompt-improver
+name: cirqix-prompt-improver
 version: 3.0.0
-description: Améliore tout prompt avant exécution — détecte phase active, ajoute contexte Layrix Phase 4, détecte le skill à invoquer. Mettre à jour quand la phase change.
+description: Améliore tout prompt avant exécution — détecte phase active, ajoute contexte Cirqix Phase 4, détecte le skill à invoquer. Mettre à jour quand la phase change.
 ---
 
 ## Quand invoquer
@@ -19,11 +19,11 @@ description: Améliore tout prompt avant exécution — détecte phase active, a
 **Focus :** footprint cascade (KiCad → SnapMagic → LCSC → AI Haiku), pcbnew placement/routing réels, DRC natif, export Gerbers/BOM/STEP, viewer KiCanvas dual-mode, JLCPCB commande
 **Fichiers :** `packages/agents/src/engines/`, `services/kicad/routers/`, `apps/web/src/widgets/viewer/`
 **Contraintes à toujours mentionner :**
-- Skill `layrix-footprint` : cascade 4 étapes — s'arrêter à la 1ère réussite
-- Skill `layrix-kicad-service` : FastAPI pcbnew (`/place/auto`, `/route`, `/drc`, `/export`)
-- Skill `layrix-drc` : boucle DRC max 3×, corrections pcbnew automatiques
-- Skill `layrix-credits` : vérifier solde AVANT, déduire APRÈS succès
-- Skill `layrix-viewer` : KiCanvas dual-mode (native `.kicad_pcb` / spec SVG custom)
+- Skill `cirqix-footprint` : cascade 4 étapes — s'arrêter à la 1ère réussite
+- Skill `cirqix-kicad-service` : FastAPI pcbnew (`/place/auto`, `/route`, `/drc`, `/export`)
+- Skill `cirqix-drc` : boucle DRC max 3×, corrections pcbnew automatiques
+- Skill `cirqix-credits` : vérifier solde AVANT, déduire APRÈS succès
+- Skill `cirqix-viewer` : KiCanvas dual-mode (native `.kicad_pcb` / spec SVG custom)
 - Moteur PCB : **Circuit-Synth** (Python) — JAMAIS TSCircuit en nouveau code
 - JLCPCB : confirmation **"OUI JE CONFIRME"** obligatoire — jamais automatique
 - Streaming SSE : `Content-Type: text/event-stream`, event `[DONE]` en fin
@@ -36,8 +36,8 @@ description: Améliore tout prompt avant exécution — détecte phase active, a
 ## Pipeline
 
 ```
-1. prompt-master-layrix  → optimise pour Claude Code (9D matrix, XML, signal words)
-2. layrix-prompt-improver → ajoute contexte Phase 4 + détecte skill
+1. prompt-master-cirqix  → optimise pour Claude Code (9D matrix, XML, signal words)
+2. cirqix-prompt-improver → ajoute contexte Phase 4 + détecte skill
    ↓
 prompt final XML + skill sélectionné
 ```
@@ -64,7 +64,7 @@ Afficher : `[Phase 4 — Agent Footprint + Pipeline KiCad complet]`
 
 ```
 [Phase 4 — Agent Footprint + Pipeline KiCad complet]
-[Skill détecté : layrix-xxx ou /skill-name]
+[Skill détecté : cirqix-xxx ou /skill-name]
 
 📝 Prompt reçu :
 [original]
@@ -103,7 +103,7 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 | "agent" sans précision | Orchestrateur / Schéma / DRC / Footprint ? |
 | "base de données" | Table + RLS + migration Supabase |
 | "affiche X" | Composant + classes design system + états loading/empty/error |
-| Touche aux crédits | Vérifier AVANT, déduire APRÈS (skill `layrix-credits`) |
+| Touche aux crédits | Vérifier AVANT, déduire APRÈS (skill `cirqix-credits`) |
 | Touche aux agents | Modèle (Sonnet ou Haiku), max 15 itérations, streaming SSE |
 | Touche à la DB | RLS + uuid-ossp + pgvector si embeddings |
 | Touche au viewer | `LAYER_COLORS`, `mmToPx`, design system |
@@ -120,24 +120,24 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 ## Détection automatique du skill
 
 ```
-├── agent / orchestrateur / boucle / SSE / itération  → layrix-pcb-agent
-├── footprint / kicad_mod / snapmagic / octopart       → layrix-footprint
-├── placement / routage / freerouting / gerber         → layrix-kicad-service
-├── viewer / kicanvas / kicad_sch / kicad_pcb / schéma  → layrix-viewer
-├── circuit-synth / @circuit / Net() / Component() / symbol mapping / KICAD_SYMBOL_DIR → layrix-circuit-synth
-├── génération kicad / python kicad / kicad_sch depuis python   → layrix-circuit-synth + layrix-kicad-service
-├── crédit / balance / plan / lemon squeezy / top-up   → layrix-credits
-├── DRC / violation / clearance / track width          → layrix-drc
+├── agent / orchestrateur / boucle / SSE / itération  → cirqix-pcb-agent
+├── footprint / kicad_mod / snapmagic / octopart       → cirqix-footprint
+├── placement / routage / freerouting / gerber         → cirqix-kicad-service
+├── viewer / kicanvas / kicad_sch / kicad_pcb / schéma  → cirqix-viewer
+├── circuit-synth / @circuit / Net() / Component() / symbol mapping / KICAD_SYMBOL_DIR → cirqix-circuit-synth
+├── génération kicad / python kicad / kicad_sch depuis python   → cirqix-circuit-synth + cirqix-kicad-service
+├── crédit / balance / plan / lemon squeezy / top-up   → cirqix-credits
+├── DRC / violation / clearance / track width          → cirqix-drc
 ├── dashboard / composant React / UI / tailwind        → /everything-claude-code:frontend-patterns
 ├── supabase / migration / RLS / pgvector / SQL        → /everything-claude-code:postgres-patterns
-├── FastAPI / Python / pcbnew / docker                 → layrix-kicad-service + python-patterns
+├── FastAPI / Python / pcbnew / docker                 → cirqix-kicad-service + python-patterns
 ├── test / playwright / e2e / vitest                   → /everything-claude-code:e2e
 ├── Claude API / SDK / tool_use / streaming            → /everything-claude-code:claude-api
 ├── architecture / plan / refactoring                  → /everything-claude-code:plan
 └── autre → exécuter directement
 ```
 
-- Plusieurs skills → invoquer skill Layrix d'abord, skill global ensuite
+- Plusieurs skills → invoquer skill Cirqix d'abord, skill global ensuite
 - Aucun skill → exécuter directement
 - 2 domaines → mentionner les deux, invoquer le plus central
 - **Ne jamais demander** quel skill — décider et expliquer en une ligne

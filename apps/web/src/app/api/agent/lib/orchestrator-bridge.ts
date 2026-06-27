@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PCBState, PCBStatus, SimulationData } from '@layrix/types';
-import { runOrchestrator } from '@layrix/agents';
-import { logger } from '@layrix/logger';
+import type { PCBState, PCBStatus, SimulationData } from '@cirqix/types';
+import { runOrchestrator } from '@cirqix/agents';
+import { logger } from '@cirqix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
 

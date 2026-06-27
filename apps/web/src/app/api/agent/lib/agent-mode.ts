@@ -1,7 +1,7 @@
 export type AgentMode = 'simulator' | 'orchestrator';
 
 export function resolveAgentMode(): AgentMode {
-  const raw = (process.env['LAYRIX_AGENT_MODE'] ?? '').toLowerCase().trim();
+  const raw = (process.env['CIRQIX_AGENT_MODE'] ?? '').toLowerCase().trim();
   if (raw === 'orchestrator' || raw === 'real') return 'orchestrator';
   return 'simulator';
 }

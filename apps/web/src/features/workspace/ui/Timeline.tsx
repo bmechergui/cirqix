@@ -5,7 +5,7 @@ import {
   Route, ShieldCheck, Download, Activity, Cpu, FlaskConical,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { PCBStatus } from '@layrix/types';
+import type { PCBStatus } from '@cirqix/types';
 import {
   PCB_STAGE_ORDER,
   isStageReached,

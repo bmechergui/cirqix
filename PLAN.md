@@ -1,4 +1,4 @@
-# Plan d'Implémentation Complet — Layrix.ai
+# Plan d'Implémentation Complet — Cirqix.ai
 
 ## Vision
 
@@ -10,12 +10,12 @@ Tagline : *"Every layer, perfectly designed by AI"*
 ## Architecture globale (Turborepo monorepo)
 
 ```
-layrix/
+cirqix/
 ├── apps/
 │   └── web/            → Next.js 15 (marketing + auth + dashboard + API Routes, port 3333)
 ├── packages/
 │   ├── agents/         → Boucle agentique Claude SDK (Orchestrateur + agents)
-│   ├── types/          → Source de vérité TypeScript (@layrix/types)
+│   ├── types/          → Source de vérité TypeScript (@cirqix/types)
 │   ├── db/             → Supabase client + migrations
 │   ├── logger/         → Pino logger
 │   ├── utils/          → cn() helpers
@@ -341,10 +341,10 @@ EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-**Validation :** `docker build -t layrix-kicad . && docker run -p 8000:8000 layrix-kicad`
+**Validation :** `docker build -t cirqix-kicad . && docker run -p 8000:8000 cirqix-kicad`
 → `curl http://localhost:8000/health` doit retourner `{"status":"ok"}`
 
-**Skill :** `layrix-kicad-service`, `/everything-claude-code:docker-patterns`
+**Skill :** `cirqix-kicad-service`, `/everything-claude-code:docker-patterns`
 **Risque :** 🔴 CRITIQUE — si `import pcbnew` échoue, tout le pipeline Phase 3 est bloqué
 
 > **Point de go/no-go** : valider cette étape AVANT tout le reste. Fallback : TSCircuit uniquement pour MVP.
@@ -365,9 +365,9 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ### Étape 0.10 — Deploy initial
 
 **Actions :**
-1. Vercel : `apps/landing` → `layrix.ai`
-2. Vercel : `apps/dashboard` → `app.layrix.ai`
-3. Railway : `apps/api` → `api.layrix.ai`
+1. Vercel : `apps/landing` → `cirqix.ai`
+2. Vercel : `apps/dashboard` → `app.cirqix.ai`
+3. Railway : `apps/api` → `api.cirqix.ai`
 4. DigitalOcean : Droplet pour service KiCad Docker (Phase 3)
 
 **Risque :** Moyen
@@ -408,7 +408,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 1. **Features** : 6 cards (Agent autonome, Viewer 2D/3D, Footprint auto, JLCPCB, SPICE, Credits)
 2. **How It Works** : 3 étapes reliées par circuit trace SVG animé
 3. **Pricing** : 4 tiers — card active = border-cyan-400
-4. **Comparatif** : Layrix vs Flux vs Quilter vs DeepPCB vs KiCad MCP
+4. **Comparatif** : Cirqix vs Flux vs Quilter vs DeepPCB vs KiCad MCP
 
 ---
 
@@ -551,13 +551,13 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 - Haiku génère JSON `{ components, nets, connections }` avec pin names KiCad (`"IN"`, `"GND"`, `"TR"`)
 - `validateAndCorrectSchema()` → POST `/circuit-synth/validate-symbols` → corrections auto
 - **Docker actif** → `circuit-synth` officiel GitHub v0.12.1 (`kicad-sch-api`) → `.kicad_sch` + `.kicad_pcb` réels
-- **Docker absent** → `schematic_gen.py` fallback custom Layrix → `.kicad_sch` S-expression basique
+- **Docker absent** → `schematic_gen.py` fallback custom Cirqix → `.kicad_sch` S-expression basique
 - Upload Supabase Storage → `pcb_state.kicad_sch_url` + `kicad_pcb_url` → SSE → KiCanvas
 
 > `circuit-synth` officiel : `pip install git+https://github.com/circuit-synth/circuit-synth.git`
 > Sans `[fast_generation]` → zéro google-adk. Core deps : kicad-sch-api, numpy, PySpice.
 
-**Skill :** `/everything-claude-code:claude-api`, `layrix-pcb-agent` | **Risque :** 🔴 ÉLEVÉ
+**Skill :** `/everything-claude-code:claude-api`, `cirqix-pcb-agent` | **Risque :** 🔴 ÉLEVÉ
 
 ---
 
@@ -589,7 +589,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 4. Onglet **Routing** → `<kicanvas-board src={kicadPcbUrl} />`
 5. Chargement conditionnel : skeleton si fichier pas encore généré
 
-**Skill :** `layrix-viewer` | **Risque :** Moyen
+**Skill :** `cirqix-viewer` | **Risque :** Moyen
 
 ---
 
@@ -625,7 +625,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 ```
 
-**Skill :** `layrix-credits` | **Risque :** Moyen
+**Skill :** `cirqix-credits` | **Risque :** Moyen
 
 ---
 
@@ -654,7 +654,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 | `POST /export/bom` | BOM CSV JLCPCB-ready |
 | `POST /simulate` | ngspice (plan Pro) |
 
-**Skill :** `layrix-kicad-service`, `/everything-claude-code:python-patterns` | **Risque :** 🔴 ÉLEVÉ
+**Skill :** `cirqix-kicad-service`, `/everything-claude-code:python-patterns` | **Risque :** 🔴 ÉLEVÉ
 
 ---
 
@@ -673,7 +673,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 4. Agent Correction Globale : Sonnet 4.6, si blocage persistant
 5. `kicad-tools.ts` : wrappers HTTP → `KICAD_SERVICE_URL`
 
-**Skill :** `layrix-pcb-agent`, `layrix-drc` | **Risque :** Élevé
+**Skill :** `cirqix-pcb-agent`, `cirqix-drc` | **Risque :** Élevé
 
 ---
 
@@ -710,7 +710,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 **Badge source :** KiCad_official | SnapMagic | Octopart | IA_Claude_from_datasheet
 
-**Skill :** `layrix-footprint` | **Risque :** Élevé
+**Skill :** `cirqix-footprint` | **Risque :** Élevé
 
 ---
 
@@ -735,7 +735,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 **✅ circuit_synth installé dans Docker** — `pip install ./circuit_synth` (src layout, PYTHONPATH=/app/circuit_synth/src)
 
-**Skill :** `layrix-circuit-synth`, `layrix-kicad-service`
+**Skill :** `cirqix-circuit-synth`, `cirqix-kicad-service`
 
 ---
 
@@ -839,7 +839,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 3. Vérification signature HMAC
 4. Idempotence : vérifier transaction_id avant insert
 
-**Skill :** `layrix-credits` | **Risque :** Moyen
+**Skill :** `cirqix-credits` | **Risque :** Moyen
 
 ---
 
@@ -965,7 +965,7 @@ L'étape **0.8** est sur le chemin critique. Si elle échoue, le MVP tourne sur 
 - [ ] CI GitHub Actions : vert
 
 ### Phase 1
-- [ ] Landing déployée sur layrix.ai
+- [ ] Landing déployée sur cirqix.ai
 - [ ] Lighthouse 100/100
 - [ ] Formulaire waitlist → Supabase → Resend fonctionnel
 

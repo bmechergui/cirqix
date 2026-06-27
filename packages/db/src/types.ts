@@ -1,7 +1,7 @@
 // Types générés depuis le schéma Supabase
 // Regénérer avec : pnpm db:generate
-// Types partagés importés depuis @layrix/types (source de vérité unique)
-import type { PCBStatus, Plan, FootprintSource } from '@layrix/types';
+// Types partagés importés depuis @cirqix/types (source de vérité unique)
+import type { PCBStatus, Plan, FootprintSource } from '@cirqix/types';
 export type { PCBStatus, Plan, FootprintSource };
 
 export interface Database {

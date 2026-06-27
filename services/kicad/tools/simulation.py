@@ -226,7 +226,7 @@ def _stub_netlist(sch_content: str) -> str:
             r_val = v.replace("Ω", "").replace("OHM", "").replace("R", "") + "K" if "K" in v else "1k"
             break
     return (
-        "* Layrix stub netlist\n"
+        "* Cirqix stub netlist\n"
         f"R1 VIN VMID {r_val}\n"
         f"C1 VMID 0 {c_val}\n"
         "V1 VIN 0 DC 5 AC 1 PULSE(0 5 0 1n 1n 0.5m 1m)\n"

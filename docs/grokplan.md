@@ -1,12 +1,12 @@
-Voici le plan technique détaillé pour réaliser Layrix (ton SaaS de Deep Agents) en utilisant Claude Agent SDK (aussi appelé Claude Code SDK, renommé en 2025-2026) comme moteur principal.
+Voici le plan technique détaillé pour réaliser Cirqix (ton SaaS de Deep Agents) en utilisant Claude Agent SDK (aussi appelé Claude Code SDK, renommé en 2025-2026) comme moteur principal.
 Ce plan est réaliste en mars 2026, basé sur l’état actuel du SDK : il offre un agent loop puissant (Context → Thought → Action → Observation), accès natif au filesystem, commandes bash, outils sandboxés, MCP (Model Context Protocol) pour connecter des outils externes, sub-agents, et une excellente fiabilité avec Claude 4 / Sonnet 4.
-Pourquoi Claude Agent SDK pour Layrix ?
+Pourquoi Claude Agent SDK pour Cirqix ?
 
 Avantages : Tool-use ultra-fiable (Claude reste leader), contexte engineering fort, sandbox sécurisé, MCP-native (connecte facilement web search, DB, APIs, fichiers), sub-agents simples, moins de boilerplate que LangGraph pour les agents autonomes.
 Limites : Lock-in sur Claude (pas facile de switcher vers Grok/Gemini), orchestration moins flexible pour des graphes très complexes avec beaucoup de branches conditionnelles.
 Solution hybride recommandée : Utilise Claude Agent SDK pour le cœur de l’agent (exécution autonome, file ops, tools) + LangGraph pour l’orchestration globale (supervisor, persistance, routing, human-in-the-loop, multi-agents). C’est une approche courante en 2026 pour combiner le meilleur des deux.
 
-Architecture technique proposée pour Layrix (MVP)
+Architecture technique proposée pour Cirqix (MVP)
 Stack globale :
 
 Frontend : Next.js 15 (React) + Tailwind + shadcn/ui → interface simple : liste d’agents, chat, templates one-click, dashboard.
@@ -28,7 +28,7 @@ Historique + pause/reprise (human-in-the-loop).
 Plan par phases (8-12 semaines pour MVP)
 Phase 0 : Setup & Préparation (3-5 jours)
 
-Crée un repo GitHub : layrix-saas.
+Crée un repo GitHub : cirqix-saas.
 Installe Claude Agent SDK :Bashpip install claude-agent-sdk
 Obtiens ta clé API Anthropic (avec budget max via max_budget_usd dans le SDK).
 Teste le quickstart officiel :Pythonfrom claude_agent_sdk import query
@@ -43,7 +43,7 @@ Configure MCP de base (pour outils externes comme web search ou PDF parsing).
 
 Phase 1 : Construction du cœur Agent (2-3 semaines)
 
-Crée un wrapper AgentLayrix qui utilise Claude Agent SDK.
+Crée un wrapper AgentCirqix qui utilise Claude Agent SDK.
 Implémente les fonctionnalités clés :
 Session persistante (avec Session du SDK + tag/rename).
 Outils built-in : lecture/écriture fichiers, bash (sandboxé), recherche web via MCP.
@@ -52,15 +52,15 @@ Support MCP servers : connecte des serveurs pour WhatsApp Business, Odoo, ou out
 Sub-agents : pour tâches spécialisées (ex: un sub-agent "Critic" qui vérifie les hallucinations).
 
 
-Exemple de structure basique d’un agent avec le SDK (adapté pour Layrix) :
+Exemple de structure basique d’un agent avec le SDK (adapté pour Cirqix) :
 Pythonfrom claude_agent_sdk import Agent, Tool, MCPTool
 from typing import List
 
-class LayrixAgent:
+class CirqixAgent:
     def __init__(self, user_prompt: str, tools: List[Tool]):
         self.agent = Agent(
             model="claude-sonnet-4",
-            system_prompt="Tu es Layrix, un deep agent autonome pour PME tunisiennes. Tu planifies, exécutes, vérifies et itères jusqu'à ce que la tâche soit terminée.",
+            system_prompt="Tu es Cirqix, un deep agent autonome pour PME tunisiennes. Tu planifies, exécutes, vérifies et itères jusqu'à ce que la tâche soit terminée.",
             tools=tools,
             max_budget_usd=5.0,  # Sécurité coût
             # Autres params : extended thinking, etc.

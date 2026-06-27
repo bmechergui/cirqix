@@ -1,7 +1,7 @@
 'use client';
 
 import { Activity, Zap, AlertTriangle } from 'lucide-react';
-import type { PCBState, SimulationVector } from '@layrix/types';
+import type { PCBState, SimulationVector } from '@cirqix/types';
 import { StageHeader } from './StageHeader';
 import {
   LineChart,

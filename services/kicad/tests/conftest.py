@@ -1,4 +1,4 @@
-"""Fixtures pytest — microservice KiCad Layrix.
+"""Fixtures pytest — microservice KiCad Cirqix.
 
 Ajoute au sys.path :
 - services/kicad        → import des modules `tools.*` / `routers.*`

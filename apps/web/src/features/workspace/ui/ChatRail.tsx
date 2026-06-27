@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { Sparkles } from 'lucide-react';
-import type { Message } from '@layrix/types';
+import type { Message } from '@cirqix/types';
 import { useAppStore } from '@/shared/store/app-store';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
@@ -130,7 +130,7 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
     <aside className="flex flex-col h-full bg-[#0d0d0d] border-r border-border w-full md:w-[340px] shrink-0">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
         <Sparkles size={14} className="text-primary" />
-        <span className="text-xs font-medium text-foreground">Layrix agent</span>
+        <span className="text-xs font-medium text-foreground">Cirqix agent</span>
         <span className="ml-auto text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60">
           {agentBusy ? 'thinking…' : 'idle'}
         </span>

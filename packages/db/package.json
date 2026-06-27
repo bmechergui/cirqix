@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/db",
+  "name": "@cirqix/db",
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
@@ -12,13 +12,13 @@
     "db:generate": "supabase gen types typescript --local > src/types.ts"
   },
   "dependencies": {
-    "@layrix/types": "workspace:*",
+    "@cirqix/types": "workspace:*",
     "@supabase/supabase-js": "^2.43.0",
     "@supabase/ssr": "^0.4.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@layrix/config-typescript": "workspace:*",
+    "@cirqix/config-typescript": "workspace:*",
     "@types/node": "^20.0.0",
     "typescript": "^5.5.0"
   }

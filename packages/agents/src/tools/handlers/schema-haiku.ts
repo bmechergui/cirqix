@@ -1,5 +1,5 @@
 import type { SchemaJson } from '../../engines/engine-router';
-import type { SchemaComponent } from '@layrix/types';
+import type { SchemaComponent } from '@cirqix/types';
 import { log, getAnthropicClient } from '../shared';
 
 // --- Haiku schema generator ----------------------------------------------

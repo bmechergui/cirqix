@@ -1,6 +1,6 @@
 import { Separator } from '@/shared/ui/separator';
 import { FOOTER_LINKS } from '@/shared/lib/marketing-content';
-import { LayrixLogo } from '@/shared/ui/layrix-logo';
+import { CirqixLogo } from '@/shared/ui/cirqix-logo';
 
 export function Footer() {
   return (
@@ -10,7 +10,7 @@ export function Footer() {
           {/* Brand */}
           <div>
             <div className="mb-4">
-              <LayrixLogo height={28} />
+              <CirqixLogo height={28} />
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
               AI PCB Design Agent — From idea to manufacturable PCB, autonomously.
@@ -38,7 +38,7 @@ export function Footer() {
         <Separator className="mb-6" />
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-          <span>© 2025 Layrix Technologies. All rights reserved.</span>
+          <span>© 2025 Cirqix Technologies. All rights reserved.</span>
           <span>Made with ♥ for hardware engineers</span>
         </div>
       </div>

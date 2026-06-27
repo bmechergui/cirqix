@@ -1,4 +1,4 @@
-import type { SchemaComponent } from '@layrix/types';
+import type { SchemaComponent } from '@cirqix/types';
 
 export interface PlacedComponent extends SchemaComponent {
   /** mm from top-left of board */

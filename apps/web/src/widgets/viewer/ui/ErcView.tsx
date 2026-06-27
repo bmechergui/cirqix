@@ -1,7 +1,7 @@
 'use client';
 
 import { Activity, AlertTriangle, CheckCircle2, Info, ShieldAlert } from 'lucide-react';
-import type { ERCViolation, PCBState } from '@layrix/types';
+import type { ERCViolation, PCBState } from '@cirqix/types';
 import { StageHeader } from './StageHeader';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

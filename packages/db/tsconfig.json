@@ -1,5 +1,5 @@
 {
-  "extends": "@layrix/config-typescript/tsconfig.base.json",
+  "extends": "@cirqix/config-typescript/tsconfig.base.json",
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "dist"

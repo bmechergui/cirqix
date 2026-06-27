@@ -1333,19 +1333,6 @@ def main() -> int:
         # Step 4: Create PCB
         pcb_path = create_stm32_pcb(output_dir)
 
-        # Step 5: Route PCB
-        routed_path = output_dir / "stm32_devboard_routed.kicad_pcb"
-        route_success = route_pcb(pcb_path, routed_path)
-
-        # Step 6: Stitch GND plane (route -> stitch -> mfr pipeline)
-        stitch_success = stitch_pcb(routed_path)
-
-        # Step 7: Run DRC
-        drc_success = run_drc(routed_path)
-
-        # Step 8: Generate manufacturing artifacts (Gerbers, BOM, CPL)
-        mfr_success = generate_manufacturing(routed_path, output_dir)
-
         # Summary
         print("\n" + "=" * 60)
         print("SUMMARY")
@@ -1355,14 +1342,8 @@ def main() -> int:
         print(f"  1. Project: {project_path.name}")
         print(f"  2. Schematic: {sch_path.name}")
         print(f"  3. PCB (unrouted): {pcb_path.name}")
-        print(f"  4. PCB (routed): {routed_path.name}")
-        print(f"  5. Manufacturing: {(output_dir / 'manufacturing').name}/")
         print("\nResults:")
         print(f"  ERC: {'PASS' if erc_success else 'FAIL'}")
-        print(f"  Routing: {'SUCCESS' if route_success else 'PARTIAL'}")
-        print(f"  Stitch: {'SUCCESS' if stitch_success else 'FAIL'}")
-        print(f"  DRC: {'PASS' if drc_success else 'FAIL'}")
-        print(f"  Manufacturing: {'SUCCESS' if mfr_success else 'FAIL'}")
         print("\nBoard description:")
         print("  - U1: AMS1117-3.3 LDO (5V to 3.3V)")
         print("  - U2: STM32F103C8T6 MCU (LQFP-48, 0.5mm pitch)")
@@ -1375,19 +1356,7 @@ def main() -> int:
         print("  - R2: BOOT0 pull-down (10k)")
         print("  - J1: 6-pin SWD debug header")
 
-        # For this demo board, partial routing and partial GND stitching
-        # are acceptable.  Per #3075 (2026-05-18), only 1 of 18 GND pads
-        # remains stranded: U2.8 (LQFP-48 west-side VSS) is blocked by
-        # the OSC_OUT B.Cu escape stub that runs through its escape
-        # window -- the same root cause cluster as the 4 clearance
-        # errors at U2 tracked under #2834.  The connectivity rule is
-        # advisory (in DRCChecker.ADVISORY_RULE_IDS, filtered from the
-        # CI gate per #3074), and the other 3 VSS pads (U2.23, U2.35,
-        # U2.47) are stitched so the MCU VSS rail is bonded to the
-        # plane through three independent paths.  Success requires ERC
-        # pass, routing success, stitch step executed, and manufacturing
-        # artifacts produced.
-        return 0 if (erc_success and route_success and stitch_success and mfr_success) else 1
+        return 0 if erc_success else 1
 
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)

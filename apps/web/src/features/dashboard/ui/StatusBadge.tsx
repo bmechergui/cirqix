@@ -1,5 +1,5 @@
 import { Badge } from '@/shared/ui/badge';
-import type { PCBStatus } from '@layrix/types';
+import type { PCBStatus } from '@cirqix/types';
 
 const STATUS_LABEL: Record<PCBStatus, string> = {
   INITIAL: 'Draft',

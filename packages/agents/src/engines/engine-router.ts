@@ -8,7 +8,7 @@ export type { CircuitSynthResult } from './schematic-engine';
 export { isCircuitSynthAvailable, runCircuitSynthEngine };
 
 // Re-export schema types for consumers
-export type { SchemaJson } from '@layrix/types';
+export type { SchemaJson } from '@cirqix/types';
 
 export type PCBEngine = 'circuit-synth';
 
@@ -33,7 +33,7 @@ export function selectEngine(): PCBEngine {
  * the grid here is only used as a fallback base for downstream steps.
  */
 export async function runPCBEngine(
-  schema: import('@layrix/types').SchemaJson,
+  schema: import('@cirqix/types').SchemaJson,
   boardWidthMm = 50,
   boardHeightMm = 50,
   projectId = ''

@@ -1,3 +1,3 @@
-// UI package — composants partagés Layrix
+// UI package — composants partagés Cirqix
 export * from './components/button';
 export * from './lib/utils';

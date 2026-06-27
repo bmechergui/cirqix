@@ -1,5 +1,5 @@
 {
-  "name": "@layrix/config-eslint",
+  "name": "@cirqix/config-eslint",
   "version": "0.0.1",
   "private": true,
   "main": "index.js",
