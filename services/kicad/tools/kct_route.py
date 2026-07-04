@@ -39,12 +39,18 @@ _ROUTE_TIMEOUT_S: int = 600
 #
 # Piste testée et REJETÉE (benchmark stm32-validation 2026-07-04) :
 # --starting-layers 4 + --targeted-ripup sur boards denses (LQFP-48, ~80 pads).
-# Résultat : 55% identique au baseline (7 runs stables à 55%, seeds 42/7/123),
-# 509s vs ~431s (aucun gain de temps — le skip du probe 2L ne paie pas),
-# 23 unconnected identiques, courts DRC dans le bruit inter-run (7-26 observés).
-# Le plafond de 55% est STRUCTUREL (fan-out LQFP-48 pitch 0.5mm + P3V3 en pistes
-# vers 15 pads) — aucun tuning de flags ne le franchit ; les vraies pistes sont
-# le backend C++ (kct build-native, Docker) et Phase 6 RL_PCB. Ne pas re-tester.
+# Résultat : 55% identique au baseline (seeds 42/7/123, 300/600s), aucun gain
+# de temps (509s vs ~431s), 23 unconnected identiques. Ne pas re-tester.
+#
+# ⚠ Le « plafond 55% » observé sur backend PYTHON n'est PAS structurel : la
+# variance inter-run est énorme (45-73% mesurés ensuite sur le MÊME board,
+# même seed — deadline wall-clock, issues upstream #2673/#2802). Le vrai
+# levier mesuré (2026-07-04) est le backend C++ : `kct build-native` (Docker ;
+# en local Windows : clang-cl requis, MSVC 2019 trop vieux pour nanobind) →
+# le MÊME kct route passe de 55-73% / 431-600s à 100% routé en 121s sur le
+# board STM32 LQFP-48 de référence. Sans le .pyd compilé, la lib retombe en
+# silence sur l'A* Python pur 10-100× plus lent — vérifier
+# `kct build-native --check` avant tout benchmark de routage.
 _MIN_COMPLETION: str = "1.0"
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
