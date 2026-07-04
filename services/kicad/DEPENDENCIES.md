@@ -28,11 +28,28 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
   surtout côté routeur, mais non re-taggé). Update du 2026-06-14 : ~718 fichiers
   routeur récupérés depuis le snapshot de début juin ; 4 patches Cirqix réappliqués
   (cf. ci-dessous). Validé localement : 20/20 tests + smoke route 100% (compat API).
-  Qualité de routage à valider en Docker (backend C++ requis, indispo en local).
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
 - **Import Python :** ajouter `kicad-tools/src` au sys.path → `import kicad_tools`.
 - **Install Docker :** `pip3 install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native --force` (backend C++ A* — 10-100× plus rapide ; non‑fatal).
+- **Backend C++ en local Windows (validé 2026-07-04)** — `kct build-native` échoue
+  tel quel : son check compilateur ne connaît que `clang++`/`g++` (jamais `cl.exe`),
+  et MSVC 2019 est de toute façon trop vieux pour les headers nanobind (C2131
+  constexpr — nanobind exige MSVC 2022+/clang 8+/GCC 9+). Recette qui marche :
+  1. `winget install LLVM.LLVM` (clang-cl) + `pip install nanobind ninja` ;
+  2. depuis un env `vcvars64` (VS 2019 Build Tools OK pour le SDK/STL) :
+     `cmake -B <build_court> -S kicad-tools/src/kicad_tools/router/cpp -G Ninja
+     -DCMAKE_CXX_COMPILER=clang-cl -DPython_EXECUTABLE=<python>
+     -Dnanobind_DIR=$(python -c "import nanobind; print(nanobind.cmake_dir())")`
+     puis `cmake --build <build_court> --config Release` ;
+     ⚠ `<build_court>` = chemin COURT (ex. `%TEMP%\kct_build`) — MSBuild plante
+     en MAX_PATH 260 sur un dossier profond ;
+  3. copier `router_cpp.cp313-win_amd64.pyd` dans `kicad-tools/src/kicad_tools/router/` ;
+  4. vérifier `kct build-native --check` → « available ».
+  **Impact mesuré (board STM32 LQFP-48 de référence)** : sans le `.pyd`, la lib
+  retombe EN SILENCE sur l'A* Python pur → 55-73 % routé en 431-600 s (variance
+  énorme) ; avec le C++ → **100 % routé en 121 s** au 1er run. Toujours vérifier
+  `build-native --check` avant un benchmark de routage.
 - **Workflow officiel utilisé par nos agents :**
   - Placement (2 phases) : Phase 1 `PlacementOptimizer(fixed_refs, enable_clustering)`
     (physique locale) → Phase 2 `EvolutionaryPlacementOptimizer.optimize_hybrid()`
