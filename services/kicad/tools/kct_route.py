@@ -36,6 +36,15 @@ _ROUTE_TIMEOUT_S: int = 600
 # l'escalade : défaut lib = 0.95 (s'arrête à 95%, trop tôt) → on vise 100% du
 # routable, donc le routeur escalade jusqu'à la couche minimale qui route tout
 # (board simple reste en 2 couches, dense monte à 4).
+#
+# Piste testée et REJETÉE (benchmark stm32-validation 2026-07-04) :
+# --starting-layers 4 + --targeted-ripup sur boards denses (LQFP-48, ~80 pads).
+# Résultat : 55% identique au baseline (7 runs stables à 55%, seeds 42/7/123),
+# 509s vs ~431s (aucun gain de temps — le skip du probe 2L ne paie pas),
+# 23 unconnected identiques, courts DRC dans le bruit inter-run (7-26 observés).
+# Le plafond de 55% est STRUCTUREL (fan-out LQFP-48 pitch 0.5mm + P3V3 en pistes
+# vers 15 pads) — aucun tuning de flags ne le franchit ; les vraies pistes sont
+# le backend C++ (kct build-native, Docker) et Phase 6 RL_PCB. Ne pas re-tester.
 _MIN_COMPLETION: str = "1.0"
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
