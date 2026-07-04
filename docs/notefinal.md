@@ -22,7 +22,7 @@
 
 ---
 
-### Pipeline complet (mis à jour 2026-05-30)
+### Pipeline complet (mis à jour 2026-07-04 — routing réaligné sur kct route)
 
 ```
 Utilisateur (texte naturel)
@@ -88,14 +88,19 @@ Utilisateur (texte naturel)
      Niveau 3 : TypeScript S-expr (fallback final)
 
 ⑥ call_agent_routing   → ROUTING_DONE
-     ① kicad-tools A* negotiated — ≤30 nets routables (≥2 pads), ≤30 comps, timeout 60s
-        route_all_negotiated + merge_routes_into_pcb + _add_power_zones (GND B.Cu + VCC F.Cu)
-     ② Freerouting REST API       — 1 JVM persistant Docker port 37864, RAM fixe 400MB
+     ① kct route --strategy negotiated (CLI kicad-tools) — PRIMAIRE, circuits simples
+        2 algos imbriqués : PathFinder (boucle rip-up & reroute + congestion) + A* (pathfinding)
+        Flags : --auto-layers (escalade 2→4 couches) --min-completion 1.0 (cible 100%)
+                --auto-fix (DRC pendant routage) --seed 42 (déterministe) --timeout 300
+        Hack VCC-as-traces : renomme +5V→P5V0 / +3.3V→P3V3 → routés en PISTES (pas en zone)
+        puis _ensure_gnd_both_planes → plan GND garanti sur F.Cu ET B.Cu
+     ② Freerouting REST API       — boards complexes ou si ① < 95% · 1 JVM persistante port 37864
         POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
      ③ Freerouting subprocess     — fallback si API absent (1 JVM par job)
-     ④ kicad-tools A* negotiated — TOUS circuits, sans limite nets, timeout plus long
-        Même algorithme que ①, utilisé quand Freerouting absent
+     ④ kct route sans limite nets — réutilise le partiel ① si Freerouting absent
+        Même algorithme que ①, pas de contrainte ≤30 nets/comps
      ⑤ skipped=True              → TypeScript addGroundPlane() GND plane B.Cu
+     Si routed_percent < 100 → l'orchestrateur (CODE, pas Sonnet) déclenche ⑥b call_agent_reason
 
 ⑦ call_agent_drc       → DRC_CLEAN (boucle max 3×)
      ① kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo
@@ -127,7 +132,7 @@ Utilisateur (texte naturel)
 | Footprint | `call_agent_footprint` | Haiku 4.5 | Cascade 4 étapes KiCad→pgvector→LCSC→IA | `footprint_name` + `kicad_mod` |
 | PCB Layout | `call_agent_gen_pcb` | — | Netlist: ①Python pur ②kicad-cli ③.kicad_net · PCB: ①PCBFromSchematic ②pcbnew ③TS S-expr | `.kicad_pcb` |
 | Placement | `call_agent_placement` | — | kct optimize-placement (si feasible) → place_unplaced cluster (shields) → pcbnew grille | `.kicad_pcb` placé |
-| Routing | `call_agent_routing` | — | ①kicad-tools A*(≤30) → ②Freerouting API(1JVM) → ③Freerouting subprocess → ④kicad-tools A*(tous) → ⑤GND plane | `.kicad_pcb` routé |
+| Routing | `call_agent_routing` | — | ①kct route negotiated (PathFinder+A*) → ②Freerouting API(1JVM) → ③Freerouting subprocess → ④kct route(nets illimités) → ⑤GND plane | `.kicad_pcb` routé |
 | DRC | `call_agent_drc` | — | kicad-tools 27 règles JLCPCB → kicad-cli auto-fix max 3× → skipped | `.kicad_pcb` corrigé |
 | Export | `call_agent_export` | — | kicad-tools JLCPCB → kicad-cli standard → BOM CSV | `.zip` b64 + `bom_csv` + `quote_usd` |
 | Simulation | `call_agent_simulation` | — | kicad-cli SPICE + ngspice batch → fallback démo synthétique | `SimulationData` (vecteurs V/A) |
@@ -335,39 +340,81 @@ FREEROUTING_API_URL=http://127.0.0.1:37864       # défini dans Dockerfile
 
 **Dépendances vendorées :** circuit_synth v0.12.1 et kicad_tools v0.13.0 utilisés avec patches Cirqix — voir `CLAUDE.md` section "Dépendances vendorées" et `services/kicad/DEPENDENCIES.md`.
 
-#### Pipeline routing — 4 niveaux (mis à jour 2026-05-31)
+#### Pipeline routing — 5 niveaux, kct route PRIMAIRE (mis à jour 2026-07-04)
+
+> Réaligné sur le code réel : `services/kicad/tools/kct_route.py` (CLI `kct route`)
+> + `routers/routing.py::route_auto`. L'ancienne API Python (`route_all_negotiated`
+> + `_add_power_zones`) a été remplacée par le CLI officiel kicad-tools en 2026-06.
+
+**Routeur primaire — `kct route` (tools/kct_route.py::_run_kct_route) :**
+
+```bash
+kct route input.kicad_pcb -o output.kicad_pcb \
+  --strategy negotiated \   # PathFinder (boucle) + A* (recherche) — 2 algos imbriqués
+  --auto-layers \           # escalade 2 → 4 couches automatique
+  --min-completion 1.0 \    # CIBLE 100% (défaut lib 0.95 = arrêt prématuré)
+  --auto-fix \              # corrige les DRC pendant le routage
+  --seed 42 \               # déterministe (reproductible)
+  --timeout 300             # plafond, rend la main dès que 100% atteint
+```
+
+**`negotiated` = DEUX algorithmes mathématiques imbriqués** (cf. entrée 2026-06-22) :
+- **NIVEAU 1 — PathFinder** (McMurchie & Ebeling, 1995) : la boucle de négociation.
+  Rip-up & reroute + pénalités de congestion croissantes → les nets « négocient »
+  l'espace jusqu'à 0 chevauchement. C'est ce niveau qui ressemble à Freerouting.
+- **NIVEAU 2 — A\*** (Hart, Nilsson & Raphael, 1968) : pathfinding optimal appelé
+  PAR PathFinder pour trouver le chemin concret d'un net sur la grille (heuristique
+  Manhattan). A* est le sous-moteur, pas une alternative à la boucle.
+
+**Hack VCC-as-traces** (`route_kct`, `vcc_as_traces=True` par défaut) : `kct route`
+classe `+5V`/`+3.3V` comme « power » par leur NOM → les coule en zone AVANT routage
+et les exclut du pathfinding (aucun flag pour désactiver). Contournement :
+1. Avant routage : renomme `+5V → P5V0`, `+3.3V → P3V3` → traités comme signaux → routés en **pistes**.
+2. Routage normal.
+3. Après : restaure les noms + `_ensure_gnd_both_planes` garantit un **plan GND sur F.Cu ET B.Cu** via `kct zones add`.
+
+Connectivité préservée : les pads référencent le net par **numéro**, seul le label change.
+
+**Cascade `route_auto()` — 5 niveaux** :
 
 ```python
 # routers/routing.py route_auto()
-
-# Nets routables = nets avec ≥2 pads (corrigé : exclure Net-(U1-X) mono-pad)
-net_count  = _count_routable_nets(pcb_bytes)   # ≥3 occurrences dans le fichier
+# Nets routables = nets avec ≥2 pads (≥3 occurrences fichier, exclut Net-(U1-X) mono-pad)
+net_count  = _count_routable_nets(pcb_bytes)
 comp_count = _count_footprints(pcb_bytes)
 is_simple  = net_count <= 30 and comp_count <= 30
 
-# Niveau 1 : kicad-tools A* negotiated (circuits simples ≤30 nets)
+# Niveau 1 : kct route negotiated (PRIMAIRE, circuits simples ≤30 nets/comps, timeout 300s)
 if is_simple:
-    → load_pcb_for_routing + route_all_negotiated(timeout=60s) + merge_routes_into_pcb
-    → _add_power_zones(merged)  # GND B.Cu + VCC F.Cu
+    → kct_route.route_kct(timeout_s=300, vcc_as_traces=True)
+    → si routed_pct >= 95% → OK · sinon on garde le partiel (kt_partial) et on tente Freerouting
 
-# Niveau 2 : Freerouting REST API (1 JVM persistante, tous circuits)
-elif _find_freerouting_api():
-    → POST /api/v1/sessions/create → jobs/enqueue → upload DSN → PUT start → GET output
+# Niveau 2 : Freerouting REST API (1 JVM persistante, boards complexes ou kct < 95%)
+if _find_freerouting_api():
+    → pcbnew ExportSpecctraDSN → POST session/job → poll → SES → ImportSpecctraSES
 
-# Niveau 3 : Freerouting subprocess (fallback, 1 JVM par job)
+# Niveau 3 : Freerouting subprocess (fallback si API server absent, 1 JVM par job)
 elif _find_freerouting():
-    → java -jar freerouting.jar (subprocess)
+    → java -jar freerouting.jar -de board.dsn -do board.ses -mp 100
 
-# Niveau 4 : kicad-tools A* negotiated sans limite (tous circuits, Freerouting absent)
-# Même algorithme que niveau 1, pas de contrainte nets/comps, timeout plus long
-else (kicad-tools disponible):
-    → route_all_negotiated(timeout=120s, no is_simple check)
-    → _add_power_zones()
+# Niveau 4 : kct route negotiated SANS limite nets (réutilise kt_partial si dispo)
+else (kct route disponible):
+    → kct_route.route_kct(timeout_s=300)  # même algo que niveau 1, sans contrainte is_simple
 
-# Niveau 5 : skipped → GND plane seulement
+# Niveau 5 : skipped → GND plane seulement (TS addGroundPlane)
 else:
     → TypeScript addGroundPlane()
 ```
+
+**Parse du % routé — `parse_routed_pct`** : ancré sur le tally final `Nets routed: N/M`
+(dernière occurrence), PAS sur un `(NN%)` isolé — sinon un routage à 56% était lu 11%/22%
+à cause des % de progression intermédiaires (commit dfa41c6).
+
+**Sauvetage si < 100%** : l'orchestrateur TS déclenche lui-même `call_agent_reason`
+(règle déterministe `shouldRescueRouting`, pas un jugement Sonnet) → `PCBReasoningAgent`
++ Claude Haiku lit `extract_failure_analysis` (sections « Unrouted nets / Routing
+Suggestions ») → déplace un composant → reroute avec le vrai `route_kct`. Fusionné via
+`mergeRescueIntoRouting` — ne peut qu'améliorer, jamais régresser.
 
 **Output toujours :**
 - `.kicad_sch` — schéma électronique (symboles, fils, netliste, power flags, title block). La netlist est embarquée sous forme de fils + labels de nets.
