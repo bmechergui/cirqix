@@ -5,8 +5,14 @@ POST /drc/auto takes a base64-encoded .kicad_pcb + auto_fix flag and runs
 or violations persist. Auto-fix applies a small safe set of corrections
 (refill zones; widen narrow tracks where possible).
 
-If ``kicad-cli`` is not available on PATH, the endpoint returns
-``drc_clean=true, skipped=true`` so the agentic pipeline continues unblocked.
+Availability matrix (kicad-tools niveau 1 ne court-circuite JAMAIS le niveau 2) :
+
+1. kicad-cli disponible             → kicad-cli fait foi : la validation
+   officielle est TOUJOURS exécutée, même si kicad-tools déclare 0 erreur.
+2. kicad-cli absent, kicad-tools OK → fallback dégradé : résultat kicad-tools
+   seul (27 règles JLCPCB), ``skipped=false`` + warning explicite.
+3. kicad-cli ET kicad-tools absents → ``drc_clean=true, skipped=true`` pour
+   ne pas bloquer le pipeline agentique.
 """
 from __future__ import annotations
 
@@ -156,10 +162,12 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
 
     Priority:
       1. kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo.
-         Si 0 erreur → DRC_CLEAN immédiat, pas besoin de kicad-cli.
-         Si erreurs → kicad-cli tente l'auto-fix (si disponible).
+         Ne court-circuite JAMAIS la validation officielle quand kicad-cli est
+         présent (faux négatif mesuré 2026-07-04 : board déclaré propre par
+         kicad-tools mais 25 shorting_items + 21 clearance selon kicad-cli).
       2. kicad-cli pcb drc     — officiel KiCad, auto-fix loop max 3×.
-         Fallback si kicad-tools échoue OU si des erreurs restent après level 1.
+         Exécuté systématiquement si disponible ; le résultat kicad-tools seul
+         ne fait foi que si kicad-cli est INDISPONIBLE (fallback dégradé).
     """
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
@@ -167,25 +175,22 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
     # ── Niveau 1 : kicad-tools Python DRC ────────────────────────────────────
+    # Le niveau 1 ne court-circuite PAS le niveau 2 : même propre, le board
+    # doit être validé par kicad-cli officiel s'il est disponible (faux
+    # négatif mesuré 2026-07-04 — kicad-tools propre, kicad-cli 200 violations).
     kt_violations: list[dict] = []
     kt_ok = False
+    kt_clean = False
     try:
         kt_violations = _run_python_drc(pcb_bytes)
         kt_ok = True
         kt_errors = [v for v in kt_violations if v.get("severity") == "error"]
+        kt_clean = not kt_errors
         logger.info("kicad-tools DRC: %d violations (%d erreurs)", len(kt_violations), len(kt_errors))
-
-        # Board propre selon les 27 règles JLCPCB → pas besoin de kicad-cli
-        if not kt_errors:
-            return DRCAutoResponse(
-                drc_clean=True,
-                violations=kt_violations,
-                fixed_count=0,
-                kicad_pcb_b64=None,
-                skipped=False,
-                warning="DRC kicad-tools 27 règles JLCPCB — propre",
-            )
-        logger.info("kicad-tools: %d erreur(s) → tentative auto-fix via kicad-cli", len(kt_errors))
+        if kt_clean:
+            logger.info("kicad-tools propre → validation kicad-cli officielle quand même")
+        else:
+            logger.info("kicad-tools: %d erreur(s) → tentative auto-fix via kicad-cli", len(kt_errors))
     except Exception as exc:
         logger.warning("kicad-tools DRC échoué (%s) — kicad-cli direct", exc)
 
@@ -194,9 +199,8 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     if cli_path is None:
         # kicad-cli absent → retourner résultat kicad-tools tel quel
         if kt_ok:
-            errors = [v for v in kt_violations if v.get("severity") == "error"]
             return DRCAutoResponse(
-                drc_clean=len(errors) == 0,
+                drc_clean=kt_clean,
                 violations=kt_violations,
                 fixed_count=0,
                 kicad_pcb_b64=None,
@@ -250,12 +254,23 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
                 if total_fixed > 0
                 else None
             )
+            warning = None
+            if kt_clean and drc_clean:
+                warning = "DRC kicad-tools 27 règles JLCPCB propre — validé kicad-cli officiel"
+            elif kt_clean and not drc_clean:
+                warning = (
+                    "kicad-tools 27 règles JLCPCB propre MAIS kicad-cli officiel "
+                    f"rapporte {len(violations)} violation(s) — kicad-cli fait foi"
+                )
+            elif not kt_ok:
+                warning = "kicad-tools DRC indisponible — résultat kicad-cli officiel seul"
             return DRCAutoResponse(
                 drc_clean=drc_clean,
                 violations=violations,
                 fixed_count=total_fixed,
                 kicad_pcb_b64=updated_b64,
                 skipped=False,
+                warning=warning,
             )
     except HTTPException:
         raise
