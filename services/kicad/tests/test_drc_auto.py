@@ -45,6 +45,52 @@ _CLI_REPORT_WITH_VIOLATIONS = json.dumps({
 
 _CLI_REPORT_CLEAN = json.dumps({"violations": []})
 
+# Clearance impliquant un pad SANS net (pin NC du LQFP-48) vs une piste d'escape.
+# Mesure réelle board STM32 routé (2026-07-06) : 17/21 violations clearance de ce
+# type — électriquement inoffensives (un pad sans net ne peut pas court-circuiter).
+_NC_CLEARANCE = {
+    "type": "clearance",
+    "severity": "error",
+    "description": "Clearance violation (0.198 mm < 0.200 mm)",
+    "items": [
+        {
+            "uuid": "nc-pad",
+            "description": "Pad 33 [<no net>] de U2",
+            "pos": {"x": 55.0, "y": 42.0},
+        },
+        {
+            "uuid": "nc-track",
+            "description": "Piste [GPIO1] sur F.Cu",
+            "pos": {"x": 55.1, "y": 42.0},
+        },
+    ],
+}
+
+# Clearance normale entre deux items connectés — vraie erreur bloquante.
+_REAL_CLEARANCE = {
+    "type": "clearance",
+    "severity": "error",
+    "description": "Clearance violation (0.05 mm < 0.2 mm)",
+    "items": [
+        {
+            "uuid": "real-pad",
+            "description": "Pad 12 [GND] de U1",
+            "pos": {"x": 10.0, "y": 20.0},
+        },
+        {
+            "uuid": "real-track",
+            "description": "Piste [+3V3] sur F.Cu",
+            "pos": {"x": 10.1, "y": 20.0},
+        },
+    ],
+}
+
+_CLI_REPORT_NC_AND_REAL_CLEARANCE = json.dumps(
+    {"violations": [_NC_CLEARANCE, _REAL_CLEARANCE]},
+)
+
+_CLI_REPORT_NC_CLEARANCE_ONLY = json.dumps({"violations": [_NC_CLEARANCE]})
+
 
 def test_level1_clean_still_validates_with_kicad_cli(monkeypatch):
     """kicad-tools propre MAIS kicad-cli dispo et rapporte des violations
@@ -96,6 +142,49 @@ def test_level1_clean_without_kicad_cli_keeps_fallback(monkeypatch):
     assert resp.warning is not None
     assert "indisponible" in resp.warning
     assert "kicad-tools" in resp.warning
+
+
+def test_nc_pad_clearance_is_warning_but_real_clearance_blocks(monkeypatch):
+    """1 clearance NC (pad <no net>) + 1 clearance normale → la NC est reclassée
+    severity=warning (visible, non bloquante) MAIS la normale reste error
+    → drc_clean=False."""
+    monkeypatch.setattr(drc_router, "_run_python_drc", lambda pcb_bytes: [])
+    monkeypatch.setattr(drc_router, "_find_kicad_cli", lambda: "/fake/kicad-cli")
+    monkeypatch.setattr(
+        drc_router, "_run_kicad_drc",
+        lambda cli_path, pcb_path: _CLI_REPORT_NC_AND_REAL_CLEARANCE,
+    )
+
+    resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=False))
+
+    assert resp.drc_clean is False
+    assert resp.skipped is False
+    by_id = {v["id"]: v for v in resp.violations}
+    # La clearance NC est reclassée warning — mais reste dans la réponse.
+    assert by_id["nc-pad"]["severity"] == "warning"
+    assert by_id["nc-track"]["severity"] == "warning"
+    # La clearance normale reste une erreur bloquante.
+    assert by_id["real-pad"]["severity"] == "error"
+    assert by_id["real-track"]["severity"] == "error"
+
+
+def test_only_nc_pad_clearances_is_drc_clean(monkeypatch):
+    """Uniquement des clearance NC (pad <no net>) → drc_clean=True :
+    aucune violation de sévérité error, mais les warnings restent visibles."""
+    monkeypatch.setattr(drc_router, "_run_python_drc", lambda pcb_bytes: [])
+    monkeypatch.setattr(drc_router, "_find_kicad_cli", lambda: "/fake/kicad-cli")
+    monkeypatch.setattr(
+        drc_router, "_run_kicad_drc",
+        lambda cli_path, pcb_path: _CLI_REPORT_NC_CLEARANCE_ONLY,
+    )
+
+    resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=False))
+
+    assert resp.drc_clean is True
+    assert resp.skipped is False
+    # Les violations NC ne sont PAS supprimées — juste reclassées warning.
+    assert len(resp.violations) == 2
+    assert all(v["severity"] == "warning" for v in resp.violations)
 
 
 def test_both_validators_absent_returns_skipped(monkeypatch):

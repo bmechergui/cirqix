@@ -232,7 +232,9 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
                 report_json = _run_kicad_drc(cli_path, pcb_path)
                 violations = parse_drc_report(report_json)
 
-                if not violations:
+                # Cohérent avec drc_clean : seules les ERRORS bloquent la boucle
+                # (les warnings NC reclassés ne justifient pas d'itération).
+                if not [v for v in violations if v.get("severity") == "error"]:
                     break
 
                 if not req.auto_fix:
@@ -248,7 +250,13 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
                     iteration + 1, fixed_this_iter, total_fixed,
                 )
 
-            drc_clean = len(violations) == 0
+            # drc_clean = aucune violation de sévérité error. Les warnings ne
+            # bloquent pas : parse_drc_report reclasse notamment les clearance
+            # impliquant un pad <no net> (pin NC → pas de court possible,
+            # carve-out #3490 ; mesuré 17/21 sur le board STM32 de référence)
+            # en warning — visibles dans la réponse mais non bloquantes.
+            error_violations = [v for v in violations if v.get("severity") == "error"]
+            drc_clean = len(error_violations) == 0
             updated_b64 = (
                 base64.b64encode(current_content).decode("ascii")
                 if total_fixed > 0
@@ -260,7 +268,7 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
             elif kt_clean and not drc_clean:
                 warning = (
                     "kicad-tools 27 règles JLCPCB propre MAIS kicad-cli officiel "
-                    f"rapporte {len(violations)} violation(s) — kicad-cli fait foi"
+                    f"rapporte {len(error_violations)} violation(s) bloquante(s) — kicad-cli fait foi"
                 )
             elif not kt_ok:
                 warning = "kicad-tools DRC indisponible — résultat kicad-cli officiel seul"

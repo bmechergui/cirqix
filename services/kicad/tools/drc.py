@@ -21,6 +21,39 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Marqueur kicad-cli d'un pad sans net dans items[].description (ex. pin NC).
+# Dépendance locale kicad-cli : gettext peut traduire le marqueur. Mesuré :
+# kicad-cli 10.99 en locale FR émet quand même « <no net> » (descriptions FR,
+# marqueur EN) ; la variante FR est couverte par défense en profondeur.
+# Direction de défaillance : conservatrice (marqueur non reconnu → la
+# violation reste error, le waiver ne s'active pas).
+_NC_PAD_MARKERS = ("<no net>", "<aucun réseau>")
+
+
+def _is_nc_pad_clearance(violation: dict[str, Any]) -> bool:
+    """True si la violation ``clearance`` implique un pad sans net (pin NC).
+
+    Un pad ``<no net>`` ne peut pas créer de court-circuit — la violation est
+    électriquement inoffensive (la lib kicad-tools exempte volontairement ce
+    cas, carve-out KiCad #3490). Mesure réelle (board STM32 routé, 2026-07-06) :
+    17/21 violations « clearance » = pins NC du LQFP-48 vs pistes d'escape.
+    Ces violations sont reclassées ``warning`` : visibles mais non bloquantes
+    pour ``drc_clean``.
+
+    Opère sur le dict BRUT du rapport kicad-cli (avant aplatissement des
+    ``items`` par ``parse_drc_report``, qui perd ``items[].description``).
+    """
+    if str(violation.get("type", "")) != "clearance":
+        return False
+    items = violation.get("items")
+    if not isinstance(items, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and any(m in str(item.get("description", "")) for m in _NC_PAD_MARKERS)
+        for item in items
+    )
+
 
 def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli pcb drc --format json`` report.
@@ -51,6 +84,11 @@ def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
             continue
         severity = str(raw.get("severity", "warning")).lower()
         if severity not in ("error", "warning"):
+            severity = "warning"
+        # Carve-out pads NC : une clearance impliquant un pad <no net> est
+        # électriquement inoffensive (pas de court possible) → reclassée
+        # warning AVANT le calcul de drc_clean, mais conservée dans la sortie.
+        if severity == "error" and _is_nc_pad_clearance(raw):
             severity = "warning"
         message = str(raw.get("description", raw.get("type", "DRC violation")))
         v_type = str(raw.get("type", "")) or None
