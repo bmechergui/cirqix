@@ -203,6 +203,24 @@ def test_run_kct_route_escalates_layers_until_100pct(monkeypatch):
     assert "--strategy" in cmd and cmd[cmd.index("--strategy") + 1] == "negotiated"
 
 
+def test_run_kct_route_uses_pro_clearance(monkeypatch):
+    # Recette pro validée 2026-07-06 (board STM32 LQFP-48, DRC officiel juge) :
+    # --clearance 0.2 aligne le routeur sur les règles DRC par défaut de KiCad.
+    # Mesuré : 0.15 (défaut lib) → 6 courts + 112 copper_edge ; 0.2 → 0 court,
+    # 6 edge, même complétion (82%) ; 0.25 → propre mais complétion 64%.
+    captured: dict[str, list[str]] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(kct_route.subprocess, "run", fake_subprocess_run)
+    kct_route._run_kct_route(Path("in.kicad_pcb"), Path("out.kicad_pcb"), 60)
+    cmd = captured["cmd"]
+    assert "--clearance" in cmd
+    assert cmd[cmd.index("--clearance") + 1] == kct_route._CLEARANCE_MM == "0.2"
+
+
 def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     captured: dict[str, str] = {}
 

@@ -38,6 +38,16 @@ _ROUTE_TIMEOUT_S: int = 600
 # (board simple reste en 2 couches, dense monte à 4).
 _MIN_COMPLETION: str = "1.0"
 
+# Clearance de routage — recette pro validée 2026-07-06 sur le board STM32
+# LQFP-48 de référence (juge = kicad-cli pcb drc, jamais le DRC interne) :
+# le défaut lib 0.15mm est INFÉRIEUR aux règles DRC par défaut de KiCad
+# (0.2mm) → violations garanties. Mesuré : 0.15 → 6 courts + 112
+# copper_edge ; 0.2 → 0 court + 6 edge, même complétion (82%) ; 0.25 →
+# 0 court + 0 edge mais complétion 64%. 0.2 = point d'équilibre.
+# Prérequis : patches Cirqix #6/#8 de la lib (angles + signe rotation pads,
+# cf. DEPENDENCIES.md) — sans eux, courts fantômes quels que soient les flags.
+_CLEARANCE_MM: str = "0.2"
+
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
 _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 
@@ -203,6 +213,7 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
         "--auto-layers",
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
+        "--clearance", _CLEARANCE_MM,
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
