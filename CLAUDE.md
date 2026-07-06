@@ -240,9 +240,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Trigger déterministe : commit 13b919c (shouldRescueRouting/mergeRescueIntoRouting, TDD)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
-     ① kicad-tools Python DRC 27 règles JLCPCB — pur Python, toujours dispo
-        0 erreur → DRC_CLEAN · erreurs → kicad-cli auto-fix
-     ② kicad-cli pcb drc — officiel KiCad, refill zones, auto-fix max 3×
+     ① kicad-tools 27 règles JLCPCB — pré-filtre seulement, ne court-circuite
+        JAMAIS kicad-cli (faux négatif mesuré 2026-07-04 : 25 courts invisibles)
+     ② kicad-cli pcb drc — TOUJOURS exécuté si dispo, fait foi, auto-fix max 3×
      ③ skipped=True — les deux absents
   ⑧ call_agent_export     → Ingénieur Fabrication
      POST /export/all
