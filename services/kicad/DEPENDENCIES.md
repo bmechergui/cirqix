@@ -28,11 +28,28 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
   surtout côté routeur, mais non re-taggé). Update du 2026-06-14 : ~718 fichiers
   routeur récupérés depuis le snapshot de début juin ; 4 patches Cirqix réappliqués
   (cf. ci-dessous). Validé localement : 20/20 tests + smoke route 100% (compat API).
-  Qualité de routage à valider en Docker (backend C++ requis, indispo en local).
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
 - **Import Python :** ajouter `kicad-tools/src` au sys.path → `import kicad_tools`.
 - **Install Docker :** `pip3 install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native --force` (backend C++ A* — 10-100× plus rapide ; non‑fatal).
+- **Backend C++ en local Windows (validé 2026-07-04)** — `kct build-native` échoue
+  tel quel : son check compilateur ne connaît que `clang++`/`g++` (jamais `cl.exe`),
+  et MSVC 2019 est de toute façon trop vieux pour les headers nanobind (C2131
+  constexpr — nanobind exige MSVC 2022+/clang 8+/GCC 9+). Recette qui marche :
+  1. `winget install LLVM.LLVM` (clang-cl) + `pip install nanobind ninja` ;
+  2. depuis un env `vcvars64` (VS 2019 Build Tools OK pour le SDK/STL) :
+     `cmake -B <build_court> -S kicad-tools/src/kicad_tools/router/cpp -G Ninja
+     -DCMAKE_CXX_COMPILER=clang-cl -DPython_EXECUTABLE=<python>
+     -Dnanobind_DIR=$(python -c "import nanobind; print(nanobind.cmake_dir())")`
+     puis `cmake --build <build_court> --config Release` ;
+     ⚠ `<build_court>` = chemin COURT (ex. `%TEMP%\kct_build`) — MSBuild plante
+     en MAX_PATH 260 sur un dossier profond ;
+  3. copier `router_cpp.cp313-win_amd64.pyd` dans `kicad-tools/src/kicad_tools/router/` ;
+  4. vérifier `kct build-native --check` → « available ».
+  **Impact mesuré (board STM32 LQFP-48 de référence)** : sans le `.pyd`, la lib
+  retombe EN SILENCE sur l'A* Python pur → 55-73 % routé en 431-600 s (variance
+  énorme) ; avec le C++ → **100 % routé en 121 s** au 1er run. Toujours vérifier
+  `build-native --check` avant un benchmark de routage.
 - **Workflow officiel utilisé par nos agents :**
   - Placement (2 phases) : Phase 1 `PlacementOptimizer(fixed_refs, enable_clustering)`
     (physique locale) → Phase 2 `EvolutionaryPlacementOptimizer.optimize_hybrid()`
@@ -117,13 +134,47 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 # circuit_synth
 cd services/kicad/circuit_synth && git pull && pip install -e .
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 5 patches LIB :
+# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 8 patches LIB :
 #   1. fsync Windows           (cli/route_cmd.py _write_routed_pcb)
 #   2. reasoning name-only     (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c        (reasoning/interpreter.py promotion depuis PCBState.layers)
 #   4. CMA-ES writer 2-pass    (cli/optimize_placement_cmd.py _write_placements_to_pcb)
 #   5. CMA-ES seed="current"   (cli/optimize_placement_cmd.py _generate_seed + appel)
+#   6. Angles pads ABSOLUS     (backport upstream #3902/cd936c1, 2026-07-05 —
+#      schema/pcb.py : champ Pad.rotation + parse + writer add_footprint_from_file ;
+#      router/io.py : total_rot = pad_rot (2 sites) ; validate/rules/clearance.py :
+#      total_rotation = pad.rotation. + 2 EXTENSIONS Cirqix que l'upstream n'a pas :
+#      (a) setter Footprint.rotation replie le DELTA dans chaque pad (chemin
+#      placement/GA), (b) writer texte CMA-ES _write_placements_to_pcb replie le
+#      delta par ligne de pad (gère pads inline ET multi-lignes). Sans ces
+#      extensions le pipeline placement désynchronise les angles.)
+#   7. KCT_SAFE_OPTIMIZE=1     (router/optimizer/config.py __post_init__ — gate
+#      opt-in qui neutralise les passes d'optimisation déplaçant la géométrie ;
+#      mesuré NON responsable des courts, conservé comme outil de diagnostic.)
+#   8. SIGNE ROTATION PADS     (router/io.py, 3 sites pad_x*cos_r… — LE fix
+#      critique 2026-07-06 : le repère fichier KiCad a Y vers le BAS → rotation
+#      des offsets locaux avec l'angle NÉGUÉ. L'ancienne matrice standard
+#      inversait les pads de tout footprint ±90° → pistes terminées au centre
+#      du pad voisin = 25-32 shorting_items au DRC officiel, invisibles au DRC
+#      interne (modèle auto-cohérent). Mesure après fix : courts 32 → 0-6,
+#      P3V3 8/15 → 14/15 pads. Garde : tests/test_pad_rotation_convention.py.
+#      À REMONTER UPSTREAM (avec le #6/(a)(b)) — cause plausible de l'issue
+#      upstream #3803 « kct PASS vs kicad-cli 400+ violations ».)
+#   (ex-patch « marge couloir same-component » grid.py testé le 2026-07-05 puis
+#    RETIRÉ — épiphénomène du #8, aucun effet mesuré sur les courts.)
 # Le patch charmap n'est PLUS dans la lib (déplacé dans tools/kct_route.py — durable).
+#
+# RECETTE ROUTAGE PRO validée 2026-07-06 (board STM32 LQFP-48 de référence) :
+#   placement auto_place (angles cohérents grâce au patch 6) →
+#   kct route --strategy negotiated --auto-layers --min-completion 1.0
+#     --auto-fix --clearance 0.2 --seed 42 (backend C++ obligatoire) →
+#   rescue placement-feedback (déplacements ciblés, ex. R1/D1 hors couloir) →
+#   kicad-cli pcb drc = JUGE (jamais le DRC interne seul).
+#   Mesuré : 91% routé, 0 shorting_items, 0 copper_edge_clearance ;
+#   reliquat = clearances pads NC (sans net, électriquement inoffensives,
+#   carve-out #3490 assumé par la lib) + 4 pads GND LQFP à coudre (kct stitch
+#   à ajuster : vias hors specs board avec --mfr jlcpcb) + 2 micro-gaps P3V3.
+#   clearance 0.15 = plus de complétion mais courts/edge ; 0.25 = propre mais 64%.
 # Phase 3 (Géomètre) = CMA-ES micro-raffinement via run_optimize_placement(seed_method="current")
 # chaîné après l'Architecte (hybrid+cluster), depuis 2026-06-18 — avec filet de sécurité
 # (revert si conflits ERROR non résorbés par l'Inspecteur). Voir tools/placement.py::_refine_with_cmaes.
