@@ -73,6 +73,13 @@ ENV FREEROUTING_API_URL=http://127.0.0.1:37864
 
 COPY . .
 
+# ⚠ GARDE — kicad-tools/ et circuit_synth/ sont des dossiers VENDORÉS GITIGNORÉS
+# (patches Cirqix inclus, cf. DEPENDENCIES.md). Ils existent en local mais PAS
+# dans un checkout git nu (CI) : le build doit échouer ICI avec un message
+# clair plutôt que sur un `mv` cryptique 10 lignes plus bas.
+RUN test -d /app/kicad-tools/src/kicad_tools || (echo "ERREUR: services/kicad/kicad-tools/ absent du contexte Docker. Ce dossier vendoré est gitignoré : builder depuis une machine qui possede le dossier (ou le restaurer via DEPENDENCIES.md)." && exit 1)
+RUN test -d /app/circuit_synth || (echo "ERREUR: services/kicad/circuit_synth/ absent du contexte Docker (dossier vendore gitignore, cf. DEPENDENCIES.md)." && exit 1)
+
 # Install circuit_synth from local source (services/kicad/circuit_synth/)
 RUN pip3 install --no-cache-dir ./circuit_synth
 
