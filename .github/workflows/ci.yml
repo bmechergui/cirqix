@@ -90,7 +90,7 @@ jobs:
 
       - name: Test /health endpoint
         run: |
-          docker run -d --name kicad-test -p 8000:8000 cirqix-kicad:test
-          sleep 5
-          curl -f http://localhost:8000/health
+          docker run -d --name kicad-test -p 8766:8766 cirqix-kicad:test
+          sleep 10
+          curl -f http://localhost:8766/health
           docker stop kicad-test
