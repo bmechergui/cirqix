@@ -1,0 +1,4 @@
+[submodule "services/kicad/kicad-tools"]
+	path = services/kicad/kicad-tools
+	url = https://github.com/bmechergui/kicad-tools.git
+	branch = cirqix

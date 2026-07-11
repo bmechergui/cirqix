@@ -11,5 +11,6 @@ freerouting/
 # Source: github.com/circuit-synth/circuit-synth (pip install -e .)
 circuit_synth/
 
-# Source: github.com/rjwalters/kicad-tools (pip install -e .)
-kicad-tools/
+# kicad-tools = git submodule (branche cirqix) -> github.com/bmechergui/kicad-tools (privé)
+# Voir docs/kicad-tools-fork-strategy.md. NE PAS l'ignorer ici (suivi comme submodule
+# par cirqix ; son propre .gitignore gère __pycache__/.pyd à l'intérieur).
