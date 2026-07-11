@@ -140,7 +140,7 @@ cd services/kicad/circuit_synth && git pull && pip install -e .
 #   3. layer_count 4/6c        (reasoning/interpreter.py promotion depuis PCBState.layers)
 #   4. CMA-ES writer 2-pass    (cli/optimize_placement_cmd.py _write_placements_to_pcb)
 #   5. CMA-ES seed="current"   (cli/optimize_placement_cmd.py _generate_seed + appel)
-#   6. Angles pads ABSOLUS     (backport upstream #3902/cd936c1, 2026-07-05 —
+#   6. Angles pads ABSOLUS     (backport upstream #3903/cd936c1, 2026-07-05 —
 #      schema/pcb.py : champ Pad.rotation + parse + writer add_footprint_from_file ;
 #      router/io.py : total_rot = pad_rot (2 sites) ; validate/rules/clearance.py :
 #      total_rotation = pad.rotation. + 2 EXTENSIONS Cirqix que l'upstream n'a pas :

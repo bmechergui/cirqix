@@ -229,13 +229,16 @@ les PR — l'humain ne fait que merger (Portes 2 + 4) après vérification CI.
 
 ## 10. Étapes de mise en place (checklist)
 
-- [ ] **Utilisateur** crée le repo privé vide `bmechergui/kicad-tools` (Private, sans README)
-- [ ] Claude clone l'historique upstream dans le repo privé + ajoute remote `upstream`
-- [ ] Claude crée la branche `cirqix` avec les **6 patches** en commits isolés (+ tests gardes)
-- [ ] Claude jette #6/#8 (déjà upstream)
-- [ ] Claude convertit `services/kicad/kicad-tools/` en submodule pointant sur la branche `cirqix`
-- [ ] Claude génère la **deploy key** (publique sur le fork privé, secrète dans cirqix)
-- [ ] Claude met à jour le `Dockerfile` (`submodule update --init`)
-- [ ] Claude pose les **2 Actions** (sync hebdo fork + bump cirqix)
-- [ ] Correction doc `DEPENDENCIES.md` (#3902 → #3903)
-- [ ] Validation : build Docker + `kct build-native` + test route board STM32 (juge = kicad-cli DRC)
+> ✅ **Mise en place terminée** — PR cirqix [#47](https://github.com/bmechergui/cirqix/pull/47).
+> Fork privé `bmechergui/kicad-tools` (branches `main` + `cirqix`) opérationnel.
+
+- [x] **Utilisateur** crée le repo privé vide `bmechergui/kicad-tools` (Private) — *fait*
+- [x] Claude clone l'historique upstream dans le repo privé + ajoute remote `upstream` — *main @ `5e6eef8`*
+- [x] Claude crée la branche `cirqix` avec les patches en commits isolés — *5 commits @ `6196b6d` (#1, #2+#3, #4+#5, #6+#8, #7)*
+- [x] Claude convertit `services/kicad/kicad-tools/` en submodule (branche `cirqix`) — *commit `bd7cdf2`*
+- [x] Claude génère la **deploy key** (read-only sur le fork privé + secret `SUBMODULE_DEPLOY_KEY` dans cirqix)
+- [x] Claude met à jour le `Dockerfile` (garde + commentaires submodule) — *commit `303a1ca`*
+- [x] Claude pose les **2 Actions** (`sync-upstream` sur le fork @ `efe376f` + `kicad-tools-bump` sur cirqix) — *commit `32eed3f`*
+- [x] Correction doc `DEPENDENCIES.md` (`#3902 → #3903`) — *fait*
+- [ ] **#6/#8 auto-supprimés au prochain rebase** upstream (`--empty=drop` de `sync-upstream` — déjà mergés upstream en PR #3903 / #3746)
+- [ ] **Validation finale (utilisateur)** : `docker compose build kicad` + `kct build-native --check` + test route board STM32 (juge = `kicad-cli pcb drc`) → puis merge PR #47
