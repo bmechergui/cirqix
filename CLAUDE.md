@@ -625,6 +625,14 @@ reste des erreurs ERROR, le snapshot est restauré — le board livré est TOUJO
 
 Ces deux librairies sont dans `services/kicad/` (gitignorées, documentées dans `DEPENDENCIES.md`).
 
+> 🔄 **Migration planifiée — kicad-tools → fork privé + submodule.** Le snapshot gitignoré
+> actuel va devenir un **fork privé** (`bmechergui/kicad-tools`, branche `cirqix`) consommé
+> comme **git submodule** dans cirqix, pour permettre diff/rebase automatisé vs upstream et
+> garder les patches **privés**. Pipeline de validation à 4 portes (rien ne migre sans merge
+> humain ×2) + Action hebdo. **État (2026-07-11)** : 8 patches Cirqix ; #6 et #8 désormais
+> upstream (PR #3903 / #3746, issue #3803 fermée) → on en garde 6 (#1–5, #7) + 2 ext. du #6.
+> Référence complète : `docs/kicad-tools-fork-strategy.md`.
+
 ### circuit_synth v0.12.1
 - **Source :** github.com/circuit-synth/circuit-synth
 - **Install :** `pip install -e ./circuit_synth` (Docker) | `pip install -e services/kicad/circuit_synth` (local)
