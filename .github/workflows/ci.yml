@@ -83,7 +83,20 @@ jobs:
     # Non-blocking: KiCad base image availability depends on external registry
     continue-on-error: true
     steps:
+      # Deploy key SSH pour cloner le submodule privé bmechergui/kicad-tools
+      # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH, le checkout
+      # principal cirqix reste inchangé).
+      - name: Configure SSH deploy key (private submodule bmechergui/kicad-tools)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SUBMODULE_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global url."git@github.com:bmechergui/kicad-tools.git".insteadOf "https://github.com/bmechergui/kicad-tools.git"
+
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Build KiCad Docker image
         run: docker build -t cirqix-kicad:test ./services/kicad
