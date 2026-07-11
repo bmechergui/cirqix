@@ -1,0 +1,80 @@
+name: Bump kicad-tools submodule
+
+# Porte 3 du pipeline de validation (voir docs/kicad-tools-fork-strategy.md).
+# Tourne chaque mardi (apres le sync-upstream du lundi sur le fork). Compare le
+# HEAD de la branche cirqix du fork vs le commit pinné dans cirqix. Si le fork a
+# avance -> ouvre une PR bumpant le submodule. Le CI cirqix (build Docker + tests)
+# tourne sur la PR ; merge humain = Porte 4.
+#
+# NB: cette Action ne s'active (cron) que si elle est presente sur la branche par
+# defaut (main). Comme elle est ajoutee en meme temps que le submodule (branche
+# chore/kicad-tools-submodule), main aura le submodule ET l'Action au meme moment.
+
+on:
+  schedule:
+    - cron: '27 8 * * 2'   # chaque mardi 08:27 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      # Deploy key SSH pour cloner le submodule privé bmechergui/kicad-tools
+      # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH).
+      - name: Configure SSH deploy key (private submodule bmechergui/kicad-tools)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SUBMODULE_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global url."git@github.com:bmechergui/kicad-tools.git".insteadOf "https://github.com/bmechergui/kicad-tools.git"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare fork cirqix HEAD vs submodule pinné
+        id: cmp
+        run: |
+          set -euo pipefail
+          cd services/kicad/kicad-tools
+          git fetch --quiet origin cirqix
+          NEW=$(git rev-parse origin/cirqix)
+          OLD=$(git rev-parse HEAD)
+          { echo "new=$NEW"; echo "old=$OLD"; } >> "$GITHUB_OUTPUT"
+          echo "pinned=$OLD  fork_cirqix=$NEW"
+
+      - name: Rien à faire (déjà à jour)
+        if: steps.cmp.outputs.new == steps.cmp.outputs.old
+        run: echo "Submodule déjà à jour avec la branche cirqix du fork."
+
+      - name: Bump submodule pin + open PR (Porte 3)
+        if: steps.cmp.outputs.new != steps.cmp.outputs.old
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.cmp.outputs.new }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd services/kicad/kicad-tools
+          git checkout "$NEW"
+          cd -
+          SHORT=$(echo "$NEW" | cut -c1-7)
+          BRANCH="auto/bump-kicad-tools-${SHORT}"
+          git checkout -b "$BRANCH"
+          git add services/kicad/kicad-tools
+          git commit -m "chore: bump kicad-tools submodule -> ${SHORT} (Porte 3)"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: bump kicad-tools submodule -> ${SHORT}" \
+            --body "Mise à jour automatique du submodule kicad-tools vers la branche \`cirqix\` du fork (@ ${SHORT}).
+
+          **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
+
+          Voir docs/kicad-tools-fork-strategy.md." || echo "PR existe peut-être déjà"
