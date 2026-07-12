@@ -25,6 +25,14 @@ cirqix/
     └── kicad/          → Python FastAPI + Circuit-Synth (Docker headless)
 ```
 
+> ⚠️ **Note chemins historiques (2026-07-12)** : les étapes des Phases 0-2 ci-dessous
+> référencent `apps/landing/`, `apps/dashboard/` et `apps/api/` — cette structure a été
+> **consolidée dans `apps/web/`** (`src/app/(marketing)`, `src/app/(dashboard)`,
+> `src/app/api/`). `apps/api/` existe encore sur le disque mais est une coquille vide —
+> ne rien y créer. De même, `packages/agents/src/tools.ts` a été refactoré en
+> `packages/agents/src/tools/` (`definitions.ts` + `index.ts` + `handlers/*`).
+> Les listes de fichiers des phases déjà livrées sont conservées telles quelles (historique).
+
 ---
 
 ## Stack technique
@@ -33,7 +41,7 @@ cirqix/
 |--------|-------------|
 | Monorepo | Turborepo + pnpm |
 | Frontend | Next.js 15 App Router + Tailwind + shadcn/ui + Zustand |
-| Backend MVP | Next.js API Routes (apps/api) |
+| Backend MVP | Next.js API Routes (`apps/web/src/app/api/`) |
 | Microservice KiCad | Python FastAPI + pcbnew — Docker headless (DigitalOcean) |
 | Agents | Claude SDK — Orchestrateur Sonnet 4.6 + 8 agents Haiku 4.5 |
 | DB | PostgreSQL + Supabase + pgvector (uuid-ossp, pgvector) |
@@ -365,9 +373,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ### Étape 0.10 — Deploy initial
 
 **Actions :**
-1. Vercel : `apps/landing` → `cirqix.ai`
-2. Vercel : `apps/dashboard` → `app.cirqix.ai`
-3. Railway : `apps/api` → `api.cirqix.ai`
+1. Vercel : `apps/web` → `cirqix.ai` (marketing + `/dashboard` + API routes — structure consolidée)
 4. DigitalOcean : Droplet pour service KiCad Docker (Phase 3)
 
 **Risque :** Moyen
@@ -777,7 +783,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 - `services/kicad/routers/simulate.py` (NOUVEAU — `POST /simulate/auto`, base64 I/O)
 - `services/kicad/tools/simulation.py` (refonte — parsing ngspice tabular + fallback démo)
 - `packages/agents/src/engines/simulation-service.ts` (NOUVEAU — client TS, 90s timeout)
-- `packages/agents/src/tools.ts` — `call_agent_simulation` + `_demoVectors()` fallback
+- `packages/agents/src/tools/handlers/simulation.ts` (ex-`tools.ts`) — `call_agent_simulation` + `_demoVectors()` fallback
 - `packages/types/src/index.ts` — `SimulationVector`, `SimulationData`, `PCBState.simulationData`
 - `apps/web/src/widgets/viewer/ui/SimulationView.tsx` (NOUVEAU — Recharts LineChart groupés)
 - Timeline : onglet "Simulate" avec icône FlaskConical
@@ -796,7 +802,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 ### Étape 4.3 — Agent BOM/Export + JLCPCB ✅
 
 **Fichiers :**
-- `packages/agents/src/tools.ts` — `call_agent_export` complet
+- `packages/agents/src/tools/handlers/export.ts` (ex-`tools.ts`) — `call_agent_export` complet
 - `apps/web/src/app/api/jlcpcb/order/route.ts` (NOUVEAU — `POST /api/jlcpcb/order`)
 - `apps/web/src/widgets/viewer/ui/ExportView.tsx` (refonte — downloads réels + JLCPCB)
 - `packages/types/src/index.ts` — `PCBState.gerberZipB64`, `bomCsv`, `quoteUsd`, `leadTimeDays`
@@ -827,8 +833,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 ### Étape 4.4 — Paiement Lemon Squeezy
 
 **Fichiers :**
-- `apps/api/app/api/webhooks/lemon-squeezy/route.ts`
-- `apps/dashboard/app/dashboard/billing/page.tsx`
+- `apps/web/src/app/api/webhooks/lemon-squeezy/route.ts`
+- `apps/web/src/app/(dashboard)/dashboard/billing/page.tsx`
 
 **Actions :**
 1. Produits Lemon Squeezy : Pro (25€/mois), Pro Max (50€/mois), top-ups (5€/10€/20€)
