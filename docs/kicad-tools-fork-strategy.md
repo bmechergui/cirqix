@@ -241,4 +241,5 @@ les PR — l'humain ne fait que merger (Portes 2 + 4) après vérification CI.
 - [x] Claude pose les **2 Actions** (`sync-upstream` sur le fork @ `efe376f` + `kicad-tools-bump` sur cirqix) — *commit `32eed3f`*
 - [x] Correction doc `DEPENDENCIES.md` (`#3902 → #3903`) — *fait*
 - [ ] **#6/#8 auto-supprimés au prochain rebase** upstream (`--empty=drop` de `sync-upstream` — déjà mergés upstream en PR #3903 / #3746)
-- [ ] **Validation finale (utilisateur)** : `docker compose build kicad` + `kct build-native --check` + test route board STM32 (juge = `kicad-cli pcb drc`) → puis merge PR #47
+- [x] **Validation finale** (2026-07-12, Docker WSL) : `docker compose build kicad` ✓ + `kct build-native --check` → *C++ backend available v1.0.0* ✓ + route board STM32 dans l'image → placement 17 composants 0 conflit, routage natif **91%** (SWDIO 1/2 — pris en charge par le Reasoner ⑥b en prod), `kicad-cli pcb drc` opérationnel (juge) → merge PR #47.
+  ⚠️ Bug trouvé pendant la validation : le Dockerfile n'installait pas `make` → `kct build-native` échouait silencieusement dans l'image (générateur cmake « Unix Makefiles » sans make) → fallback routeur Python pur. Fix : paquet `make` ajouté à l'apt install.

@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                unzip \
                cmake \
                g++ \
+               make \
                ninja-build \
            && break || sleep 30; \
        done \
