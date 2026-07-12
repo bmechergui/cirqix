@@ -4,6 +4,7 @@ import { runOrchestrator } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
+import { deductPipelineCost } from './credits';
 
 const log = logger.child({ module: 'orchestrator-bridge' });
 
@@ -19,7 +20,6 @@ interface BridgeOptions {
   projectId: string;
   prompt: string;
   iterationStart: number;
-  balanceStart: number;
 }
 
 type OrchestratorPcbState = Record<string, unknown> & {
@@ -29,7 +29,7 @@ type OrchestratorPcbState = Record<string, unknown> & {
 };
 
 export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart, balanceStart } = opts;
+  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart } = opts;
 
   let mergedState: Partial<PCBState> = {
     projectId,
@@ -153,14 +153,10 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
 
         case 'done':
           controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-          // Deduct credits — same fixed cost as simulator until per-step billing is wired
-          await supabase
-            .from('credits')
-            .update({
-              balance: Math.max(0, balanceStart - 8.5),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('user_id', userId);
+          // Atomic deduction via the secured deduct_credits RPC — row lock +
+          // audit row in credit_transactions. Replaces the previous direct
+          // UPDATE that bypassed the RPC (race condition + missing audit).
+          await deductPipelineCost(supabase, userId, projectId);
           controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
           break;
 

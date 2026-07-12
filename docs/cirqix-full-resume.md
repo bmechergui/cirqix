@@ -825,3 +825,72 @@ Features d’état : GNN sur le netlist/hypergraphe est crucial (comme dans les 
 Reward : Multi-objectif (wirelength, congestion, timing proxy, PPA). Utilise du reward shaping + curriculum (petits → gros designs).
 Hyperparams : Utilise les configs RL Zoo de SB3 pour un bon départ.
 Évaluation : Toujours valider avec des metrics réels de placement/routage (pas seulement la reward RL)
+
+---
+
+### 🏆 Option 4 — Architecture hybride GNN + RL (le meilleur des deux mondes)
+
+Orthogonale aux Options 1–3 (qui combinent RL ↔ FreeRouting), cette alternative porte sur **l'architecture interne du modèle RL**. Elle combine :
+
+- **GNN (Graph Neural Network)** = la *compréhension* — encode le netlist comme un graphe (composants = nœuds, nets = arêtes) et produit des embeddings qui capturent la topologie du circuit.
+- **RL (PPO)** = l'*optimisation* — la politique consomme ces embeddings et apprend, par essais/erreurs, à placer les composants pour maximiser le reward.
+
+**Pourquoi « le meilleur des deux mondes » :**
+
+| Approche seule | Limite | Ce que l'autre apporte |
+|---|---|---|
+| RL pur (features plates) | Ne généralise pas : un modèle entraîné sur des STM32 échoue sur un ESP32 | Le GNN donne une représentation invariante à la taille du board → **généralise** |
+| GNN pur (imitation supervisée) | Se contente de recopier ses exemples, ne peut pas les dépasser | Le RL **optimise au-delà** du dataset via le reward |
+
+➡️ **GNN + RL = généralise ET optimise.** C'est l'approche state-of-the-art des papiers Google (chip placement) et de Circuit Training.
+
+**Pipeline concret pour Cirqix :**
+
+```
+netlist (.kicad_sch)
+  → graphe (kicad-tools build_netlist)
+  → GNN encodeur (PyTorch Geometric)  →  embeddings de nœuds
+  → politique RL (PPO)                →  actions de placement (dx, dy / composant)
+  → reward = Δ compute_fom()          ← FOM multi-objectif de kicad-tools (optim/fom.py)
+  → FreeRouting fait le routage final (Option 1)
+```
+
+**Avantages pour Cirqix :**
+- ✔ Généralisation cross-board (un seul modèle pour STM32 / ESP32 / analog / mixte)
+- ✔ Reward gratuit : `compute_fom()` existe déjà dans kicad-tools (`optim/fom.py`) — 10 termes normalisés + hard gate DRC, évite de réinventer le reward shaping
+- ✔ Compatible avec le pipeline existant : le GNN+RL remplace juste le Géomètre CMA-ES (étape ② du placement), protégé par le filet de sécurité `_max_displacement_mm` (revert si dérive)
+
+**Coûts / risques :**
+- ❌ ~2× plus complexe à entraîner qu'une politique MLP simple (encoder GNN + politique + reward)
+- ❌ PyTorch Geometric à ajouter au Docker KiCad, ou export ONNX de tout le bloc GNN+policy
+- ⚠️ À n'attaquer qu'en **Phase 6b**, après que la politique MLP simple (Option 1) aura prouvé la viabilité
+
+**🚀 Outils et ressources pour démarrer rapidement**
+- **FreeRouting + KiCad** → intégration directe (déjà en place dans Cirqix via `services/kicad`).
+- **GitHub** : dépôt **RL_PCB** (placement) à adapter avec une couche *force-directed* (kicad-tools expose déjà la physique via `OptimizationWorkflow`).
+- **Papiers** : **DreamerV3 + FR** — *world model* qui intègre directement FreeRouting comme simulateur d'environnement.
+- **Libs Python** : `gymnasium` (environnement custom), `shapely` (géométrie 2D / collisions), `scipy` (force-directed / springs), `torch_geometric` (encodeur GNN), `stable_baselines3` (PPO).
+
+---
+
+## 🔒 SÉCURITÉ — Hotfix 006 (2026-07-09, en cours)
+
+Analyse du projet : 3 vulnérabilités critiques dans la base Supabase.
+
+| 🚨 Vuln | Impact | Statut |
+|---|---|---|
+| `add_credits` SECURITY DEFINER sans garde | Tout user pouvait **s'auto-créditer illimitément** (vol de valeur) | ✅ Corrigé |
+| `deduct_credits` sans check `auth.uid()` | Un user pouvait **vider les crédits d'un autre** | ✅ Corrigé |
+| `waitlist` sans RLS | **Emails lisibles publiquement** (fuite PII) | ✅ RLS activée |
+
+**Correctif livré (branche `fix/security-hotfix`) :**
+- `packages/db/supabase/migrations/006_security_hotfix.sql` — gardes RPC (service_role / propriétaire), RLS `waitlist` (INSERT anon seulement), `SET search_path = public`, `REVOKE/GRANT EXECUTE`
+- `packages/db/tests/rls_isolation.sql` — 5 scénarios A–E (isolation user A / user B + waitlist)
+- `apps/web/src/app/api/agent/lib/credits.ts` — déduction atomique via RPC `deduct_credits`
+- `orchestrator-bridge.ts` — remplace l'UPDATE direct non-atomique par le RPC (audit + row lock)
+
+**Statut :** hotfix **écrit, testé** (`pnpm type-check` → 0 erreur) **et approuvé** (database-reviewer : guards corrects sous SECURITY DEFINER, aucun exploit). ⚠️ L'application sur la base en ligne **plante par timeout Supabase** (problème d'infrastructure MCP, pas du code).
+
+**Prochaine action :** relancer l'apply de la migration (`apply_migration` ou `supabase db push`) puis `commit + push + PR`.
+
+➡️ À faire aussi (action manuelle, séparé) : **rotation du token Supabase** écrit en clair dans `.mcp.json` (`sbp_e454…`).
