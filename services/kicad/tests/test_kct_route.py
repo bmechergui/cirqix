@@ -339,6 +339,49 @@ def test_run_kct_route_uses_pro_clearance(monkeypatch):
     assert cmd[cmd.index("--clearance") + 1] == kct_route._CLEARANCE_MM == "0.2"
 
 
+def test_run_kct_route_uses_mfr_tier_escalation(monkeypatch):
+    # Benchmark 2026-07-14 (board STM32 placé, baseline negotiated 91%) :
+    # --auto-mfr-tier jlcpcb→jlcpcb-tier1 (via-in-pad autorisé) = seul levier
+    # natif qui atteint 100% (202s). L'escalade ne se déclenche QUE sur échec
+    # → aucun surcoût fabricant sur les boards qui routent déjà en tier std.
+    captured: dict[str, list[str]] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(kct_route.subprocess, "run", fake_subprocess_run)
+    kct_route._run_kct_route(Path("in.kicad_pcb"), Path("out.kicad_pcb"), 60)
+    cmd = captured["cmd"]
+    assert "--auto-mfr-tier" in cmd
+    assert cmd[cmd.index("--mfr-tier-ladder") + 1] == kct_route._MFR_TIER_LADDER \
+        == "jlcpcb,jlcpcb-tier1"
+
+
+def test_route_kct_replaces_kct_zones_with_edge_margin_zones(
+        monkeypatch, stm32_board_bytes):
+    # kct route auto-coule GND collé à l'Edge.Cuts (122 copper_edge_clearance
+    # mesurées 2026-07-14 sur la variante 100%) : route_kct doit REMPLACER les
+    # zones du routeur par nos plans GND en retrait _ZONE_EDGE_CLEARANCE_MM.
+    def fake_run(src, dst, timeout_s):
+        # Le routeur renvoie le board de référence (zones GND à 0.3mm du bord).
+        Path(dst).write_bytes(stm32_board_bytes)
+        return SimpleNamespace(returncode=0, stdout="Nets routed: 11/11 (100%)",
+                               stderr="")
+
+    monkeypatch.setattr(kct_route, "_run_kct_route", fake_run)
+    out, pct, _ = kct_route.route_kct(stm32_board_bytes, vcc_as_traces=True)
+    assert pct == 100
+    text = out.decode("utf-8", errors="replace")
+    margin = kct_route._ZONE_EDGE_CLEARANCE_MM - 0.05
+    for layer in ("F.Cu", "B.Cu"):
+        pts = _zone_polygon_points(text, layer)
+        assert pts, f"plan GND {layer} manquant"
+        for x, y in pts:
+            assert 100.0 + margin <= x <= 160.0 - margin, f"{layer} x={x} au bord"
+            assert 100.0 + margin <= y <= 140.0 - margin, f"{layer} y={y} au bord"
+
+
 def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     captured: dict[str, str] = {}
 

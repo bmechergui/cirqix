@@ -76,6 +76,17 @@ _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 # pads référencent le net par NUMÉRO, seul le label change.
 _VCC_RENAME: dict[str, str] = {"+5V": "P5V0", "+3.3V": "P3V3"}
 
+# Escalade de tier fabricant — benchmark 2026-07-14 (board STM32 placé,
+# baseline negotiated 91%, juge kicad-cli pcb drc) : le net restant échouait
+# sur l'échappement du pad LQFP 0.5mm (« via-in-pad non supporté par le profil
+# jlcpcb », issue upstream #2880). --auto-mfr-tier escalade vers jlcpcb-tier1
+# (via-in-pad autorisé) UNIQUEMENT si le routage échoue au tier standard →
+# 100% routé en 202s (vs 91%). Variantes rejetées au même benchmark :
+# seed 7 = 91% · --starting-layers 4 = 91% · tier+4L = 82% · monte-carlo = 64%.
+# Impact fabricant : tier1 = vias remplis (coût +), déclenché seulement quand
+# nécessaire — les boards simples restent au tier standard.
+_MFR_TIER_LADDER: str = "jlcpcb,jlcpcb-tier1"
+
 
 def parse_routed_pct(stdout: str) -> int:
     """Parse routing completion % from kct route/reason output.
@@ -244,6 +255,52 @@ def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
         return board.read_bytes()
 
 
+_ZONE_BLOCK_RE = re.compile(r"\n\s*\(zone[\s\n]")
+
+
+def _strip_zone_blocks(text: str) -> str:
+    """Retire tous les blocs top-level ``(zone …)`` d'un .kicad_pcb.
+
+    kct route auto-coule le net GND en zones COLLÉES à l'Edge.Cuts (122
+    copper_edge_clearance mesurées 2026-07-14 au DRC officiel) : on retire ses
+    zones après routage et ``_ensure_gnd_both_planes`` repose les plans GND
+    avec la marge bord. Pistes/vias intacts — seule la provenance des zones
+    change. Scan à parenthèses équilibrées, insensible aux parenthèses dans
+    les chaînes quotées (même technique que reasoning._strip_routing).
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        m = _ZONE_BLOCK_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i:m.start()])
+        j = text.index("(", m.start())
+        depth, in_str = 0, False
+        while True:
+            if j >= len(text):
+                raise ValueError(
+                    "_strip_zone_blocks: parenthèses non équilibrées "
+                    f"(zone à l'offset {m.start()}) — .kicad_pcb malformé")
+            c = text[j]
+            if in_str:
+                if c == "\\":
+                    j += 1
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        i = j + 1
+
+
 def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.CompletedProcess[str]:
     """Lance ``kct route`` : stratégie ``negotiated`` + escalade de couches
     automatique jusqu'à 100% routé (``--auto-layers`` + ``--min-completion 1.0``,
@@ -256,6 +313,8 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", _CLEARANCE_MM,
+        "--auto-mfr-tier",
+        "--mfr-tier-ladder", _MFR_TIER_LADDER,
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
@@ -310,11 +369,13 @@ def route_kct(
 
         routed = dst.read_bytes()
         if vcc_as_traces:
-            # Restaure les noms VCC, puis garantit le plan GND sur les 2 faces.
+            # Restaure les noms VCC, remplace les zones kct (collées au bord)
+            # par nos plans GND en retrait, sur les 2 faces.
             restored = _rename_nets(
                 routed.decode("utf-8", errors="replace"),
                 {new: old for old, new in _VCC_RENAME.items()},
             )
+            restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))
 
         routed_text = routed.decode("utf-8", errors="replace")
