@@ -223,8 +223,11 @@ couloirs bloqués, de quelques mm seulement.
 # ANTHROPIC_API_KEY — et le LLM ne décide qu'en fallback (aucune suggestion
 # parsable, ou aucune ref applicable).
 
+# « (+N more) » : le routeur tronque parfois la liste des refs — tolère le
+# suffixe pour ne pas perdre toute la suggestion (format réel, 2026-07-13).
 _MOVE_SUGGESTION_RE = re.compile(
-    r"Move\s+([A-Z]{1,4}\d+(?:\s*,\s*[A-Z]{1,4}\d+)*)\s+(north|south|east|west)\b",
+    r"Move\s+([A-Z]{1,4}\d+(?:\s*,\s*[A-Z]{1,4}\d+)*)"
+    r"(?:\s*\(\+\d+\s+more\))?\s+(north|south|east|west)\b",
     re.IGNORECASE,
 )
 # Board KiCad : y croît vers le BAS → north = -y.

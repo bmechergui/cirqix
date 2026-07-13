@@ -192,6 +192,14 @@ def test_parse_router_moves_multi_refs():
     assert parse_router_moves(analysis) == [("C1", "east"), ("J1", "east"), ("U2", "east")]
 
 
+def test_parse_router_moves_tolerates_more_suffix():
+    # Format réel observé (run monte-carlo 2026-07-13) : le routeur tronque la
+    # liste avec « (+N more) » — il ne doit pas faire perdre toute la suggestion.
+    analysis = "Suggestion: Move D1, J1, R1 (+1 more) north to create routing channel"
+    assert parse_router_moves(analysis) == [
+        ("D1", "north"), ("J1", "north"), ("R1", "north")]
+
+
 def test_parse_router_moves_dedup_and_empty():
     assert parse_router_moves("") == []
     assert parse_router_moves(None) == []
