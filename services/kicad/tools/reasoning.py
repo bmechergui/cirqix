@@ -201,9 +201,58 @@ Ton SEUL levier est le placement. À chaque tour, réponds par UNE commande JSON
 INTERDIT : route_net, add_via, define_zone — le routage appartient au routeur \
 négocié qui repassera après tes déplacements.
 
-Stratégie : suis les suggestions du routeur (« Move D1 north… ») ; déplace les \
-petits composants (R, C, D) hors des couloirs bloqués, de quelques mm seulement ; \
-n'empile jamais deux composants. Si plus rien d'utile à déplacer, réponds null."""
+Stratégie — dans CET ordre :
+1. Les « Routing Suggestions » du routeur PRIMENT sur toute intuition : si le \
+routeur écrit « Move U2 north to create routing channel » ou « Move C13, J1, U2 \
+east », applique EXACTEMENT ces déplacements — y compris pour un gros composant \
+(U*, J*) : le routeur sait mieux que toi où est le mur (mesuré 2026-07-12 : \
+déplacer d'autres composants que ceux suggérés DÉGRADE le routage, 91%→73%).
+2. Sans suggestion explicite : déplace les petits composants (R, C, D) hors des \
+couloirs bloqués, de quelques mm seulement.
+3. N'empile jamais deux composants. Si plus rien d'utile à déplacer, réponds null."""
+
+
+# --- Suiveur de suggestions déterministe (industrialisation 2026-07-13) -----
+#
+# kct route émet des suggestions machine-parsables par net bloqué :
+#   « Suggestion: Move D1 north to create routing channel »
+#   « Suggestion: Move C1, J1, U2 east »
+# Mesuré 2026-07-12 (board STM32) : suivre EXACTEMENT ces suggestions est le
+# seul levier qui débloque (déplacer d'autres composants dégrade 91%→73%).
+# On les applique donc en DÉTERMINISTE — zéro coût LLM, zéro dépendance
+# ANTHROPIC_API_KEY — et le LLM ne décide qu'en fallback (aucune suggestion
+# parsable, ou aucune ref applicable).
+
+_MOVE_SUGGESTION_RE = re.compile(
+    r"Move\s+([A-Z]{1,4}\d+(?:\s*,\s*[A-Z]{1,4}\d+)*)\s+(north|south|east|west)\b",
+    re.IGNORECASE,
+)
+# Board KiCad : y croît vers le BAS → north = -y.
+_DIRECTION_UNIT: dict[str, tuple[int, int]] = {
+    "north": (0, -1), "south": (0, 1), "east": (1, 0), "west": (-1, 0),
+}
+_DIRECTION_FR: dict[str, str] = {
+    "north": "nord", "south": "sud", "east": "est", "west": "ouest",
+}
+_SUGGESTED_MOVE_MM = 3.0
+
+
+def parse_router_moves(analysis: str | None) -> list[tuple[str, str]]:
+    """Extrait les déplacements suggérés par le routeur : [("D1", "north"), …].
+
+    Dédoublonne en préservant l'ordre (le routeur répète parfois la même
+    suggestion pour plusieurs tentatives de tiers).
+    """
+    moves: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for m in _MOVE_SUGGESTION_RE.finditer(analysis or ""):
+        direction = m.group(2).lower()
+        for ref in re.split(r"\s*,\s*", m.group(1)):
+            ref = ref.strip().upper()
+            if ref and (ref, direction) not in seen:
+                seen.add((ref, direction))
+                moves.append((ref, direction))
+    return moves
 
 
 _ROUTING_BLOCK_RE = re.compile(r'\n\s*\((segment|via|zone)[\s\n]')
@@ -314,13 +363,40 @@ def rescue_with_placement_feedback(
             if iteration == max_iterations:
                 break  # plus de re-routage possible — inutile de déplacer encore
 
-            # --- Le LLM décide des déplacements sur le board routé ------------
             board.write_bytes(routed)
             agent = PCBReasoningAgent.from_pcb(str(board))
 
             moved_refs: list[str] = []
             batch_commands = []
-            for _ in range(max_moves_per_iter):
+
+            # --- Voie 1 (déterministe) : suggestions natives du routeur ------
+            # Le routeur désigne lui-même le mur (« Move D1 north… ») : on
+            # applique ses suggestions telles quelles, sans LLM.
+            for ref, direction in parse_router_moves(analysis)[:max_moves_per_iter]:
+                comp = agent.state.components.get(ref)
+                if comp is None:
+                    steps_log.append(f"⚠ Suggestion routeur : {ref} introuvable — ignorée")
+                    continue
+                dx, dy = _DIRECTION_UNIT[direction]
+                x, y = comp.position
+                command = {"type": "place_component", "ref": ref,
+                           "at": [x + dx * _SUGGESTED_MOVE_MM,
+                                  y + dy * _SUGGESTED_MOVE_MM]}
+                try:
+                    result, _diag = agent.execute_dict(command)
+                except Exception:
+                    steps_log.append(f"⚠ Suggestion routeur invalide ({ref}) — ignorée")
+                    continue
+                ok = "✓" if result.success else "✗"
+                steps_log.append(
+                    f"{ok} Suggestion du routeur appliquée : {ref} → "
+                    f"{_DIRECTION_FR[direction]} ({_SUGGESTED_MOVE_MM:g}mm)")
+                batch_commands.append(command)
+                if result.success:
+                    moved_refs.append(ref)
+
+            # --- Voie 2 (LLM, fallback) : aucune suggestion applicable -------
+            for _ in range(max_moves_per_iter if not moved_refs else 0):
                 prompt = (agent.get_prompt()
                           + "\n## Analyse d'échec du routeur\n" + analysis)
                 try:

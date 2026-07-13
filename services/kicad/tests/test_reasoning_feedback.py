@@ -19,24 +19,32 @@ import re
 
 import pytest
 
-from tools.reasoning import _strip_routing, rescue_with_placement_feedback
+from tools.reasoning import (
+    _strip_routing,
+    parse_router_moves,
+    rescue_with_placement_feedback,
+)
 
 
-def _route_fn_improving(script: list[int]):
+def _route_fn_improving(script: list[int], suggestion: bool = True):
     """route_fn factice : renvoie les pourcentages scriptés, dans l'ordre.
 
     Signature contractuelle : (pcb_bytes) -> (routed_bytes, pct, failure_analysis).
+    ``suggestion=False`` produit une analyse SANS « Move … » parsable — la boucle
+    doit alors retomber sur le décideur LLM.
     """
     calls: list[bytes] = []
 
     def route_fn(pcb_bytes: bytes):
         calls.append(pcb_bytes)
         pct = script[min(len(calls), len(script)) - 1]
-        analysis = (
-            "" if pct >= 100 else
-            "Unrouted nets:\n  SWO: Path blocked by component\n"
-            "Suggestion: Move D1 north to create routing channel"
-        )
+        if pct >= 100:
+            analysis = ""
+        elif suggestion:
+            analysis = ("Unrouted nets:\n  SWO: Path blocked by component\n"
+                        "Suggestion: Move D1 north to create routing channel")
+        else:
+            analysis = "Unrouted nets:\n  SWO: Path blocked by component"
         return pcb_bytes, pct, analysis
 
     route_fn.calls = calls  # type: ignore[attr-defined]
@@ -128,7 +136,8 @@ def test_returns_best_board_not_last(stm32_board_bytes):
 
 def test_route_net_command_is_rejected(stm32_board_bytes):
     """Une commande route_net du LLM est refusée (jamais exécutée) et loggée."""
-    route_fn = _route_fn_improving([40, 40])
+    # suggestion=False → pas de « Move … » parsable → le LLM est consulté.
+    route_fn = _route_fn_improving([40, 40], suggestion=False)
 
     def decide(prompt):
         return {"type": "route_net", "net": "SWO"}
@@ -142,8 +151,11 @@ def test_route_net_command_is_rejected(stm32_board_bytes):
 
 
 def test_failure_analysis_is_in_llm_prompt(stm32_board_bytes):
-    """Le prompt envoyé au LLM contient l'analyse d'échec du routeur."""
-    route_fn = _route_fn_improving([40, 100])
+    """Le prompt envoyé au LLM contient l'analyse d'échec du routeur.
+
+    (suggestion=False : sans « Move … » parsable, c'est le LLM qui décide —
+    il doit recevoir l'analyse complète du routeur.)"""
+    route_fn = _route_fn_improving([40, 100], suggestion=False)
     prompts: list[str] = []
 
     def decide(prompt):
@@ -155,7 +167,90 @@ def test_failure_analysis_is_in_llm_prompt(stm32_board_bytes):
     )
 
     assert prompts, "le LLM devait être consulté"
-    assert "Move D1 north" in prompts[0]
+    assert "SWO: Path blocked" in prompts[0]
+
+
+# ---------------------------------------------------------------------------
+# Suiveur de suggestions déterministe (industrialisation 2026-07-13)
+# ---------------------------------------------------------------------------
+#
+# Le routeur kct émet des suggestions machine-parsables (« Move D1 north to
+# create routing channel », « Move C1, J1, U2 east »). Mesuré 2026-07-12 :
+# suivre EXACTEMENT ces suggestions est le seul levier qui marche (déplacer
+# autre chose dégrade 91%→73%). On les applique donc en DÉTERMINISTE, sans
+# LLM — zéro coût, zéro dépendance clé API. Le LLM ne décide que s'il n'y a
+# AUCUNE suggestion parsable.
+
+def test_parse_router_moves_single_ref():
+    analysis = ("Unrouted nets:\n  NRST: Path blocked\n"
+                "            Suggestion: Move D1 north to create routing channel")
+    assert parse_router_moves(analysis) == [("D1", "north")]
+
+
+def test_parse_router_moves_multi_refs():
+    analysis = "Suggestion: Move C1, J1, U2 east"
+    assert parse_router_moves(analysis) == [("C1", "east"), ("J1", "east"), ("U2", "east")]
+
+
+def test_parse_router_moves_dedup_and_empty():
+    assert parse_router_moves("") == []
+    assert parse_router_moves(None) == []
+    twice = "Move D1 north ... Move D1 north"
+    assert parse_router_moves(twice) == [("D1", "north")]
+
+
+def test_router_suggestions_applied_without_llm(stm32_board_bytes):
+    """Suggestion parsable → déplacements déterministes, LLM JAMAIS consulté."""
+    route_fn = _route_fn_improving([40, 100], suggestion=True)
+    llm_calls: list[str] = []
+
+    def decide(prompt):
+        llm_calls.append(prompt)
+        return None
+
+    _out, pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn, max_iterations=2, decide=decide,
+    )
+
+    assert pct == 100
+    assert llm_calls == []                       # zéro appel LLM
+    assert any("uggestion" in s and "D1" in s for s in steps), steps
+
+
+def test_llm_fallback_when_no_parseable_suggestion(stm32_board_bytes):
+    """Pas de « Move … » parsable → le LLM reprend la main (comportement actuel)."""
+    route_fn = _route_fn_improving([40, 100], suggestion=False)
+    llm_calls: list[str] = []
+
+    def decide(prompt):
+        llm_calls.append(prompt)
+        return _decide_move_d1(prompt)
+
+    _out, pct, _steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn, max_iterations=2, decide=decide,
+    )
+
+    assert pct == 100
+    assert llm_calls, "le LLM devait être consulté en fallback"
+
+
+def test_suggestion_for_unknown_ref_falls_back_to_llm(stm32_board_bytes):
+    """Suggestion visant une ref absente du board → aucun déplacement
+    déterministe possible → fallback LLM."""
+    def route_fn(pcb_bytes: bytes):
+        return pcb_bytes, 40, "Suggestion: Move Z99 north to create routing channel"
+
+    llm_calls: list[str] = []
+
+    def decide(prompt):
+        llm_calls.append(prompt)
+        return None
+
+    rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn, max_iterations=2, decide=decide,
+    )
+
+    assert llm_calls, "ref inconnue : le LLM devait être consulté"
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +259,7 @@ def test_failure_analysis_is_in_llm_prompt(stm32_board_bytes):
 
 def test_decide_exception_returns_best_so_far(stm32_board_bytes):
     """decide crashe : arrêt propre, on rend le meilleur board déjà routé."""
-    route_fn = _route_fn_improving([40])
+    route_fn = _route_fn_improving([40], suggestion=False)
 
     def decide(prompt):
         raise RuntimeError("API down")
@@ -180,7 +275,7 @@ def test_decide_exception_returns_best_so_far(stm32_board_bytes):
 
 def test_decide_none_stops_iteration(stm32_board_bytes):
     """decide renvoie None (pas de commande exploitable) : arrêt propre."""
-    route_fn = _route_fn_improving([40, 40, 40])
+    route_fn = _route_fn_improving([40, 40, 40], suggestion=False)
 
     _out, pct, _steps = rescue_with_placement_feedback(
         stm32_board_bytes, route_fn=route_fn, max_iterations=3, decide=lambda p: None,

@@ -118,6 +118,12 @@ def extract_failure_analysis(stdout: str) -> str:
     Le routeur émet déjà un diagnostic structuré par net bloqué
     (« SWO: Path blocked by component — Suggestion: Move D1 north … ») :
     on le transmet tel quel au LLM plutôt que de le re-parser fragilement.
+
+    Format kct : « Header\\n====…\\ncontenu » — l'en-tête est immédiatement
+    suivi d'une ligne séparatrice ====. Il faut SAUTER ce séparateur collé
+    avant de couper à la prochaine ligne ====, sinon la section revient vide
+    (bug corrigé 2026-07-12 : le reasoner ⑥b ne recevait jamais les
+    « Routing Suggestions » du routeur et déplaçait les composants à l'aveugle).
     """
     sections: list[str] = []
     for header in ("Unrouted nets:", "Partially connected nets",
@@ -125,9 +131,12 @@ def extract_failure_analysis(stdout: str) -> str:
         idx = stdout.rfind(header)
         if idx == -1:
             continue
-        # Coupe au prochain double saut de ligne suivi d'un séparateur ====
-        chunk = stdout[idx:idx + 1500]
-        sections.append(chunk.split("\n====", 1)[0].strip())
+        body = stdout[idx + len(header):idx + len(header) + 1500]
+        sep = re.match(r"\s*\n=+\n", body)
+        if sep:
+            body = body[sep.end():]
+        body = body.split("\n====", 1)[0]
+        sections.append((header + "\n" + body).strip())
     return "\n\n".join(sections)
 
 
@@ -187,33 +196,51 @@ def _gnd_zone_layers(text: str) -> set[str]:
     return layers
 
 
+# Retrait des zones GND vs Edge.Cuts. La règle DRC KiCad par défaut
+# (copper-to-edge) est 0.5mm : des zones collées au bord = violations
+# copper_edge_clearance garanties (124 mesurées le 2026-07-12 sur le board
+# STM32 de référence, kicad-cli pcb drc juge). ``kct zones add`` (CLI)
+# n'expose pas ce retrait → on passe par l'API native ZoneGenerator
+# (edge_clearance = inset natif du contour, shapely buffer(-c)).
+_ZONE_EDGE_CLEARANCE_MM: float = 0.5
+
+
 def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
     """Garantit un plan de masse GND sur F.Cu ET B.Cu : ajoute la zone GND sur
-    la/les face(s) manquante(s) via ``kct zones add`` (ZoneGenerator pur Python,
-    sans kicad-cli). Idempotent — si les deux faces ont déjà GND, no-op."""
+    la/les face(s) manquante(s) via l'API native ``ZoneGenerator`` (pur Python,
+    sans kicad-cli), avec retrait ``_ZONE_EDGE_CLEARANCE_MM`` du bord de carte.
+    Idempotent — si les deux faces ont déjà GND, no-op."""
     text = pcb_bytes.decode("utf-8", errors="replace")
     missing = [layer for layer in ("F.Cu", "B.Cu") if layer not in _gnd_zone_layers(text)]
     if not missing:
         return pcb_bytes
+    try:
+        from kicad_tools.zones import ZoneGenerator
+    except ImportError:
+        if _KCT_SRC.is_dir():
+            sys.path.insert(0, str(_KCT_SRC))
+            from kicad_tools.zones import ZoneGenerator
+        else:
+            raise
     with tempfile.TemporaryDirectory() as tmp:
         board = Path(tmp) / "board.kicad_pcb"
         board.write_bytes(pcb_bytes)
+        # Best-effort PAR FACE (comme l'ancien chemin CLI) : un échec sur une
+        # face ne doit pas perdre la zone déjà posée sur l'autre.
         for layer in missing:
             out = Path(tmp) / f"gnd_{layer.replace('.', '_')}.kicad_pcb"
-            cmd = [
-                sys.executable, "-m", "kicad_tools.cli", "zones", "add",
-                str(board), "--net", "GND", "--layer", layer,
-                "--priority", "0", "-o", str(out),
-            ]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", env=_kct_env(), check=False, timeout=60,
-            )
-            if out.exists():
+            try:
+                gen = ZoneGenerator.from_pcb(board, edge_clearance=_ZONE_EDGE_CLEARANCE_MM)
+                gen.add_zone(net="GND", layer=layer, priority=0)
+                gen.save(out)
                 board = out
-            else:
-                logger.warning("zones add GND %s échoué: %s", layer,
-                               (result.stderr or result.stdout)[-160:])
+            except Exception:
+                # ERROR + traceback : la garantie « plan GND double face »
+                # (docstring + route_kct) n'est PAS respectée sur cette face —
+                # impact fabricabilité, doit être visible en prod.
+                logger.exception(
+                    "zones GND %s échoué — garantie plan GND double face non respectée",
+                    layer)
         return board.read_bytes()
 
 

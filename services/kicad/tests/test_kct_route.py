@@ -131,6 +131,124 @@ def test_ensure_gnd_both_planes_adds_missing_face(stm32_board_bytes):
     assert {"F.Cu", "B.Cu"}.issubset(layers)
 
 
+# ===========================================================================
+# extract_failure_analysis — sections COMPLÈTES (bug troncature 2026-07-12)
+# ===========================================================================
+#
+# kct route émet « Header\n====…\ncontenu » : l'en-tête est immédiatement suivi
+# d'une ligne séparatrice ====. L'ancien code coupait au premier « \n==== » du
+# chunk → il ne restait QUE l'en-tête : le reasoner ⑥b ne voyait JAMAIS les
+# « Routing Suggestions » du routeur (« Move U2 north… ») et déplaçait à
+# l'aveugle. Diagnostiqué sur le board STM32 (NRST blocked_path à tous les
+# tiers --adaptive-rules, log complet B_adaptive.stdout.txt du 2026-07-12).
+
+_SEP = "=" * 60
+
+_FAILED_ROUTE_STDOUT = f"""\
+PARTIAL: Best result 91% at 2 layers, tier 3
+
+{_SEP}
+Routing Incomplete (91% connected)
+  Nets routed: 10/11 (91%)
+{_SEP}
+
+Unrouted nets:
+  NRST: Path blocked by component or trace
+
+{_SEP}
+Failure Summary by Cause
+{_SEP}
+  BLOCKED_PATH: 1 net (100%)
+
+{_SEP}
+Routing Suggestions
+{_SEP}
+
+Based on failure analysis:
+
+1. COMPONENT BLOCKING (1 net affected)
+   Direct paths are blocked by component keepouts.
+   Try: Reposition components or use vias to route around
+   Suggestion: Move U2 north to create routing channel
+
+{_SEP}
+"""
+
+
+def test_extract_failure_analysis_sections_not_truncated():
+    out = kct_route.extract_failure_analysis(_FAILED_ROUTE_STDOUT)
+    assert "NRST: Path blocked by component or trace" in out
+    assert "BLOCKED_PATH: 1 net (100%)" in out       # Failure Summary complet
+    assert "Reposition components" in out            # corps des Suggestions
+    assert "Move U2 north" in out                    # la suggestion par net
+
+
+def test_extract_failure_analysis_survives_header_glued_separator():
+    minimal = "Routing Suggestions\n" + "=" * 60 + "\n\ncontenu utile\n"
+    out = kct_route.extract_failure_analysis(minimal)
+    assert "contenu utile" in out
+
+
+def test_extract_failure_analysis_still_cuts_at_next_section():
+    # La coupe au séparateur SUIVANT reste active : une section ne doit pas
+    # avaler le bloc d'après.
+    txt = ("Unrouted nets:\n  SWDIO: Path blocked\n\n"
+           + _SEP + "\nBLOC SUIVANT NON PERTINENT\n")
+    out = kct_route.extract_failure_analysis(txt)
+    assert "SWDIO: Path blocked" in out
+    assert "BLOC SUIVANT NON PERTINENT" not in out
+
+
+# ===========================================================================
+# _ensure_gnd_both_planes — marge bord (124 copper_edge_clearance mesurées
+# le 2026-07-12 : zones GND collées à l'Edge.Cuts → DRC officiel rouge)
+# ===========================================================================
+
+def _zone_polygon_points(text: str, layer: str) -> list[tuple[float, float]]:
+    """Points (xy …) des polygones de zones GND sur une couche donnée."""
+    import re as _re
+    pts: list[tuple[float, float]] = []
+    starts = [m.start() for m in _re.finditer(r"\(zone\b", text)]
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        blk = text[start:end]
+        if f'(layer "{layer}")' not in blk or '"GND"' not in blk:
+            continue
+        for xy in _re.finditer(r"\(xy\s+([-\d.]+)\s+([-\d.]+)\)", blk):
+            pts.append((float(xy.group(1)), float(xy.group(2))))
+    return pts
+
+
+def test_ensure_gnd_zone_respects_edge_clearance(stm32_board_bytes):
+    # La zone GND ajoutée (F.Cu manquant sur le board de référence) doit être
+    # en retrait d'au moins _ZONE_EDGE_CLEARANCE_MM du contour Edge.Cuts.
+    import re as _re
+    src = stm32_board_bytes.decode("utf-8", errors="replace")
+    out = kct_route._ensure_gnd_both_planes(stm32_board_bytes)
+    text = out.decode("utf-8", errors="replace")
+
+    # bbox du contour Edge.Cuts (gr_rect ou gr_line, format multi-lignes KiCad 9)
+    xs: list[float] = []
+    ys: list[float] = []
+    for m in _re.finditer(r"\(gr_(?:rect|line)\b", text):
+        blk = text[m.start():m.start() + 300]
+        if '(layer "Edge.Cuts")' not in blk:
+            continue
+        s = _re.search(r"\(start\s+([-\d.]+)\s+([-\d.]+)\)", blk)
+        e = _re.search(r"\(end\s+([-\d.]+)\s+([-\d.]+)\)", blk)
+        if s and e:
+            xs += [float(s.group(1)), float(e.group(1))]
+            ys += [float(s.group(2)), float(e.group(2))]
+    assert xs and ys, "Edge.Cuts introuvable dans le board de référence"
+
+    pts = _zone_polygon_points(text, "F.Cu")
+    assert pts, "zone GND F.Cu non ajoutée"
+    margin = kct_route._ZONE_EDGE_CLEARANCE_MM - 0.05  # tolérance arrondi
+    for x, y in pts:
+        assert min(xs) + margin <= x <= max(xs) - margin, f"x={x} trop près du bord"
+        assert min(ys) + margin <= y <= max(ys) - margin, f"y={y} trop près du bord"
+
+
 def _fake_route(stdout: str):
     """side_effect : écho src→dst, renvoie un CompletedProcess avec ce stdout."""
     def _run(src, dst, timeout_s):
