@@ -1,5 +1,22 @@
 # Cirqix.ai — CLAUDE.md
 
+> **Source canonique transitoire.** Les règles projet, l’architecture et les
+> contraintes métier Cirqix sont maintenues ici une seule fois. Les adaptateurs
+> des autres assistants ne doivent pas en conserver une copie divergente.
+
+## Collaboration multi-agent
+
+Avant toute tâche partagée, parallèle ou reprise depuis un autre assistant :
+
+1. Lire `docs/agents/COLLABORATION.md`.
+2. Lire le handoff concerné dans `docs/agents/handoffs/`.
+3. Vérifier la branche, le SHA, le diff et les résultats de validation annoncés.
+4. Ne modifier que les chemins explicitement transférés ou revendiqués.
+5. Mettre à jour le handoff avant de rendre la main.
+
+Le handoff transporte l’état du travail ; il ne remplace jamais Git, les tests,
+les quality gates ni les règles de sécurité de ce fichier.
+
 ## Projet
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
@@ -56,7 +73,7 @@ Confirme pour que je démarre.
 - Si plusieurs candidats : choisir celle qui débloque le plus de valeur
 - **NEVER** terminer sans ce bloc après un commit/PR
 
-### 2. Niveau de planification — voir `rules/planning.md`
+### 2. Niveau de planification — voir `.claude/rules/planning.md`
 
 ### 3. Autonomie totale
 
@@ -65,7 +82,7 @@ Claude mène le projet. L'utilisateur valide. Pas l'inverse.
 - Si un skill manque → `npx skills find "query"` puis `/skill-creator:skill-creator`
 - Si une décision d'archi est nécessaire → invoquer `architect` agent et proposer
 
-### 4. Git workflow — voir `rules/git.md`
+### 4. Git workflow — voir `.claude/rules/git.md`
 
 ---
 
