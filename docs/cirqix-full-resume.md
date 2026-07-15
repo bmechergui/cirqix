@@ -894,3 +894,7 @@ Analyse du projet : 3 vulnérabilités critiques dans la base Supabase.
 **Prochaine action :** relancer l'apply de la migration (`apply_migration` ou `supabase db push`) puis `commit + push + PR`.
 
 ➡️ À faire aussi (action manuelle, séparé) : **rotation du token Supabase** écrit en clair dans `.mcp.json` (`sbp_e454…`).
+
+---
+
+## Piste Phase 6 — GNN + Transformer × RL
