@@ -84,11 +84,11 @@ COPY . .
 # ⚠ GARDE — vérifie que les dépendances sont présentes dans le contexte Docker :
 #  - kicad-tools/ : GIT SUBMODULE (branche cirqix, repo privé bmechergui/kicad-tools).
 #    Présent si `git submodule update --init` a tourné (local) ou si le CI fait
-#    `actions/checkout` avec `submodules: true` + SUBMODULE_DEPLOY_KEY.
+#    le checkout manuel des deux gitlinks directs + SUBMODULE_DEPLOY_KEY.
 #  - circuit_synth/ : GIT SUBMODULE public (branche cirqix, fork v0.12.1).
 #    Le gitlink du dépôt parent épingle le SHA exact utilisé par le build.
 # Le build doit échouer ICI avec un message clair plutôt que sur un `mv` cryptique plus bas.
-RUN test -d /app/kicad-tools/src/kicad_tools || (echo "ERREUR: services/kicad/kicad-tools/ absent du contexte Docker. C'est un git submodule : lancer 'git submodule update --init' (local) ou utiliser actions/checkout avec submodules:true + secret SUBMODULE_DEPLOY_KEY (CI). Voir docs/kicad-tools-fork-strategy.md." && exit 1)
+RUN test -d /app/kicad-tools/src/kicad_tools || (echo "ERREUR: services/kicad/kicad-tools/ absent du contexte Docker. C'est un git submodule : lancer 'git submodule update --init -- services/kicad/kicad-tools services/kicad/circuit_synth' (local/CI) avec SUBMODULE_DEPLOY_KEY pour le fork privé. Voir docs/kicad-tools-fork-strategy.md." && exit 1)
 RUN test -d /app/circuit_synth/src/circuit_synth || (echo "ERREUR: services/kicad/circuit_synth/ absent du contexte Docker. C'est un git submodule public : lancer 'git submodule update --init'. Voir DEPENDENCIES.md." && exit 1)
 
 # Install circuit_synth from the pinned public submodule.
