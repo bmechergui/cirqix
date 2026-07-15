@@ -43,6 +43,22 @@ qu’à accepter un résultat final déjà validé.
 `DONE` signifie que le critère de terminaison et les validations annoncées sont
 réellement satisfaits.
 
+## Sélection du handoff actif
+
+1. Relever la branche avec `git branch --show-current`. Si la sortie est vide
+   ou indéterminée (`HEAD` détaché), arrêter toute écriture et demander une
+   branche ou un handoff explicite.
+2. Vérifier que chaque handoff examiné possède des champs `Status` et `Branch`
+   valides. Une métadonnée absente ou invalide bloque toute écriture.
+3. Chercher dans `docs/agents/handoffs/` les fichiers dont le champ `Status`
+   n’est pas `DONE` et dont le champ `Branch` correspond exactement.
+4. Zéro candidat signifie qu’aucun handoff n’est actif.
+5. Un candidat devient le handoff actif.
+6. Plusieurs candidats constituent une ambiguïté : arrêter toute écriture et
+   demander lequel fait autorité.
+
+`HANDOFF_TEMPLATE.md` est un modèle et n’est jamais un candidat.
+
 ## Démarrage d’une tâche
 
 1. Lire les fichiers d’instructions et le handoff éventuel.
@@ -82,13 +98,17 @@ l’owner et ne modifie rien sans transfert explicite. Le document doit indiquer
 
 - objectif et périmètre autorisé ;
 - owner, reviewer/receiver, branche et worktree ;
-- SHA de base et SHA de tête ;
+- SHA de base et content commit à relire ;
 - fichiers modifiés et modifications préexistantes non possédées ;
 - décisions prises et raisons ;
 - commandes de validation avec résultats exacts ;
 - travail restant, risques et blocages ;
 - prochaine action atomique et critère de terminaison ;
 - journal horodaté des transferts.
+
+Le head Git courant n’est pas recopié dans le handoff, car le commit du handoff
+le rendrait immédiatement obsolète. Le receiver le vérifie dynamiquement sur la
+branche locale et la branche distante avant de reprendre.
 
 Écrire `non exécuté` ou `indisponible` lorsqu’une validation ne l’a pas été.
 La formule vague « tests OK » est interdite.
@@ -97,7 +117,8 @@ La formule vague « tests OK » est interdite.
 
 Le receiver doit :
 
-1. vérifier que le SHA et la branche existent ;
+1. vérifier que le content commit et la branche existent, puis relever le head
+   Git courant local et distant, si une branche distante existe ;
 2. relire le diff des chemins transférés ;
 3. vérifier que le worktree ne contient pas de modifications non attribuées ;
 4. reproduire les validations critiques proportionnées au risque ;

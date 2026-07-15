@@ -10,9 +10,11 @@ Avant toute tâche partagée, parallèle ou reprise depuis un autre assistant :
 
 1. Lire `docs/agents/COLLABORATION.md`.
 2. Lire le handoff concerné dans `docs/agents/handoffs/`.
-3. Vérifier la branche, le SHA, le diff et les résultats de validation annoncés.
+3. Vérifier la branche, le content commit, le head Git courant, le diff et les
+   résultats de validation annoncés.
 4. Ne modifier que les chemins explicitement transférés ou revendiqués.
-5. Mettre à jour le handoff avant de rendre la main.
+5. Si l’assistant est l’owner, mettre à jour le handoff avant de rendre la
+   main ; sinon, transmettre ses constats à l’owner sans modifier le fichier.
 
 Le handoff transporte l’état du travail ; il ne remplace jamais Git, les tests,
 les quality gates ni les règles de sécurité de ce fichier.

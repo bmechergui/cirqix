@@ -5,10 +5,13 @@
 - **Reviewer:** `<agent ou none>`
 - **Receiver:** `<agent ou none>`
 - **Branch:** `<branch>`
-- **Worktree:** `<chemin absolu ou racine principale>`
+- **Worktree:** `<repo-root ou identifiant logique>`
 - **Base commit:** `<sha>`
-- **Head commit:** `<sha ou uncommitted>`
+- **Content commit:** `<sha, ou uncommitted uniquement avant HANDOFF>`
 - **Updated UTC:** `<YYYY-MM-DDTHH:mm:ssZ>`
+
+Le receiver relève le head Git courant local et distant au moment de la
+réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
 
 ## Objectif
 

@@ -12,6 +12,13 @@ Après chargement de ce fichier, lire dans cet ordre :
 3. Le handoff actif dans `docs/agents/handoffs/`, s’il existe.
 4. `PLAN.md` et le skill Cirqix pertinent pour la tâche.
 
+Déterminer d’abord la branche Git courante. Si elle est vide ou inconnue
+(`HEAD` détaché), arrêter avant toute écriture. Le handoff actif est ensuite
+l’unique fichier non `DONE` dont le champ `Branch` correspond à cette branche.
+Un handoff aux métadonnées `Status` ou `Branch` absentes/invalides bloque
+également l’écriture. S’il n’existe aucun candidat valide, continuer sans
+handoff. Si plusieurs fichiers correspondent, demander lequel fait autorité.
+
 Les faits produit, l’architecture, le pipeline PCB et les contraintes métier ne
 doivent pas être recopiés ici. Ils sont maintenus une seule fois dans
 `CLAUDE.md` jusqu’à leur future extraction dans un document neutre partagé.
@@ -32,9 +39,14 @@ assouplir une règle de sécurité ou une quality gate.
 
 ## Adaptation des instructions Claude vers Codex
 
-- Toujours invoquer réellement `cirqix-prompt-improver` avant une tâche.
-- Utiliser uniquement les skills exposés dans la session ou présents sous
-  `.agents/skills/`. Ne jamais annoncer un skill absent comme s’il avait été appelé.
+- Avant toute tâche, appliquer `cirqix-prompt-improver` : l’invoquer réellement
+  s’il est exposé dans la session ; sinon appliquer le fallback ci-dessous.
+- Utiliser en priorité les skills exposés dans la session ou présents sous
+  `.agents/skills/`.
+- Si un skill Cirqix obligatoire n’est pas exposé mais existe dans
+  `.claude/skills/<skill>/SKILL.md`, lire ce fichier en entier et annoncer
+  explicitement le fallback d’instructions du dépôt. Ne jamais prétendre qu’un
+  outil de skill absent a été invoqué.
 - Traduire `everything-claude-code:plan` par le plan Codex disponible
   (`update_plan`) lorsqu’aucun skill de planification équivalent n’est installé.
 - Traduire le workflow TDD par : critères/tests en échec d’abord, implémentation
@@ -75,8 +87,9 @@ assouplir une règle de sécurité ou une quality gate.
 - Une branche ou un worktree correspond à une tâche clairement délimitée.
 - Deux agents ne modifient jamais simultanément le même fichier.
 - Un reviewer reste en lecture seule jusqu’à un transfert explicite.
-- Avant de reprendre le travail de Claude, Codex vérifie le SHA, le diff, les
-  validations et l’état du worktree indiqués dans le handoff.
+- Avant de reprendre le travail de Claude, Codex vérifie le content commit, le
+  head Git courant, le diff, les validations et l’état du worktree indiqués
+  dans le handoff.
 - Codex ne stage, ne restaure et ne commit jamais les changements préexistants
   de Claude ou de l’utilisateur.
 - Tout transfert utilise `docs/agents/HANDOFF_TEMPLATE.md` et produit un fichier
