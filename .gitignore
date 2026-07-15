@@ -24,6 +24,9 @@ build
 # MCP project config (contains access tokens — never commit)
 .mcp.json
 
+# Local Codex MCP config (contains personal access tokens — never commit)
+.codex/config.toml
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
