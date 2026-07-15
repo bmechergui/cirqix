@@ -1,5 +1,6 @@
 # Dependencies
 node_modules
+.pnpm-store/
 .pnp
 .pnp.js
 
@@ -26,6 +27,11 @@ build
 
 # Local Codex MCP config (contains personal access tokens — never commit)
 .codex/config.toml
+
+# Local agent runtime files (machine-specific — never commit)
+.agents/
+.codex/hooks.json
+.claude/settings.local.json
 
 # Logs
 npm-debug.log*
