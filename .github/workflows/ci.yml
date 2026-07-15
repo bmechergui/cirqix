@@ -80,8 +80,6 @@ jobs:
   kicad-docker:
     name: KiCad Docker Build
     runs-on: ubuntu-latest
-    # Non-blocking: KiCad base image availability depends on external registry
-    continue-on-error: true
     steps:
       # Deploy key SSH pour cloner le submodule privé bmechergui/kicad-tools
       # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH, le checkout
@@ -96,14 +94,40 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          # Only Cirqix's two direct submodules. Circuit-Synth's optional nested
+          # library/example submodules are not required by the service image.
           submodules: true
+
+      - name: Verify pinned KiCad build sources
+        run: python3 -m unittest services.kicad.tests.test_docker_build_context -v
 
       - name: Build KiCad Docker image
         run: docker build -t cirqix-kicad:test ./services/kicad
 
+      - name: Test Circuit-Synth regression patches
+        run: >-
+          docker run --rm --entrypoint python3 cirqix-kicad:test
+          -m unittest discover -s /app/circuit_synth/tests/unit
+          -p 'test_cirqix_*.py' -v
+
       - name: Test /health endpoint
         run: |
-          docker run -d --name kicad-test -p 8766:8766 cirqix-kicad:test
-          sleep 10
-          curl -f http://localhost:8766/health
-          docker stop kicad-test
+          set -euo pipefail
+          docker run -d --name kicad-test cirqix-kicad:test
+          trap 'docker rm -f kicad-test >/dev/null 2>&1 || true' EXIT
+
+          for attempt in $(seq 1 36); do
+            state=$(docker inspect --format '{{.State.Status}} {{.State.Health.Status}}' kicad-test)
+            case "$state" in
+              "running healthy") exit 0 ;;
+              *" unhealthy"|"exited "*)
+                docker logs kicad-test
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "KiCad service did not become healthy within 180 seconds"
+          docker logs kicad-test
+          exit 1

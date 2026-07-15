@@ -1,14 +1,19 @@
-# Dépendances vendorées — KiCad Service
+# Dépendances Git — KiCad Service
 
-Ces deux librairies sont installées localement en mode éditable (`pip install -e .`).
-Elles sont **ignorées par git** mais leurs versions sont trackées ici.
+`circuit_synth` et `kicad-tools` sont des **git submodules** : le dépôt Cirqix
+versionne leur gitlink, donc un checkout CI reproduit exactement les sources testées.
+Le premier est installé normalement dans l'image ; `kicad-tools` reste éditable pour
+le bind-mount de développement.
 
 ## circuit_synth
 
-- **Source :** https://github.com/circuit-synth/circuit-synth
-- **Version locale :** 3.12 (0.12.1 selon git commit)
+- **Fork public Cirqix :** https://github.com/bmechergui/circuit-synth (`cirqix`)
+- **Base upstream :** v0.12.1, commit `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`
+- **SHA Cirqix épinglé :** `302e22db48fde0f9d128ff5d755f36096bb8c8ee`
+- **PR des patches :** https://github.com/bmechergui/circuit-synth/pull/1
 - **Chemin :** `services/kicad/circuit_synth/`
 - **Install Docker :** `pip3 install --no-cache-dir ./circuit_synth`
+- **Runtime Docker :** Ubuntu 24.04 Noble + Python 3.12 dans `/opt/venv`
 - **Patches Cirqix :**
   - `src/circuit_synth/kicad/sch_gen/circuit_loader.py` — fix pin_identifier vide
     → `_parse_circuit`: exclure `""` et `None` (pas seulement `"~"`) du test de nom de pin.
@@ -16,21 +21,23 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
     → VCC_5V ET DHT_DATA tous deux au même endroit (pin1) → R1.pin2=unconnected.
     Ligne ~286: `if "name" in pin_data and pin_data["name"] not in ("~", "", None):`
   - `src/circuit_synth/kicad/schematic/geometry_utils.py` — fallback index-based
-    → `get_actual_pin_position`: si pin.number absent, utiliser l'index (défensif).
+    → `get_actual_pin_position`: utiliser l'index uniquement si **toutes** les broches
+    sont non numérotées. Avec des numéros explicites, une absence retourne `None` afin
+    de ne jamais connecter silencieusement la mauvaise broche.
+- **Tests fork :** `tests/unit/test_cirqix_empty_pin_name.py` et
+  `tests/unit/test_cirqix_pin_index_fallback.py` (3 scénarios).
+- **Garde CI Cirqix :** `services/kicad/tests/test_docker_build_context.py` vérifie le
+  gitlink public, Python 3.12/v0.12.1 et le caractère bloquant du build Docker.
 
-## kicad-tools (dossier officiel complet — mis à jour main HEAD 2026-06-14)
+## kicad-tools (fork privé complet — sous-module)
 
-- **Source :** https://github.com/rjwalters/kicad-tools (dépôt officiel complet, avec
-  src/, docs/, examples/, boards/, MCP, build C++).
-- **Snapshot vendoré actuel :** branche `main`, commit `fda275d` (2026-06-13,
-  « fix(router): 45-align length-tuning meander emitter »). Version pyproject
-  affichée `0.13.0` (le tag publié v0.13.0 est d'avril — `main` est très en avance,
-  surtout côté routeur, mais non re-taggé). Update du 2026-06-14 : ~718 fichiers
-  routeur récupérés depuis le snapshot de début juin ; 4 patches Cirqix réappliqués
-  (cf. ci-dessous). Validé localement : 20/20 tests + smoke route 100% (compat API).
+- **Fork privé :** https://github.com/bmechergui/kicad-tools (`cirqix`)
+- **Upstream :** https://github.com/rjwalters/kicad-tools
+- **SHA épinglé :** `c2482b8e582fcd8f76c9be414e4dfacd3d50847b`
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
 - **Import Python :** ajouter `kicad-tools/src` au sys.path → `import kicad_tools`.
-- **Install Docker :** `pip3 install -e "/tmp/kicad-tools[placement,drc,geometry,native]"`
+- **Install Docker :** déplacement vers `/opt/kicad-tools`, puis
+  `pip3 install -e "/opt/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native --force` (backend C++ A* — 10-100× plus rapide ; non‑fatal).
 - **Backend C++ en local Windows (validé 2026-07-04)** — `kct build-native` échoue
   tel quel : son check compilateur ne connaît que `clang++`/`g++` (jamais `cl.exe`),
@@ -131,10 +138,25 @@ Elles sont **ignorées par git** mais leurs versions sont trackées ici.
 ## Mise à jour
 
 ```bash
-# circuit_synth
-cd services/kicad/circuit_synth && git pull && pip install -e .
+# circuit_synth — ne mettre à jour le gitlink qu'après revue et tests du fork
+git -C services/kicad/circuit_synth fetch origin cirqix
+git -C services/kicad/circuit_synth checkout <sha-revu>
+git add services/kicad/circuit_synth
 
-# kicad-tools — après un nouveau snapshot upstream, ré-appliquer les 8 patches LIB :
+# kicad-tools — procédure complète : docs/kicad-tools-fork-strategy.md §7.
+# Dans le fork privé, rebaser `cirqix`, résoudre les patches, tester, revoir et pousser :
+git -C services/kicad/kicad-tools fetch upstream
+git -C services/kicad/kicad-tools checkout cirqix
+git -C services/kicad/kicad-tools rebase upstream/main
+# exécuter la suite de tests du fork et `kct build-native --check`, puis double revue
+git -C services/kicad/kicad-tools push origin cirqix --force-with-lease
+# Dans Cirqix, seulement après le push validé, épingler le nouveau SHA :
+git -C services/kicad/kicad-tools fetch origin cirqix
+git -C services/kicad/kicad-tools checkout <sha-revu-et-pousse>
+git add services/kicad/kicad-tools
+#
+# Inventaire des 8 patches DÉJÀ suivis dans le fork — ne pas les ré-appliquer
+# manuellement dans le checkout du dépôt parent :
 #   1. fsync Windows           (cli/route_cmd.py _write_routed_pcb)
 #   2. reasoning name-only     (reasoning/state.py helper _resolve_net_node + 4 sites)
 #   3. layer_count 4/6c        (reasoning/interpreter.py promotion depuis PCBState.layers)
@@ -178,7 +200,8 @@ cd services/kicad/circuit_synth && git pull && pip install -e .
 # Phase 3 (Géomètre) = CMA-ES micro-raffinement via run_optimize_placement(seed_method="current")
 # chaîné après l'Architecte (hybrid+cluster), depuis 2026-06-18 — avec filet de sécurité
 # (revert si conflits ERROR non résorbés par l'Inspecteur). Voir tools/placement.py::_refine_with_cmaes.
+# Validation locale à effectuer dans le fork avant le push :
 cd services/kicad/kicad-tools && pip install -e ".[placement,drc,geometry,native]" && kct build-native
 ```
 
-Puis mettre à jour ce fichier avec la nouvelle version.
+Consigner ici le SHA validé après la mise à jour du gitlink.

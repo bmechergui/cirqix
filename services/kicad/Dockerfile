@@ -1,10 +1,10 @@
 # ============================================================
 # Cirqix KiCad Service — Docker headless
-# Base : KiCad 8.0 + Python 3.11 + FastAPI + Freerouting
+# Base : KiCad 8.0 + Python 3.12 + FastAPI + Freerouting
 # Port : 8766 (matches KICAD_SERVICE_URL in .env.local)
 # ============================================================
 
-FROM ubuntu:22.04 AS base
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
     && rm -rf /var/lib/apt/lists/* \
-    && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu jammy main" \
+    && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu noble main" \
         > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
     && mkdir -p /root/.gnupg && chmod 700 /root/.gnupg \
     && for i in 1 2 3; do \
@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
                kicad-footprints \
                python3-pip \
                python3-dev \
+               python3-venv \
                xvfb \
                openjdk-21-jre-headless \
                zip \
@@ -48,6 +49,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        done \
     && rm -rf /var/lib/apt/lists/*
 
+# Circuit-Synth v0.12.1 requires Python >=3.12. A venv avoids Ubuntu 24.04's
+# externally-managed system Python while retaining pcbnew from system packages.
+RUN python3 -c "import sys; assert sys.version_info >= (3, 12), sys.version"
+RUN python3 -m venv --system-site-packages /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
 ENV KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
 ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
 ENV PYTHONUNBUFFERED=1
@@ -56,7 +63,7 @@ ENV DISPLAY=:99
 # /app/circuit_synth/src — real circuit_synth package (src layout)
 # NOTE: do NOT add /usr/lib/python3/dist-packages here — it would put numpy 1.21.5 before
 # pip-installed numpy 2.x, breaking kicad-tools type annotations. pcbnew is found via default sys.path.
-ENV PYTHONPATH=/app/circuit_synth/src:${PYTHONPATH}
+ENV PYTHONPATH=/app/circuit_synth/src
 
 WORKDIR /app
 COPY requirements.txt .
@@ -78,16 +85,17 @@ COPY . .
 #  - kicad-tools/ : GIT SUBMODULE (branche cirqix, repo privé bmechergui/kicad-tools).
 #    Présent si `git submodule update --init` a tourné (local) ou si le CI fait
 #    `actions/checkout` avec `submodules: true` + SUBMODULE_DEPLOY_KEY.
-#  - circuit_synth/ : dossier VENDORÉ GITIGNORÉ (cf. DEPENDENCIES.md) — existe en
-#    local mais PAS dans un checkout git nu.
+#  - circuit_synth/ : GIT SUBMODULE public (branche cirqix, fork v0.12.1).
+#    Le gitlink du dépôt parent épingle le SHA exact utilisé par le build.
 # Le build doit échouer ICI avec un message clair plutôt que sur un `mv` cryptique plus bas.
-RUN test -d /app/kicad-tools/src/kicad_tools || (echo "ERREUR: services/kicad/kicad-tools/ absent du contexte Docker. C'est un git submodule : lancer 'git submodule update --init --recursive' (local) ou utiliser actions/checkout avec submodules:true + secret SUBMODULE_DEPLOY_KEY (CI). Voir docs/kicad-tools-fork-strategy.md." && exit 1)
-RUN test -d /app/circuit_synth || (echo "ERREUR: services/kicad/circuit_synth/ absent du contexte Docker (dossier vendore gitignore, cf. DEPENDENCIES.md)." && exit 1)
+RUN test -d /app/kicad-tools/src/kicad_tools || (echo "ERREUR: services/kicad/kicad-tools/ absent du contexte Docker. C'est un git submodule : lancer 'git submodule update --init' (local) ou utiliser actions/checkout avec submodules:true + secret SUBMODULE_DEPLOY_KEY (CI). Voir docs/kicad-tools-fork-strategy.md." && exit 1)
+RUN test -d /app/circuit_synth/src/circuit_synth || (echo "ERREUR: services/kicad/circuit_synth/ absent du contexte Docker. C'est un git submodule public : lancer 'git submodule update --init'. Voir DEPENDENCIES.md." && exit 1)
 
-# Install circuit_synth from local source (services/kicad/circuit_synth/)
+# Install circuit_synth from the pinned public submodule.
 RUN pip3 install --no-cache-dir ./circuit_synth
+RUN python3 -c "import circuit_synth, pcbnew; assert circuit_synth.__version__ == '0.12.1'"
 
-# Install kicad-tools (official repo, vendored at services/kicad/kicad-tools/) EDITABLE.
+# Install kicad-tools from its pinned private submodule in editable mode.
 # Moved to /opt/kicad-tools (out of /app to avoid namespace-package shadowing, AND a
 # stable path used as the docker-compose bind-mount target → code éditable live en dev).
 # extras: placement=CMA-ES/optim, drc=rtree, geometry=shapely, native=C++ build deps.

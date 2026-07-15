@@ -739,7 +739,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 5. Upload Supabase Storage → `pcb_state.kicad_sch_url` / `kicad_pcb_url` → KiCanvas
 6. Fallback S-expression inline TS si service indisponible
 
-**✅ circuit_synth installé dans Docker** — `pip install ./circuit_synth` (src layout, PYTHONPATH=/app/circuit_synth/src)
+**✅ source circuit_synth épinglée pour Docker** — fork public v0.12.1 en sous-module
+épinglé (`302e22d`), Ubuntu 24.04/Python 3.12, `pip install ./circuit_synth`, smoke
+test d'import/version et build CI bloquant (`test_docker_build_context.py`).
 
 **Skill :** `cirqix-circuit-synth`, `cirqix-kicad-service`
 
@@ -825,7 +827,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 1. `circuit-synth-engine.ts` → `schematic-engine.ts` — évite confusion avec pip package `circuit_synth`
 2. `CircuitSynthRequest/Response` → `SchematicRequest/Response` dans le router Python
 3. `schematic_gen.py` → `kicad_gen.py` — le fichier gère `.kicad_sch` + `.kicad_pcb`, pas uniquement le schéma
-4. `circuit_synth` pip installé dans Docker : `pip install ./circuit_synth` (src/ layout, PYTHONPATH fix)
+4. `circuit_synth` installé depuis le sous-module public épinglé : Ubuntu 24.04/Python
+   3.12, `pip install ./circuit_synth`, smoke test v0.12.1 et build Docker CI bloquant
 5. `orchestrator.ts` : strip blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) des `tool_result` envoyés à Sonnet → économie ~70% tokens input (≈ $0.86 → ~$0.25/run schema)
 
 ---
