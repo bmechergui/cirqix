@@ -76,6 +76,17 @@ _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 # pads référencent le net par NUMÉRO, seul le label change.
 _VCC_RENAME: dict[str, str] = {"+5V": "P5V0", "+3.3V": "P3V3"}
 
+# Escalade de tier fabricant — benchmark 2026-07-14 (board STM32 placé,
+# baseline negotiated 91%, juge kicad-cli pcb drc) : le net restant échouait
+# sur l'échappement du pad LQFP 0.5mm (« via-in-pad non supporté par le profil
+# jlcpcb », issue upstream #2880). --auto-mfr-tier escalade vers jlcpcb-tier1
+# (via-in-pad autorisé) UNIQUEMENT si le routage échoue au tier standard →
+# 100% routé en 202s (vs 91%). Variantes rejetées au même benchmark :
+# seed 7 = 91% · --starting-layers 4 = 91% · tier+4L = 82% · monte-carlo = 64%.
+# Impact fabricant : tier1 = vias remplis (coût +), déclenché seulement quand
+# nécessaire — les boards simples restent au tier standard.
+_MFR_TIER_LADDER: str = "jlcpcb,jlcpcb-tier1"
+
 
 def parse_routed_pct(stdout: str) -> int:
     """Parse routing completion % from kct route/reason output.
@@ -118,6 +129,12 @@ def extract_failure_analysis(stdout: str) -> str:
     Le routeur émet déjà un diagnostic structuré par net bloqué
     (« SWO: Path blocked by component — Suggestion: Move D1 north … ») :
     on le transmet tel quel au LLM plutôt que de le re-parser fragilement.
+
+    Format kct : « Header\\n====…\\ncontenu » — l'en-tête est immédiatement
+    suivi d'une ligne séparatrice ====. Il faut SAUTER ce séparateur collé
+    avant de couper à la prochaine ligne ====, sinon la section revient vide
+    (bug corrigé 2026-07-12 : le reasoner ⑥b ne recevait jamais les
+    « Routing Suggestions » du routeur et déplaçait les composants à l'aveugle).
     """
     sections: list[str] = []
     for header in ("Unrouted nets:", "Partially connected nets",
@@ -125,9 +142,12 @@ def extract_failure_analysis(stdout: str) -> str:
         idx = stdout.rfind(header)
         if idx == -1:
             continue
-        # Coupe au prochain double saut de ligne suivi d'un séparateur ====
-        chunk = stdout[idx:idx + 1500]
-        sections.append(chunk.split("\n====", 1)[0].strip())
+        body = stdout[idx + len(header):idx + len(header) + 1500]
+        sep = re.match(r"\s*\n=+\n", body)
+        if sep:
+            body = body[sep.end():]
+        body = body.split("\n====", 1)[0]
+        sections.append((header + "\n" + body).strip())
     return "\n\n".join(sections)
 
 
@@ -187,34 +207,98 @@ def _gnd_zone_layers(text: str) -> set[str]:
     return layers
 
 
+# Retrait des zones GND vs Edge.Cuts. La règle DRC KiCad par défaut
+# (copper-to-edge) est 0.5mm : des zones collées au bord = violations
+# copper_edge_clearance garanties (124 mesurées le 2026-07-12 sur le board
+# STM32 de référence, kicad-cli pcb drc juge). ``kct zones add`` (CLI)
+# n'expose pas ce retrait → on passe par l'API native ZoneGenerator
+# (edge_clearance = inset natif du contour, shapely buffer(-c)).
+_ZONE_EDGE_CLEARANCE_MM: float = 0.5
+
+
 def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
     """Garantit un plan de masse GND sur F.Cu ET B.Cu : ajoute la zone GND sur
-    la/les face(s) manquante(s) via ``kct zones add`` (ZoneGenerator pur Python,
-    sans kicad-cli). Idempotent — si les deux faces ont déjà GND, no-op."""
+    la/les face(s) manquante(s) via l'API native ``ZoneGenerator`` (pur Python,
+    sans kicad-cli), avec retrait ``_ZONE_EDGE_CLEARANCE_MM`` du bord de carte.
+    Idempotent — si les deux faces ont déjà GND, no-op."""
     text = pcb_bytes.decode("utf-8", errors="replace")
     missing = [layer for layer in ("F.Cu", "B.Cu") if layer not in _gnd_zone_layers(text)]
     if not missing:
         return pcb_bytes
+    try:
+        from kicad_tools.zones import ZoneGenerator
+    except ImportError:
+        if _KCT_SRC.is_dir():
+            sys.path.insert(0, str(_KCT_SRC))
+            from kicad_tools.zones import ZoneGenerator
+        else:
+            raise
     with tempfile.TemporaryDirectory() as tmp:
         board = Path(tmp) / "board.kicad_pcb"
         board.write_bytes(pcb_bytes)
+        # Best-effort PAR FACE (comme l'ancien chemin CLI) : un échec sur une
+        # face ne doit pas perdre la zone déjà posée sur l'autre.
         for layer in missing:
             out = Path(tmp) / f"gnd_{layer.replace('.', '_')}.kicad_pcb"
-            cmd = [
-                sys.executable, "-m", "kicad_tools.cli", "zones", "add",
-                str(board), "--net", "GND", "--layer", layer,
-                "--priority", "0", "-o", str(out),
-            ]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", env=_kct_env(), check=False, timeout=60,
-            )
-            if out.exists():
+            try:
+                gen = ZoneGenerator.from_pcb(board, edge_clearance=_ZONE_EDGE_CLEARANCE_MM)
+                gen.add_zone(net="GND", layer=layer, priority=0)
+                gen.save(out)
                 board = out
-            else:
-                logger.warning("zones add GND %s échoué: %s", layer,
-                               (result.stderr or result.stdout)[-160:])
+            except Exception:
+                # ERROR + traceback : la garantie « plan GND double face »
+                # (docstring + route_kct) n'est PAS respectée sur cette face —
+                # impact fabricabilité, doit être visible en prod.
+                logger.exception(
+                    "zones GND %s échoué — garantie plan GND double face non respectée",
+                    layer)
         return board.read_bytes()
+
+
+_ZONE_BLOCK_RE = re.compile(r"\n\s*\(zone[\s\n]")
+
+
+def _strip_zone_blocks(text: str) -> str:
+    """Retire tous les blocs top-level ``(zone …)`` d'un .kicad_pcb.
+
+    kct route auto-coule le net GND en zones COLLÉES à l'Edge.Cuts (122
+    copper_edge_clearance mesurées 2026-07-14 au DRC officiel) : on retire ses
+    zones après routage et ``_ensure_gnd_both_planes`` repose les plans GND
+    avec la marge bord. Pistes/vias intacts — seule la provenance des zones
+    change. Scan à parenthèses équilibrées, insensible aux parenthèses dans
+    les chaînes quotées (même technique que reasoning._strip_routing).
+    """
+    out: list[str] = []
+    i = 0
+    while True:
+        m = _ZONE_BLOCK_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i:m.start()])
+        j = text.index("(", m.start())
+        depth, in_str = 0, False
+        while True:
+            if j >= len(text):
+                raise ValueError(
+                    "_strip_zone_blocks: parenthèses non équilibrées "
+                    f"(zone à l'offset {m.start()}) — .kicad_pcb malformé")
+            c = text[j]
+            if in_str:
+                if c == "\\":
+                    j += 1
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        i = j + 1
 
 
 def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.CompletedProcess[str]:
@@ -229,6 +313,8 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", _CLEARANCE_MM,
+        "--auto-mfr-tier",
+        "--mfr-tier-ladder", _MFR_TIER_LADDER,
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
@@ -283,11 +369,13 @@ def route_kct(
 
         routed = dst.read_bytes()
         if vcc_as_traces:
-            # Restaure les noms VCC, puis garantit le plan GND sur les 2 faces.
+            # Restaure les noms VCC, remplace les zones kct (collées au bord)
+            # par nos plans GND en retrait, sur les 2 faces.
             restored = _rename_nets(
                 routed.decode("utf-8", errors="replace"),
                 {new: old for old, new in _VCC_RENAME.items()},
             )
+            restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))
 
         routed_text = routed.decode("utf-8", errors="replace")

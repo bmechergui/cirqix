@@ -2,3 +2,7 @@
 	path = services/kicad/kicad-tools
 	url = https://github.com/bmechergui/kicad-tools.git
 	branch = cirqix
+[submodule "services/kicad/circuit_synth"]
+	path = services/kicad/circuit_synth
+	url = https://github.com/bmechergui/circuit-synth.git
+	branch = cirqix

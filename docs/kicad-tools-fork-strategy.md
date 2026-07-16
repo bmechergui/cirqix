@@ -185,7 +185,7 @@ Upstream est **+197 commits / 300 fichiers** ahead (`5e6eef8`, 2026-07-10).
 cd services/kicad/kicad-tools
 git fetch upstream
 git checkout cirqix
-git rebase upstream/main          # rejoue nos 6 patches par-dessus le nouvel upstream
+git rebase upstream/main          # rejoue les patches Cirqix encore nécessaires
 # → résoudre les conflits éventuels patch par patch
 git push origin cirqix --force-with-lease   # branche patchée = rebase = force OK
 
@@ -206,7 +206,10 @@ les PR — l'humain ne fait que merger (Portes 2 + 4) après vérification CI.
 
 - **Effort mise en place :** ~1 journée (Claude fait le code ; l'utilisateur crée le repo
   privé vide en 1 clic).
-- **Tradeoff :** le build Docker doit faire `git submodule update --init --recursive`
+- **Tradeoff :** le CI initialise manuellement les deux sous-modules directs Cirqix
+  (`git submodule update --init -- services/kicad/kicad-tools services/kicad/circuit_synth`).
+  Ne pas utiliser l'option `submodules` d'`actions/checkout` : son nettoyage récursif
+  visite les gitlinks optionnels historiques de Circuit-Synth, inutiles à l'image.
   (1 ligne de plus dans le Dockerfile). Le CI clone un repo privé → **deploy key** SSH
   (Claude configure tout).
 - **Bénéfice long terme (Phase D) :** ouvrir de vrais PR upstream pour les patches généraux

@@ -7,9 +7,7 @@ kicad_libs/
 *.log
 freerouting/
 
-# Dépendances vendorées — ignorées dans git, versions trackées dans DEPENDENCIES.md
-# Source: github.com/circuit-synth/circuit-synth (pip install -e .)
-circuit_synth/
+# circuit_synth et kicad-tools sont des git submodules suivis par cirqix.
 
 # kicad-tools = git submodule (branche cirqix) -> github.com/bmechergui/kicad-tools (privé)
 # Voir docs/kicad-tools-fork-strategy.md. NE PAS l'ignorer ici (suivi comme submodule

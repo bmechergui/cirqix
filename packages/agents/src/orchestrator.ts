@@ -42,6 +42,40 @@ export function shouldRescueRouting(result: Record<string, unknown>): boolean {
   return typeof pct === 'number' && pct < 100;
 }
 
+/**
+ * Nombre TOTAL de tentatives placement→routage (1 initiale + retries).
+ * Mesuré 2026-07-14 (examples/stm32-validation, juge kicad-cli pcb drc) : le
+ * plancher 91% sur placement frais est un artefact du tirage GA — le même code
+ * route 100% sur un tirage favorable (benchmark --auto-mfr-tier). Re-tirer le
+ * placement est donc le levier déterministe quand routage + reasoner plafonnent.
+ */
+export const MAX_PLACEMENT_ATTEMPTS = 3;
+
+/**
+ * Décision à seuil : faut-il re-tirer un placement (nouveau tirage GA) puis
+ * re-router ? Règle métier déterministe (pct < 100 et budget restant) → code.
+ */
+export function shouldRetryPlacement(
+  result: Record<string, unknown>,
+  attempt: number,
+  maxAttempts: number = MAX_PLACEMENT_ATTEMPTS,
+): boolean {
+  const pct = result['routed_percent'];
+  return typeof pct === 'number' && pct < 100 && attempt < maxAttempts;
+}
+
+/**
+ * Anti-régression inter-tentatives : conserve le meilleur routage rencontré.
+ */
+export function keepBestRouting(
+  best: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+): Record<string, unknown> {
+  const b = typeof best['routed_percent'] === 'number' ? (best['routed_percent'] as number) : -1;
+  const c = typeof candidate['routed_percent'] === 'number' ? (candidate['routed_percent'] as number) : -1;
+  return c > b ? candidate : best;
+}
+
 function extractReasoningSteps(result: Record<string, unknown>): string[] {
   return Array.isArray(result['reasoning_steps'])
     ? (result['reasoning_steps'] as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -212,6 +246,30 @@ export async function* runOrchestrator(
         const steps = extractReasoningSteps(reason);
         if (steps.length > 0) yield { type: 'reasoning', steps };
         result = mergeRescueIntoRouting(result, reason);
+      }
+
+      // Retry placement DÉTERMINISTE : si après routage + reasoner le board
+      // reste <100%, l'orchestrateur re-tire LUI-MÊME un placement (GA
+      // stochastique — cf. MAX_PLACEMENT_ATTEMPTS) puis re-route, en gardant
+      // le MEILLEUR résultat. Même philosophie que le trigger reasoner
+      // ci-dessus : règle à seuil → code, pas jugement de Sonnet.
+      if (tool.name === 'call_agent_routing') {
+        let attempt = 1;
+        while (shouldRetryPlacement(result, attempt)) {
+          attempt++;
+          yield { type: 'step', step: 'PLACEMENT' };
+          const placement = await executeToolStub('call_agent_placement', {}, options.projectId);
+          yield { type: 'pcb_state', projectId: options.projectId, state: placement };
+          yield { type: 'step', step: 'ROUTING' };
+          let retry = await executeToolStub('call_agent_routing', {}, options.projectId);
+          if (shouldRescueRouting(retry)) {
+            const reason = await executeToolStub('call_agent_reason', {}, options.projectId);
+            const steps = extractReasoningSteps(reason);
+            if (steps.length > 0) yield { type: 'reasoning', steps };
+            retry = mergeRescueIntoRouting(retry, reason);
+          }
+          result = keepBestRouting(result, retry);
+        }
       }
 
       yield {
