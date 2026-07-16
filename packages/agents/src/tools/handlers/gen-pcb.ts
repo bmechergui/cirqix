@@ -1,5 +1,6 @@
 import { pcbStateCache, log } from '../shared';
 import { runCircuitSynthEngine } from '../../engines/engine-router';
+import { buildKicadServiceHeaders } from '../../engines/kicad-service-auth';
 
 export async function handleGenPcb(projectId: string): Promise<Record<string, unknown>> {
   // Ingénieur Layout — génère .kicad_pcb depuis le cache (schema + footprints enrichis)
@@ -24,7 +25,7 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
         : undefined;
       const res = await fetch(`${serviceUrl}/pcb/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildKicadServiceHeaders(),
         body: JSON.stringify({
           components: schema.components,
           nets: schema.nets,

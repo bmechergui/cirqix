@@ -118,6 +118,7 @@ SUPABASE_SERVICE_KEY=
 REDIS_URL=
 LEMON_SQUEEZY_API_KEY=
 KICAD_SERVICE_URL=http://localhost:8766
+KICAD_SERVICE_TOKEN=
 
 # Agent mode: 'simulator' (no API calls) or 'orchestrator' (real Claude + Circuit-Synth)
 CIRQIX_AGENT_MODE=orchestrator
@@ -136,9 +137,19 @@ pnpm dev
 
 ```bash
 cd services/kicad
-docker compose up -d
+docker compose up -d --build
 # → http://localhost:8766/health
 ```
+
+`KICAD_SERVICE_TOKEN` est obligatoire pour toutes les routes sauf `/health` et
+doit avoir la même valeur dans l'application web et le conteneur. Générez une
+valeur aléatoire longue, par exemple avec
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+Le service est strictement serveur-à-serveur : il n'expose pas CORS et
+n'exécute plus de Python généré. En local, Docker publie le port uniquement sur
+`127.0.0.1`. Pour un déploiement inter-hôtes, utilisez une URL HTTPS derrière
+un proxy ou un réseau privé ; ne transmettez jamais le jeton depuis un navigateur.
 
 ---
 

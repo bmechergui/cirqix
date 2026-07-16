@@ -10,6 +10,7 @@ const agentEnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY manquante'),
   REDIS_URL: z.string().url('REDIS_URL invalide'),
   KICAD_SERVICE_URL: z.string().url('KICAD_SERVICE_URL invalide'),
+  KICAD_SERVICE_TOKEN: z.string().min(32, 'KICAD_SERVICE_TOKEN trop court'),
 });
 
 export function validateEnv() {

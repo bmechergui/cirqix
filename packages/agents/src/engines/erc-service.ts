@@ -9,6 +9,7 @@
 
 import pino from 'pino';
 import type { ERCViolation } from '@cirqix/types';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({
   name: 'cirqix.agents.erc-service',
@@ -85,7 +86,7 @@ export async function runRealErc(input: RealErcInput): Promise<RealErcResult> {
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body,
       signal: AbortSignal.timeout(ERC_TIMEOUT_MS),
     });

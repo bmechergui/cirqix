@@ -4,28 +4,27 @@ services:
       context: .
       dockerfile: Dockerfile
       # circuit_synth/ + kicad-tools/ sont copiés dans l'image (fallback prod sans mount).
-      # En dev les bind-mounts ci-dessous rendent le code éditable LIVE depuis l'hôte.
+      # En dev, seuls les fichiers FastAPI ci-dessous restent visibles en direct.
     image: cirqix-kicad:latest
     container_name: cirqix-kicad
     ports:
-      - '8766:8766'
+      - '127.0.0.1:8766:8766'
     volumes:
       - kicad-jobs:/tmp/kicad-jobs
-      # kicad-tools OFFICIEL en éditable : code Python live + le backend natif C++
-      # (re)buildé par docker-entrypoint.sh au démarrage (le mount masque le .so de
-      # l'image). Le .so compilé persiste ici côté hôte (gitignored) → builds suivants
-      # instantanés. ⚠️ chemin = /opt/kicad-tools (cf. Dockerfile pip install -e).
-      - ./kicad-tools:/opt/kicad-tools
       # Code du service FastAPI éditable live (reasoner, routers…). Restart du conteneur
       # pour prise en compte (uvicorn --workers, pas de --reload pour rester thread-safe).
-      - ./tools:/app/tools
-      - ./routers:/app/routers
-      - ./main.py:/app/main.py
+      - ./tools:/app/tools:ro
+      - ./routers:/app/routers:ro
+      - ./main.py:/app/main.py:ro
+      - ./security.py:/app/security.py:ro
     environment:
       - PYTHONUNBUFFERED=1
       - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
       - KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
       - FREEROUTING_API_URL=http://127.0.0.1:37864
+      # Obligatoire pour toutes les routes sauf /health. `:?` empêche un
+      # démarrage local accidentel avec une API privilégiée non protégée.
+      - KICAD_SERVICE_TOKEN=${KICAD_SERVICE_TOKEN:?KICAD_SERVICE_TOKEN must be set}
       # Reasoner IA (call_agent_reason → PCBReasoningAgent + Claude Haiku). Sans cette
       # clé, le service retombe sur `kct reason --auto-route` (heuristique sans LLM).
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -35,7 +34,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      # 1er démarrage en dev : build du backend natif (cmake+g++) avant de servir.
+      # Xvfb, Freerouting and KiCad can take time to initialize.
       start_period: 180s
 
 volumes:

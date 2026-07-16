@@ -68,8 +68,7 @@ cirqix/
 
 Pipeline 8 agents (ordre strict) :
 ① `call_agent_schema` → Ingénieur Schéma — génère `.kicad_sch` + `unresolved_footprints`
-   Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
-   Path B : Haiku → JSON → POST /schematic/generate :
+   Haiku → JSON typé → POST /schematic/generate :
      ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr inline
 ② `call_agent_erc` → Ingénieur ERC — valide connexions électriques, auto-fix
    ① kicad-tools Schematic.validate() — pur Python · ② kicad-cli sch erc · ③ TS fallback
@@ -316,6 +315,7 @@ SUPABASE_SERVICE_KEY=
 REDIS_URL=
 LEMON_SQUEEZY_API_KEY=
 KICAD_SERVICE_URL=
+KICAD_SERVICE_TOKEN=
 RESEND_API_KEY=
 SNAPMAGIC_API_KEY=
 ```

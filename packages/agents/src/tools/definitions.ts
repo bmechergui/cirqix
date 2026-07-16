@@ -8,8 +8,8 @@ export const PCB_TOOLS: Tool[] = [
     name: 'call_agent_schema',
     description:
       'Ingénieur Schéma — Expert circuit_synth et KiCad. ' +
-      'Génère un script Python circuit_synth adapté à la description, l\'exécute via Docker, ' +
-      'et produit un .kicad_sch natif + netlist + JSON composants. ' +
+      'Génère un schéma JSON typé adapté à la description, puis le rend via circuit_synth/KiCad ' +
+      'pour produire un .kicad_sch natif + netlist + JSON composants. ' +
       'Décide seul les composants optimaux (MCU, capteurs, passifs, connecteurs) — NE PAS passer schema_json. ' +
       'Utilise la stratégie connecteur générique pour tous les modules complexes (ESP32, Arduino, capteurs). ' +
       'Retourne : kicad_sch_content, composants avec footprints, unresolved_footprints à résoudre.',

@@ -120,6 +120,11 @@ jobs:
       - name: Build KiCad Docker image
         run: docker build -t cirqix-kicad:test ./services/kicad
 
+      - name: Test KiCad service security boundary
+        run: >-
+          docker run --rm --entrypoint python3 cirqix-kicad:test
+          -m unittest tests.test_service_security -v
+
       - name: Test Circuit-Synth regression patches
         run: >-
           docker run --rm --entrypoint python3 cirqix-kicad:test

@@ -7,6 +7,7 @@
  * actions IA (pour l'affichage UI/SSE).
  */
 import pino from 'pino';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({
   name: 'cirqix.agents.reasoning-service',
@@ -59,7 +60,7 @@ export async function runReasoner(input: ReasonerInput): Promise<ReasonerResult>
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body,
       signal: AbortSignal.timeout(REASON_TIMEOUT_MS),
     });

@@ -1,5 +1,6 @@
 import pino from 'pino';
 import type { SimulationData, SimulationVector } from '@cirqix/types';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({ name: 'cirqix.agents.simulation-service', level: process.env['LOG_LEVEL'] ?? 'info' });
 
@@ -34,7 +35,7 @@ export async function runSimulation(opts: SimulationOptions): Promise<Simulation
 
   const res = await fetch(`${kicadServiceUrl}/simulate/auto`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildKicadServiceHeaders(),
     body: JSON.stringify({ kicad_sch_b64: b64, sim_type: simType }),
     signal: AbortSignal.timeout(90_000),
   });

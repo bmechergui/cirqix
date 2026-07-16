@@ -36,12 +36,11 @@ Utilisateur (texte naturel)
         │  tool_use (Anthropic SDK)
         ▼
 ① call_agent_schema    → SCHEMA_DONE
-     Path A : Haiku → Python circuit_synth → Docker /schematic/execute → .kicad_sch
-     Path B : Haiku → JSON → POST /schematic/generate :
+     Haiku → JSON typé → POST /schematic/generate :
        ① circuit_synth pip            → .kicad_sch
        ② kicad-tools Schematic class  → .kicad_sch
        ③ TypeScript S-expr inline     → .kicad_sch (si service down)
-     Erreur  : status:'error' si les deux chemins échouent (jamais de faux schéma hardcodé)
+     Erreur  : status:'error' si la génération échoue (jamais de faux schéma hardcodé)
 
 ② call_agent_erc       → ERC_CLEAN
      ① kicad-tools Schematic.validate()  — pur Python, toujours dispo

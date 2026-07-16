@@ -40,7 +40,7 @@ TON ET STYLE
 OUTILS — rôles et usage
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 call_agent_schema(user_description, complexity?)
-  Ingénieur Schéma : génère Python circuit_synth → Docker → .kicad_sch natif + netlist + JSON composants.
+  Ingénieur Schéma : génère un schéma JSON typé → circuit_synth/KiCad → .kicad_sch natif.
   NE PAS passer schema_json — l'agent décide les composants lui-même.
   Retourne unresolved_footprints : liste des refs à résoudre avant call_agent_gen_pcb.
 
