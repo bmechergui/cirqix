@@ -1,14 +1,14 @@
 # Handoff — `2026-07-16-kicad-service-security`
 
-- **Status:** `REVIEW`
+- **Status:** `DONE`
 - **Owner:** `Codex`
 - **Reviewer:** `code-reviewer sub-agent + security-reviewer sub-agent`
 - **Receiver:** `none`
 - **Branch:** `fix/kicad-service-security`
 - **Worktree:** `C:\tmp\cirqix-kicad-service-security`
 - **Base commit:** `cdad4879610f670b3400762baa826e759815bc63`
-- **Content commit:** `uncommitted`
-- **Updated UTC:** `2026-07-16T21:54:18Z`
+- **Content commit:** `66471d3601b4787dea770cb2bde5bb8e6e0b79ba`
+- **Updated UTC:** `2026-07-16T21:59:13Z`
 
 ## Objectif
 
@@ -114,18 +114,18 @@ les validations TypeScript/Python ainsi que les deux revues passent.
 
 ## Travail restant
 
-- Commit, push, ouverture de PR, puis mise à jour finale de ce handoff.
+- Aucun dans le périmètre de ce handoff.
 
 ## Prochaine action atomique
 
-Créer le commit de contenu et ouvrir la PR vers `main`.
+Vérifier que le job CI Docker KiCad de la PR #50 réussit.
 
 ## Git
 
 - **État initial du worktree:** propre sur `cdad487`
-- **État final du worktree:** modifications uniquement dans les chemins possédés
-- **Commit:** `none`
-- **PR:** `none`
+- **État final du worktree:** propre après commit
+- **Commit:** `66471d3601b4787dea770cb2bde5bb8e6e0b79ba`
+- **PR:** `https://github.com/bmechergui/cirqix/pull/50`
 
 ## Journal de transfert
 
@@ -133,3 +133,4 @@ Créer le commit de contenu et ouvrir la PR vers `main`.
 |---|---|---|---|---|
 | `2026-07-16T20:51:52Z` | `Codex` | reviewers | `proposé` | Relectures code et sécurité en lecture seule. |
 | `2026-07-16T21:54:18Z` | reviewers | `Codex` | `accepté` | High RCE, CORS, traversal, immutabilité et fail-fast corrigés; verdict final sans constat code. |
+| `2026-07-16T21:59:13Z` | `Codex` | `none` | `DONE` | Commit poussé et PR #50 ouverte; prochaine action atomique : CI Docker. |
