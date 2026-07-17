@@ -8,7 +8,7 @@
 - **Worktree:** `C:\tmp\cirqix-kicad-service-security`
 - **Base commit:** `cdad4879610f670b3400762baa826e759815bc63`
 - **Content commit:** `66471d3601b4787dea770cb2bde5bb8e6e0b79ba`
-- **Updated UTC:** `2026-07-16T21:59:13Z`
+- **Updated UTC:** `2026-07-17T08:25:32Z`
 
 ## Objectif
 
@@ -102,11 +102,12 @@ les validations TypeScript/Python ainsi que les deux revues passent.
 | `C:/Program Files/Git/bin/sh.exe -n services/kicad/docker-entrypoint.sh` | code 0 | `2026-07-16` |
 | `git diff --check` | code 0 | `2026-07-16` |
 | Review code + sécurité en lecture seule | approuvé, aucun constat restant côté code | `2026-07-16` |
+| `gh pr checks 50` | 5/5 jobs pass, dont `KiCad Docker Build` en 3m19s | `2026-07-17` |
 
 ## Risques et blocages
 
-- Docker est indisponible localement; le build, l'UID effectif et le démarrage
-  avec mounts read-only doivent être confirmés par le job CI bloquant.
+- Docker est indisponible localement; le job CI bloquant a confirmé le build,
+  les tests de sécurité dans l'image et le démarrage du conteneur.
 - Risque résiduel moyen accepté pour cette PR : tailles JSON/base64, concurrence
   et débit ne sont pas encore bornés; à traiter par un hardening séparé.
 - Un futur client KiCad pourrait oublier le helper d'auth; ajouter ultérieurement
@@ -118,7 +119,7 @@ les validations TypeScript/Python ainsi que les deux revues passent.
 
 ## Prochaine action atomique
 
-Vérifier que le job CI Docker KiCad de la PR #50 réussit.
+Fusionner la PR #50 après approbation humaine.
 
 ## Git
 
@@ -134,3 +135,4 @@ Vérifier que le job CI Docker KiCad de la PR #50 réussit.
 | `2026-07-16T20:51:52Z` | `Codex` | reviewers | `proposé` | Relectures code et sécurité en lecture seule. |
 | `2026-07-16T21:54:18Z` | reviewers | `Codex` | `accepté` | High RCE, CORS, traversal, immutabilité et fail-fast corrigés; verdict final sans constat code. |
 | `2026-07-16T21:59:13Z` | `Codex` | `none` | `DONE` | Commit poussé et PR #50 ouverte; prochaine action atomique : CI Docker. |
+| `2026-07-17T08:25:32Z` | CI | `Codex` | `accepté` | 5/5 jobs verts, dont build et démarrage Docker KiCad. |
