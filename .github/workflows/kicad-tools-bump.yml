@@ -46,8 +46,12 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          # persist-credentials reste a true (defaut) : ce job pousse une
+          # branche de bump vers CE repo (cirqix) plus loin dans le job --
+          # persist-credentials:false le casserait ("could not read Username",
+          # echec verifie en prod le 2026-07-18, run 29642597340). Seul le
+          # sous-module kicad-tools est scope hors init automatique ci-dessous.
           submodules: false
-          persist-credentials: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout pinned kicad-tools submodule

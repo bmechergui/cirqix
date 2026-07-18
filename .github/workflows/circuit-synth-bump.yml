@@ -34,8 +34,11 @@ jobs:
           # sous-module : il initialiserait aussi le kicad-tools PRIVE sans
           # credentials -> echec. Meme pattern que ci.yml : checkout non
           # recursif, puis init manuel du seul submodule qui nous concerne.
+          # persist-credentials reste a true (defaut) : ce job pousse une
+          # branche de bump vers CE repo (cirqix) plus loin dans le job --
+          # persist-credentials:false le casserait (meme bug trouve sur
+          # kicad-tools-bump.yml, run 29642597340, "could not read Username").
           submodules: false
-          persist-credentials: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout pinned circuit_synth submodule
