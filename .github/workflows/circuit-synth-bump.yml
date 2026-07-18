@@ -2,14 +2,15 @@ name: Bump circuit_synth submodule
 
 # Porte 3 du pipeline de validation (meme modele que kicad-tools-bump.yml, voir
 # services/kicad/DEPENDENCIES.md et docs/kicad-tools-fork-strategy.md).
-# Tourne chaque mardi (apres le sync-upstream du lundi sur le fork public
+# Tourne chaque mardi (apres le sync-upstream du lundi sur le fork
 # bmechergui/circuit-synth). Compare le HEAD de la branche cirqix du fork vs le
 # commit pinne dans ce repo. Si le fork a avance -> ouvre une PR bumpant le
 # submodule. Le CI cirqix (build Docker + tests) tourne sur la PR ; merge
 # humain = Porte 4.
 #
-# NB: contrairement a kicad-tools (prive, deploy key SSH requise), le fork
-# circuit_synth est PUBLIC -> le GITHUB_TOKEN par defaut suffit pour le fetch.
+# NB (2026-07-18): le fork circuit_synth est passe PRIVE -> deploy key SSH
+# dediee CIRCUIT_SYNTH_DEPLOY_KEY requise (meme pattern que kicad-tools ;
+# le GITHUB_TOKEN de ce repo n'a aucun droit sur un autre repo prive).
 
 on:
   schedule:
@@ -28,6 +29,16 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
+      # Deploy key SSH pour cloner le submodule prive bmechergui/circuit-synth
+      # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH).
+      - name: Configure SSH deploy key (private submodule bmechergui/circuit-synth)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.CIRCUIT_SYNTH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global url."git@github.com:bmechergui/circuit-synth.git".insteadOf "https://github.com/bmechergui/circuit-synth.git"
+
       - uses: actions/checkout@v4
         with:
           # actions/checkout ne peut pas scoper submodules:true a un seul
@@ -84,18 +95,23 @@ jobs:
           git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore: bump circuit_synth submodule -> ${SHORT}" \
-            --body "Mise a jour automatique du submodule circuit_synth vers la branche \`cirqix\` du fork public (@ ${SHORT}).
+            --body "Mise a jour automatique du submodule circuit_synth vers la branche \`cirqix\` du fork (@ ${SHORT}).
 
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
           Voir services/kicad/DEPENDENCIES.md." || echo "PR existe peut-etre deja"
 
+      - name: Remove private submodule credentials
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
+
   # Detection du "silence ambigu" : si le rebase hebdo (Porte 1) echoue sur le
   # fork, sa branche cirqix reste en retard sur upstream/main et AUCUN PR de
   # bump ne s'ouvre — meme silence qu'un upstream inactif, et l'issue de conflit
   # vit sur le fork (invisible depuis cirqix). Ce job compare les deux refs par
-  # git pur (fork public -> aucun credential requis) et ouvre une issue DANS CE
-  # REPO si le fork est en retard. Meme modele que kicad-tools-bump.yml.
+  # git pur (fork prive depuis le 2026-07-18 -> deploy key SSH, upstream public
+  # en https anonyme) et ouvre une issue DANS CE REPO si le fork est en retard.
+  # Meme modele que kicad-tools-bump.yml.
   sync-health:
     # Moindre privilege : ce job ne fait que lister/creer une issue — il
     # n'herite pas des contents/pull-requests:write du niveau workflow.
@@ -103,6 +119,13 @@ jobs:
       issues: write
     runs-on: ubuntu-latest
     steps:
+      - name: Configure SSH deploy key (private fork bmechergui/circuit-synth)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.CIRCUIT_SYNTH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+
       - name: Comparer fork cirqix vs upstream main
         id: lag
         run: |
@@ -112,7 +135,7 @@ jobs:
           # --filter=tree:0 : commits seuls — merge-base n'a besoin ni des
           # arbres ni des blobs (et le clone shallow du job bump fausserait
           # l'ancestry, d'ou ce depot bare dedie).
-          git fetch --quiet --filter=tree:0 https://github.com/bmechergui/circuit-synth.git cirqix
+          git fetch --quiet --filter=tree:0 git@github.com:bmechergui/circuit-synth.git cirqix
           FORK=$(git rev-parse FETCH_HEAD)
           git fetch --quiet --filter=tree:0 https://github.com/circuit-synth/circuit-synth.git main
           UP=$(git rev-parse FETCH_HEAD)
@@ -155,3 +178,7 @@ jobs:
           - **Commits upstream depuis le dernier sync** — bruit benin, se resorbe au prochain sync (lundi). Fermer cette issue si c'est le cas.
 
           Tant que le fork est en retard, la Porte 3 n'ouvre aucun PR de bump : ce silence est indistinguable d'un upstream inactif — d'ou cette issue."
+
+      - name: Remove private fork credentials
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
