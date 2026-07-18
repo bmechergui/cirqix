@@ -7,7 +7,11 @@ le bind-mount de développement.
 
 ## circuit_synth
 
-- **Fork public Cirqix :** https://github.com/bmechergui/circuit-synth (`cirqix`)
+- **Fork privé Cirqix :** https://github.com/bmechergui/circuit-synth (`cirqix`)
+  — passé privé le 2026-07-18 ; accès CI via deploy key SSH lecture seule
+  (secret `CIRCUIT_SYNTH_DEPLOY_KEY`, même pattern que kicad-tools ; dans
+  `ci.yml`, alias SSH `github.com-circuit-synth` car 2 deploy keys ne peuvent
+  pas partager l'hôte github.com)
 - **Base upstream :** v0.12.1, commit `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`
 - **SHA Cirqix épinglé :** `302e22db48fde0f9d128ff5d755f36096bb8c8ee`
 - **PR des patches :** https://github.com/bmechergui/circuit-synth/pull/1
@@ -27,7 +31,7 @@ le bind-mount de développement.
 - **Tests fork :** `tests/unit/test_cirqix_empty_pin_name.py` et
   `tests/unit/test_cirqix_pin_index_fallback.py` (3 scénarios).
 - **Garde CI Cirqix :** `services/kicad/tests/test_docker_build_context.py` vérifie le
-  gitlink public, Python 3.12/v0.12.1 et le caractère bloquant du build Docker.
+  gitlink, Python 3.12/v0.12.1 et le caractère bloquant du build Docker.
 - **Sync upstream automatisé (2026-07-16, corrigé 2026-07-18)** — 3 étapes,
   1 auto + 1 humaine conditionnelle, même modèle que kicad-tools
   (`docs/kicad-tools-fork-strategy.md`) :

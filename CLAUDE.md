@@ -655,9 +655,11 @@ dans `DEPENDENCIES.md`.
 > Cirqix épingle le SHA validé. Référence : `docs/kicad-tools-fork-strategy.md`.
 
 ### circuit_synth v0.12.1
-- **Fork public :** github.com/bmechergui/circuit-synth, branche `cirqix`, sous-module
+- **Fork privé :** github.com/bmechergui/circuit-synth, branche `cirqix`, sous-module
   épinglé sur `302e22db48fde0f9d128ff5d755f36096bb8c8ee` (base upstream v0.12.1
-  `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`, PR fork #1)
+  `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`, PR fork #1). Privé depuis le
+  2026-07-18 — accès CI via deploy key SSH `CIRCUIT_SYNTH_DEPLOY_KEY`
+  (voir `services/kicad/DEPENDENCIES.md`)
 - **Runtime :** Ubuntu 24.04 Noble + Python 3.12 (`/opt/venv`)
 - **Install :** `pip install ./circuit_synth` (Docker) | `pip install -e services/kicad/circuit_synth` (local)
 - **Patches Cirqix :**

@@ -84,16 +84,28 @@ jobs:
     name: KiCad Docker Build
     runs-on: ubuntu-latest
     steps:
-      # Deploy key SSH pour cloner le submodule privé bmechergui/kicad-tools
-      # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH, le checkout
-      # principal cirqix reste inchangé).
-      - name: Configure SSH deploy key (private submodule bmechergui/kicad-tools)
+      # Deploy keys SSH pour cloner les submodules privés bmechergui/kicad-tools
+      # et bmechergui/circuit-synth (privé depuis le 2026-07-18) — rewrite
+      # chirurgical : SEULES les URLs des submodules passent en SSH, le checkout
+      # principal cirqix reste inchangé. Deux deploy keys ne peuvent pas partager
+      # l'hôte github.com (GitHub fige l'identité sur la 1re clé acceptée, et une
+      # deploy key = 1 seul repo) → alias SSH dédié pour circuit-synth.
+      - name: Configure SSH deploy keys (private submodules kicad-tools + circuit-synth)
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.SUBMODULE_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.CIRCUIT_SYNTH_DEPLOY_KEY }}" > ~/.ssh/id_circuit_synth
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/id_circuit_synth
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          {
+            echo "Host github.com-circuit-synth"
+            echo "  HostName github.com"
+            echo "  User git"
+            echo "  IdentityFile ~/.ssh/id_circuit_synth"
+            echo "  IdentitiesOnly yes"
+          } >> ~/.ssh/config
           git config --global url."git@github.com:bmechergui/kicad-tools.git".insteadOf "https://github.com/bmechergui/kicad-tools.git"
+          git config --global url."git@github.com-circuit-synth:bmechergui/circuit-synth.git".insteadOf "https://github.com/bmechergui/circuit-synth.git"
 
       - uses: actions/checkout@v4
         with:
@@ -111,8 +123,9 @@ jobs:
       - name: Remove private submodule credentials
         if: always()
         run: |
-          rm -f ~/.ssh/id_ed25519
+          rm -f ~/.ssh/id_ed25519 ~/.ssh/id_circuit_synth
           git config --global --unset-all url."git@github.com:bmechergui/kicad-tools.git".insteadOf || true
+          git config --global --unset-all url."git@github.com-circuit-synth:bmechergui/circuit-synth.git".insteadOf || true
 
       - name: Verify pinned KiCad build sources
         run: python3 -m unittest services.kicad.tests.test_docker_build_context -v
