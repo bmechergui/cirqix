@@ -2,14 +2,15 @@ name: Bump circuit_synth submodule
 
 # Porte 3 du pipeline de validation (meme modele que kicad-tools-bump.yml, voir
 # services/kicad/DEPENDENCIES.md et docs/kicad-tools-fork-strategy.md).
-# Tourne chaque mardi (apres le sync-upstream du lundi sur le fork public
+# Tourne chaque mardi (apres le sync-upstream du lundi sur le fork
 # bmechergui/circuit-synth). Compare le HEAD de la branche cirqix du fork vs le
 # commit pinne dans ce repo. Si le fork a avance -> ouvre une PR bumpant le
 # submodule. Le CI cirqix (build Docker + tests) tourne sur la PR ; merge
 # humain = Porte 4.
 #
-# NB: contrairement a kicad-tools (prive, deploy key SSH requise), le fork
-# circuit_synth est PUBLIC -> le GITHUB_TOKEN par defaut suffit pour le fetch.
+# NB (2026-07-18): le fork circuit_synth est passe PRIVE -> deploy key SSH
+# dediee CIRCUIT_SYNTH_DEPLOY_KEY requise (meme pattern que kicad-tools ;
+# le GITHUB_TOKEN de ce repo n'a aucun droit sur un autre repo prive).
 
 on:
   schedule:
@@ -28,6 +29,16 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
+      # Deploy key SSH pour cloner le submodule prive bmechergui/circuit-synth
+      # (rewrite chirurgical : SEULE l'URL du submodule passe en SSH).
+      - name: Configure SSH deploy key (private submodule bmechergui/circuit-synth)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.CIRCUIT_SYNTH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global url."git@github.com:bmechergui/circuit-synth.git".insteadOf "https://github.com/bmechergui/circuit-synth.git"
+
       - uses: actions/checkout@v4
         with:
           # actions/checkout ne peut pas scoper submodules:true a un seul
@@ -84,8 +95,12 @@ jobs:
           git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore: bump circuit_synth submodule -> ${SHORT}" \
-            --body "Mise a jour automatique du submodule circuit_synth vers la branche \`cirqix\` du fork public (@ ${SHORT}).
+            --body "Mise a jour automatique du submodule circuit_synth vers la branche \`cirqix\` du fork (@ ${SHORT}).
 
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
           Voir services/kicad/DEPENDENCIES.md." || echo "PR existe peut-etre deja"
+
+      - name: Remove private submodule credentials
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
