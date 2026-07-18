@@ -12,6 +12,14 @@ le bind-mount de développement.
   (secret `CIRCUIT_SYNTH_DEPLOY_KEY`, même pattern que kicad-tools ; dans
   `ci.yml`, alias SSH `github.com-circuit-synth` car 2 deploy keys ne peuvent
   pas partager l'hôte github.com)
+- **⚠️ Tag de pin obligatoire (2026-07-18) :** le rebase hebdo (Porte 1)
+  force-push `cirqix` → les SHA épinglés deviennent orphelins et GitHub refuse
+  de les servir (`upload-pack: not our ref`, CI cassée — vécu sur 302e22d).
+  Chaque SHA épinglé DOIT être couvert par un tag sur le fork
+  (`cirqix-pin-<short>`, ex. `cirqix-pin-302e22d` ; idem kicad-tools
+  `cirqix-pin-c2482b8`). À chaque bump de gitlink : pousser le tag du nouveau
+  SHA sur le fork AVANT de merger le bump ; les vieux tags peuvent être
+  supprimés une fois le gitlink avancé.
 - **Base upstream :** v0.12.1, commit `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`
 - **SHA Cirqix épinglé :** `302e22db48fde0f9d128ff5d755f36096bb8c8ee`
 - **PR des patches :** https://github.com/bmechergui/circuit-synth/pull/1
