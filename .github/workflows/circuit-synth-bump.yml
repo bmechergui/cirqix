@@ -48,8 +48,11 @@ jobs:
         run: |
           set -euo pipefail
           cd services/kicad/circuit_synth
+          # FETCH_HEAD, pas origin/cirqix : le submodule clone en --depth=1
+          # ne cree pas toujours la ref de suivi origin/cirqix (echec verifie
+          # en prod le 2026-07-18, run 29639440081).
           git fetch --quiet origin cirqix
-          NEW=$(git rev-parse origin/cirqix)
+          NEW=$(git rev-parse FETCH_HEAD)
           OLD=$(git rev-parse HEAD)
           { echo "new=$NEW"; echo "old=$OLD"; } >> "$GITHUB_OUTPUT"
           echo "pinne=$OLD  fork_cirqix=$NEW"
