@@ -47,6 +47,18 @@ le bind-mount de développement.
   - 🚪 **Porte 4 (toi)** — tu valides le CI cirqix (build Docker + tests) puis
     merges.
   - **Rien ne migre sans tes 2 validations manuelles** (Portes 2 et 4).
+  - **Piège GitHub Actions découvert le 2026-07-18 (validé empiriquement sur
+    kicad-tools, corrigé par précaution ici)** : `gh issue create` (mutation
+    GraphQL `createIssue`) échoue avec `Resource not accessible by integration`
+    sur un dépôt privé/perso même quand le token de run rapporte `Issues: write`
+    (vérifié dans les logs `GITHUB_TOKEN Permissions` du runner). `gh pr create`
+    est REST, non concerné. Fallback appliqué : `gh api --method POST
+    repos/${GITHUB_REPOSITORY}/issues` à la place de `gh issue create`. Autre
+    prérequis : `default_workflow_permissions` doit être `write` au niveau du
+    dépôt (`gh api repos/<owner>/<repo>/actions/permissions/workflow`) — sinon
+    le bloc `permissions:` du YAML ne suffit pas à débloquer push/PR/issue.
+    Basculé sur les 3 dépôts (`cirqix`, `circuit-synth`, `kicad-tools`) le
+    2026-07-18.
 
 ## kicad-tools (fork privé complet — sous-module)
 
@@ -82,6 +94,18 @@ le bind-mount de développement.
     (GA global, cluster-aware, fitness routabilité). API natives, zéro patch.
   - Routage   : `kct route --mfr jlcpcb --auto-layers --auto-fix --seed`
   - Voir `docs/guides/placement-optimization.md` + `docs/guides/routing.md`.
+- **Sync upstream (Porte 1)** — `.github/workflows/sync-upstream.yml` sur le fork,
+  chaque lundi 08:17 UTC (déjà en place, commit `efe376f` — contrairement à ce
+  qu'une session précédente avait cru en inspectant par erreur le SHA épinglé
+  localement au lieu du tip réel du fork). **Run réel du 2026-07-13** : conflit
+  détecté sur le patch #6/#8 (angles pads absolus) contre `router/io.py`,
+  `schema/pcb.py`, `validate/rules/clearance.py` — cohérent avec la zone du
+  patch, upstream a dû bouger la même logique de rotation. L'ouverture d'issue
+  de secours a d'abord échoué (`gh issue create` GraphQL, cf. note circuit_synth
+  ci-dessus) puis a été corrigée et validée le 2026-07-18 → voir
+  [issue #1](https://github.com/bmechergui/kicad-tools/issues/1) sur le fork,
+  **à résoudre manuellement** (le patch #6/#8 est peut-être devenu partiellement
+  redondant si l'upstream #3903/#3746 a évolué depuis).
 - **Patches Cirqix :**
   - `src/kicad_tools/cli/route_cmd.py` `_write_routed_pcb` — **fix fsync Windows (2026-06-02)**
     → `os.fsync` était appelé sur un handle ouvert en `"rb"` (read-only) → `OSError
