@@ -28,15 +28,27 @@ le bind-mount de développement.
   `tests/unit/test_cirqix_pin_index_fallback.py` (3 scénarios).
 - **Garde CI Cirqix :** `services/kicad/tests/test_docker_build_context.py` vérifie le
   gitlink public, Python 3.12/v0.12.1 et le caractère bloquant du build Docker.
-- **Sync upstream automatisé (2026-07-16)** — 4 portes, 2 auto + 2 humaines, même
-  modèle que kicad-tools (`docs/kicad-tools-fork-strategy.md`) :
+- **Sync upstream automatisé (2026-07-16, corrigé 2026-07-18)** — 3 étapes,
+  1 auto + 1 humaine conditionnelle, même modèle que kicad-tools
+  (`docs/kicad-tools-fork-strategy.md`) :
   - 🚪 **Porte 1 (auto)** — `.github/workflows/sync-upstream.yml` sur le fork
-    `bmechergui/circuit-synth`, chaque lundi 07:17 UTC. Compare le point de greffe
-    de `cirqix` à `upstream/main` (`circuit-synth/circuit-synth`) ; rebase propre
-    → PR `rebase: cirqix -> upstream <sha>` contre `cirqix` ; conflit → issue.
+    `bmechergui/circuit-synth`, chaque lundi 07:17 UTC. Compare le point de
+    greffe de `cirqix` à `upstream/main` (`circuit-synth/circuit-synth`).
+    **Rebase propre → force-push direct sur `cirqix`** (pas de PR — un rebase
+    ne peut jamais se fusionner via le bouton GitHub standard dans la branche
+    dont il est issu : merge commit, squash et rebase-merge bloqués
+    identiquement par le calcul de mergeabilité, `mergeable: CONFLICTING`
+    quelle que soit la stratégie ; vérifié empiriquement le 2026-07-18 sur
+    kicad-tools PR #2). Un rebase propre est déterministe et préserve chaque
+    patch à l'identique (sinon git le signale comme conflit) → pas besoin de
+    revue humaine sur ce chemin. Conflit → ouvre une issue (REST, voir NB
+    ci-dessous), à résoudre manuellement (exemple réel : kicad-tools issue #1).
     Vit sur `main` (requis pour le cron GitHub Actions) mais n'y ajoute que ce
     seul fichier — `main` reste un mirroir strict d'upstream.
-  - 🚪 **Porte 2 (toi)** — tu relis/merges la PR de rebase sur le fork.
+  - 🚪 **Porte 2 (toi, seulement si conflit)** — résous le patch en conflit à
+    la main (rebase local, `--skip` si le patch est devenu redondant ou merge
+    manuel sinon), valide par les tests, puis force-push direct sur `cirqix`.
+    Aucune action si Porte 1 a poussé un rebase propre.
   - 🚪 **Porte 3 (auto)** — `.github/workflows/circuit-synth-bump.yml` dans ce
     repo, chaque mardi 08:43 UTC. Compare `origin/cirqix` du fork au SHA pinné ;
     si avancé → PR `chore: bump circuit_synth submodule -> <sha>` contre `main`.
@@ -45,18 +57,20 @@ le bind-mount de développement.
     pattern que `ci.yml`) — `submodules: true` sur `actions/checkout` toucherait
     aussi le `kicad-tools` privé sans credentials et ferait échouer le job.
   - 🚪 **Porte 4 (toi)** — tu valides le CI cirqix (build Docker + tests) puis
-    merges.
-  - **Rien ne migre sans tes 2 validations manuelles** (Portes 2 et 4).
+    merges. **Seule validation humaine garantie systématique** (le rebase amont
+    peut passer sans review si propre, mais rien n'atteint `main` de cirqix
+    sans repasser par cette porte).
   - **Piège GitHub Actions découvert le 2026-07-18 (validé empiriquement sur
     kicad-tools, corrigé par précaution ici)** : `gh issue create` (mutation
     GraphQL `createIssue`) échoue avec `Resource not accessible by integration`
     sur un dépôt privé/perso même quand le token de run rapporte `Issues: write`
     (vérifié dans les logs `GITHUB_TOKEN Permissions` du runner). `gh pr create`
-    est REST, non concerné. Fallback appliqué : `gh api --method POST
+    est REST, non concerné — mais devenu sans objet ici puisque Porte 1 ne crée
+    plus de PR de rebase. Fallback appliqué : `gh api --method POST
     repos/${GITHUB_REPOSITORY}/issues` à la place de `gh issue create`. Autre
     prérequis : `default_workflow_permissions` doit être `write` au niveau du
     dépôt (`gh api repos/<owner>/<repo>/actions/permissions/workflow`) — sinon
-    le bloc `permissions:` du YAML ne suffit pas à débloquer push/PR/issue.
+    le bloc `permissions:` du YAML ne suffit pas à débloquer push/issue.
     Basculé sur les 3 dépôts (`cirqix`, `circuit-synth`, `kicad-tools`) le
     2026-07-18.
 
@@ -97,15 +111,20 @@ le bind-mount de développement.
 - **Sync upstream (Porte 1)** — `.github/workflows/sync-upstream.yml` sur le fork,
   chaque lundi 08:17 UTC (déjà en place, commit `efe376f` — contrairement à ce
   qu'une session précédente avait cru en inspectant par erreur le SHA épinglé
-  localement au lieu du tip réel du fork). **Run réel du 2026-07-13** : conflit
-  détecté sur le patch #6/#8 (angles pads absolus) contre `router/io.py`,
-  `schema/pcb.py`, `validate/rules/clearance.py` — cohérent avec la zone du
-  patch, upstream a dû bouger la même logique de rotation. L'ouverture d'issue
-  de secours a d'abord échoué (`gh issue create` GraphQL, cf. note circuit_synth
-  ci-dessus) puis a été corrigée et validée le 2026-07-18 → voir
-  [issue #1](https://github.com/bmechergui/kicad-tools/issues/1) sur le fork,
-  **à résoudre manuellement** (le patch #6/#8 est peut-être devenu partiellement
-  redondant si l'upstream #3903/#3746 a évolué depuis).
+  localement au lieu du tip réel du fork). Rebase propre → **force-push direct
+  sur `cirqix`** (pas de PR — un rebase ne peut jamais se fusionner via le
+  bouton GitHub standard dans la branche dont il est issu, voir note
+  circuit_synth ci-dessus). Conflit → issue (REST, cf. note circuit_synth).
+  **Run réel du 2026-07-13, résolu le 2026-07-18** : conflit détecté sur le
+  patch #6/#8 (angles pads absolus) contre `router/io.py`, `schema/pcb.py`,
+  `validate/rules/clearance.py`. Diagnostic : patch devenu **redondant**
+  (son propre message de commit l'annonçait — upstream #3903 + #3746 fusionnées
+  entretemps, fix upstream plus complet et testé contre l'oracle `pcbnew` réel).
+  Résolu par `git rebase --skip` (abandon intentionnel), validé par 50/51 tests
+  de rotation (`test_rotation_convention.py`, `test_rotation_convention_audit.py`,
+  `test_footprint_rotation.py`), force-poussé sur `cirqix` (`ef86defa`).
+  [Issue #1](https://github.com/bmechergui/kicad-tools/issues/1) et
+  [PR #2](https://github.com/bmechergui/kicad-tools/pull/2) fermées/mergées.
 - **Patches Cirqix :**
   - `src/kicad_tools/cli/route_cmd.py` `_write_routed_pcb` — **fix fsync Windows (2026-06-02)**
     → `os.fsync` était appelé sur un handle ouvert en `"rb"` (read-only) → `OSError
