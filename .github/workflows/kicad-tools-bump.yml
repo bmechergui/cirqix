@@ -107,3 +107,81 @@ jobs:
       - name: Remove private submodule credentials
         if: always()
         run: rm -f ~/.ssh/id_ed25519
+
+  # Détection du « silence ambigu » : si le rebase hebdo (Porte 1) échoue sur le
+  # fork, sa branche cirqix reste en retard sur upstream/main et AUCUN PR de bump
+  # ne s'ouvre — même silence qu'un upstream inactif, et l'issue de conflit vit
+  # sur le fork (invisible depuis cirqix). Ce job compare les deux refs par git
+  # pur (le fork est PRIVÉ : son API Actions est inaccessible au GITHUB_TOKEN de
+  # ce repo — la deploy key SSH suffit en revanche pour un fetch) et ouvre une
+  # issue DANS CE REPO si le fork est en retard.
+  sync-health:
+    # Moindre privilège : ce job ne fait que lister/créer une issue — il
+    # n'hérite pas des contents/pull-requests:write du niveau workflow.
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH deploy key (private fork bmechergui/kicad-tools)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SUBMODULE_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Comparer fork cirqix vs upstream main
+        id: lag
+        run: |
+          set -euo pipefail
+          git init --quiet --bare synccheck
+          cd synccheck
+          # --filter=tree:0 : commits seuls — merge-base n'a besoin ni des
+          # arbres ni des blobs (et le clone shallow du job bump fausserait
+          # l'ancestry, d'où ce dépôt bare dédié).
+          git fetch --quiet --filter=tree:0 git@github.com:bmechergui/kicad-tools.git cirqix
+          FORK=$(git rev-parse FETCH_HEAD)
+          git fetch --quiet --filter=tree:0 https://github.com/rjwalters/kicad-tools.git main
+          UP=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$UP" "$FORK"; then
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+            echo "Fork cirqix à jour sur upstream/main (${UP})."
+          else
+            { echo "behind=true"; echo "up=$UP"; echo "fork=$FORK"; } >> "$GITHUB_OUTPUT"
+            echo "Fork cirqix EN RETARD sur upstream/main (up=${UP} fork=${FORK})."
+          fi
+
+      # NB: gh issue create (GraphQL createIssue) échoue avec "Resource not
+      # accessible by integration" même avec issues:write (vérifié sur
+      # kicad-tools, cf. sync-upstream.yml du fork) — REST direct.
+      - name: Fork en retard -> issue dans cirqix (si absente)
+        if: steps.lag.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: '[sync-upstream] kicad-tools : fork cirqix en retard sur upstream/main'
+          # Dédup par marqueur caché dans le body, pas par titre : un titre
+          # édité à la main casserait la détection de doublon.
+          MARKER: '<!-- sync-health:kicad-tools -->'
+          UP: ${{ steps.lag.outputs.up }}
+          FORK: ${{ steps.lag.outputs.fork }}
+        run: |
+          set -euo pipefail
+          EXISTS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
+            --jq '.[] | select((.body // "") | contains(env.MARKER)) | .number' | wc -l)
+          if [ "$EXISTS" != "0" ]; then
+            echo "Issue déjà ouverte — rien à faire."
+            exit 0
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" \
+            -f title="$TITLE" \
+            -f body="${MARKER}
+          La branche \`cirqix\` du fork \`bmechergui/kicad-tools\` (@ ${FORK:0:7}) ne contient pas le HEAD d'\`upstream/main\` (\`rjwalters/kicad-tools\` @ ${UP:0:7}).
+
+          Causes possibles :
+          - **Conflit de rebase (Porte 2)** — le sync-upstream de lundi a échoué : voir les issues du fork, résoudre à la main (\`--skip\` si patch redondant), tester, force-push \`cirqix\`. Procédure : services/kicad/DEPENDENCIES.md.
+          - **Commits upstream depuis le dernier sync** — bruit bénin, se résorbe au prochain sync (lundi). Fermer cette issue si c'est le cas.
+
+          Tant que le fork est en retard, la Porte 3 n'ouvre aucun PR de bump : ce silence est indistinguable d'un upstream inactif — d'où cette issue."
+
+      - name: Remove private fork credentials
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

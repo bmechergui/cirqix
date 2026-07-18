@@ -89,3 +89,69 @@ jobs:
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
           Voir services/kicad/DEPENDENCIES.md." || echo "PR existe peut-etre deja"
+
+  # Detection du "silence ambigu" : si le rebase hebdo (Porte 1) echoue sur le
+  # fork, sa branche cirqix reste en retard sur upstream/main et AUCUN PR de
+  # bump ne s'ouvre — meme silence qu'un upstream inactif, et l'issue de conflit
+  # vit sur le fork (invisible depuis cirqix). Ce job compare les deux refs par
+  # git pur (fork public -> aucun credential requis) et ouvre une issue DANS CE
+  # REPO si le fork est en retard. Meme modele que kicad-tools-bump.yml.
+  sync-health:
+    # Moindre privilege : ce job ne fait que lister/creer une issue — il
+    # n'herite pas des contents/pull-requests:write du niveau workflow.
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comparer fork cirqix vs upstream main
+        id: lag
+        run: |
+          set -euo pipefail
+          git init --quiet --bare synccheck
+          cd synccheck
+          # --filter=tree:0 : commits seuls — merge-base n'a besoin ni des
+          # arbres ni des blobs (et le clone shallow du job bump fausserait
+          # l'ancestry, d'ou ce depot bare dedie).
+          git fetch --quiet --filter=tree:0 https://github.com/bmechergui/circuit-synth.git cirqix
+          FORK=$(git rev-parse FETCH_HEAD)
+          git fetch --quiet --filter=tree:0 https://github.com/circuit-synth/circuit-synth.git main
+          UP=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$UP" "$FORK"; then
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+            echo "Fork cirqix a jour sur upstream/main (${UP})."
+          else
+            { echo "behind=true"; echo "up=$UP"; echo "fork=$FORK"; } >> "$GITHUB_OUTPUT"
+            echo "Fork cirqix EN RETARD sur upstream/main (up=${UP} fork=${FORK})."
+          fi
+
+      # NB: gh issue create (GraphQL createIssue) echoue avec "Resource not
+      # accessible by integration" meme avec issues:write (verifie sur
+      # kicad-tools, cf. sync-upstream.yml du fork) — REST direct.
+      - name: Fork en retard -> issue dans cirqix (si absente)
+        if: steps.lag.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: '[sync-upstream] circuit_synth : fork cirqix en retard sur upstream/main'
+          # Dedup par marqueur cache dans le body, pas par titre : un titre
+          # edite a la main casserait la detection de doublon.
+          MARKER: '<!-- sync-health:circuit-synth -->'
+          UP: ${{ steps.lag.outputs.up }}
+          FORK: ${{ steps.lag.outputs.fork }}
+        run: |
+          set -euo pipefail
+          EXISTS=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
+            --jq '.[] | select((.body // "") | contains(env.MARKER)) | .number' | wc -l)
+          if [ "$EXISTS" != "0" ]; then
+            echo "Issue deja ouverte — rien a faire."
+            exit 0
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" \
+            -f title="$TITLE" \
+            -f body="${MARKER}
+          La branche \`cirqix\` du fork \`bmechergui/circuit-synth\` (@ ${FORK:0:7}) ne contient pas le HEAD d'\`upstream/main\` (\`circuit-synth/circuit-synth\` @ ${UP:0:7}).
+
+          Causes possibles :
+          - **Conflit de rebase (Porte 2)** — le sync-upstream de lundi a echoue : voir les issues du fork, resoudre a la main (\`--skip\` si patch redondant), tester, force-push \`cirqix\`. Procedure : services/kicad/DEPENDENCIES.md.
+          - **Commits upstream depuis le dernier sync** — bruit benin, se resorbe au prochain sync (lundi). Fermer cette issue si c'est le cas.
+
+          Tant que le fork est en retard, la Porte 3 n'ouvre aucun PR de bump : ce silence est indistinguable d'un upstream inactif — d'ou cette issue."
