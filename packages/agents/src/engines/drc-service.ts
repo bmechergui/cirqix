@@ -8,6 +8,7 @@
 
 import pino from 'pino';
 import type { DRCViolation } from '@cirqix/types';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({
   name: 'cirqix.agents.drc-service',
@@ -82,7 +83,7 @@ export async function runRealDrc(input: RealDrcInput): Promise<RealDrcResult> {
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body,
       signal: AbortSignal.timeout(DRC_TIMEOUT_MS),
     });

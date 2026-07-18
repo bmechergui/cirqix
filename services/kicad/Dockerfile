@@ -96,29 +96,37 @@ RUN pip3 install --no-cache-dir ./circuit_synth
 RUN python3 -c "import circuit_synth, pcbnew; assert circuit_synth.__version__ == '0.12.1'"
 
 # Install kicad-tools from its pinned private submodule in editable mode.
-# Moved to /opt/kicad-tools (out of /app to avoid namespace-package shadowing, AND a
-# stable path used as the docker-compose bind-mount target → code éditable live en dev).
+# Moved to /opt/kicad-tools (out of /app to avoid namespace-package shadowing,
+# and kept immutable at runtime by the secured compose).
 # extras: placement=CMA-ES/optim, drc=rtree, geometry=shapely, native=C++ build deps.
 RUN mv /app/kicad-tools /opt/kicad-tools && \
     pip3 install --no-cache-dir -e "/opt/kicad-tools[placement,drc,geometry,native]"
 
-# Build the C++ router + placement extensions (10-100x faster A*) into the IMAGE so
-# production (no bind-mount) starts fast. In dev the bind-mount hides this .so → the
-# entrypoint rebuilds it. Non-fatal: pure-Python fallback at runtime if the build fails.
+# Build the C++ router + placement extensions (10-100x faster A*) into the image.
+# The secured compose keeps this immutable artifact; update the submodule with
+# `docker compose build` instead of masking /opt/kicad-tools at runtime.
 RUN cd /opt/kicad-tools && (kct build-native --force || \
     echo "WARNING: kct build-native failed — using pure-Python router")
 
-# Entrypoint: (re)build native backend if missing (bind-mount case) then start services.
+# Entrypoint: verify the native backend, then start services.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /tmp/kicad-jobs
 
+# Runtime hardening: pcbnew and Freerouting never run as root. Application code
+# stays root-owned and immutable; only the job workspace is writable.
+RUN groupadd --gid 10001 cirqix && \
+    useradd --uid 10001 --gid cirqix --create-home --shell /usr/sbin/nologin cirqix && \
+    chown -R cirqix:cirqix /tmp/kicad-jobs
+
 EXPOSE 8766
 
-# start-period long : en dev le 1er démarrage rebuild le backend natif (cmake+g++).
+# start-period long : Xvfb, Freerouting and KiCad can take time to initialize.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
   CMD curl -f http://localhost:8766/health || exit 1
+
+USER cirqix
 
 # Xvfb + Freerouting (JVM persistante) + uvicorn — orchestré par l'entrypoint
 # (qui garantit aussi le backend natif C++ avant de servir).

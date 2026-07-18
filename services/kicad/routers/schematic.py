@@ -1,6 +1,5 @@
 """
 Cirqix — Schematic HTTP endpoints
-POST /schematic/execute          → execute circuit_synth Python code → .kicad_sch
 POST /schematic/generate         → JSON schema → .kicad_sch
 POST /schematic/validate-symbols → validate KiCad symbol ids
 """
@@ -17,7 +16,6 @@ from tools.schematic import (
     SchemaComponent,
     SchemaNet,
     generate_schematic,
-    execute_cs_code,
     validate_symbols,
 )
 
@@ -36,26 +34,12 @@ class SchematicRequest(BaseModel):
     connections: list[SchemaNet] = Field(default_factory=list)
     board_width_mm: float = Field(default=50.0, ge=10.0, le=200.0)
     board_height_mm: float = Field(default=50.0, ge=10.0, le=200.0)
-    project_id: str = ""
+    project_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
 
 
 class SchematicResponse(BaseModel):
     success: bool
     kicad_sch_content: Optional[str] = None
-    error: Optional[str] = None
-
-
-class ExecuteRequest(BaseModel):
-    code: str
-    project_id: str = ""
-    board_width_mm: float = Field(default=50.0, ge=10.0, le=200.0)
-    board_height_mm: float = Field(default=50.0, ge=10.0, le=200.0)
-
-
-class ExecuteResponse(BaseModel):
-    success: bool
-    kicad_sch_content: Optional[str] = None
-    kicad_pcb_content: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -79,19 +63,6 @@ class ValidateSymbolsResponse(BaseModel):
 # ============================================================
 # Endpoints
 # ============================================================
-
-@router.post("/execute", response_model=ExecuteResponse)
-def execute_circuit_synth_code(req: ExecuteRequest) -> ExecuteResponse:
-    """Execute circuit_synth Python code → .kicad_sch + .kicad_pcb."""
-    if not req.code.strip():
-        return ExecuteResponse(success=False, error="Empty code")
-    try:
-        sch, pcb = execute_cs_code(req.code, req.project_id, req.board_width_mm, req.board_height_mm)
-        return ExecuteResponse(success=True, kicad_sch_content=sch, kicad_pcb_content=pcb)
-    except Exception as exc:
-        logger.error("execute failed: %s", exc)
-        return ExecuteResponse(success=False, error=str(exc))
-
 
 @router.post("/generate", response_model=SchematicResponse)
 def generate(req: SchematicRequest) -> SchematicResponse:

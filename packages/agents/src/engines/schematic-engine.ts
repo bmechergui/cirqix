@@ -9,6 +9,7 @@
  */
 
 import type { SchemaJson, SchemaComponent, SchemaNet } from '@cirqix/types';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 export type { SchemaJson };
 
@@ -834,7 +835,7 @@ export async function validateAndCorrectSchema(schema: SchemaJson): Promise<Sche
   try {
     const res = await fetch(`${serviceUrl}/schematic/validate-symbols`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body: JSON.stringify({ components: schema.components }),
       signal: AbortSignal.timeout(5_000),
     });
@@ -880,7 +881,7 @@ export async function runCircuitSynthEngine(
     try {
       const res = await fetch(`${serviceUrl}/schematic/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildKicadServiceHeaders(),
         body: JSON.stringify({
           components: schema.components,
           nets: schema.nets,

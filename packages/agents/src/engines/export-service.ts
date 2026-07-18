@@ -7,6 +7,7 @@
  */
 
 import pino from 'pino';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({
   name: 'cirqix.agents.export-service',
@@ -62,7 +63,7 @@ export async function runRealExport(input: RealExportInput): Promise<RealExportR
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body,
       signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
     });

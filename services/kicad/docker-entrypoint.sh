@@ -2,12 +2,9 @@
 # ============================================================
 # Cirqix KiCad Service — entrypoint
 #
-# kicad-tools est installé en ÉDITABLE depuis /opt/kicad-tools. En dev ce
-# chemin est un bind-mount de l'hôte (services/kicad/kicad-tools) → le code
-# est live. Mais le bind-mount masque le .so C++ compilé dans l'image (l'hôte
-# Windows n'a pas de .so Linux), donc on (re)build le backend natif ici si
-# `kct build-native --check` ne le voit pas disponible. En prod (sans mount),
-# le .so de l'image est présent → --check passe → on saute le build (start rapide).
+# kicad-tools est installé en ÉDITABLE depuis /opt/kicad-tools dans l'image.
+# Le compose sécurisé ne masque pas ce chemin : le backend C++ compilé reste
+# disponible et une mise à jour du sous-module impose un rebuild de l'image.
 # ============================================================
 set -e
 
@@ -15,23 +12,27 @@ KT_DIR="${KICAD_TOOLS_DIR:-/opt/kicad-tools}"
 
 echo "[entrypoint] kicad-tools dir: ${KT_DIR}"
 
-# Réinstalle en éditable seulement si l'import casse (ex: chemin de mount différent
-# du build, métadonnées absentes). Idempotent et silencieux si déjà lié.
+# L'image valide cet import au build. Le runtime est volontairement immuable :
+# une installation cassée doit échouer explicitement, pas tenter de modifier le venv.
 if ! python3 -c "import kicad_tools" >/dev/null 2>&1; then
-    echo "[entrypoint] kicad_tools non importable — réinstallation éditable..."
-    pip3 install --no-cache-dir -e "${KT_DIR}[placement,drc,geometry,native]" || \
-        echo "[entrypoint] WARNING: pip install -e a échoué"
+    echo "[entrypoint] ERROR: kicad_tools non importable dans l'image immuable"
+    exit 1
 fi
 
-# Backend C++ A* (10-100× plus rapide). Build si absent (cas bind-mount).
+# Backend C++ A* (10-100× plus rapide). Le build conditionnel reste un fallback
+# pour les images personnalisées; le compose standard utilise l'artefact existant.
 if kct build-native --check 2>&1 | grep -qi "available"; then
     echo "[entrypoint] backend natif C++ : disponible"
 else
-    echo "[entrypoint] backend natif C++ manquant — build (cmake+g++)..."
-    if (cd "${KT_DIR}" && kct build-native --force); then
-        echo "[entrypoint] backend natif C++ : build OK"
+    if [ -w "${KT_DIR}" ]; then
+        echo "[entrypoint] backend natif C++ manquant — build (cmake+g++)..."
+        if (cd "${KT_DIR}" && kct build-native --force); then
+            echo "[entrypoint] backend natif C++ : build OK"
+        else
+            echo "[entrypoint] WARNING: build natif échoué — fallback routeur Python pur"
+        fi
     else
-        echo "[entrypoint] WARNING: build natif échoué — fallback routeur Python pur"
+        echo "[entrypoint] backend natif absent et sources read-only — fallback routeur Python pur"
     fi
 fi
 

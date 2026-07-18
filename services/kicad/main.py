@@ -2,7 +2,7 @@
 Cirqix KiCad Service — FastAPI headless
 Endpoints actifs (tous via routers/) :
   /health
-  /schematic/execute · /schematic/generate · /schematic/validate-symbols
+  /schematic/generate · /schematic/validate-symbols
   /pcb/generate
   /place/auto · /erc · /route/auto · /drc/auto · /export/all · /simulate/auto
 """
@@ -82,9 +82,9 @@ if not _shutil.which("kicad-cli"):
             break
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
+from security import require_service_auth
 
 # Import pcbnew (disponible dans le container KiCad)
 try:
@@ -100,14 +100,12 @@ app = FastAPI(
     description="Microservice headless KiCad : placement, routage Freerouting, DRC, export Gerbers",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# This is a server-to-server API: no browser CORS surface is exposed. Only
+# /health is public; missing server configuration fails closed instead of
+# silently exposing pcbnew and subprocess-backed endpoints.
+app.middleware("http")(require_service_auth)
 
-# Schematic router — /schematic/execute · /schematic/generate · /schematic/validate-symbols
+# Schematic router — /schematic/generate · /schematic/validate-symbols
 from routers.schematic import router as schematic_router  # noqa: E402
 app.include_router(schematic_router)
 

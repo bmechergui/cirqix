@@ -10,6 +10,7 @@
  */
 
 import pino from 'pino';
+import { buildKicadServiceHeaders } from './kicad-service-auth';
 
 const log = pino({
   name: 'cirqix.agents.routing-service',
@@ -73,7 +74,7 @@ export async function runRealRouting(
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildKicadServiceHeaders(),
       body,
       signal: AbortSignal.timeout(ROUTING_TIMEOUT_MS),
     });

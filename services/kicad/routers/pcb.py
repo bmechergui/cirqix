@@ -29,7 +29,7 @@ class PcbRequest(BaseModel):
     connections: list[SchemaNet] = Field(default_factory=list)
     board_width_mm: float = Field(default=50.0, ge=10.0, le=200.0)
     board_height_mm: float = Field(default=50.0, ge=10.0, le=200.0)
-    project_id: str = ""
+    project_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
     kicad_sch_b64: Optional[str] = Field(default=None, description=".kicad_sch encodé base64 — utilisé par kicad-tools PCBFromSchematic")
 
 
