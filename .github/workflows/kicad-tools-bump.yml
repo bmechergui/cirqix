@@ -9,6 +9,13 @@ name: Bump kicad-tools submodule
 # NB: cette Action ne s'active (cron) que si elle est presente sur la branche par
 # defaut (main). Comme elle est ajoutee en meme temps que le submodule (branche
 # chore/kicad-tools-submodule), main aura le submodule ET l'Action au meme moment.
+#
+# NB2 (2026-07-18): depuis que circuit_synth est aussi un sous-module direct
+# (commit 9f2fa18), `submodules: true` sur actions/checkout ne doit plus être
+# utilisé : son nettoyage récursif visite les gitlinks historiques optionnels
+# de Circuit-Synth (voir docs/kicad-tools-fork-strategy.md §Tradeoff) et fait
+# échouer le job. Checkout non récursif + init manuel du seul submodule requis
+# ici — même pattern que ci.yml et circuit-synth-bump.yml.
 
 on:
   schedule:
@@ -18,6 +25,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: kicad-tools-bump
+  cancel-in-progress: false
 
 jobs:
   bump:
@@ -35,8 +46,14 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
+          persist-credentials: false
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout pinned kicad-tools submodule
+        run: |
+          git submodule sync -- services/kicad/kicad-tools
+          git submodule update --init --depth=1 -- services/kicad/kicad-tools
 
       - name: Compare fork cirqix HEAD vs submodule pinné
         id: cmp
@@ -70,7 +87,7 @@ jobs:
           git checkout -b "$BRANCH"
           git add services/kicad/kicad-tools
           git commit -m "chore: bump kicad-tools submodule -> ${SHORT} (Porte 3)"
-          git push origin "$BRANCH"
+          git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore: bump kicad-tools submodule -> ${SHORT}" \
             --body "Mise à jour automatique du submodule kicad-tools vers la branche \`cirqix\` du fork (@ ${SHORT}).
@@ -78,3 +95,7 @@ jobs:
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
           Voir docs/kicad-tools-fork-strategy.md." || echo "PR existe peut-être déjà"
+
+      - name: Remove private submodule credentials
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

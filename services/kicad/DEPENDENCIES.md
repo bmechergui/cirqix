@@ -28,6 +28,25 @@ le bind-mount de développement.
   `tests/unit/test_cirqix_pin_index_fallback.py` (3 scénarios).
 - **Garde CI Cirqix :** `services/kicad/tests/test_docker_build_context.py` vérifie le
   gitlink public, Python 3.12/v0.12.1 et le caractère bloquant du build Docker.
+- **Sync upstream automatisé (2026-07-16)** — 4 portes, 2 auto + 2 humaines, même
+  modèle que kicad-tools (`docs/kicad-tools-fork-strategy.md`) :
+  - 🚪 **Porte 1 (auto)** — `.github/workflows/sync-upstream.yml` sur le fork
+    `bmechergui/circuit-synth`, chaque lundi 07:17 UTC. Compare le point de greffe
+    de `cirqix` à `upstream/main` (`circuit-synth/circuit-synth`) ; rebase propre
+    → PR `rebase: cirqix -> upstream <sha>` contre `cirqix` ; conflit → issue.
+    Vit sur `main` (requis pour le cron GitHub Actions) mais n'y ajoute que ce
+    seul fichier — `main` reste un mirroir strict d'upstream.
+  - 🚪 **Porte 2 (toi)** — tu relis/merges la PR de rebase sur le fork.
+  - 🚪 **Porte 3 (auto)** — `.github/workflows/circuit-synth-bump.yml` dans ce
+    repo, chaque mardi 08:43 UTC. Compare `origin/cirqix` du fork au SHA pinné ;
+    si avancé → PR `chore: bump circuit_synth submodule -> <sha>` contre `main`.
+    Repo public → `GITHUB_TOKEN` suffit, pas de deploy key SSH (contrairement à
+    kicad-tools) ; checkout scopé au seul submodule `circuit_synth` (même
+    pattern que `ci.yml`) — `submodules: true` sur `actions/checkout` toucherait
+    aussi le `kicad-tools` privé sans credentials et ferait échouer le job.
+  - 🚪 **Porte 4 (toi)** — tu valides le CI cirqix (build Docker + tests) puis
+    merges.
+  - **Rien ne migre sans tes 2 validations manuelles** (Portes 2 et 4).
 
 ## kicad-tools (fork privé complet — sous-module)
 
