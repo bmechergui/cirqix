@@ -157,6 +157,43 @@ supplémentaires (benchmark PR #48 : certains routent 100 %, aucun sur les 6 de
 cette session) ; (c) piste structurelle hors périmètre : plan/zone +3.3V (remise
 en cause de vcc_as_traces — décision produit, pas un fix de rescue).
 
+## Arbitrage mesuré : 100 % routé vs board fabricable (2026-07-19)
+
+Diagnostic des violations DRC des boards routés à 100 % : **toutes** les
+violations bloquantes (9 `shorting_items` + 9 `solder_mask_bridge` + 6
+`clearance` sur le run 9) impliquent **un seul objet** — `Pad 33 [<no net>]
+de U2`, voisin immédiat du pad 34 (SWDIO) au pas 0,5 mm. Le routeur fait passer
+SWDIO à 0,14 mm du pad alors que 0,2 mm sont requis, et le touche.
+
+Cause : `kicad_tools/router/grid.py` (upstream #3281) exempte volontairement les
+pads NC (`net == 0`, `net_name == ""`) du validateur de clearance — les traiter
+en obstacles durs faisait chuter un board de 9/9 à 4/9 nets routés. **Mais sur
+un STM32F103C8T6 LQFP-48 aucune broche n'est réellement NC** : les 32 pads à
+`(net 0 "")` sont des broches silicium simplement inutilisées dans ce design.
+Une piste qui les touche est un court-circuit réel, pas un faux positif.
+
+**Expérience de coût** (board run 9, placement identique, iso-prod Docker) :
+assigner un net unique à chacun des 32 pads `(net 0 "")` → obstacles normaux.
+
+| Traitement des pads sans net | Routage |
+|---|---|
+| Exempté (comportement actuel, upstream #3281) | **100 %** |
+| Obstacle normal (net unique par pad) | **73 %** (SWDIO partiel, BLOCKED_PATH) |
+
+**Le 100 % actuel DÉPEND de cette exemption.** L'arbitrage coûte 27 points de
+complétion — c'est une **décision produit**, pas un correctif technique :
+- (a) garder 100 % routé, board NON fabricable tel quel (courts réels) ;
+- (b) mode strict 73 %, board correct mais incomplet → rescue/4 couches ;
+- (c) piste intermédiaire non explorée : exiger seulement la non-touche
+  physique + séparation de masque sur les pads sans net (clearance réduite
+  plutôt que nulle), à mesurer.
+
+⚠ Le carve-out existant `tools/drc.py::_is_nc_pad_clearance` reclasse en
+warning les `clearance` impliquant un pad `<no net>` — il ne couvre PAS
+`shorting_items` ni `solder_mask_bridge`, et sa justification (« un pad
+`<no net>` ne peut pas créer de court ») est **fausse pour une broche
+silicium inutilisée**. À réexaminer avec la décision ci-dessus.
+
 ## Risques et blocages
 
 - Non-déterminisme GA/routeur (56–89 % observés run à run, upstream #2673/#2802)
