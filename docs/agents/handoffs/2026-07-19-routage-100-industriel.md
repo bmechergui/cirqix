@@ -172,13 +172,22 @@ un STM32F103C8T6 LQFP-48 aucune broche n'est réellement NC** : les 32 pads à
 `(net 0 "")` sont des broches silicium simplement inutilisées dans ce design.
 Une piste qui les touche est un court-circuit réel, pas un faux positif.
 
-**Expérience de coût** (board run 9, placement identique, iso-prod Docker) :
-assigner un net unique à chacun des 32 pads `(net 0 "")` → obstacles normaux.
+**Expérience de coût** (iso-prod Docker, 32 pads `(net 0 "")` → net unique
+par pad = obstacles normaux). Mesurée sur **3 placements GA indépendants**,
+le retry placement étant le levier qui débloque habituellement :
 
-| Traitement des pads sans net | Routage |
-|---|---|
-| Exempté (comportement actuel, upstream #3281) | **100 %** |
-| Obstacle normal (net unique par pad) | **73 %** (SWDIO partiel, BLOCKED_PATH) |
+| Placement | Permissif (actuel) | Strict (pads NC respectés) |
+|---|---|---|
+| run 7 | **100 %** | 82 % |
+| run 8 | 82 % | 73 % |
+| run 9 | **100 %** | 73 % |
+
+**Aucun placement n'atteint 100 % en mode strict** (coût constant 18-27 points).
+Le rescue n'y peut rien : sur le board strict à 73 %, il s'arrête dès la 1re
+itération (aucune suggestion applicable — le blocage est géométrique, pas
+positionnel : SWDIO ne peut pas sortir du LQFP-48 au pas 0,5 mm sans frôler
+le pad voisin). Ce n'est donc PAS un aléa de tirage GA mais une limite
+structurelle de l'outillage sur ce boîtier.
 
 **Le 100 % actuel DÉPEND de cette exemption.** L'arbitrage coûte 27 points de
 complétion — c'est une **décision produit**, pas un correctif technique :
