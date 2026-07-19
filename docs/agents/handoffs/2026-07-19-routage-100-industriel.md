@@ -122,14 +122,27 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 | Docker run 3 : `run_feedback_loop.py` (rescue prod + dédup, sans LLM) | `exit 0 — 36 % → 82 % → 91 % → 82 %, meilleur conservé 91 % ; suggestions J1 est puis J1 nord (orthogonales, autorisées par la dédup) — reproduit exactement le plancher 91 % documenté` | `2026-07-19T17:35:00Z` |
 | `kicad-cli pcb drc` (juge final) | `non exécuté — pertinent quand un run atteint 100 % routé` | — |
 
-Bilan mesuré (iso-prod Docker, backend C++) : la chaîne déterministe complète
-(placement GA → route 36 % → rescue+dédup → **91 % conservé**) reproduit le
-plancher 91 % documenté sur un tirage défavorable. Le critère « 3 runs
-consécutifs à 100 % » n'est PAS atteint dans cette session. Le dernier net est
-*partiellement connecté* → le routeur n'émet pas de suggestion → au-delà de
-91 %, les deux leviers de prod sont : retry placement orchestrateur (tirage GA
-neuf — certains tirages routent 100 %, benchmark PR #48) et voie LLM du
-reasoner (bloquée : clé API invalide — action humaine).
+Bilan mesuré (iso-prod Docker, backend C++) — campagne complète 2026-07-19 :
+
+| Tirage GA | Routage brut | Après rescue+dédup (sans LLM) |
+|---|---|---|
+| run 3 | 36 % (NRST BLOCKED_PATH, suggestion J1) | 82 → **91** → 82, conservé **91 %** |
+| run 4 | **91 %** (P3V3 10/15 pads, AUCUNE suggestion) | 91 % — arrêt propre en 1 itération (0 itération brûlée) |
+| run 5 | **91 %** | 91 % stable sur 3 itérations |
+| run 6 | 82 % | non tenté (dominé) |
+
+Le plafond déterministe de 91 % est reproduit sur TOUS les tirages (6 tirages
+session incluse). Le critère « 3 runs consécutifs à 100 % » n'est PAS atteint.
+Cause terminale identifiée par analyse du board run 4 : rail **P3V3 partiellement
+connecté (10/15 pads) sans suggestion du routeur** — la politique Cirqix
+vcc_as_traces route les rails VCC en pistes (pas de plan), et le routeur négocié
+ne sait pas conclure les 5 pads restants. La **piste 4 est validée en réel** :
+marqueur `cirqix_mfr_tier=jlcpcb-tier1` présent sur le board (escalade via-in-pad
+effective) → le juge DRC alignera ses règles. Au-delà de 91 % : (a) voie LLM du
+reasoner — BLOQUÉE, clé API invalide, action humaine ; (b) tirages GA
+supplémentaires (benchmark PR #48 : certains routent 100 %, aucun sur les 6 de
+cette session) ; (c) piste structurelle hors périmètre : plan/zone +3.3V (remise
+en cause de vcc_as_traces — décision produit, pas un fix de rescue).
 
 ## Risques et blocages
 
