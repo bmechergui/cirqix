@@ -82,15 +82,22 @@ export function NewProjectDialog() {
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Input
-            id="project-name"
-            placeholder="e.g. ESP32 Weather Station"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={100}
-            autoFocus
-            disabled={submitting}
-          />
+          <div className="space-y-2">
+            <label htmlFor="project-name" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Project name
+            </label>
+            <Input
+              id="project-name"
+              placeholder="e.g. ESP32 Weather Station"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={100}
+              autoFocus
+              disabled={submitting}
+              aria-invalid={!!error}
+              aria-describedby={error ? 'project-error' : undefined}
+            />
+          </div>
 
           <div className="flex flex-wrap gap-1.5">
             {EXAMPLES.map((ex) => (
@@ -107,7 +114,7 @@ export function NewProjectDialog() {
           </div>
 
           {error && (
-            <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2">
+            <p id="project-error" className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md px-3 py-2" role="alert">
               {error}
             </p>
           )}

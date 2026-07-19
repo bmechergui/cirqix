@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { CircuitBoard, MoreHorizontal, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Project } from '@cirqix/types';
 import { Button } from '@/shared/ui/button';
 import { StatusBadge } from './StatusBadge';
@@ -27,6 +27,25 @@ function formatRelative(iso: string): string {
 
 export function ProjectCard({ project, onDelete }: ProjectCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [menuOpen]);
 
   return (
     <Link
@@ -48,29 +67,35 @@ export function ProjectCard({ project, onDelete }: ProjectCardProps) {
           </div>
         </div>
         {onDelete && (
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-7 w-7 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setMenuOpen((v) => !v);
               }}
               aria-label="Project actions"
+              aria-expanded={menuOpen}
+              aria-haspopup="true"
             >
               <MoreHorizontal size={14} />
             </Button>
             {menuOpen && (
               <div
                 className="absolute right-0 top-8 w-36 z-20 rounded-md border border-border bg-[#0a0a0a] shadow-lg py-1"
+                role="menu"
+                aria-orientation="vertical"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
               >
                 <button
+                  type="button"
+                  role="menuitem"
                   className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
                   onClick={() => {
                     setMenuOpen(false);
