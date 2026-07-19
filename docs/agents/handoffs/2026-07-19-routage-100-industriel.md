@@ -120,7 +120,9 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 | `kct build-native --check` (Docker cirqix-kicad) | `C++ backend: available (version 1.0.0)` | `2026-07-19T17:00:00Z` |
 | Docker run 3 : `run_agent_chain.py` (backend C++) | `exit 0 — placement 17 comp. (0 conflit), routage brut 36 % (tirage GA défavorable, NRST BLOCKED_PATH)` | `2026-07-19T17:15:00Z` |
 | Docker run 3 : `run_feedback_loop.py` (rescue prod + dédup, sans LLM) | `exit 0 — 36 % → 82 % → 91 % → 82 %, meilleur conservé 91 % ; suggestions J1 est puis J1 nord (orthogonales, autorisées par la dédup) — reproduit exactement le plancher 91 % documenté` | `2026-07-19T17:35:00Z` |
-| `kicad-cli pcb drc` (juge final) | `non exécuté — pertinent quand un run atteint 100 % routé` | — |
+| Expérience plans power : `route_kct(placed_run4, vcc_as_traces=False)` (Docker) | `RESULTAT 100 % — même placement qui plafonnait à 91 % en pistes` | `2026-07-19T18:40:00Z` |
+| **Validation finale ×3 avec fallback plans power (commit e39f5fa)** | `run 7 : 100 % BRUT · run 8 : 82 % → rescue → 100 % (itération 1) · run 9 : 100 % BRUT — critère « 3 runs consécutifs à 100 % de nets routés » ATTEINT` | `2026-07-19T19:10:00Z` |
+| `kicad-cli pcb drc --refill-zones` + sidecar tier (runs 7/9) | `NON clean : 67/55 ERROR (shorting_items 18, solder_mask_bridge 18, clearance 10/2, annular_width 5, starved_thermal 6/4, unconnected 10/8) — le refill résout 24/26 unconnected ; qualité pistes/zones = chantier suivant` | `2026-07-19T19:20:00Z` |
 
 Bilan mesuré (iso-prod Docker, backend C++) — campagne complète 2026-07-19 :
 
@@ -171,9 +173,12 @@ local Windows sans le backend C++ n'est PAS représentative de la prod.**
 
 ## Prochaine action atomique
 
-Codex : relire le diff de `services/kicad/tools/reasoning.py` +
-`services/kicad/tests/test_reasoning_feedback.py` (points d'attention listés
-dans « Tâches assignées ») et rapporter les constats à l'owner.
+Codex : relire le diff complet de la PR #63 (`tools/reasoning.py`,
+`tools/kct_route.py` — dont le fallback plans power, `tools/drc.py`,
+`routers/drc.py`, tests) et rapporter les constats à l'owner. Chantier suivant
+(nouvelle tâche, hors périmètre de celle-ci) : DRC-clean — ajouter
+`--refill-zones` à `_run_kicad_drc`, puis traiter courts/masque/annulaire des
+boards 100 % routés en plans.
 
 ## Git
 
