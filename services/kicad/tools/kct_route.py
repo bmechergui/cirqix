@@ -386,27 +386,103 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
     )
 
 
+def _missing_nets(analysis: str | None) -> list[str]:
+    """Noms des nets listés dans les sections « Unrouted nets » et
+    « Partially connected nets » d'une analyse d'échec du routeur.
+
+    Parsing scopé par section — les lignes « Suggestion: … », les compteurs
+    « (N): » et les causes « BLOCKED_PATH: … » ne sont jamais pris pour des
+    nets (ils partagent le format ``mot:``)."""
+    nets: list[str] = []
+    section: str | None = None
+    for line in (analysis or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("Unrouted nets"):
+            section = "unrouted"
+            continue
+        if s.startswith("Partially connected nets"):
+            section = "partial"
+            continue
+        if s.startswith(("Failure Summary", "Routing Suggestions", "Based on")):
+            section = None
+            continue
+        if section and ":" in s:
+            name = s.split(":", 1)[0].strip()
+            if name and " " not in name and not name.startswith(("Suggestion", "(")):
+                nets.append(name)
+    return nets
+
+
+def _only_power_nets_missing(analysis: str | None) -> bool:
+    """True si TOUS les nets manquants sont des rails power (et qu'il y en a).
+
+    Détection native ``kicad_tools.explain.mistakes.is_power_net`` après
+    re-mapping des noms renommés par la politique vcc_as_traces (P3V3 → +3.3V).
+    C'est la condition de déclenchement du fallback plans power : un signal
+    manquant ne serait PAS résolu par un plan — inutile de re-router."""
+    nets = _missing_nets(analysis)
+    if not nets:
+        return False
+    try:
+        from kicad_tools.explain.mistakes import is_power_net
+    except ImportError:
+        return False  # kicad-tools absent → pas de fallback (comportement inchangé)
+    reverse = {new: old for old, new in _VCC_RENAME.items()}
+    return all(is_power_net(reverse.get(n, n)) for n in nets)
+
+
 def route_kct(
     pcb_bytes: bytes,
     timeout_s: int = _ROUTE_TIMEOUT_S,
     vcc_as_traces: bool = True,
 ) -> tuple[bytes, int, str]:
-    """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
+    """Route via kct (negotiated, auto-layers, auto-mfr-tier) + fallback plans power.
 
-    Delegates routing to kicad-tools. By default applies the Cirqix routing
-    policy (``vcc_as_traces=True``): +5V/+3.3V routed as TRACES (not poured as
-    planes) and a GND plane guaranteed on BOTH faces (F.Cu + B.Cu). Set
-    ``vcc_as_traces=False`` for the historical behaviour (kct auto-pours every
-    power net). See ``_VCC_RENAME`` for the why.
+    Politique Cirqix d'abord (``vcc_as_traces=True`` : +5V/+3.3V en PISTES,
+    plan GND garanti double face). **Fallback industriel (2026-07-19)** : si le
+    routage pistes laisse UNIQUEMENT des rails power partiels (cas mesuré board
+    STM32 : tous signaux routés, P3V3 10/15 pads SANS suggestion → plancher
+    91 % indépassable par le rescue), re-route une fois avec
+    ``vcc_as_traces=False`` — kct coule les rails en plans cuivre (pratique
+    standard multi-couches) → 100 % mesuré sur le même placement. Le meilleur
+    des deux résultats est rendu (jamais de régression). Coût pire cas : 2×
+    ``timeout_s``.
+
+    Returns (routed_pcb_bytes, routed_percent, failure_analysis).
+    ``failure_analysis`` is "" when routing is complete.
+    Raises RuntimeError on failure.
+    """
+    routed, pct, analysis = _route_once(pcb_bytes, timeout_s, vcc_as_traces)
+    if pct >= 100 or not vcc_as_traces or not _only_power_nets_missing(analysis):
+        return routed, pct, analysis
+
+    logger.info(
+        "route_kct: seuls des rails power restent partiels (%s) → re-route en "
+        "plans power (fallback industriel)", ", ".join(_missing_nets(analysis)))
+    routed_planes, pct_planes, analysis_planes = _route_once(
+        pcb_bytes, timeout_s, False)
+    if pct_planes > pct:
+        return routed_planes, pct_planes, analysis_planes
+    return routed, pct, analysis
+
+
+def _route_once(
+    pcb_bytes: bytes,
+    timeout_s: int,
+    vcc_as_traces: bool,
+) -> tuple[bytes, int, str]:
+    """Une passe de routage kct complète (rename VCC, route, post-process).
+
+    ``vcc_as_traces=True`` : +5V/+3.3V renommés → routés en pistes, zones kct
+    remplacées par nos plans GND en retrait. ``False`` : comportement kct
+    historique (rails power coulés en plans par le routeur lui-même).
 
     Assumes a PLACED board input (no pre-existing power zones) — the production
     flow (placement → routing) and the reasoner reroute loop both satisfy this.
     A board that already carries a +5V/+3.3V copper zone would keep it (only
     pad/net-declaration names are renamed, not zone ``net_name`` blocks).
-
-    Returns (routed_pcb_bytes, routed_percent, failure_analysis).
-    ``failure_analysis`` is "" when routing is complete.
-    Raises RuntimeError on failure.
     """
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
