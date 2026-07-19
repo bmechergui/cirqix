@@ -94,12 +94,21 @@ def test_full_route_first_pass_no_llm_call(stm32_board_bytes):
 
 
 def test_max_iterations_bound(stm32_board_bytes):
-    """route_fn n'améliore jamais : la boucle s'arrête à max_iterations routages."""
-    route_fn = _route_fn_improving([40, 40, 40, 40, 40])
+    """route_fn n'améliore jamais : la boucle s'arrête à max_iterations routages.
+
+    Le décideur propose une position NEUVE à chaque tour (sinon la dédup
+    l'arrêterait plus tôt — comportement couvert par les tests dédiés) : ici on
+    ne teste que la borne max_iterations."""
+    route_fn = _route_fn_improving([40, 40, 40, 40, 40], suggestion=False)
+    offsets = iter(range(1, 10))
+
+    def decide(prompt):
+        d = next(offsets)
+        return {"type": "place_component", "ref": "D1", "at": [145.4 + d, 112.4 + d]}
 
     _out, pct, _steps = rescue_with_placement_feedback(
         stm32_board_bytes, route_fn=route_fn,
-        max_iterations=3, decide=_decide_move_d1,
+        max_iterations=3, decide=decide,
     )
 
     assert pct == 40
@@ -343,8 +352,8 @@ def test_inverse_rejected_falls_back_to_llm(stm32_board_bytes, tmp_path):
     assert len(route_fn.calls) == 3          # le déplacement LLM relance un routage
 
 
-def test_same_suggestion_allowed_up_to_cap(stm32_board_bytes):
-    """La même suggestion est ré-applicable (mur persistant) mais plafonnée à 2×."""
+def test_same_suggestion_capped(stm32_board_bytes):
+    """La même suggestion n'est appliquée qu'une fois (plafond _MAX_SAME_MOVE)."""
     analysis = "Suggestion: Move D1 north to create routing channel"
     route_fn = _route_fn_scripted([(40, analysis)] * 4)
 
@@ -354,25 +363,26 @@ def test_same_suggestion_allowed_up_to_cap(stm32_board_bytes):
     )
 
     applied = [s for s in steps if "Suggestion du routeur appliquée : D1" in s]
-    assert len(applied) == 2                 # _MAX_SAME_MOVE
-    assert len(route_fn.calls) == 3          # 3e itération : rejet → arrêt propre
+    assert len(applied) == 1                 # _MAX_SAME_MOVE = 1 (mesure NE555)
+    assert len(route_fn.calls) == 2          # 2e itération : rejet → arrêt propre
 
 
 def test_select_applicable_moves_pure():
-    """Fonction pure : inverse rejetée, répétition sous plafond acceptée, ordre préservé."""
-    history = {("R5", "north"): 1}
-    moves = [("R5", "south"), ("R5", "north"), ("C2", "west")]
-
-    applicable, rejected = _select_applicable_moves(moves, history)
-
+    """Fonction pure : inverse rejetée, répétition rejetée, ordre préservé."""
+    # Historique vierge : tout passe, ordre conservé
+    applicable, rejected = _select_applicable_moves(
+        [("R5", "north"), ("C2", "west")], {})
     assert applicable == [("R5", "north"), ("C2", "west")]
-    assert len(rejected) == 1 and "R5" in rejected[0]
+    assert rejected == []
 
-    # Plafond atteint → rejet de la répétition aussi
+    # R5 déjà déplacé au nord : l'inverse (sud) ET la répétition (nord) rejetés
+    history = {("R5", "north"): 1}
     applicable2, rejected2 = _select_applicable_moves(
-        [("R5", "north")], {("R5", "north"): 2})
-    assert applicable2 == []
-    assert len(rejected2) == 1
+        [("R5", "south"), ("R5", "north"), ("C2", "west")], history)
+    assert applicable2 == [("C2", "west")]
+    assert len(rejected2) == 2
+    assert any("oscillation" in r for r in rejected2)
+    assert any("plafond" in r for r in rejected2)
 
 
 def test_filtered_moves_do_not_consume_budget(stm32_board_bytes):
@@ -559,3 +569,53 @@ def test_strip_is_logged_in_steps(stm32_board_bytes):
     )
 
     assert any("dé-rout" in s.lower() for s in steps), steps
+
+
+# ---------------------------------------------------------------------------
+# Plafond de répétition ramené à 1 (mesure NE555, 2026-07-19)
+# ---------------------------------------------------------------------------
+#
+# Le plafond initial de 2 partait de l'hypothèse « mur persistant → déplacement
+# cumulatif utile ». Mesure contradictoire sur le board NE555 (30x30mm, 2
+# couches, iso-prod Docker) : itération 1 applique C3/D1/R1/C2 est (17 %),
+# itération 2 ré-applique C2/C3/D1 est (cumul 6mm) → itération 3 chute à 0 %.
+# La garde anti-régression a sauvé le résultat, mais une itération de routage
+# (la plus coûteuse) a été brûlée pour DÉGRADER. Le routeur ré-émet la même
+# suggestion parce qu'il ré-analyse un board neuf, pas parce qu'il demande un
+# cumul. Plafond = 1 : chaque (ref, direction) n'est appliqué qu'une fois par
+# sauvetage.
+
+def test_same_suggestion_applied_only_once(stm32_board_bytes):
+    """Une même suggestion n'est jamais ré-appliquée (cumul mesuré nuisible)."""
+    analysis = "Suggestion: Move D1 north to create routing channel"
+    route_fn = _route_fn_scripted([(40, analysis)] * 4)
+
+    _out, _pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=4, decide=lambda p: None,
+    )
+
+    applied = [s for s in steps if "Suggestion du routeur appliquée : D1" in s]
+    assert len(applied) == 1
+    assert any("plafond" in s for s in steps), steps
+    # Itération 1 (applique) + itération 2 (rejet → arrêt) — pas de 3e routage
+    assert len(route_fn.calls) == 2
+
+
+def test_ne555_cumulative_drift_scenario(stm32_board_bytes):
+    """Scénario réel NE555 : le routeur ré-émet les mêmes refs « est » à chaque
+    itération. Aucune ré-application → pas de dérive cumulative de 6mm."""
+    analysis = "Suggestion: Move C3, D1, R1 east to create routing channel"
+    route_fn = _route_fn_scripted([(17, analysis), (17, analysis), (0, analysis)])
+
+    _out, pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=3, decide=lambda p: None,
+    )
+
+    assert pct == 17                       # garde anti-régression (jamais 0 %)
+    assert len(route_fn.calls) == 2        # la 3e passe dégradante n'a pas lieu
+    for ref in ("C3", "D1", "R1"):
+        applied = [s for s in steps
+                   if f"Suggestion du routeur appliquée : {ref}" in s]
+        assert len(applied) == 1, (ref, steps)

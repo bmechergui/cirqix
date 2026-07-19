@@ -241,9 +241,13 @@ _SUGGESTED_MOVE_MM = 3.0
 _OPPOSITE_DIRECTION: dict[str, str] = {
     "north": "south", "south": "north", "east": "west", "west": "east",
 }
-# Une même suggestion peut être ré-appliquée (mur persistant → déplacement
-# cumulatif 3mm+3mm), mais plafonnée pour empêcher une dérive hors board.
-_MAX_SAME_MOVE = 2
+# Une même (ref, direction) n'est appliquée QU'UNE FOIS par sauvetage.
+# Le plafond était à 2 (hypothèse « mur persistant → cumul 3mm+3mm utile »),
+# infirmée par la mesure NE555 (2026-07-19, iso-prod Docker) : itération 1
+# applique C3/D1/R1/C2 est (17 %), itération 2 ré-applique C2/C3/D1 est
+# (cumul 6mm) → itération 3 chute à 0 %. Le routeur ré-émet la même suggestion
+# parce qu'il ré-analyse un board neuf, pas parce qu'il demande un cumul.
+_MAX_SAME_MOVE = 1
 # Tolérance float pour « position déjà occupée » (voie 2 — coordonnées LLM).
 _POSITION_EPSILON_MM = 0.05
 
