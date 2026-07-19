@@ -87,6 +87,68 @@ _VCC_RENAME: dict[str, str] = {"+5V": "P5V0", "+3.3V": "P3V3"}
 # nécessaire — les boards simples restent au tier standard.
 _MFR_TIER_LADDER: str = "jlcpcb,jlcpcb-tier1"
 
+# Piste 4 (2026-07-19) — alignement DRC sur le tier escaladé. Quand l'escalade
+# retient un tier plus fin (via-in-pad…), le juge kicad-cli doit évaluer le
+# board avec les règles de CE tier, pas les défauts KiCad (plus stricts →
+# résiduels copper_edge/annular_width garantis). Le tier retenu est parsé du
+# stdout de route_with_mfr_tier_escalation puis transporté IN-BAND dans le
+# board (property racine KiCad) — aucun changement de contrat entre les étapes
+# routage → DRC. Le router DRC retire le marqueur avant kicad-cli et écrit un
+# sidecar .kicad_pro aux règles du profil (tools/drc.write_mfr_project_sidecar).
+_MFR_TIER_PROPERTY = "cirqix_mfr_tier"
+_TIER_SUCCESS_RE = re.compile(r"Tier (\S+) achieved routing success")
+_TIER_RECO_RE = re.compile(r"Recommendation: order from (\S+?)\.")
+_TIER_ATTEMPT_RE = re.compile(r"Tier \d+/\d+: (\S+)")
+_MFR_TIER_MARKER_RE = re.compile(
+    r'\n?[ \t]*\(property "' + _MFR_TIER_PROPERTY + r'" "([^"]+)"\)')
+
+
+def parse_retained_tier(stdout: str) -> str | None:
+    """Tier fabricant réellement retenu par l'escalade, depuis le stdout kct.
+
+    Ordre de préférence (messages réels de route_with_mfr_tier_escalation) :
+      1. dernière ligne « Tier X achieved routing success » (définitif) ;
+      2. « Recommendation: order from X. » (résumé final) ;
+      3. dernière tentative « Tier i/n: X » (best-effort, routage partiel) ;
+      4. None — aucun mode escalade dans la sortie.
+    """
+    matches = _TIER_SUCCESS_RE.findall(stdout or "")
+    if matches:
+        return matches[-1]
+    m = _TIER_RECO_RE.search(stdout or "")
+    if m:
+        return m.group(1)
+    attempts = _TIER_ATTEMPT_RE.findall(stdout or "")
+    if attempts:
+        return attempts[-1]
+    return None
+
+
+def strip_mfr_tier(pcb_bytes: bytes) -> bytes:
+    """Retire le marqueur de tier du board (kicad-cli ne doit jamais le voir)."""
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    return _MFR_TIER_MARKER_RE.sub("", text).encode("utf-8")
+
+
+def extract_mfr_tier(pcb_bytes: bytes) -> str | None:
+    """Tier fabricant estampillé dans le board, ou None (pas d'escalade)."""
+    m = _MFR_TIER_MARKER_RE.search(pcb_bytes.decode("utf-8", errors="replace"))
+    return m.group(1) if m else None
+
+
+def stamp_mfr_tier(pcb_bytes: bytes, tier: str) -> bytes:
+    """Estampille le tier retenu dans le board (property racine KiCad).
+
+    Idempotent : un marqueur existant est remplacé, jamais empilé (le rescue
+    re-route le même board plusieurs fois). Insertion avant la parenthèse
+    fermante racine — S-expr équilibrée garantie.
+    """
+    text = strip_mfr_tier(pcb_bytes).decode("utf-8", errors="replace").rstrip()
+    if not text.endswith(")"):
+        raise ValueError("stamp_mfr_tier: .kicad_pcb malformé (pas de ')' final)")
+    return (text[:-1].rstrip()
+            + f'\n  (property "{_MFR_TIER_PROPERTY}" "{tier}")\n)\n').encode("utf-8")
+
 
 def parse_routed_pct(stdout: str) -> int:
     """Parse routing completion % from kct route/reason output.
@@ -377,6 +439,14 @@ def route_kct(
             )
             restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))
+
+        # Piste 4 : estampille le tier retenu SI l'escalade a dépassé le
+        # premier barreau — le router DRC alignera ses règles dessus. No-op
+        # (aucun marqueur) quand le board route au tier standard.
+        retained_tier = parse_retained_tier(result.stdout)
+        if retained_tier and retained_tier != _MFR_TIER_LADDER.split(",")[0]:
+            routed = stamp_mfr_tier(routed, retained_tier)
+            logger.info("kct route: tier fabricant escaladé retenu = %s", retained_tier)
 
         routed_text = routed.decode("utf-8", errors="replace")
         seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))

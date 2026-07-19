@@ -174,6 +174,18 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
+    # ── Piste 4 : tier fabricant escaladé (marqueur in-band posé par route_kct)
+    # Le marqueur est retiré AVANT tout DRC (ni kicad-tools ni kicad-cli ne le
+    # voient) ; s'il est présent, un sidecar .kicad_pro aux règles du profil
+    # est écrit à côté du board temporaire → kicad-cli juge aux règles du tier
+    # réellement routé, plus aux défauts KiCad (résiduels copper_edge/annular).
+    from tools.kct_route import extract_mfr_tier, strip_mfr_tier
+
+    mfr_tier = extract_mfr_tier(pcb_bytes)
+    if mfr_tier:
+        pcb_bytes = strip_mfr_tier(pcb_bytes)
+        logger.info("DRC: board routé au tier escaladé %s — règles alignées", mfr_tier)
+
     # ── Niveau 1 : kicad-tools Python DRC ────────────────────────────────────
     # Le niveau 1 ne court-circuite PAS le niveau 2 : même propre, le board
     # doit être validé par kicad-cli officiel s'il est disponible (faux
@@ -222,6 +234,18 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             pcb_path = Path(tmp) / "board.kicad_pcb"
+
+            if mfr_tier:
+                from tools.drc import copper_layer_count, write_mfr_project_sidecar
+                try:
+                    write_mfr_project_sidecar(
+                        pcb_path, mfr_tier,
+                        copper_layer_count(pcb_bytes.decode("utf-8", errors="replace")))
+                except Exception as exc:
+                    # Défense : tier inconnu/profil indisponible → le DRC
+                    # continue aux règles par défaut, jamais de crash 500.
+                    logger.warning("DRC: sidecar tier %s impossible (%s) — "
+                                   "règles par défaut", mfr_tier, exc)
 
             violations: list[dict[str, Any]] = []
             total_fixed = 0

@@ -16,10 +16,64 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Couches cuivre d'un .kicad_pcb : entrées ``(N "X.Cu" signal|power|…)`` de la
+# section (layers …). Les couches non-cuivre (SilkS, Mask…) ne matchent pas.
+_COPPER_LAYER_RE = re.compile(r'\(\s*\d+\s+"[^"]*\.Cu"\s+(?:signal|power|mixed|jumper)\b')
+
+
+def copper_layer_count(pcb_text: str) -> int:
+    """Nombre de couches cuivre du board (défaut 2 si section illisible)."""
+    count = len(_COPPER_LAYER_RE.findall(pcb_text))
+    return count if count >= 2 else 2
+
+
+def write_mfr_project_sidecar(pcb_path: str | Path, tier: str, layers: int) -> Path:
+    """Écrit ``<board>.kicad_pro`` avec les règles DRC du profil fabricant.
+
+    Piste 4 — alignement du juge : kicad-cli charge le projet adjacent au
+    board ; sans lui, les minima PAR DÉFAUT de KiCad (plus stricts que la
+    géométrie d'un tier escaladé type via-in-pad) produisent des résiduels
+    copper_edge/annular_width sans défaut réel. 100 % natif kicad-tools :
+    ``get_profile().get_design_rules()`` + ``apply_manufacturer_rules``.
+
+    Lève ValueError si le tier est inconnu (l'appelant décide du fallback).
+    """
+    from kicad_tools.core.project_file import (
+        apply_manufacturer_rules,
+        create_minimal_project,
+        save_project,
+        set_manufacturer_metadata,
+    )
+    from kicad_tools.manufacturers import get_profile
+
+    profile = get_profile(tier)
+    rules = profile.get_design_rules(layers, 1.0)
+
+    pro_path = Path(pcb_path).with_suffix(".kicad_pro")
+    data = create_minimal_project(pro_path.name)
+    apply_manufacturer_rules(
+        data,
+        min_clearance_mm=rules.min_clearance_mm,
+        min_track_width_mm=rules.min_trace_width_mm,
+        min_via_diameter_mm=rules.min_via_diameter_mm,
+        min_via_drill_mm=rules.min_via_drill_mm,
+        min_annular_ring_mm=rules.min_annular_ring_mm,
+        min_hole_diameter_mm=rules.min_hole_diameter_mm,
+        min_copper_to_edge_mm=rules.min_copper_to_edge_mm,
+    )
+    set_manufacturer_metadata(data, manufacturer_id=profile.id,
+                              layers=layers, copper_oz=1.0)
+    save_project(data, pro_path)
+    logger.info("DRC: sidecar %s écrit (tier %s, %d couches)",
+                pro_path.name, profile.id, layers)
+    return pro_path
 
 # Marqueur kicad-cli d'un pad sans net dans items[].description (ex. pin NC).
 # Dépendance locale kicad-cli : gettext peut traduire le marqueur. Mesuré :
