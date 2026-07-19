@@ -33,6 +33,9 @@ build
 .codex/hooks.json
 .claude/settings.local.json
 
+# Graphify knowledge graph (artefact régénérable — graphify update .)
+graphify-out/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
