@@ -20,6 +20,7 @@ import re
 import pytest
 
 from tools.reasoning import (
+    _select_applicable_moves,
     _strip_routing,
     parse_router_moves,
     rescue_with_placement_feedback,
@@ -259,6 +260,196 @@ def test_suggestion_for_unknown_ref_falls_back_to_llm(stm32_board_bytes):
     )
 
     assert llm_calls, "ref inconnue : le LLM devait être consulté"
+
+
+# ---------------------------------------------------------------------------
+# Dédup anti-oscillation des suggestions (inter-itérations, 2026-07-19)
+# ---------------------------------------------------------------------------
+#
+# Cas mesuré (STM32, 2026-07-14) : itération 1 = 91% + « Move U2 east » →
+# itération 2 = 82% + « Move U2 west » (inverse exacte, pas fixe 3mm) →
+# retour au placement initial → itération 3 re-route un board identique.
+# La garde anti-régression sauvait le résultat, mais une itération de routage
+# (la plus coûteuse) était brûlée pour rien. Règles : une suggestion inverse
+# d'un déplacement déjà appliqué est rejetée ; une même suggestion est plafonnée
+# à _MAX_SAME_MOVE applications ; l'état est LOCAL à un appel (4 workers
+# uvicorn + retry placement orchestrateur = historique caduc entre appels).
+
+
+def _route_fn_scripted(script: list[tuple[int, str]]):
+    """route_fn factice : échoe le board reçu, (pct, analysis) scriptés par appel.
+
+    Échoer le board réel est indispensable : la boucle recharge le board routé
+    dans PCBReasoningAgent — un marqueur opaque n'aurait aucun composant.
+    """
+    calls: list[bytes] = []
+
+    def route_fn(pcb_bytes: bytes):
+        calls.append(pcb_bytes)
+        pct, analysis = script[min(len(calls), len(script)) - 1]
+        return pcb_bytes, pct, analysis
+
+    route_fn.calls = calls  # type: ignore[attr-defined]
+    return route_fn
+
+
+def _component_position(stm32_board_bytes, tmp_path, ref: str) -> tuple[float, float]:
+    """Position (x, y) d'une ref dans la fixture, via le reasoner lui-même."""
+    from kicad_tools.reasoning import PCBReasoningAgent
+
+    board = tmp_path / "probe.kicad_pcb"
+    board.write_bytes(stm32_board_bytes)
+    x, y = PCBReasoningAgent.from_pcb(str(board)).state.components[ref].position
+    return float(x), float(y)
+
+
+def test_inverse_suggestion_rejected_stops_oscillation(stm32_board_bytes):
+    """Suggestion inverse (east puis west) → rejetée, pas de 3e routage inutile."""
+    route_fn = _route_fn_scripted([
+        (91, "Suggestion: Move D1 east to create routing channel"),
+        (82, "Suggestion: Move D1 west to create routing channel"),
+        (82, "Suggestion: Move D1 west to create routing channel"),
+    ])
+
+    _out, pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=3, decide=lambda p: None,
+    )
+
+    assert pct == 91
+    assert len(route_fn.calls) == 2          # le board revenu à l'identique n'est pas re-routé
+    assert any("oscillation" in s or "inverse" in s for s in steps), steps
+
+
+def test_inverse_rejected_falls_back_to_llm(stm32_board_bytes, tmp_path):
+    """Toutes les suggestions filtrées → la voie 2 (LLM) reprend la main."""
+    route_fn = _route_fn_scripted([
+        (91, "Suggestion: Move D1 east to create routing channel"),
+        (82, "Suggestion: Move D1 west to create routing channel"),
+        (82, ""),
+    ])
+    x_r1, y_r1 = _component_position(stm32_board_bytes, tmp_path, "R1")
+    llm_calls: list[str] = []
+
+    def decide(prompt):
+        llm_calls.append(prompt)
+        return {"type": "place_component", "ref": "R1", "at": [x_r1 + 2.0, y_r1]}
+
+    rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn, max_iterations=3, decide=decide,
+    )
+
+    assert llm_calls, "suggestions filtrées : le LLM devait être consulté"
+    assert len(route_fn.calls) == 3          # le déplacement LLM relance un routage
+
+
+def test_same_suggestion_allowed_up_to_cap(stm32_board_bytes):
+    """La même suggestion est ré-applicable (mur persistant) mais plafonnée à 2×."""
+    analysis = "Suggestion: Move D1 north to create routing channel"
+    route_fn = _route_fn_scripted([(40, analysis)] * 4)
+
+    _out, _pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=4, decide=lambda p: None,
+    )
+
+    applied = [s for s in steps if "Suggestion du routeur appliquée : D1" in s]
+    assert len(applied) == 2                 # _MAX_SAME_MOVE
+    assert len(route_fn.calls) == 3          # 3e itération : rejet → arrêt propre
+
+
+def test_select_applicable_moves_pure():
+    """Fonction pure : inverse rejetée, répétition sous plafond acceptée, ordre préservé."""
+    history = {("R5", "north"): 1}
+    moves = [("R5", "south"), ("R5", "north"), ("C2", "west")]
+
+    applicable, rejected = _select_applicable_moves(moves, history)
+
+    assert applicable == [("R5", "north"), ("C2", "west")]
+    assert len(rejected) == 1 and "R5" in rejected[0]
+
+    # Plafond atteint → rejet de la répétition aussi
+    applicable2, rejected2 = _select_applicable_moves(
+        [("R5", "north")], {("R5", "north"): 2})
+    assert applicable2 == []
+    assert len(rejected2) == 1
+
+
+def test_filtered_moves_do_not_consume_budget(stm32_board_bytes):
+    """Le filtre précède la coupe max_moves_per_iter : une suggestion rejetée
+    ne consomme pas le budget de déplacements de l'itération."""
+    route_fn = _route_fn_scripted([
+        (40, "Suggestion: Move D1 east to create routing channel"),
+        (40, ("Suggestion: Move D1 west to create routing channel\n"
+              "Suggestion: Move R1 north to create routing channel")),
+        (40, ""),
+    ])
+
+    _out, _pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=3, max_moves_per_iter=1, decide=lambda p: None,
+    )
+
+    # Si la coupe passait avant le filtre, [D1 west] serait pris puis rejeté
+    # → aucun déplacement → arrêt à 2 routages. Avec filtre d'abord, R1 passe.
+    assert any("R1" in s and "appliquée" in s for s in steps), steps
+    assert len(route_fn.calls) == 3
+
+
+def test_dedup_state_is_per_call(stm32_board_bytes):
+    """L'historique de dédup ne fuit pas entre deux appels (stateless service)."""
+    def make_route_fn():
+        return _route_fn_scripted([
+            (40, "Suggestion: Move D1 east to create routing channel"),
+            (40, ""),
+        ])
+
+    for _ in range(2):
+        _out, _pct, steps = rescue_with_placement_feedback(
+            stm32_board_bytes, route_fn=make_route_fn(),
+            max_iterations=2, decide=lambda p: None,
+        )
+        assert any("Suggestion du routeur appliquée : D1" in s for s in steps), steps
+
+
+def test_llm_move_to_visited_position_rejected(stm32_board_bytes, tmp_path):
+    """Voie 2 : un place_component qui ramène une ref sur une position déjà
+    occupée est rejeté (anti-oscillation LLM)."""
+    x0, y0 = _component_position(stm32_board_bytes, tmp_path, "D1")
+
+    route_fn = _route_fn_scripted([
+        (40, "Unrouted nets:\n  SWO: Path blocked"),
+        (40, "Unrouted nets:\n  SWO: Path blocked"),
+    ])
+    decisions = iter([
+        {"type": "place_component", "ref": "D1", "at": [x0 + 5.0, y0]},
+        {"type": "place_component", "ref": "D1", "at": [x0, y0]},   # retour → rejet
+        None,
+    ])
+
+    _out, _pct, steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=2, decide=lambda p: next(decisions),
+    )
+
+    assert any("déjà essayée" in s for s in steps), steps
+
+
+def test_best_board_preserved_when_all_suggestions_filtered(stm32_board_bytes):
+    """Garde anti-régression intacte : arrêt anticipé par la dédup → on rend
+    toujours le meilleur board rencontré."""
+    route_fn = _route_fn_scripted([
+        (60, "Suggestion: Move C3 south to create routing channel"),
+        (35, "Suggestion: Move C3 north to create routing channel"),
+    ])
+
+    out, pct, _steps = rescue_with_placement_feedback(
+        stm32_board_bytes, route_fn=route_fn,
+        max_iterations=3, decide=lambda p: None,
+    )
+
+    assert pct == 60
+    assert out == route_fn.calls[0]          # le board de la 1re passe (60%), pas la 2e
 
 
 # ---------------------------------------------------------------------------
