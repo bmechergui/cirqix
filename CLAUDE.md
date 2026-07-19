@@ -95,6 +95,11 @@ Claude mène le projet. L'utilisateur valide. Pas l'inverse.
 - `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
 - `PLAN.md` — plan d'implémentation complet par phases
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
+- `docs/graphify.md` — knowledge graph du monorepo (sous-modules inclus).
+  Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
+  (`graphify query|path|explain`, skill `graphify`) au lieu de grepper.
+  Le graphe (`graphify-out/`, gitignoré) est maintenu à jour automatiquement par
+  `graphify watch` (hook SessionStart) ; `graphify update .` pour forcer.
 
 **Mettre à jour `.claude/SKILLS.md` + `CLAUDE.md` après chaque installation ou création de skill**
 
