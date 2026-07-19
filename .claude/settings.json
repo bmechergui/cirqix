@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$g = Join-Path $env:USERPROFILE '.local\\bin\\graphify.exe'; if (Test-Path $g) { $running = Get-CimInstance Win32_Process -Filter \"Name = 'graphify.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '\\swatch\\s' }; if (-not $running) { New-Item -ItemType Directory -Force graphify-out | Out-Null; Start-Process -WindowStyle Hidden -FilePath $g -ArgumentList 'watch','.' -WorkingDirectory (Get-Location) } }",
+            "async": true,
+            "timeout": 60,
+            "statusMessage": "Démarrage du watcher Graphify (knowledge graph auto-update)"
+          }
+        ]
+      }
+    ]
+  }
+}
