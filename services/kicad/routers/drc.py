@@ -75,6 +75,11 @@ def _run_kicad_drc(cli_path: str, pcb_path: Path) -> str:
         "--output", str(report_path),
         "--format", "json",
         "--severity-all",
+        # Sans refill, kicad-cli juge les zones cuivre telles qu'écrites par le
+        # routeur (non remplies) → les pads alimentés par un plan comptent comme
+        # orphelins. Mesuré sur les boards STM32 routés à 100 % (2026-07-19) :
+        # 34 « unconnected_items » fantômes sans le flag, 10 et 8 avec.
+        "--refill-zones",
     ]
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
