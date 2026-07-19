@@ -97,6 +97,11 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
   (`packages/agents/src/orchestrator.ts:52-77`, `MAX_PLACEMENT_ATTEMPTS=3`,
   `keepBestRouting`) — aucune extension nécessaire ; la dédup lui rend du budget
   en arrêtant le rescue dès qu'aucune suggestion inédite ne reste.
+- **Piste 4 implémentée (TDD, commit d13bc19)** : `parse_retained_tier` (stdout
+  escalade) + marqueur in-band `cirqix_mfr_tier` (property racine KiCad,
+  idempotent, validé compatible parseur kicad-tools) + sidecar `.kicad_pro`
+  natif (`get_profile().get_design_rules()` + `apply_manufacturer_rules`) écrit
+  par le router DRC avant kicad-cli. No-op sans escalade. 13 tests, 107/107 verts.
 
 ## Fichiers modifiés
 
@@ -130,12 +135,19 @@ voie LLM reste bloquée (clé API invalide — action humaine).
 
 ## Travail restant
 
-- **Piste 4** (alignement règles DRC sur tier escaladé) : non implémentée —
-  l'analyse de conception a été interrompue (limite de session). À traiter en
-  tâche de suivi : récupérer le tier retenu dans `_run_kct_route`, appliquer le
-  profil fabricant natif kicad-tools au board (no-op sans escalade).
-- Runs de validation supplémentaires (critère : 3 runs consécutifs, cible 100 %).
-- Review Codex, PR.
+- Runs de validation supplémentaires en environnement Docker (backend C++) —
+  critère : 3 runs consécutifs à 100 %.
+- Review Codex de la PR #63 (pistes 2 + 4).
+
+## Cause racine des runs locaux faibles (27 % / 9 % / 45 %) — mesurée 2026-07-19
+
+`kct build-native --check` en local Windows : **backend C++ absent** (pas de
+compilateur C++20 ; la compilation échoue). Le routeur retombe en silence sur
+l'A* Python pur 10-100× plus lent → mur de deadline wall-clock. Le même
+pipeline avec backend compilé (conteneur `cirqix-kicad`, vérifié
+`C++ backend: available 1.0.0`) route le board STM32 de référence à 100 % en
+121 s (mesure documentée kct_route.py). **Toute mesure de % routé faite en
+local Windows sans le backend C++ n'est PAS représentative de la prod.**
 
 ## Prochaine action atomique
 
