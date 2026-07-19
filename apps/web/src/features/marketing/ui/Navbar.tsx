@@ -72,6 +72,8 @@ export function Navbar() {
             className="md:hidden flex items-center justify-center w-8 h-8 text-muted-foreground hover:text-foreground transition-colors"
             onClick={() => setMenuOpen((v) => !v)}
             aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-menu"
           >
             {menuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
@@ -80,7 +82,7 @@ export function Navbar() {
 
       {/* Mobile dropdown menu */}
       {menuOpen && (
-        <div className="md:hidden border-t border-border bg-[#080808]/95 backdrop-blur-md px-6 py-4 flex flex-col gap-1">
+        <div id="mobile-menu" className="md:hidden border-t border-border bg-[#080808]/95 backdrop-blur-md px-6 py-4 flex flex-col gap-1">
           {NAV_LINKS.map(({ label, href }) => (
             <Link
               key={label}

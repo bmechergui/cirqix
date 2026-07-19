@@ -107,6 +107,8 @@ export function SignupForm() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
+            aria-invalid={!!error}
+            aria-describedby={error ? 'signup-error' : undefined}
           />
         </div>
 
@@ -122,10 +124,12 @@ export function SignupForm() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="new-password"
+            aria-invalid={!!error}
+            aria-describedby={error ? 'signup-error' : undefined}
           />
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p id="signup-error" className="text-sm text-red-400" role="alert">{error}</p>}
 
         <Button type="submit" className="w-full glow-cyan-sm" disabled={loading}>
           {loading ? 'Creating account…' : 'Create account'}
