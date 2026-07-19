@@ -115,14 +115,21 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 |---|---|---|
 | `run_agent_chain.py output/orch-run1` (baseline) | `exit 0 — ERC PASS, placement 17 comp., routage 27 %` | `2026-07-19T12:40:00Z` |
 | `run_feedback_loop.py … no_decisions.json` (rescue prod + dédup, sans LLM) | `exit 0 — 27 % → 45 % (meilleur conservé) ; 4 suggestions appliquées (D1/R2 nord puis ouest — orthogonales, correctement autorisées) ; itér. 3 rechute 27 % absorbée par la garde` | `2026-07-19T13:05:00Z` |
-| `pytest services/kicad/tests` | `94 passed (dont 8 nouveaux tests dédup)` | `2026-07-19T12:55:00Z` |
-| `kicad-cli pcb drc` (juge final) | `non exécuté — pertinent après piste 4 (alignement tier)` | — |
+| `pytest services/kicad/tests` | `107 passed (8 tests dédup + 13 tests alignement tier)` | `2026-07-19T17:00:00Z` |
+| `kct build-native --check` (local Windows) | `C++ backend: not installed — compilation impossible (pas de C++20)` | `2026-07-19T16:55:00Z` |
+| `kct build-native --check` (Docker cirqix-kicad) | `C++ backend: available (version 1.0.0)` | `2026-07-19T17:00:00Z` |
+| Docker run 3 : `run_agent_chain.py` (backend C++) | `exit 0 — placement 17 comp. (0 conflit), routage brut 36 % (tirage GA défavorable, NRST BLOCKED_PATH)` | `2026-07-19T17:15:00Z` |
+| Docker run 3 : `run_feedback_loop.py` (rescue prod + dédup, sans LLM) | `exit 0 — 36 % → 82 % → 91 % → 82 %, meilleur conservé 91 % ; suggestions J1 est puis J1 nord (orthogonales, autorisées par la dédup) — reproduit exactement le plancher 91 % documenté` | `2026-07-19T17:35:00Z` |
+| `kicad-cli pcb drc` (juge final) | `non exécuté — pertinent quand un run atteint 100 % routé` | — |
 
-Note mesure : le critère « 3 runs consécutifs à 100 % » n'est PAS atteint. Ce
-tirage GA (27 % brut) est bien en dessous du plancher 91 % documenté — c'est le
-cas que le retry placement de l'orchestrateur (piste 3, tirage GA neuf) traite
-en prod ; la dédup y contribue en libérant le budget d'itérations stériles. La
-voie LLM reste bloquée (clé API invalide — action humaine).
+Bilan mesuré (iso-prod Docker, backend C++) : la chaîne déterministe complète
+(placement GA → route 36 % → rescue+dédup → **91 % conservé**) reproduit le
+plancher 91 % documenté sur un tirage défavorable. Le critère « 3 runs
+consécutifs à 100 % » n'est PAS atteint dans cette session. Le dernier net est
+*partiellement connecté* → le routeur n'émet pas de suggestion → au-delà de
+91 %, les deux leviers de prod sont : retry placement orchestrateur (tirage GA
+neuf — certains tirages routent 100 %, benchmark PR #48) et voie LLM du
+reasoner (bloquée : clé API invalide — action humaine).
 
 ## Risques et blocages
 
