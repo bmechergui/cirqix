@@ -81,8 +81,19 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 1. La dédup opère uniquement sur les tuples `(ref, direction)` du parseur
    générique (`[A-Z]{1,4}\d+`) — les tests utilisent des refs variées
    (R5/C2/C3/Z99) pour verrouiller l'absence de constante board-specific.
-2. Validation d'exécution réelle : boucle rescue de prod sur le board baseline
-   (voir Validations exactes).
+2. **Exécutée sur 3 types de carte** (iso-prod Docker) :
+   - **STM32** (60×40mm, 4 couches après escalade, LQFP-48 0,5mm) : 100 % ×3
+   - **LED blinker** (5 V minimal, pipeline 8 agents complet) :
+     `test_native_pipeline_is_manufacturable` OK — routage 100 %, ERC/DRC
+     propre, `gerbers.zip` produit. Aucune régression du fallback.
+   - **NE555** (30×30mm, 2 couches, analogique) : 17 % — **état préexistant**
+     (les 3 runs antérieurs à ces changements échouent identiquement :
+     OUT/CONT BLOCKED_PATH). Le fallback plans power s'est correctement
+     ABSTENU (nets manquants = signaux, pas des rails power).
+3. **Régression trouvée par cette validation croisée** : le plafond
+   `_MAX_SAME_MOVE=2` laissait ré-appliquer les mêmes déplacements (cumul 6mm)
+   → 17 % → 0 % sur NE555. Plafond ramené à 1 (commit 6894ca4) : 2 routages au
+   lieu de 3, pas de dérive, même résultat final.
 
 ## Travail réalisé
 
