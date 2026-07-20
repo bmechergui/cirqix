@@ -157,6 +157,60 @@ def test_write_mfr_project_sidecar_matches_profile(tmp_path):
     assert data["meta"]["manufacturer"] == "jlcpcb-tier1"
 
 
+def test_sidecar_default_netclass_aligned_on_tier(tmp_path):
+    """Chantier DRC-clean (2026-07-19) : sans netclass dans le sidecar,
+    kicad-cli juge la clearance à la netclass Default de KiCad (0,2 mm) alors
+    que le routeur route aux règles du tier (0,127) → faux positifs garantis
+    sur tous les escapes fine-pitch (mesuré : 5 clearance run 7, 1 run 9,
+    éliminés par ce fix)."""
+    from kicad_tools.manufacturers import get_profile
+
+    pcb_path = tmp_path / "board.kicad_pcb"
+    pcb_path.write_bytes(b"(kicad_pcb)")
+
+    pro_path = write_mfr_project_sidecar(pcb_path, "jlcpcb-tier1", layers=2)
+
+    data = json.loads(Path(pro_path).read_text(encoding="utf-8"))
+    cls = next(c for c in data["net_settings"]["classes"] if c["name"] == "Default")
+    expected = get_profile("jlcpcb-tier1").get_design_rules(2, 1.0)
+    assert cls["clearance"] == expected.min_clearance_mm
+    assert cls["track_width"] == expected.min_trace_width_mm
+    assert cls["via_diameter"] == expected.min_via_diameter_mm
+    assert cls["via_drill"] == expected.min_via_drill_mm
+
+
+def test_sidecar_writes_microvia_dru_when_board_has_micro_vias(tmp_path):
+    """Microvias via-in-pad 0,3/0,15 = politique kct escape (env
+    KICAD_TOOLS_MICRO_VIA_SIZE/DRILL) ; le profil déclare annular min 0,15 —
+    géométriquement impossible pour sa propre microvia. Règle .kicad_dru
+    scopée Via_Type == 'Micro' à l'annular de la politique (0,075), honorée
+    par kicad-cli (validé empiriquement : 5 annular_width → 0, runs 7 et 9)."""
+    pcb_path = tmp_path / "board.kicad_pcb"
+    pcb_path.write_bytes(b"(kicad_pcb)")
+
+    write_mfr_project_sidecar(
+        pcb_path, "jlcpcb-tier1", layers=2,
+        pcb_text='(kicad_pcb (via micro (at 1 1) (size 0.3) (drill 0.15)))')
+
+    dru = pcb_path.with_suffix(".kicad_dru")
+    assert dru.exists()
+    content = dru.read_text(encoding="utf-8")
+    assert "A.Via_Type == 'Micro'" in content
+    assert "(constraint annular_width (min 0.075mm))" in content
+
+
+def test_sidecar_no_dru_without_micro_vias(tmp_path):
+    """Pas de microvia sur le board → pas de règle d'assouplissement : les
+    vias traversants restent jugés à l'annular du profil."""
+    pcb_path = tmp_path / "board.kicad_pcb"
+    pcb_path.write_bytes(b"(kicad_pcb)")
+
+    write_mfr_project_sidecar(pcb_path, "jlcpcb-tier1", layers=2,
+                              pcb_text="(kicad_pcb (via (at 1 1)))")
+
+    assert not pcb_path.with_suffix(".kicad_dru").exists()
+
+
 def test_write_mfr_project_sidecar_unknown_tier_raises(tmp_path):
     """Un tier inconnu lève (ValueError de get_profile) — l'appelant (router
     DRC) l'attrape et continue aux règles par défaut, jamais de crash 500."""

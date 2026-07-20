@@ -203,6 +203,53 @@ warning les `clearance` impliquant un pad `<no net>` — il ne couvre PAS
 `<no net>` ne peut pas créer de court ») est **fausse pour une broche
 silicium inutilisée**. À réexaminer avec la décision ci-dessus.
 
+## Option (c) livrée — strip des stubs d'escape NC (session 2026-07-20)
+
+**Décision utilisateur (2026-07-20)** : option (c) — clearance réduite sur les
+pads sans net, pour viser 100 % routé **ET** fabricable.
+
+### Enquête Docker (4 phases, iso-prod, backend C++ v1.0.0)
+
+- **Phase 1 (A/B `--manufacturer`)** : le shrink fine-pitch est **DÉJÀ actif**
+  en prod (escape clearance U2 = 0,140 mm ; tier1 JLCPCB = 0,127 mm → OK).
+  `--auto-mfr-tier` positionne déjà `rules.manufacturer` → le flag
+  `--manufacturer` est **redondant** (voie A = voie B = 100 % sur bon placement).
+  L'hypothèse « 1 flag manque » est **FALSIFIÉE**.
+- **Phase 2 (route_kct prod + DRC détaillé)** : le **vrai tueur de fabricabilité**
+  est identifié — le routeur **échappe les pads NC** (`net 0`, rendus obstacles
+  par `assign_nc_nets` via des nets `CIRQIX_NC_*`) avec des tracks/vias qui ne
+  transportent **aucun signal**. Une fois `strip_nc_nets` passé, ces stubs
+  deviennent des pistes `<no net>` qui court-circuitent les pads NC
+  (solder_mask_bridge + shorting_items : 20 + 20 mesurés sur U2).
+- **Phase 3b (pcbnew strip)** : retirer les tracks/vias à nom de net vide →
+  **0 erreur DRC tier1** (shorting 20→0, solder_mask 20→0). Preuve de concept.
+- **Phase 4 (fix intégré)** : confirmé sur le board routé par `route_kct` —
+  `strip_nc_escape_stubs` retire **tous** les stubs (0 restant). Après strip +
+  normalisation pcbnew : **0 erreur tier1**.
+
+### Fix livré — `strip_nc_escape_stubs` (TDD)
+
+- **Fichier** : `services/kicad/tools/kct_route.py` — nouvelle fonction
+  `strip_nc_escape_stubs(text) -> (text, n)`, appelée dans `_route_once`
+  **avant** `strip_nc_nets`.
+- **Mécanisme** : détection par **code net** (KiCad sérialise les segments/vias
+  en `(net N)` code-only, pas nommé) — on déduit les codes `CIRQIX_NC_*` des
+  déclarations puis on retire les blocs `(segment…)`/`(via…)` qui les
+  référencent. Scan à parenthèses équilibrées (cf. `_strip_zone_blocks`).
+- **Board-agnostique** = industrialisable partout (tout pad NC génère un stub).
+- **Tests** : `services/kicad/tests/test_kct_route_nc_stubs.py` — 10 tests
+  (synthétiques nommés + **code-only KiCad réel** + roundtrip complet).
+  `pytest services/kicad/tests` → **147 passed, 0 erreur**.
+
+### Ouvert (non bloquant)
+
+Sur un placement GA défavorable (orch-run1, 73 % routé), le strip laisse
+~43 erreurs `clearance_pad_segment` qui ne sont **pas** des stubs (0 stub
+restant confirmé) mais un **artefact de zones** qu'une passe load+save pcbnew
+résout (43 → 0). À investiguer : adopter une normalisation pcbnew finale dans
+`route_kct`, ou compter sur le retry-placement pour viser ≥ 82 % (où le strip
+seul suffit). Indépendant du présent fix (qui est validé).
+
 ## Risques et blocages
 
 - Non-déterminisme GA/routeur (56–89 % observés run à run, upstream #2673/#2802)

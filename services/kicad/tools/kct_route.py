@@ -317,6 +317,169 @@ def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
         return board.read_bytes()
 
 
+# ---------------------------------------------------------------------------
+# Pads NC stricts (chantier DRC-clean 2026-07-19)
+# ---------------------------------------------------------------------------
+# kicad-tools exempte les pads ``(net 0 "")`` de son validateur de clearance
+# (arbitrage upstream #3281) → le routeur peut TRAVERSER un pad NC. Mesuré sur
+# les boards routés 100 % (runs 7/9 stm32-validation) : 9 shorting_items +
+# 9 solder_mask_bridge, tous contre les pads 33/43 du LQFP-48 — des broches
+# silicium inutilisées, donc des courts RÉELS. On assigne un net unique à
+# chaque pad sans net AVANT le routage (obstacle normal), retiré APRÈS : le
+# board final garde son contrat (pads NC = ``(net 0 "")``).
+# Coût mesuré (scripts/strict_nc_route.py, backend C++) : complétion brute
+# 100→82 % (run 7) / 82→73 % (run 8) — compensé par rescue + retry placement.
+_NC_NET_PREFIX = "CIRQIX_NC_"
+_NC_NET_DECL_RE = re.compile(r'\n[ \t]*\(net \d+ "' + _NC_NET_PREFIX + r'\d+"\)')
+_NC_NET_REF_RE = re.compile(r'\(net \d+ "' + _NC_NET_PREFIX + r'\d+"\)')
+
+
+def assign_nc_nets(text: str) -> tuple[str, int]:
+    """Donne un net unique ``CIRQIX_NC_<n>`` à chaque pad ``(net 0 "")``.
+
+    Seules les références de pad (après le premier ``(footprint``) sont
+    converties — la déclaration racine ``(net 0 "")`` reste intacte. Les
+    déclarations des nouveaux nets sont insérées après la dernière déclaration
+    existante (un net référencé mais non déclaré rendrait le board invalide).
+    Renvoie (board modifié, nombre de pads convertis) ; no-op → (text, 0).
+    """
+    fp = text.find("(footprint")
+    if fp == -1:
+        return text, 0
+    head, body = text[:fp], text[fp:]
+
+    next_net = max([int(n) for n in re.findall(r"\(net (\d+)", text)] or [0]) + 1
+    declarations: list[str] = []
+
+    def _assign(_m: re.Match) -> str:
+        nonlocal next_net
+        n = next_net
+        next_net += 1
+        declarations.append(f'  (net {n} "{_NC_NET_PREFIX}{n}")')
+        return f'(net {n} "{_NC_NET_PREFIX}{n}")'
+
+    body = re.sub(r'\(net 0 ""\)', _assign, body)
+    if not declarations:
+        return text, 0
+
+    last = None
+    for m in re.finditer(r'\n[ \t]*\(net \d+ "[^"]*"\)', head):
+        last = m
+    if last is None:
+        return text, 0  # pas de section nets identifiable → no-op prudent
+    idx = last.end()
+    head = head[:idx] + "\n" + "\n".join(declarations) + head[idx:]
+    return head + body, len(declarations)
+
+
+def strip_nc_nets(text: str) -> str:
+    """Retire les nets temporaires ``CIRQIX_NC_*`` (inverse d'assign_nc_nets).
+
+    Robuste à une re-numérotation par le routeur : le marqueur est le NOM,
+    jamais le numéro. Déclarations (avant le premier footprint) supprimées,
+    références de pad restaurées en ``(net 0 "")``.
+    """
+    fp = text.find("(footprint")
+    if fp == -1:
+        return text
+    head, body = text[:fp], text[fp:]
+    head = _NC_NET_DECL_RE.sub("", head)
+    body = _NC_NET_REF_RE.sub('(net 0 "")', body)
+    return head + body
+
+
+_SEG_VIA_BLOCK_RE = re.compile(r"\n[ \t]*\((segment|via)[\s\n]")
+
+
+def strip_nc_escape_stubs(text: str) -> tuple[str, int]:
+    """Retire les tracks/vias d'escape laissés sur les pads NC.
+
+    Le routeur échappe les pads NC (rendus obstacles par :func:`assign_nc_nets`
+    via des nets ``CIRQIX_NC_*``) avec des segments/vias qui ne transportent
+    **aucun signal**. Une fois :func:`strip_nc_nets` passé, ces stubs deviennent
+    des pistes ``<no net>`` qui court-circuitent les pads NC (shorting_items +
+    solder_mask_bridge : 20 + 20 → 0 mesuré sur STM32 LQFP-48 en iso-prod).
+    On les retire **avant** ``strip_nc_nets``, tant qu'ils sont encore
+    étiquetés ``CIRQIX_NC_*``.
+
+    **Détection par code** : KiCad sérialise les nets des segments/vias par
+    **code seul** ``(net N)``, jamais par nom. On déduit donc les codes des
+    nets NC depuis leurs déclarations ``(net N "CIRQIX_NC_N")`` puis on retire
+    tout bloc segment/via référençant l'un de ces codes.
+
+    Board-agnostique : tout pad NC générera un stub ``CIRQIX_NC_*``, donc la
+    transformation s'applique à n'importe quelle carte. Scan à parenthèses
+    équilibrées, insensible aux parenthèses dans les chaînes quotées (même
+    technique que :func:`_strip_zone_blocks`).
+
+    Args:
+        text: Contenu sérialisé du ``.kicad_pcb`` routé (avant strip_nc_nets).
+
+    Returns:
+        ``(text_nettoyé, nombre_de_stubs_retirés)``. No-op → ``(text, 0)``.
+    """
+    nc_codes = set(re.findall(
+        r'\(net\s+(\d+)\s+"' + re.escape(_NC_NET_PREFIX) + r'\d+"\)', text))
+    if not nc_codes:
+        return text, 0
+
+    out: list[str] = []
+    removed = 0
+    i = 0
+    while True:
+        m = _SEG_VIA_BLOCK_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            return "".join(out), removed
+        paren = text.index("(", m.start())
+        depth, in_str = 0, False
+        j = paren
+        while j < len(text):
+            c = text[j]
+            if in_str:
+                if c == "\\":
+                    j += 1
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if depth != 0:
+            # .kicad_pcb malformé — on garde le bloc intact et on rend la main.
+            out.append(text[i:])
+            return "".join(out), removed
+        block = text[paren:j + 1]
+        # Codes nets référencés par ce segment/via (format KiCad code-only ou nommé).
+        block_codes = set(re.findall(r'\(net\s+(\d+)', block))
+        if block_codes & nc_codes:
+            # Stub d'escape NC : on retire le \n+indentation qui précèdent aussi.
+            out.append(text[i:m.start()])
+            removed += 1
+        else:
+            out.append(text[i:j + 1])
+        i = j + 1
+
+
+def _solid_connect_zones(text: str) -> str:
+    """Zones en connexion solid (``connect_pads yes``) — idempotent.
+
+    Les zones du flux Cirqix sont toutes des plans power (GND posé par
+    ``_ensure_gnd_both_planes``, rails coulés par kct en mode plans) : le
+    frein thermique par défaut y est infaisable entre les pistes d'escape
+    fine-pitch (starved_thermal + pads orphelins mesurés runs 7/9 — éliminés
+    par la connexion solid). ``ZoneConfig``/``zone_node`` (kicad-tools)
+    n'exposent pas le mode de connexion → transformation texte du bloc
+    ``(connect_pads …)`` sérialisé.
+    """
+    return text.replace("(connect_pads (clearance", "(connect_pads yes (clearance")
+
+
 _ZONE_BLOCK_RE = re.compile(r"\n\s*\(zone[\s\n]")
 
 
@@ -492,6 +655,11 @@ def _route_once(
         src_text = pcb_bytes.decode("utf-8", errors="replace")
         if vcc_as_traces:
             src_text = _rename_nets(src_text, _VCC_RENAME)
+        # Pads NC → obstacles réels le temps du routage (cf. _NC_NET_PREFIX).
+        src_text, nc_count = assign_nc_nets(src_text)
+        if nc_count:
+            logger.info("kct route: %d pad(s) NC convertis en obstacles stricts",
+                        nc_count)
         src.write_text(src_text, encoding="utf-8")
 
         result = _run_kct_route(src, dst, timeout_s)
@@ -515,6 +683,18 @@ def _route_once(
             )
             restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))
+
+        # Post-traitements communs aux deux modes : retrait des stubs
+        # d'escape NC (courts/solder-mask sur pads NC), des nets NC
+        # temporaires, et zones en connexion solid (chantier DRC-clean).
+        routed_text = routed.decode("utf-8", errors="replace")
+        routed_text, stub_n = strip_nc_escape_stubs(routed_text)
+        if stub_n:
+            logger.info(
+                "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
+                "courts + solder_mask_bridge sur pads NC", stub_n)
+        post = strip_nc_nets(routed_text)
+        routed = _solid_connect_zones(post).encode("utf-8")
 
         # Piste 4 : estampille le tier retenu SI l'escalade a dépassé le
         # premier barreau — le router DRC alignera ses règles dessus. No-op
