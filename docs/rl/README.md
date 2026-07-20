@@ -45,13 +45,37 @@ l'investissement dans le routeur déterministe existant.
 
 ## Coûts estimés
 
-À chiffrer avant le démarrage de chaque phase et consigner ici :
+Ordres de grandeur à valider par un smoke run avant chaque phase. Hypothèses :
+1 GPU grand public (classe RTX) ou 16 cœurs CPU, Stable-Baselines3 PPO/MLP,
+cartes de 10 à 30 composants.
 
-- heures GPU d'entraînement PPO par expérience ;
-- cadence et durée des évaluations `kicad-cli pcb drc` sur checkpoints ;
-- coût d'inférence par requête en production (budget borné) ;
-- maintenance : versioning des modèles, régénération après changement de
-  `kicad-tools` ou de KiCad.
+### Phase 6a — RL placement
+
+- Entraînement : 1 à 5 M de pas PPO, pas surrogate à ~2–5 ms
+  (calcul FOM `kicad-tools`) → **2 à 8 h GPU par expérience**.
+- Inférence : épisode de 100 à 500 déplacements, forward MLP < 1 ms →
+  **< 1 s par candidat**, négligeable face au budget CMA-ES actuel.
+
+### RL routing LED
+
+- Entraînement : 10 à 100 M de pas surrogate (grille 2 couches, 3 nets,
+  pas ~10–50 µs vectorisé) → **12 à 48 h GPU par run**.
+- Évaluations réelles : `kicad-cli pcb drc` ≈ 5–15 s sur le LED ; cadence
+  1 checkpoint sur 20, checkpoint tous les 100 k pas → ~5 évaluations par
+  run de 10 M de pas, **plafond 50 évaluations par run** (< 15 min au total).
+- Inférence : épisode de 1 à 10 k pas → quelques secondes par candidat.
+
+### Maintenance
+
+- Modèles versionnés avec le commit `kicad-tools` et la version KiCad ayant
+  servi à l'entraînement.
+- Réentraînement complet requis après tout changement du FOM, des règles
+  de design ou de la version majeure de KiCad : rejouer le budget
+  d'entraînement ci-dessus.
+
+Ces chiffres sont des estimations initiales : le premier smoke run (100 k pas)
+doit mesurer le débit réel du surrogate et la durée réelle du DRC, puis cette
+section est mise à jour avec les valeurs mesurées.
 
 ## Invariants non négociables
 
