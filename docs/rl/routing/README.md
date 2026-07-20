@@ -18,6 +18,11 @@ Validateur rapide : rejette collisions, keepouts et sortie de carte
 Validateur final : KiCad 10 DRC sur le .kicad_pcb écrit
 ```
 
+Les deux niveaux sont des politiques PPO/MLP en v1. Si la mémoire manque au
+routeur local (grille partiellement observable), l'option est RecurrentPPO
+(LSTM, sb3-contrib) — voir « Choix d'algorithme » dans
+[../README.md](../README.md#choix-dalgorithme--ppo-v1-dreamerv3-seulement-sur-preuve).
+
 ## Observation du routeur local
 
 Chaque couche cuivre est un ensemble de canaux rasterisés :

@@ -26,6 +26,35 @@ puis DRC officiel `kicad-cli pcb drc --format json`.
 La procédure de démarrage est documentée dans
 [l'exemple LED](routing/README.md#processus-led-pour-le-routeur-rl-direct).
 
+## Choix d'algorithme : PPO v1, DreamerV3 seulement sur preuve
+
+Les deux politiques utilisent **PPO** (Stable-Baselines3) en v1. DreamerV3 est
+écarté pour une raison structurelle : sa valeur est l'efficacité
+d'échantillons quand chaque pas d'environnement coûte cher (world model +
+entraînement en imagination). Or le surrogate tourne à ~10–50 µs/pas : les pas
+sont quasi gratuits, l'avantage disparaît et il ne reste que les inconvénients
+(stack JAX lourde ou portages torch non officiels, hyperparamètres sensibles,
+débogage difficile, coût par pas supérieur).
+
+- Placement : état compact, reward dense (FOM), épisodes courts — cas d'école
+  PPO/MLP.
+- Routing : si l'observabilité partielle de la grille exige de la mémoire,
+  l'étape intermédiaire est **RecurrentPPO** (LSTM, sb3-contrib), pas un
+  world model.
+
+DreamerV3 n'est réexaminé que si l'une de ces conditions est mesurée :
+
+1. l'entraînement doit se faire contre l'environnement réel KiCad (pas
+   coûteux → l'efficacité d'échantillons redevient décisive) ;
+2. PPO et RecurrentPPO plafonnent sur les cartes 5–10 composants (credit
+   assignment long horizon) ;
+3. le gap surrogate/réel impose un modèle appris de la dynamique.
+
+Rôle de FreeRouting : baseline de comparaison aux côtés de `kct route`
+(export DSN/SES) et source optionnelle de **behavioral cloning** pour
+pré-entraîner la politique avant PPO. Jamais dans la boucle de pas RL :
+trop lent.
+
 ## Critères d'échec et d'abandon
 
 Chaque phase est une expérience avec un critère d'arrêt, pas un engagement.
