@@ -489,10 +489,14 @@ pour protypage on utulise claude SDK
 > produisent des candidats, jugés par `kicad-cli pcb drc`, avec critères
 > d'abandon et coûts chiffrés. Décision d'algorithme : **PPO v1** (SB3),
 > RecurrentPPO si la mémoire manque, DreamerV3 seulement sur conditions
-> mesurées. La section ci-dessous reste un brainstorm historique : son
-> « Option 1 — RL → FreeRouting » est une alternative MVP valide, mais la
-> spec Phase 6 retient un routeur RL direct avec fallback `kct route` ;
-> FreeRouting y sert de baseline et de source de behavioral cloning.
+> mesurées. La piste **DreamerV3 + FreeRouting** est validée par une
+> publication (Chiang et al., 2026, *Expert Systems with Applications* :
+> 96 % de complétion, −21 % de temps d'entraînement vs DQN) et documentée
+> dans `docs/rl/README.md` comme piste de référence post-PPO. La section
+> ci-dessous reste un brainstorm historique : son « Option 1 — RL →
+> FreeRouting » est une alternative MVP valide, mais la spec Phase 6 retient
+> un routeur RL direct avec fallback `kct route` ; FreeRouting y sert de
+> baseline et de source de behavioral cloning.
 
 Important pour ton RL (Cirqix)
 

@@ -50,6 +50,28 @@ DreamerV3 n'est réexaminé que si l'une de ces conditions est mesurée :
    assignment long horizon) ;
 3. le gap surrogate/réel impose un modèle appris de la dynamique.
 
+### Preuve externe : DreamerV3+FR (Chiang et al., 2026)
+
+L'étude « Automation of PCB autorouting via world-model reinforcement
+learning » (Chiang et al., 2026, *Expert Systems with Applications*,
+[doi](https://www.sciencedirect.com/science/article/abs/pii/S0957417426003374))
+annonce pour **DreamerV3+FR** (world model latent + FreeRouting) un taux de
+complétion SOTA de **96 %** et **−21 % de temps d'entraînement** face à la
+meilleure baseline model-free. Cette publication valide la direction
+world model + FreeRouting à moyen terme, sans changer la décision v1 :
+
+- la baseline battue est **DQN**, pas PPO sur surrogate quasi gratuit — le
+  résultat ne contredit pas l'argument structurel ci-dessus ;
+- 96 % de complétion reste sous l'invariant Cirqix (`routing_complete` + 0
+  violation KiCad) → le fallback déterministe reste obligatoire dans tous
+  les cas ;
+- leur évaluation porte sur du routage réel (pas coûteux), ce qui correspond
+  à la condition 1 de réexamen ci-dessus.
+
+Conséquence : DreamerV3+FR devient la **piste de référence documentée pour la
+phase post-PPO** (routing), à répliquer sur les fixtures Cirqix si PPO et
+RecurrentPPO plafonnent.
+
 Rôle de FreeRouting : baseline de comparaison aux côtés de `kct route`
 (export DSN/SES) et source optionnelle de **behavioral cloning** pour
 pré-entraîner la politique avant PPO. Jamais dans la boucle de pas RL :
