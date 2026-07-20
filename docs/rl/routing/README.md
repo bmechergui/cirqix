@@ -72,7 +72,15 @@ preuve est le DRC officiel après écriture du PCB.
 | Environnement | Usage | Validateur |
 |---|---|---|
 | `surrogate` rapide | millions de pas PPO | géométrie/grille en mémoire |
+| pré-filtre candidat | tri avant évaluation réelle | DRC natif `kicad-tools` (27 règles JLCPCB) |
 | `real` | évaluation de chaque checkpoint | PCB écrit → `kicad-cli pcb drc --format json` |
+
+Le DRC natif `kicad-tools` sert de pré-filtre sur les candidats : il tourne en
+local, bien plus vite que `kicad-cli`, et écarte les candidats visiblement
+mauvais avant l'évaluation réelle. Il ne remplace jamais le juge final —
+conformément à la matrice de disponibilité de `routers/drc.py`, kicad-tools
+niveau 1 ne court-circuite jamais `kicad-cli`, qui fait seul foi sur les
+invariants d'acceptation.
 
 KiCad 10 et `kct route` ne sont pas exécutés à chaque pas RL : ils seraient trop
 lents. Ils évaluent les candidats complets et empêchent le modèle d'optimiser
