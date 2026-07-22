@@ -282,7 +282,11 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 # kicad_tools.optim.fom_features._dense_package_count (BGA, QFP/QFN denses).
 _DENSE_PAD_COUNT: int = 16
 # Largeur du canal d'escape réservé au-delà du courtyard d'un composant dense.
-_ESCAPE_HALO_MM: float = 2.5
+# Calibré (iso-prod Docker, board STM32) : 2,5 mm → 73% routé mais 1 court réel
+# résiduel (kicad-cli) ; 5,0 mm approche le halo manuel (~6 mm de clearance) qui
+# donnait 0 court. Un halo trop large sur une petite carte repousse trop de
+# voisins vers les bords → re-mesurer si augmenté.
+_ESCAPE_HALO_MM: float = 5.0
 # Pas et plafond du push radial hors du keepout (borné — jamais de boucle infinie).
 _HALO_PUSH_STEP_MM: float = 0.5
 _HALO_PUSH_MAX_STEPS: int = 60
