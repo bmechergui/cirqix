@@ -25,6 +25,23 @@ export interface PcbStateCacheEntry {
   boardH: number;
   kicad_sch_content?: string;
   kicad_pcb_content?: string;
+  drc_clean?: boolean;
+  drc_skipped?: boolean;
+  drc_validation?: 'kicad-cli' | 'unavailable' | 'simulated' | 'stale';
 }
 
 export const pcbStateCache = new Map<string, PcbStateCacheEntry>();
+
+/** A modified board must be validated again before it can be exported. */
+export function invalidateDrcCertification(
+  state: PcbStateCacheEntry,
+  kicadPcbContent: string,
+): PcbStateCacheEntry {
+  return {
+    ...state,
+    kicad_pcb_content: kicadPcbContent,
+    drc_clean: false,
+    drc_skipped: false,
+    drc_validation: 'stale',
+  };
+}

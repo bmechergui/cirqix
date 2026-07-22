@@ -4,7 +4,6 @@ import { runOrchestrator } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
-import { deductPipelineCost } from './credits';
 
 const log = logger.child({ module: 'orchestrator-bridge' });
 
@@ -26,6 +25,15 @@ type OrchestratorPcbState = Record<string, unknown> & {
   kicad_sch_content?: string;
   kicad_pcb_content?: string;
   pcb_status?: PCBStatus;
+  drc_clean?: boolean;
+  drc_skipped?: boolean;
+  drc_validation?: 'kicad-cli' | 'unavailable' | 'simulated' | 'stale';
+};
+
+type DrcEvidence = {
+  drc_clean?: boolean;
+  drc_skipped?: boolean;
+  drc_validation?: 'kicad-cli' | 'unavailable' | 'simulated' | 'stale';
 };
 
 export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
@@ -100,7 +108,32 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           delete rawWithoutContent['kicad_sch_content'];
           delete rawWithoutContent['kicad_pcb_content'];
 
-          const status: PCBStatus = (raw.pcb_status as PCBStatus | undefined) ?? lastStatus;
+          const requestedStatus: PCBStatus = (raw.pcb_status as PCBStatus | undefined) ?? lastStatus;
+          const boardWasChanged: boolean = typeof raw.kicad_pcb_content === 'string'
+            && requestedStatus !== 'DRC_CLEAN'
+            && requestedStatus !== 'PCB_LIVRÉ';
+          if (boardWasChanged) {
+            rawWithoutContent['drc_clean'] = false;
+            rawWithoutContent['drc_skipped'] = false;
+            rawWithoutContent['drc_validation'] = 'stale';
+          }
+          const storedDrc = mergedState as Partial<PCBState> & DrcEvidence;
+          const currentDrcClean: boolean | undefined = boardWasChanged
+            ? false
+            : raw.drc_clean ?? storedDrc.drc_clean;
+          const currentDrcSkipped: boolean | undefined = boardWasChanged
+            ? false
+            : raw.drc_skipped ?? storedDrc.drc_skipped;
+          const currentDrcValidation: DrcEvidence['drc_validation'] = boardWasChanged
+            ? 'stale'
+            : raw.drc_validation ?? storedDrc.drc_validation;
+          const hasOfficialDrc: boolean = currentDrcClean === true
+            && currentDrcSkipped !== true
+            && currentDrcValidation === 'kicad-cli';
+          const requiresOfficialDrc: boolean = requestedStatus === 'DRC_CLEAN' || requestedStatus === 'PCB_LIVRÉ';
+          const status: PCBStatus = requiresOfficialDrc && !hasOfficialDrc
+            ? 'ROUTING_DONE'
+            : requestedStatus;
           mergedState = {
             ...mergedState,
             ...rawWithoutContent,
@@ -145,18 +178,10 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
 
         case 'error':
-          if (ev.message.includes('credit') || ev.message.includes('402')) {
-            throw new Error(ev.message); // Throw to trigger fallback
-          }
-          controller.enqueue(encoder.encode(encodeSse({ type: 'error', message: ev.message })));
-          break;
+          throw new Error(ev.message);
 
         case 'done':
           controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-          // Atomic deduction via the secured deduct_credits RPC — row lock +
-          // audit row in credit_transactions. Replaces the previous direct
-          // UPDATE that bypassed the RPC (race condition + missing audit).
-          await deductPipelineCost(supabase, userId, projectId);
           controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
           break;
 
@@ -167,10 +192,6 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
       }
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Orchestrator failed';
-    if (message.includes('credit') || message.includes('402')) {
-      throw err; // Re-throw to trigger fallback in route.ts
-    }
-    controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
+    throw err;
   }
 }

@@ -54,8 +54,6 @@ export async function POST(req: NextRequest) {
       user_id: user.id,
       name: parsed.data.name,
       description: parsed.data.description,
-      status: 'INITIAL',
-      iteration_count: 0,
     })
     .select('id, name, description, status, iteration_count, created_at, updated_at')
     .single();

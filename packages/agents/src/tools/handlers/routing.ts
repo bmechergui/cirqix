@@ -1,4 +1,4 @@
-import { pcbStateCache, log } from '../shared';
+import { invalidateDrcCertification, pcbStateCache, log } from '../shared';
 import { runPCBEngine } from '../../engines/engine-router';
 import { runRealRouting, RoutingServiceUnavailableError } from '../../engines/routing-service';
 import { stripTrackSegments, addGroundPlane } from '../pcb-helpers';
@@ -49,7 +49,7 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
 
     if (service.skipped) {
       const skippedPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
-      if (cached) pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: skippedPcb });
+      if (cached) pcbStateCache.set(projectId, invalidateDrcCertification(cached, skippedPcb));
       return {
         status: 'success',
         pcb_status: 'ROUTING_DONE',
@@ -71,7 +71,7 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
 
     // Persist routed .kicad_pcb in cache for downstream tools (DRC, export)
     if (cached) {
-      pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+      pcbStateCache.set(projectId, invalidateDrcCertification(cached, finalPcb));
     }
 
     return {
@@ -96,7 +96,7 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     }
     const fallbackPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
     if (cached) {
-      pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: fallbackPcb });
+      pcbStateCache.set(projectId, invalidateDrcCertification(cached, fallbackPcb));
     }
     return {
       status: 'success',

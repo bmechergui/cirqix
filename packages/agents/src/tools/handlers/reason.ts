@@ -1,4 +1,4 @@
-import { pcbStateCache } from '../shared';
+import { invalidateDrcCertification, pcbStateCache } from '../shared';
 import { runReasoner } from '../../engines/reasoning-service';
 
 export async function handleReason(projectId: string): Promise<Record<string, unknown>> {
@@ -19,7 +19,7 @@ export async function handleReason(projectId: string): Promise<Record<string, un
   const result = await runReasoner({ kicadPcbContent: pcbContent });
   const finalPcb = result.kicadPcbContent ?? pcbContent;
   if (cached) {
-    pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+    pcbStateCache.set(projectId, invalidateDrcCertification(cached, finalPcb));
   }
   const brain = result.usedLlm ? 'LLM Claude' : 'heuristique';
   return {

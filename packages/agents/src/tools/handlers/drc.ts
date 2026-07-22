@@ -11,9 +11,10 @@ export async function handleDrc(
   if (!pcbContent || pcbContent.length === 0) {
     return {
       status: 'success',
-      pcb_status: 'DRC_CLEAN',
+      pcb_status: 'ROUTING_DONE',
       drcViolations: [],
-      drc_clean: true,
+      drc_clean: false,
+      drc_skipped: true,
       engine: 'fallback-skip',
       warning: 'No .kicad_pcb in cache — run call_agent_routing first.',
       note: 'DRC sauté — pas de PCB en cache.',
@@ -27,18 +28,28 @@ export async function handleDrc(
       pcbStateCache.set(projectId, {
         ...cached,
         kicad_pcb_content: result.kicadPcbContent,
+        drc_clean: result.drcClean,
+        drc_skipped: result.skipped,
+        drc_validation: result.skipped ? 'unavailable' : 'kicad-cli',
+      });
+    } else if (cached) {
+      pcbStateCache.set(projectId, {
+        ...cached,
+        drc_clean: result.drcClean,
+        drc_skipped: result.skipped,
+        drc_validation: result.skipped ? 'unavailable' : 'kicad-cli',
       });
     }
-    // Only promote to DRC_CLEAN when the board is actually clean (or skipped).
-    // Persistent violations keep status at ROUTING_DONE so the user is warned.
+    // Only an official, non-skipped clean result can certify the board.
     const newStatus: 'DRC_CLEAN' | 'ROUTING_DONE' =
-      result.drcClean || result.skipped ? 'DRC_CLEAN' : 'ROUTING_DONE';
+      result.drcClean && !result.skipped ? 'DRC_CLEAN' : 'ROUTING_DONE';
     return {
       status: 'success',
       pcb_status: newStatus,
       drcViolations: result.violations,
       drc_clean: result.drcClean,
       drc_skipped: result.skipped,
+      drc_validation: result.skipped ? 'unavailable' : 'kicad-cli',
       fixed_count: result.fixedCount,
       kicad_pcb_content: result.kicadPcbContent ?? pcbContent,
       engine: result.skipped ? 'kicad-cli-skipped' : 'kicad-cli',
@@ -53,12 +64,21 @@ export async function handleDrc(
     if (!(err instanceof DrcServiceUnavailableError)) {
       log.warn({ err }, 'DRC service threw unexpected error — falling back');
     }
+    if (cached) {
+      pcbStateCache.set(projectId, {
+        ...cached,
+        drc_clean: false,
+        drc_skipped: true,
+        drc_validation: 'unavailable',
+      });
+    }
     return {
       status: 'success',
-      pcb_status: 'DRC_CLEAN',
+      pcb_status: 'ROUTING_DONE',
       drcViolations: [],
-      drc_clean: true,
+      drc_clean: false,
       drc_skipped: true,
+      drc_validation: 'unavailable',
       kicad_pcb_content: pcbContent,
       engine: 'fallback-skip',
       warning: 'kicad-cli unavailable — DRC will be re-checked in production',

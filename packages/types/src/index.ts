@@ -170,6 +170,12 @@ export interface PCBState {
   placement?: Record<string, unknown>;
   routing?: Record<string, unknown>;
   drcViolations?: DRCViolation[];
+  /** True only after the official KiCad CLI validator reports zero errors. */
+  drc_clean?: boolean;
+  /** The DRC service was unavailable or degraded; never equivalent to clean. */
+  drc_skipped?: boolean;
+  /** Provenance for the DRC result used by export and ordering gates. */
+  drc_validation?: 'kicad-cli' | 'unavailable' | 'simulated' | 'stale';
   ercViolations?: ERCViolation[];
   /** True when the ERC check was skipped (e.g. kicad-cli unavailable in dev). */
   erc_skipped?: boolean;
