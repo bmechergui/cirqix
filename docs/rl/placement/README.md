@@ -1,5 +1,7 @@
 # RL placement — candidat protégé par les gates actuelles
 
+> Plan d'implémentation étape par étape : [PLAN.md](PLAN.md).
+
 ## But
 
 RL_PCB optimise les positions X/Y des footprints non ancrés. Il ne décide ni

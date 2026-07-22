@@ -1,5 +1,7 @@
 # RL routing — routeur direct avec validation KiCad
 
+> Plan d'implémentation étape par étape : [PLAN.md](PLAN.md).
+
 ## But
 
 RL routing trace directement les segments et vias. Il ne se limite pas à
