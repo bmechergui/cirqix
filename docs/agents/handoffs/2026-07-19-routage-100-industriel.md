@@ -116,6 +116,32 @@ qu'avec un placement qui laisse de la place → à gater, pas à activer seuls
 fine-pitch dense ⇒ jamais 2 couches DRC-clean (plan Free 2 couches exclu). Pas
 un bug.
 
+### Brique 1 LIVRÉE — halo d'escape au placement (commit fc48ecb, 2026-07-22)
+
+Preuve directe du levier (halo manuel 9,5 mm + escape strict, iso-prod) :
+55 % → **73 % routé, 0 court réel (kicad-cli), 0 clearance**. Board :
+`examples/stm32-validation/output/run-halo-routed-73pct.kicad_pcb`.
+
+`tools/placement.py::auto_place` réserve désormais un canal d'escape autour des
+composants denses. 100 % natif : détection `_dense_part_refs` (≥16 pads, seuil
+`_dense_package_count`), halo `create_keepout_from_component`, push radial borné
+hors du keepout, overlaps résolus par `PlacementFixer`. No-op sur carte sans
+part dense. Tests : `test_placement.py` (5 nouveaux, 154 verts, 0 régression).
+End-to-end STM32 : U2 détecté, voisins proches 7,3→8,6 mm, 0 conflit.
+Fichiers : `tools/placement.py`, `tests/test_placement.py`.
+
+### Brique 2 — À FAIRE (chaîne complète)
+
+1. Réintroduire les flags escape dans `tools/kct_route.py::_run_kct_route`
+   (`--strict-in-pad-clearance`, `--micro-via-in-pad-fallback`,
+   `--fine-pitch-clearance 0.08`), **gatés** (ne s'appliquent que si part dense).
+2. Corriger le sous-bug : `--strict-in-pad-clearance` désactive `--auto-layers`
+   → forcer l'escalade de couches quand le routage propre est incomplet.
+3. Calibrer `_ESCAPE_HALO_MM` (2,5 actuel ; le halo manuel à ~6 mm de clearance
+   donnait 73 %) par mesure route+DRC end-to-end (halo auto + escape).
+4. Cascade DRC : `kct check` (kicad-tools) puis `kicad-cli` — ordre imposé par
+   l'utilisateur (2026-07-22).
+
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
 
