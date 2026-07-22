@@ -78,12 +78,20 @@ candidat via `pcbnew` avec snapshot/revert.
 
 Le candidat RL remplace progressivement le micro-raffinement CMA-ES, sans
 supprimer le chemin actuel. Fallback placement hybride si RL indisponible.
+Le contrôle de dérive appelle `_max_displacement_mm()` et
+`_CMAES_MAX_DISPLACEMENT_MM` existants (pas de constante dupliquée), et la
+comparaison FOM utilise la même configuration de poids `compute_fom()` des
+deux côtés.
 
-- Validation : pipeline inchangé quand le flag est off.
+- Validation : pipeline inchangé quand le flag est off ; le contrôle de
+  dérive réutilise les primitives de `tools/placement.py`.
 
 ### 8. Mesure du critère de vie ou de mort
 
-Comparer le FOM du candidat RL vs CMA-ES sur ≥ 10 fixtures représentatives.
+Comparer le FOM du candidat RL vs CMA-ES sur ≥ 10 fixtures représentatives,
+à configuration `compute_fom()` identique. Le FOM étant un proxy de
+routabilité, la mesure inclut le taux de routage effectivement obtenu en
+aval sur un échantillon des fixtures.
 
 - **Go Phase 6a** : RL bat CMA-ES de > 5 % de FOM.
 - **Abandon** : sinon — le placement hybride reste le chemin unique, le code

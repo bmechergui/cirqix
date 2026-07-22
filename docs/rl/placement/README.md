@@ -58,6 +58,19 @@ snapshot Architecte + Inspecteur
 → sinon : comparer le FOM au candidat CMA-ES et conserver le meilleur propre
 ```
 
+Trois précisions d'implémentation :
+
+1. Le contrôle de dérive **réutilise** `_max_displacement_mm()` et
+   `_CMAES_MAX_DISPLACEMENT_MM = 20.0` de `tools/placement.py` (seuil déjà
+   justifié par le benchmark CMA-ES : 4–11,8 mm en fonctionnement normal) —
+   pas de constante dupliquée qui divergerait.
+2. La comparaison FOM RL vs CMA-ES n'a de sens qu'avec la **même
+   configuration de poids** `compute_fom()` des deux côtés — sinon on compare
+   deux métriques différentes.
+3. Le FOM reste un proxy : un meilleur FOM ne garantit pas une meilleure
+   routabilité. Le critère de décision Phase 6a doit inclure, sur un
+   échantillon des fixtures, le taux de routage effectivement obtenu en aval.
+
 Le fallback est déjà défini : le placement hybride actuel est conservé si RL
 est indisponible, échoue ou dégrade le PCB.
 
