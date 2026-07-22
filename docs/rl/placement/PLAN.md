@@ -58,9 +58,13 @@ valeurs mesurées.
 ### 5. Entraînement 1–5 M pas
 
 Run complet sur les fixtures. Modèle versionné avec le commit `kicad-tools`
-et la version KiCad.
+et la version KiCad. Toutes les trajectoires sont loggées (`obs`, `action`,
+`reward`, `done`) en npz/jsonl par épisode — c'est le futur replay buffer
+d'un éventuel switch DreamerV3 (voir « Chemin de migration » dans
+[../README.md](../README.md)).
 
-- Validation : courbe de reward convergente ; checkpoint sauvegardé.
+- Validation : courbe de reward convergente ; checkpoint sauvegardé ;
+  trajectoires loggées et relisibles.
 
 ### 6. `candidate.py` + `policy.py` — inférence
 

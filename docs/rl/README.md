@@ -50,6 +50,51 @@ DreamerV3 n'est réexaminé que si l'une de ces conditions est mesurée :
    assignment long horizon) ;
 3. le gap surrogate/réel impose un modèle appris de la dynamique.
 
+### Chemin de migration PPO → DreamerV3
+
+Les poids d'une politique PPO ne se convertissent pas en DreamerV3 (réseau de
+politique direct vs world model RSSM + actor-critic latent). En revanche, tout
+le reste se réutilise :
+
+- l'environnement Gymnasium (`env.py`, observation, reward, actions,
+  validateur) — agnostique à l'algorithme, c'est l'investissement principal ;
+- les fixtures, gates, métriques et le harnais de validation (pré-filtre
+  kicad-tools → juge `kicad-cli`) ;
+- les trajectoires PPO, qui pré-remplissent le replay buffer de DreamerV3 et
+  pré-entraînent son world model (warm start offline) ; le modèle PPO reste
+  la baseline à battre.
+
+**Décision à appliquer dès la v1** : logger toutes les trajectoires PPO
+(`obs`, `action`, `reward`, `done`) dans un format standard (npz/jsonl par
+épisode, versionné avec le commit de l'environnement). Ce logging est la
+condition pour qu'un futur switch DreamerV3 soit un changement de learner,
+pas une reconstruction.
+
+### Distillation / behavioral cloning — le vrai mécanisme de transfert
+
+Le fine-tuning au sens strict suppose même architecture et même espace
+d'entrée. L'actor de DreamerV3 consomme des états latents (RSSM), la
+politique PPO l'observation brute : les poids ne se transfèrent dans aucun
+sens. Le transfert entre algorithmes passe par le **comportement** :
+
+- **Distillation / behavioral cloning** : faire jouer la politique source,
+  collecter des paires `(obs, action)`, entraîner le réseau cible en
+  supervisé à l'imiter, puis continuer l'entraînement RL normal. Fonctionne
+  dans les deux sens (PPO ↔ DreamerV3) car il transfère le comportement,
+  pas les poids.
+- **Partage d'encodeur** : si les deux politiques partagent le même trunk
+  d'observation (décidé à la conception), les poids de l'encodeur se
+  transfèrent et seules les têtes sont réentraînées — fine-tuning partiel.
+
+| Transfert | Mécanisme | Fine-tuning ? |
+|---|---|---|
+| PPO → PPO (nouvelle carte) | checkpoint continué, LR réduit | Oui, au sens strict |
+| PPO ↔ DreamerV3 | distillation / imitation + données partagées | Non — warm start |
+| PPO ↔ DreamerV3 (encodeur commun) | poids du trunk + têtes réentraînées | Partiel, si conçu pour |
+
+Le cas PPO → PPO (LED → cartes 5–10 composants) est le seul vrai fine-tuning
+du plan ; il suit l'ordre de livraison progressif.
+
 ### Preuve externe : DreamerV3+FR (Chiang et al., 2026)
 
 L'étude « Automation of PCB autorouting via world-model reinforcement

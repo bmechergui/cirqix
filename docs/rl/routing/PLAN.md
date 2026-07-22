@@ -74,7 +74,10 @@ valeurs mesurées.
 1. Un épisode par net (VCC, LED_ANODE, GND), sans via.
 2. Les trois nets dans un ordre choisi par le contrôleur.
 3. Artefacts dans `output/rl-routing/` : `episode_metrics.jsonl`,
-   `candidate.kicad_pcb`, `kicad_drc.json`, `summary.json`.
+   `candidate.kicad_pcb`, `kicad_drc.json`, `summary.json`. Trajectoires
+   complètes (`obs`, `action`, `reward`, `done`) loggées en npz/jsonl par
+   épisode — futur replay buffer d'un switch DreamerV3 (voir « Chemin de
+   migration » dans [../README.md](../README.md)).
 
 - Validation : `kct route` lancé comme baseline de comparaison sur le même
   PCB placé.
