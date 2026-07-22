@@ -526,10 +526,47 @@ def _strip_zone_blocks(text: str) -> str:
         i = j + 1
 
 
-def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.CompletedProcess[str]:
-    """Lance ``kct route`` : stratégie ``negotiated`` + escalade de couches
-    automatique jusqu'à 100% routé (``--auto-layers`` + ``--min-completion 1.0``,
-    sans plafond ``--max-layers`` → défaut 4), auto-fix DRC, seed déterministe."""
+# Protections escape fine-pitch (Brique 2) — activées SEULEMENT si le board
+# contient un boîtier dense (≥16 pads). Mesuré 2026-07-22 : sans elles, le
+# routeur pose des vias in-pad qui frôlent les pads voisins d'un autre net sur
+# QFP/QFN fin → courts réels (kicad-cli). Avec elles + canal d'escape dégagé au
+# placement (Brique 1) : routage propre (0 court). Elles coûtent de la complétion
+# si appliquées sans nécessité → gating strict.
+#   --strict-in-pad-clearance (#3033/#3062) : refuse un via in-pad qui clipperait
+#       un pad voisin d'un net étranger.
+#   --micro-via-in-pad-fallback (#3118) : réessaie avec un micro-via plus petit.
+#   --fine-pitch-clearance : clearance d'escape entre broches < 0,8 mm de pas.
+_FINE_PITCH_CLEARANCE_MM: str = "0.08"
+
+
+def _has_dense_footprint(text: str) -> bool:
+    """True si le board contient un boîtier dense (≥ seuil pads) → déclenche les
+    protections escape fine-pitch. Seuil partagé avec le placement
+    (``tools.placement._DENSE_PAD_COUNT`` = ``_dense_package_count`` kicad-tools).
+
+    Comptage par bloc footprint (texte) — pas de chargement PCB (``route_kct``
+    est appelé en boucle par le reasoner). Les segments/vias/zones en fin de
+    fichier ne portent pas de ``(pad `` : le comptage reste fidèle.
+    """
+    from tools.placement import _DENSE_PAD_COUNT
+    for block in text.split("(footprint")[1:]:
+        if block.count("(pad ") >= _DENSE_PAD_COUNT:
+            return True
+    return False
+
+
+def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
+                     fine_pitch: bool = False) -> list[str]:
+    """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
+
+    Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
+    auto-fix + auto-mfr-tier + seed déterministe. Sur un board **fine-pitch**
+    (``fine_pitch=True``) : ajoute les protections escape ET force
+    ``--starting-layers 4`` — ``--strict-in-pad-clearance`` désactivant
+    l'escalade ``--auto-layers`` (nets refusés proprement ≠ « échec »), on
+    démarre à 4 couches (un LQFP dense requiert de toute façon 4 couches ; il
+    n'est jamais 2 couches DRC-clean).
+    """
     cmd = [
         sys.executable, "-m", "kicad_tools.cli", "route",
         str(src), "-o", str(dst),
@@ -538,11 +575,28 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", _CLEARANCE_MM,
+    ]
+    if fine_pitch:
+        cmd += [
+            "--fine-pitch-clearance", _FINE_PITCH_CLEARANCE_MM,
+            "--strict-in-pad-clearance",
+            "--micro-via-in-pad-fallback",
+            "--starting-layers", "4",
+        ]
+    cmd += [
         "--auto-mfr-tier",
         "--mfr-tier-ladder", _MFR_TIER_LADDER,
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
+    return cmd
+
+
+def _run_kct_route(src: Path, dst: Path, timeout_s: int,
+                   fine_pitch: bool = False) -> subprocess.CompletedProcess[str]:
+    """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
+    protections escape + départ 4 couches sur les boards à boîtier dense."""
+    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
@@ -653,6 +707,12 @@ def _route_once(
 
         # VCC en pistes : renomme +5V/+3.3V en noms non-power AVANT le routage.
         src_text = pcb_bytes.decode("utf-8", errors="replace")
+        # Détection fine-pitch AVANT toute transformation (rename/assign ne
+        # touchent pas au nombre de pads) → active les protections escape.
+        fine_pitch = _has_dense_footprint(src_text)
+        if fine_pitch:
+            logger.info("kct route: boîtier dense détecté → protections escape "
+                        "fine-pitch + départ 4 couches")
         if vcc_as_traces:
             src_text = _rename_nets(src_text, _VCC_RENAME)
         # Pads NC → obstacles réels le temps du routage (cf. _NC_NET_PREFIX).
@@ -662,7 +722,7 @@ def _route_once(
                         nc_count)
         src.write_text(src_text, encoding="utf-8")
 
-        result = _run_kct_route(src, dst, timeout_s)
+        result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch)
 
         if not dst.exists():
             raise RuntimeError(

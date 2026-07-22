@@ -251,7 +251,7 @@ def test_ensure_gnd_zone_respects_edge_clearance(stm32_board_bytes):
 
 def _fake_route(stdout: str):
     """side_effect : écho src→dst, renvoie un CompletedProcess avec ce stdout."""
-    def _run(src, dst, timeout_s):
+    def _run(src, dst, timeout_s, fine_pitch=False):
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
     return _run
@@ -260,7 +260,7 @@ def _fake_route(stdout: str):
 def test_route_kct_renames_vcc_before_routing(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 5/9 (56%)", stderr="")
@@ -274,7 +274,7 @@ def test_route_kct_renames_vcc_before_routing(monkeypatch):
 
 
 def test_route_kct_restores_vcc_names_in_output(monkeypatch):
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         # Le routeur renvoie un board avec les noms renommés (comme le vrai kct).
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 9/9 (100%)", stderr="")
@@ -363,7 +363,7 @@ def test_route_kct_replaces_kct_zones_with_edge_margin_zones(
     # kct route auto-coule GND collé à l'Edge.Cuts (122 copper_edge_clearance
     # mesurées 2026-07-14 sur la variante 100%) : route_kct doit REMPLACER les
     # zones du routeur par nos plans GND en retrait _ZONE_EDGE_CLEARANCE_MM.
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         # Le routeur renvoie le board de référence (zones GND à 0.3mm du bord).
         Path(dst).write_bytes(stm32_board_bytes)
         return SimpleNamespace(returncode=0, stdout="Nets routed: 11/11 (100%)",
@@ -385,7 +385,7 @@ def test_route_kct_replaces_kct_zones_with_edge_margin_zones(
 def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 5/5", stderr="")

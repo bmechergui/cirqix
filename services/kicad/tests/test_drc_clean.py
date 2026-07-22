@@ -103,7 +103,7 @@ def test_strip_nc_nets_survives_renumbering():
 def test_route_once_routes_with_nc_obstacles_and_strips_after(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 2/2 (100%)",
@@ -147,7 +147,7 @@ def test_solid_connect_zones_idempotent():
 def test_route_once_applies_solid_connect_to_final_board(monkeypatch):
     board = _NC_BOARD[:-2] + _ZONED + "\n)\n"  # zone injectée avant la ')' finale
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 2/2 (100%)",
                                stderr="")
