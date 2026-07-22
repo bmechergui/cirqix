@@ -130,17 +130,49 @@ part dense. Tests : `test_placement.py` (5 nouveaux, 154 verts, 0 régression).
 End-to-end STM32 : U2 détecté, voisins proches 7,3→8,6 mm, 0 conflit.
 Fichiers : `tools/placement.py`, `tests/test_placement.py`.
 
-### Brique 2 — À FAIRE (chaîne complète)
+### Brique 2 — LIVRÉE (commit 6c08bbc)
 
-1. Réintroduire les flags escape dans `tools/kct_route.py::_run_kct_route`
-   (`--strict-in-pad-clearance`, `--micro-via-in-pad-fallback`,
-   `--fine-pitch-clearance 0.08`), **gatés** (ne s'appliquent que si part dense).
-2. Corriger le sous-bug : `--strict-in-pad-clearance` désactive `--auto-layers`
-   → forcer l'escalade de couches quand le routage propre est incomplet.
-3. Calibrer `_ESCAPE_HALO_MM` (2,5 actuel ; le halo manuel à ~6 mm de clearance
-   donnait 73 %) par mesure route+DRC end-to-end (halo auto + escape).
-4. Cascade DRC : `kct check` (kicad-tools) puis `kicad-cli` — ordre imposé par
-   l'utilisateur (2026-07-22).
+`tools/kct_route.py` : flags escape (`--strict-in-pad-clearance`,
+`--micro-via-in-pad-fallback`, `--fine-pitch-clearance 0.08`) **gatés** par
+`_has_dense_footprint` (≥16 pads). Sous-bug corrigé : `--strict-in-pad-clearance`
+désactive `--auto-layers` → `--starting-layers 4` forcé sur fine-pitch.
+`_build_route_cmd` extrait pour testabilité. 6 tests TDD (`test_kct_route_fine_pitch.py`).
+Brique 2.3 (cascade DRC kicad-tools→kicad-cli) : **déjà en place** dans
+`routers/drc.py` (Niveau 1 `_run_python_drc`, Niveau 2 kicad-cli juge).
+
+### Brique 3 — LIVRÉE (commit 08a6066)
+
+`_ESCAPE_HALO_MM` calibré 2,5 → **5,0 mm**. Mesure end-to-end iso-prod
+(auto_place halo + route_kct escape, board STM32) : 2,5 → 73 % + 1 court réel ;
+**5,0 → 73 % + 0 court réel + 0 clearance** (kicad-cli). Cuivre routé
+électriquement propre.
+
+### État de l'objectif — plafond atteint sur le worst-case (2026-07-22/23)
+
+**Bricks 1+2+3 → routage PROPRE (0 court réel) sur le board STM32**, vs baseline
+91 % *avec* courts réels (non fabricable). C'est la moitié « fabricable » de
+l'objectif, atteinte et générique (no-op sur carte simple).
+
+**100 % ROUTÉ non atteint sur ce board worst-case** (LQFP-48 0,5 mm, 60×40) :
+- 73 % routé, 7 non-connectés = **4 pads GND** (connexion plan, réparables par
+  l'auto-fix DRC via-in-pad de `/drc/auto`) + **3 nets signaux** (OSC_OUT,
+  SWCLK, SWO) génuinement bloqués sur l'escape LQFP.
+- Board à 4 couches ; **6 couches TROP LENT** (>550 s, tué — non viable en
+  budget prod 0,12 €/PCB). Levier écarté.
+- Les 3 nets restants nécessitent : reasoner LLM (clé API invalide,
+  [[anthropic-key-invalide]]) OU agrandissement du board (`--auto-pcb-size`,
+  décision produit) OU package à pas plus large. **Limite physique/outillage,
+  pas un bug** — cf. diagnostic du routeur (« move fine-pitch component / wider
+  pitch package »).
+
+**Sur une carte normale** (sans boîtier ≥16 pads) : halo no-op, routage
+inchangé → l'objectif 100 % routable→routé→fabricable reste atteignable.
+
+### Reste (hors budget de cette tâche)
+
+- Fermer les 3 escapes signaux : reasoner avec clé API valide, ou `--auto-pcb-size`.
+- Le halo `PlacementFixer` n'est pas halo-aware (peut théoriquement re-rapprocher
+  un voisin) — non observé, mais à surveiller.
 
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
