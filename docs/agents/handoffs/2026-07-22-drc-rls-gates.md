@@ -110,8 +110,8 @@ Provision a local or staging Supabase stack, apply migration 007, then run
 ## Git
 
 - **Content commit:** `6d573fe913a6979a286e7b46174158e385b9c578` (`fix: enforce certified pcb release gates`)
-- **Documentation commit:** pending
-- **PR:** pending
+- **Documentation commit:** `cb3434340a62f76c0fdcb773acde757d21c7d1ac`
+- **PR:** `https://github.com/bmechergui/cirqix/pull/66`
 
 ## Transfer log
 
@@ -119,3 +119,4 @@ Provision a local or staging Supabase stack, apply migration 007, then run
 |---|---|---|---|---|
 | `2026-07-22T21:26:01Z` | user | Codex | accepted | Isolated fix authorized after broad audit. |
 | `2026-07-22T22:46:57Z` | Codex | reviewers | review | DRC/RLS/payment/manufacturing corrections committed; two independent reviews report no remaining blocker. |
+| `2026-07-22T22:49:00Z` | Codex | reviewers | review | Branch pushed and PR #66 opened; SQL and KiCad runtime validation remain pending. |
