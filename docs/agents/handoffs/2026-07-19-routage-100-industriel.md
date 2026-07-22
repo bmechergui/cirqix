@@ -370,9 +370,11 @@ boards 100 % routés en plans.
 ## Git
 
 - **État initial du worktree:** `docs/fork-strategy-pipelines-local-cloud propre (hors untracked .cursor/.gemini/GEMINI.md)`
-- **État final du worktree:** `à mettre à jour`
-- **Commit:** `none`
-- **PR:** `none`
+- **État final du worktree:** `propre hors 2 suppressions préexistantes non possédées
+  (examples/stm32-validation/decisions.json + input/project.kct, appartenant à
+  une autre session) + untracked .cursor/.gemini/GEMINI.md`
+- **Commit:** `0d318fe` (fix SetIsFilled KiCad 10 + évaluation leviers post-route)
+- **PR:** `#63` (mise à jour par push le 2026-07-22)
 
 ## Journal de transfert
 
