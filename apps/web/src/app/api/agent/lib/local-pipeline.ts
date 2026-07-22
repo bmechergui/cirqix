@@ -15,7 +15,6 @@ interface PipelineOptions {
   projectId: string;
   prompt: string;
   iterationStart: number;
-  balanceStart: number;
 }
 
 async function streamText(
@@ -102,13 +101,16 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
 
     await streamText(controller, encoder, "5. Running DRC...\n");
     const drc = await executeToolStub('call_agent_drc', { auto_fix: true }, projectId);
-    await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
+    const drcCertified = drc.pcb_status === 'DRC_CLEAN'
+      && drc.drc_clean === true
+      && drc.drc_skipped !== true
+      && drc.drc_validation === 'kicad-cli';
+    await updateState('call_agent_drc', drc, drcCertified ? 'DRC_CLEAN' : 'ROUTING_DONE', 'DRC');
 
     controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
     controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Local pipeline failed';
-    controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
+    throw err;
   }
 }

@@ -130,7 +130,7 @@ def test_level1_clean_and_cli_clean_reports_official_validation(monkeypatch):
     assert "kicad-cli officiel" in resp.warning
 
 
-def test_level1_clean_without_kicad_cli_keeps_fallback(monkeypatch):
+def test_level1_clean_without_kicad_cli_never_certifies(monkeypatch):
     """kicad-cli ABSENT → fallback dégradé conservé : drc_clean=True basé sur
     kicad-tools seul, warning « kicad-cli indisponible »."""
     monkeypatch.setattr(drc_router, "_run_python_drc", lambda pcb_bytes: [])
@@ -138,14 +138,14 @@ def test_level1_clean_without_kicad_cli_keeps_fallback(monkeypatch):
 
     resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=True))
 
-    assert resp.drc_clean is True
-    assert resp.skipped is False
+    assert resp.drc_clean is False
+    assert resp.skipped is True
     assert resp.warning is not None
     assert "indisponible" in resp.warning
     assert "kicad-tools" in resp.warning
 
 
-def test_nc_pad_clearance_is_warning_but_real_clearance_blocks(monkeypatch):
+def test_nc_pad_clearance_and_real_clearance_both_block(monkeypatch):
     """1 clearance NC (pad <no net>) + 1 clearance normale → la NC est reclassée
     severity=warning (visible, non bloquante) MAIS la normale reste error
     → drc_clean=False."""
@@ -162,14 +162,14 @@ def test_nc_pad_clearance_is_warning_but_real_clearance_blocks(monkeypatch):
     assert resp.skipped is False
     by_id = {v["id"]: v for v in resp.violations}
     # La clearance NC est reclassée warning — mais reste dans la réponse.
-    assert by_id["nc-pad"]["severity"] == "warning"
-    assert by_id["nc-track"]["severity"] == "warning"
+    assert by_id["nc-pad"]["severity"] == "error"
+    assert by_id["nc-track"]["severity"] == "error"
     # La clearance normale reste une erreur bloquante.
     assert by_id["real-pad"]["severity"] == "error"
     assert by_id["real-track"]["severity"] == "error"
 
 
-def test_only_nc_pad_clearances_is_drc_clean(monkeypatch):
+def test_only_nc_pad_clearances_are_not_drc_clean(monkeypatch):
     """Uniquement des clearance NC (pad <no net>) → drc_clean=True :
     aucune violation de sévérité error, mais les warnings restent visibles."""
     monkeypatch.setattr(drc_router, "_run_python_drc", lambda pcb_bytes: [])
@@ -181,14 +181,14 @@ def test_only_nc_pad_clearances_is_drc_clean(monkeypatch):
 
     resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=False))
 
-    assert resp.drc_clean is True
+    assert resp.drc_clean is False
     assert resp.skipped is False
     # Les violations NC ne sont PAS supprimées — juste reclassées warning.
     assert len(resp.violations) == 2
-    assert all(v["severity"] == "warning" for v in resp.violations)
+    assert all(v["severity"] == "error" for v in resp.violations)
 
 
-def test_both_validators_absent_returns_skipped(monkeypatch):
+def test_both_validators_absent_returns_blocking_skipped(monkeypatch):
     """kicad-tools crash + kicad-cli absent → skipped=True (pipeline non bloqué)."""
     def _crash(pcb_bytes: bytes) -> list[dict]:
         raise RuntimeError("kicad-tools indisponible")
@@ -199,7 +199,7 @@ def test_both_validators_absent_returns_skipped(monkeypatch):
     resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=True))
 
     assert resp.skipped is True
-    assert resp.drc_clean is True
+    assert resp.drc_clean is False
     assert resp.violations == []
 
 

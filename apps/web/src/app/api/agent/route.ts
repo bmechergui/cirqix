@@ -1,11 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import { createAdminClient, createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { encodeSse, sseHeaders } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
 import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
+import {
+  completePipelineCreditReservation,
+  PIPELINE_COST,
+  releasePipelineCreditReservation,
+  reservePipelineCredits,
+} from './lib/credits';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -53,12 +60,27 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .single();
   const balance = creditRow?.balance ?? 0;
-  if (balance < 0.5) {
+  if (balance < PIPELINE_COST) {
     return NextResponse.json({ success: false, error: 'Insufficient credits' }, { status: 402 });
   }
 
   const requestedMode = resolveAgentMode();
   const useOrchestrator = requestedMode === 'orchestrator' && isOrchestratorAvailable();
+  // User-scoped reads above establish ownership. Pipeline persistence then
+  // uses the server credential so clients cannot mutate certified state.
+  const persistenceSupabase = createAdminClient();
+  const reservationId = randomUUID();
+  try {
+    await reservePipelineCredits(persistenceSupabase, reservationId, user.id, projectId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Credit service unavailable';
+    const status = message.includes('insufficient_credits') ? 402 : 500;
+    return NextResponse.json(
+      { success: false, error: status === 402 ? 'Insufficient credits' : 'Credit service unavailable' },
+      { status },
+    );
+  }
+  let reservationActive = true;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -69,7 +91,7 @@ export async function POST(req: NextRequest) {
             await runRealOrchestrator({
               controller,
               encoder,
-              supabase,
+              supabase: persistenceSupabase,
               userId: user.id,
               projectId,
               prompt,
@@ -81,12 +103,11 @@ export async function POST(req: NextRequest) {
               await runLocalPipeline({
                 controller,
                 encoder,
-                supabase,
+                supabase: persistenceSupabase,
                 userId: user.id,
                 projectId,
                 prompt,
                 iterationStart: project.iteration_count ?? 0,
-                balanceStart: balance,
               });
             } else {
               throw err;
@@ -96,15 +117,23 @@ export async function POST(req: NextRequest) {
           await runSimulatorAgent({
             controller,
             encoder,
-            supabase,
-            userId: user.id,
+            supabase: persistenceSupabase,
             projectId,
             prompt,
             iterationStart: project.iteration_count ?? 0,
-            balanceStart: balance,
           });
         }
+        await completePipelineCreditReservation(persistenceSupabase, reservationId);
+        reservationActive = false;
       } catch (err) {
+        if (reservationActive) {
+          try {
+            await releasePipelineCreditReservation(persistenceSupabase, reservationId);
+          } catch {
+            // A failed release leaves a durable, non-debited reservation that
+            // the next reservation request releases once it has expired.
+          }
+        }
         const message = err instanceof Error ? err.message : 'Agent error';
         controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
       } finally {

@@ -202,8 +202,6 @@ def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
         # Carve-out pads NC : une clearance impliquant un pad <no net> est
         # électriquement inoffensive (pas de court possible) → reclassée
         # warning AVANT le calcul de drc_clean, mais conservée dans la sortie.
-        if severity == "error" and _is_nc_pad_clearance(raw):
-            severity = "warning"
         message = str(raw.get("description", raw.get("type", "DRC violation")))
         v_type = str(raw.get("type", "")) or None
 

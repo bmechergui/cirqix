@@ -108,15 +108,13 @@ interface SimulatorOptions {
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
   supabase: SupabaseClient;
-  userId: string;
   projectId: string;
   prompt: string;
   iterationStart: number;
-  balanceStart: number;
 }
 
 export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart, balanceStart } = opts;
+  const { controller, encoder, supabase, projectId, prompt, iterationStart } = opts;
   const schema = deriveSchemaFromPrompt(prompt);
 
   await streamText(
@@ -181,25 +179,23 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   await streamText(
     controller,
     encoder,
-    `**DRC clean** — 0 violations. Your PCB is manufacturable. Ready to export Gerbers or order from JLCPCB.`,
+    `Simulation only: no official KiCad DRC was run. Export and ordering remain blocked.`,
   );
-  const drcState: PCBState = { ...routingState, status: 'DRC_CLEAN', drcViolations: [] };
+  const drcState = {
+    ...routingState,
+    status: 'ROUTING_DONE',
+    drcViolations: [],
+    drc_clean: false,
+    drc_skipped: true,
+    drc_validation: 'simulated',
+  } as PCBState;
   controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: drcState })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
+  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'ROUTING_DONE' })));
   controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
   await supabase
     .from('projects')
-    .update({ status: 'DRC_CLEAN', pcb_state: drcState, updated_at: new Date().toISOString() })
+    .update({ status: 'ROUTING_DONE', pcb_state: drcState, updated_at: new Date().toISOString() })
     .eq('id', projectId);
-
-  const totalCost = 8.5;
-  await supabase
-    .from('credits')
-    .update({
-      balance: Math.max(0, balanceStart - totalCost),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', userId);
 
   controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 }

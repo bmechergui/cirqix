@@ -198,7 +198,7 @@ export function ExportView({ state }: { state: PCBState }) {
       const res = await fetch('/api/jlcpcb/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: state.projectId, qty, confirmed: true }),
+        body: JSON.stringify({ projectId: state.projectId, qty, confirmation: 'OUI JE CONFIRME' }),
       });
       const json = (await res.json()) as { success: boolean; data?: { orderRef: string }; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Order failed');
@@ -262,12 +262,12 @@ export function ExportView({ state }: { state: PCBState }) {
           <div className="flex items-start gap-2.5 rounded-xl border border-[#22C55E]/25 bg-[#22C55E]/05 px-4 py-3">
             <CheckCircle2 size={14} className="text-[#22C55E] shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-[#22C55E]">Order sent to JLCPCB</p>
+              <p className="text-xs font-semibold text-[#22C55E]">Manufacturing intent recorded</p>
               {orderRef && (
                 <p className="text-[10px] font-mono text-[#22C55E]/70 mt-0.5">{orderRef}</p>
               )}
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                You will receive a confirmation email from JLCPCB within a few minutes.
+                No supplier order has been submitted automatically.
               </p>
             </div>
           </div>
@@ -373,9 +373,9 @@ export function ExportView({ state }: { state: PCBState }) {
           <section className="rounded-xl border border-primary/20 bg-primary/[0.03] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3">
               <div>
-                <p className="text-xs font-semibold text-foreground/90">Order on JLCPCB</p>
+                <p className="text-xs font-semibold text-foreground/90">Record JLCPCB manufacturing intent</p>
                 <p className="text-[10px] text-[#3d3d3d] mt-0.5">
-                  Gerbers + BOM + CPL will be sent directly to JLCPCB.
+                  No files are sent to JLCPCB. This stores your internal manufacturing intent.
                 </p>
               </div>
               {!showOrder && (
@@ -396,8 +396,8 @@ export function ExportView({ state }: { state: PCBState }) {
               <div className="border-t border-primary/10 mx-0 px-4 py-4 bg-[#040408] space-y-4">
                 <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5">
                   <p className="text-[11px] text-destructive/90 font-medium leading-snug">
-                    This action will initiate a real order on JLCPCB.
-                    Once confirmed, cancellation depends on JLCPCB policies.
+                    This does not submit a supplier order or charge a payment method.
+                    It records an internal manufacturing intent only.
                   </p>
                 </div>
 
@@ -427,8 +427,8 @@ export function ExportView({ state }: { state: PCBState }) {
                   />
                   <span className="text-[11px] text-foreground/70 leading-relaxed group-hover:text-foreground/90 transition-colors">
                     <strong className="text-foreground font-mono">OUI JE CONFIRME</strong> — Je comprends
-                    que cette action envoie une commande réelle à JLCPCB et engage des frais.
-                    J&apos;ai vérifié le design, le DRC est propre, et je veux passer commande.
+                    que cette action enregistre une intention de fabrication, sans soumission fournisseur automatique.
+                    J&apos;ai vérifié le design et le DRC est propre.
                   </span>
                 </label>
 
@@ -444,8 +444,8 @@ export function ExportView({ state }: { state: PCBState }) {
                     className="gap-1.5 text-xs h-8"
                   >
                     {orderLoading
-                      ? <><Loader2 size={11} className="animate-spin" />Sending…</>
-                      : <><ShieldCheck size={11} />Confirm & send to JLCPCB</>}
+                      ? <><Loader2 size={11} className="animate-spin" />Recording…</>
+                      : <><ShieldCheck size={11} />Confirm manufacturing intent</>}
                   </Button>
                   <Button
                     size="sm"

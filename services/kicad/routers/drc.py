@@ -223,19 +223,21 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     # ── Niveau 2 : kicad-cli (auto-fix loop + validation officielle) ─────────
     cli_path = _find_kicad_cli()
     if cli_path is None:
-        # kicad-cli absent → retourner résultat kicad-tools tel quel
+        # kicad-tools-only output is diagnostic, never a fabrication certificate.
         if kt_ok:
             return DRCAutoResponse(
-                drc_clean=kt_clean,
+                # A kicad-tools-only run is diagnostic only. It must never
+                # certify a board for export or ordering.
+                drc_clean=False,
                 violations=kt_violations,
                 fixed_count=0,
                 kicad_pcb_b64=None,
-                skipped=False,
+                skipped=True,
                 warning="kicad-cli indisponible — DRC kicad-tools 27 règles JLCPCB uniquement",
             )
-        # kicad-tools ET kicad-cli indisponibles → skipped
+        # No validator is available: keep an explicit, blocking skipped result.
         return DRCAutoResponse(
-            drc_clean=True,
+            drc_clean=False,
             violations=[],
             fixed_count=0,
             kicad_pcb_b64=None,

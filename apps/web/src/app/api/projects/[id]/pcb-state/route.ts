@@ -85,17 +85,8 @@ export async function PATCH(
     return NextResponse.json({ success: false, error: 'Payload must be an object' }, { status: 400 });
   }
 
-  const { id } = await ctx.params;
-  const { data, error } = await supabase
-    .from('projects')
-    .update({ pcb_state: payload, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select('pcb_state')
-    .single();
-
-  if (error || !data) {
-    return NextResponse.json({ success: false, error: error?.message ?? 'Not found' }, { status: 404 });
-  }
-
-  return NextResponse.json({ success: true, data: { pcb_state: data.pcb_state } });
+  return NextResponse.json(
+    { success: false, error: 'PCB state is managed by the pipeline' },
+    { status: 403 },
+  );
 }

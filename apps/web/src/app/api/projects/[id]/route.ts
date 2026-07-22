@@ -61,6 +61,12 @@ export async function PATCH(
       { status: 400 }
     );
   }
+  if (parsed.data.status !== undefined) {
+    return NextResponse.json(
+      { success: false, error: 'Project status is managed by the pipeline' },
+      { status: 403 },
+    );
+  }
 
   const { id } = await ctx.params;
   const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };

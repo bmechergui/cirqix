@@ -1,4 +1,4 @@
-import { pcbStateCache, log } from '../shared';
+import { invalidateDrcCertification, pcbStateCache, log } from '../shared';
 import { runCircuitSynthEngine } from '../../engines/engine-router';
 import { buildKicadServiceHeaders } from '../../engines/kicad-service-auth';
 
@@ -55,7 +55,7 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
   }
 
   const finalPcb = kicadPcbContent ?? '';
-  pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+  pcbStateCache.set(projectId, invalidateDrcCertification(cached, finalPcb));
 
   return {
     status: 'success',
