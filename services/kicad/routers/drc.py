@@ -123,7 +123,10 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
         in_path.write_bytes(pcb_content)
         board = pcbnew.LoadBoard(str(in_path))
         for zone in board.Zones():
-            zone.SetFilled(True)
+            # KiCad 10 : ZONE.SetFilled n'existe plus (c'est SetIsFilled) ;
+            # sous KiCad 9 les deux existent. On force le flag « rempli » puis
+            # ZONE_FILLER.Fill calcule le remplissage réel juste après.
+            zone.SetIsFilled(True)
         filler = pcbnew.ZONE_FILLER(board)
         filler.Fill(board.Zones())
         pcbnew.SaveBoard(str(out_path), board)

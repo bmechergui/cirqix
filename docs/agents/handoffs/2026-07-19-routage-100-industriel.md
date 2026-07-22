@@ -1,6 +1,6 @@
 # Handoff — `2026-07-19-routage-100-industriel`
 
-- **Status:** `REVIEW`
+- **Status:** `IN_PROGRESS`
 - **Owner:** `Claude Code`
 - **Reviewer:** `Codex`
 - **Receiver:** `none` (Kimi indisponible — validation croisée reprise par l'owner, décision utilisateur 2026-07-19)
@@ -8,7 +8,76 @@
 - **Worktree:** `C:\Users\Mechegui\Desktop\dev\cirqix`
 - **Base commit:** `aa50a81` (origin/main)
 - **Content commit:** `uncommitted`
-- **Updated UTC:** `2026-07-19T12:10:00Z`
+- **Updated UTC:** `2026-07-22T09:00:00Z`
+
+### Reprise 2026-07-22 — la « normalisation pcbnew » NE résout PAS le résidu (mesuré)
+
+Owner a repris le point « Ouvert (non bloquant) » (résidu `clearance_pad_segment`
+censé disparaître via une passe pcbnew load+save). **Mesure iso-prod Docker
+(conteneur `cirqix-kicad`, backend C++ v1.0.0), board frais généré par
+`run_agent_chain.py` → 91 % routé :**
+
+| Board | Violations kicad-cli (juge) |
+|---|---|
+| routé brut (`strip_nc_escape_stubs` déjà appliqué en prod) | **50** (9 clearance, 1 shorting_items, 17 lib_footprint_issues, 8 silk_over_copper, 7 track_dangling, 5 hole_clearance, 3 track_width) + 10 unconnected |
+| après pcbnew `ZONE_FILLER.Fill` + `SaveBoard` (normalisation) | **50 — identique**, répartition inchangée |
+
+**Conclusion : la passe load+save est un no-op contre le juge kicad-cli.**
+La thèse « 43 → 0 » du handoff portait sur `clearance_pad_segment`, qui est un
+type de violation **kicad-tools** (`drc/violation.py:135`), c.-à-d. le
+**pré-filtre** — jamais autoritatif (CLAUDE.md : « ne court-circuite JAMAIS
+kicad-cli »). Le load+save améliorait donc une métrique de pré-filtre
+déconnectée de la fabricabilité réelle.
+
+**Nature réelle du résidu (kicad-cli, board 91 %)** — aucun artefact de zones :
+- 1 `shorting_items` RÉEL : `Track [+3.3V]` (B.Cu, 9,9 mm) court-circuite
+  `Via [OSC_IN]` — court inter-nets franc.
+- 5 `clearance` signal-à-signal : `OSC_IN` à 0,05–0,20 mm du pad `OSC_OUT` de
+  U2 ; vias `+3.3V` à 0,05 mm des pads GND 8/35 — géométrie du routeur négocié
+  sur l'échappement LQFP-48 0,5 mm.
+- 4 `clearance` sur pads NC `<no net>` (pads 4/26/38/43 de U2) : tracks/vias
+  `OSC_IN`/`SWO`/`USER_LED`/`BOOT0` à 0,01–0,11 mm — **la limite structurelle
+  déjà documentée** (exemption `grid.py` #3281, arbitrage lignes 160-204).
+
+Bug latent trouvé au passage : `routers/drc.py:126` appelle `zone.SetFilled(True)`
+— API KiCad 9 ; sous KiCad 10 (conteneur = 10.0.4) c'est `SetIsFilled`
+(`AttributeError`). Le `ZONE_FILLER.Fill` qui suit masque l'effet (les zones
+sont remplies quand même) mais l'appel lève dans la boucle si jamais isolé —
+à corriger dans le chantier DRC-clean.
+
+Le vrai chemin natif pour réduire ces clearances est `kct repair-clearance` /
+`kct fix-drc` (kicad-tools), PAS un load+save pcbnew — mais l'essentiel des
+violations bloquantes (short réel + NC-pads) relève de la qualité des pistes /
+de l'arbitrage NC, décisions produit, pas d'une normalisation.
+
+### Évaluation des leviers natifs post-route (2026-07-22, même board 91 %)
+
+Les 3 approches candidates mesurées contre le juge kicad-cli — **aucune ne réduit
+le compte de violations autoritatif** :
+
+| Levier | Auto-éval de l'outil | Juge kicad-cli (total / unconnected / nouveaux défauts) |
+|---|---|---|
+| pcbnew `ZONE_FILLER.Fill`+save | — | 50 / 10 / **no-op** (répartition identique) |
+| `kct fix-drc --drc-report <kicad-cli.json> --max-passes 3` (nudge 0,5 mm) | « 14/14 repaired » | 50 / **11** (+1 net cassé) / **+1 shorting_items, +1 solder_mask_bridge** |
+| `kct repair-clearance --max-displacement 0.1 --prefer move-trace` (conservateur) | « 7/14 repaired » | 50 / 10 / **+1 shorting_items, +1 solder_mask_bridge** |
+
+Cause : les outils de nudge optimisent le **modèle de clearance interne
+kicad-tools** (exemption NC + géométrie différente) ; en poussant les pistes de
+0,1–0,5 mm sur l'échappement LQFP-48 0,5 mm congestionné, ils créent des courts
+RÉELS que le juge kicad-cli attrape. `fix-drc` casse en plus un net (unconnected
+10→11). **Conclusion : le résidu n'est pas réparable mécaniquement post-route** —
+il est géométrique/densité (cf. README stm32-validation : « l'échec était un
+problème de placement, pas de routeur »). Chemin DRC-clean = amont
+(placement/densité/couches), hors périmètre d'un fix de `route_kct`.
+
+### Fait en parallèle (2026-07-22)
+
+Fix `routers/drc.py` `SetFilled` → API KiCad 10 (voir §Fichiers modifiés).
+
+**Décision de direction restante — arbitrage utilisateur** : (a) accepter le
+board 91 % non-DRC-clean tel quel et documenter ; (b) attaquer la densité en
+amont (retry placement ciblé / 4 couches systématiques sur LQFP fin) ; (c) plan
++3.3V (remise en cause de vcc_as_traces). Aucune n'est un fix post-route.
 
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
@@ -119,6 +188,13 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 - `services/kicad/tools/reasoning.py` — dédup anti-oscillation (voies 1 et 2)
 - `services/kicad/tests/test_reasoning_feedback.py` — 8 tests dédup + stub scripté
 - `docs/agents/handoffs/2026-07-19-routage-100-industriel.md` — création + suivi
+- `services/kicad/routers/drc.py` (2026-07-22) — `zone.SetFilled(True)` →
+  `zone.SetIsFilled(True)` : API KiCad 10 (conteneur = 10.0.4), `SetFilled`
+  supprimé côté ZONE. La branche refill de `_apply_fixes` n'était jamais
+  exercée en CI (pas de pcbnew) → bug latent. Validé conteneur (2 zones GND
+  remplies + sauvées, vrai pcbnew) + test de régression.
+- `services/kicad/tests/test_drc_clean.py` (2026-07-22) — 2 tests refill KiCad 10
+  (faux pcbnew avec `SetIsFilled` mais sans `SetFilled` ; RED avant fix).
 
 ## Validations exactes
 
@@ -134,6 +210,13 @@ racine + mesures ; tests `services/kicad/tests/` verts ; PR ouverte.
 | Expérience plans power : `route_kct(placed_run4, vcc_as_traces=False)` (Docker) | `RESULTAT 100 % — même placement qui plafonnait à 91 % en pistes` | `2026-07-19T18:40:00Z` |
 | **Validation finale ×3 avec fallback plans power (commit e39f5fa)** | `run 7 : 100 % BRUT · run 8 : 82 % → rescue → 100 % (itération 1) · run 9 : 100 % BRUT — critère « 3 runs consécutifs à 100 % de nets routés » ATTEINT` | `2026-07-19T19:10:00Z` |
 | `kicad-cli pcb drc --refill-zones` + sidecar tier (runs 7/9) | `NON clean : 67/55 ERROR (shorting_items 18, solder_mask_bridge 18, clearance 10/2, annular_width 5, starved_thermal 6/4, unconnected 10/8) — le refill résout 24/26 unconnected ; qualité pistes/zones = chantier suivant` | `2026-07-19T19:20:00Z` |
+| `run_agent_chain.py` board frais (Docker C++) | `exit 0 — placement 17 comp. (0 conflit), routage 91 %` | `2026-07-22T09:10:00Z` |
+| `kicad-cli pcb drc` board 91 % brut | `50 viol (9 clearance, 1 shorting_items, 17 lib_footprint, 8 silk, 7 track_dangling, 5 hole_clearance, 3 track_width) + 10 unconnected` | `2026-07-22T09:15:00Z` |
+| pcbnew `ZONE_FILLER.Fill`+save → kicad-cli | `50 → 50 (no-op ; load+save ne résout PAS le résidu contre le juge)` | `2026-07-22T09:20:00Z` |
+| `kct fix-drc --drc-report <kicad-cli> --max-passes 3` → kicad-cli | `« 14/14 repaired » (auto-éval) MAIS juge : 50/50, unconnected 10→11, +1 shorting_items, +1 solder_mask_bridge` | `2026-07-22T09:30:00Z` |
+| `kct repair-clearance --max-displacement 0.1` → kicad-cli | `« 7/14 repaired » MAIS juge : 50/50, +1 shorting_items, +1 solder_mask_bridge` | `2026-07-22T09:35:00Z` |
+| `pytest services/kicad/tests` (après fix SetIsFilled) | `149 passed (147 + 2 tests refill KiCad 10)` | `2026-07-22T09:45:00Z` |
+| Fix `SetIsFilled` vrai pcbnew conteneur (KiCad 10) | `OK — 2 zones GND remplies + sauvées` | `2026-07-22T09:47:00Z` |
 
 Bilan mesuré (iso-prod Docker, backend C++) — campagne complète 2026-07-19 :
 

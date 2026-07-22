@@ -26,6 +26,7 @@ Gain mesuré des fixes 2+3+4 (expérience scratchpad, runs 7/9) :
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -301,3 +302,65 @@ def test_apply_fixes_uses_via_fix_without_pcbnew():
     new_content, fixed = _apply_fixes(_PLANE_BOARD.encode(), [_pad_violation()])
     assert fixed == 1
     assert b"(via micro" in new_content
+
+
+# ===========================================================================
+# Refill zones — compat API pcbnew KiCad 10 (SetIsFilled, pas SetFilled)
+# ===========================================================================
+# La branche pcbnew de _apply_fixes (refill zones sur unfilled_zone /
+# zone_has_empty_net) n'est JAMAIS exercée en local/CI (pas de pcbnew) → le
+# bug d'API est passé inaperçu. Le conteneur prod tourne KiCad 10 (10.0.4),
+# où ZONE.SetFilled n'existe pas (c'est SetIsFilled ; ZONE_FILLER.Fill masque
+# l'effet mais la boucle SetFilled lève AttributeError avant Fill).
+
+
+class _FakeZoneK10:
+    """Zone façon KiCad 10 : SetIsFilled existe, SetFilled N'EXISTE PAS."""
+
+    def __init__(self) -> None:
+        self.is_filled = False
+
+    def SetIsFilled(self, value: bool) -> None:
+        self.is_filled = value
+
+
+class _FakeZoneFiller:
+    def __init__(self, board: "_FakeBoardK10") -> None:
+        self._board = board
+
+    def Fill(self, zones: list[_FakeZoneK10]) -> None:
+        for z in zones:
+            z.is_filled = True
+
+
+class _FakeBoardK10:
+    def __init__(self) -> None:
+        self._zones = [_FakeZoneK10()]
+
+    def Zones(self) -> list[_FakeZoneK10]:
+        return self._zones
+
+
+def _install_fake_pcbnew_k10(monkeypatch) -> None:
+    mod = types.ModuleType("pcbnew")
+    mod.LoadBoard = lambda path: _FakeBoardK10()  # type: ignore[attr-defined]
+    mod.ZONE_FILLER = _FakeZoneFiller             # type: ignore[attr-defined]
+
+    def _save(path: str, board: _FakeBoardK10) -> None:
+        Path(path).write_bytes(b"(kicad_pcb (filled))\n")
+
+    mod.SaveBoard = _save                          # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pcbnew", mod)
+
+
+def test_apply_fixes_refills_zone_with_kicad10_api(monkeypatch):
+    # Régression : avec l'API KiCad 10 (SetFilled absent), la branche refill
+    # ne doit PAS lever AttributeError. Échoue contre l'ancien SetFilled(True).
+    _install_fake_pcbnew_k10(monkeypatch)
+    from routers.drc import _apply_fixes
+
+    unfilled = {"id": "z1", "severity": "error", "type": "unfilled_zone",
+                "message": "Zone non remplie"}
+    new_content, fixed = _apply_fixes(_PLANE_BOARD.encode(), [unfilled])
+    assert fixed == 1
+    assert new_content == b"(kicad_pcb (filled))\n"
