@@ -79,6 +79,43 @@ board 91 % non-DRC-clean tel quel et documenter ; (b) attaquer la densité en
 amont (retry placement ciblé / 4 couches systématiques sur LQFP fin) ; (c) plan
 +3.3V (remise en cause de vcc_as_traces). Aucune n'est un fix post-route.
 
+### CAUSE RACINE = PLACEMENT (prouvé, 2026-07-22) — l'option (b) précisée
+
+Objectif utilisateur reformulé : solution GÉNÉRIQUE (toutes cartes) →
+100 % routable → 100 % routé → 100 % fabricable. 6 expériences iso-prod Docker
+(détail : `examples/stm32-validation/output/README-experiences-2026-07-22.md`) :
+
+| Config | Routé | Courts réels (kicad-cli) |
+|---|---|---|
+| 2 couches, escape permissif (prod) | 91 % | oui |
+| 2 couches, escape strict (`--strict-in-pad-clearance` + `--micro-via-in-pad-fallback` + `--fine-pitch-clearance 0.08`) | 55 % | **0** |
+| **4 couches**, escape strict | **55 %** | 0 |
+| `kct pipeline --layers 4` (route+fix-drc+zones+audit) | ~85 % | 51 err DRC, 9 non routés |
+
+**Les couches n'aident pas (4L = 55 % = 2L).** Le routeur diagnostique lui-même
+(stdout) : *« move fine-pitch component toward board centre, 5+mm from edge »*.
+Sur ce board U2 (LQFP-48) a Y1 dessous + J1 à côté → canaux d'escape encombrés.
+**→ cause racine = placement, pas routage/couches/DRC.** Aucun levier post-route
+(pcbnew load+save, `kct fix-drc`, `kct repair-clearance`) ne corrige — ils
+créent même des courts en poussant les pistes.
+
+**Sous-bug isolé** : `--strict-in-pad-clearance` **désactive `--auto-layers`**
+(nets refusés proprement ≠ « échec » → pas d'escalade ; le board strict reste à
+2 couches). À corriger si on garde les flags escape.
+
+**Direction solution (à valider) : placement routing-aware** —
+`PlaceRouteOptimizer` / `kct placement optimize --routing-aware` (kicad-tools,
+itère placement↔routage pour un placement réellement routable). Le pipeline
+Cirqix actuel sépare `auto_place` (tools/placement.py) et `route_kct`
+(tools/kct_route.py) SANS boucle de convergence — c'est le gap structurel. Les
+flags escape sont CORRECTS (ils préviennent les courts) mais n'ont de sens
+qu'avec un placement qui laisse de la place → à gater, pas à activer seuls
+(edit escape testé puis REVERTÉ ce jour car -36 pts de complétion en standalone).
+
+**Contrainte physique** : couches minimales = fonction de la densité. MCU
+fine-pitch dense ⇒ jamais 2 couches DRC-clean (plan Free 2 couches exclu). Pas
+un bug.
+
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
 
