@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import tempfile
 import time
 from pathlib import Path
@@ -266,6 +267,115 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 
 
 # ---------------------------------------------------------------------------
+# Brique 1 — Halo d'escape autour des composants fine-pitch
+# ---------------------------------------------------------------------------
+# Cause racine mesurée (iso-prod Docker, 2026-07-22) du blocage 100% routable →
+# routé → fabricable : un boîtier fine-pitch dense (LQFP-48 0,5mm) encerclé par
+# ses voisins ne peut pas échapper ses broches proprement. À placement égal, le
+# routage strict passe de 55% (voisins collés) à 73% (canal d'escape dégagé), en
+# restant électriquement propre (0 court réel). On réserve donc un canal d'escape
+# autour des composants denses AVANT de livrer le placement. 100% natif :
+# détection = seuil `_dense_package_count` (≥16 pads) ; halo = keepout natif
+# `create_keepout_from_component` ; résolution des overlaps induits = PlacementFixer.
+
+# Seuil « boîtier dense » — identique à
+# kicad_tools.optim.fom_features._dense_package_count (BGA, QFP/QFN denses).
+_DENSE_PAD_COUNT: int = 16
+# Largeur du canal d'escape réservé au-delà du courtyard d'un composant dense.
+# Calibré (iso-prod Docker, board STM32) : 2,5 mm → 73% routé mais 1 court réel
+# résiduel (kicad-cli) ; 5,0 mm approche le halo manuel (~6 mm de clearance) qui
+# donnait 0 court. Un halo trop large sur une petite carte repousse trop de
+# voisins vers les bords → re-mesurer si augmenté.
+_ESCAPE_HALO_MM: float = 5.0
+# Pas et plafond du push radial hors du keepout (borné — jamais de boucle infinie).
+_HALO_PUSH_STEP_MM: float = 0.5
+_HALO_PUSH_MAX_STEPS: int = 60
+
+
+def _dense_part_refs(pcb) -> list[str]:
+    """Refs des composants fine-pitch haut-broches (≥ ``_DENSE_PAD_COUNT`` pads).
+
+    Seuil identique à ``kicad_tools.optim.fom_features._dense_package_count``
+    (pas de constante custom). Ces boîtiers (BGA, QFP/QFN denses) ont besoin
+    d'un canal d'escape dégagé pour router leurs broches sans quasi-courts.
+    """
+    return [fp.reference for fp in pcb.footprints
+            if fp.reference and len(fp.pads) >= _DENSE_PAD_COUNT]
+
+
+def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
+                          halo_mm: float = _ESCAPE_HALO_MM) -> int:
+    """Écarte les voisins mobiles du halo d'escape des composants denses.
+
+    Pour chaque composant dense (``_dense_part_refs``), crée un keepout natif
+    (courtyard + ``halo_mm`` via ``create_keepout_from_component``) et pousse
+    radialement hors du keepout tout footprint mobile dont le centre y tombe.
+    Les composants ancrés (connecteurs) et les composants denses eux-mêmes ne
+    bougent jamais. Les overlaps induits sont résolus par ``PlacementFixer``
+    (``_resolve_remaining_conflicts``). Positions clampées dans le contour.
+
+    Générique : **no-op** (retourne 0, board inchangé) si aucun composant dense
+    — une carte simple (NE555, LED blinker) n'est jamais touchée.
+
+    Renvoie le nombre de footprints déplacés.
+    """
+    from kicad_tools.schema.pcb import PCB
+    from kicad_tools.optim.keepout import create_keepout_from_component
+    from kicad_tools.optim.board_outline import extract_board_outline
+
+    pcb = PCB.load(str(pcb_path))
+    dense = _dense_part_refs(pcb)
+    if not dense:
+        return 0
+
+    outline = extract_board_outline(pcb)
+    ox, oy = pcb.board_origin
+    if outline is not None and outline.vertices:
+        xs = [v.x - ox for v in outline.vertices]
+        ys = [v.y - oy for v in outline.vertices]
+        bx0, bx1 = min(xs) + 2.0, max(xs) - 2.0
+        by0, by1 = min(ys) + 2.0, max(ys) - 2.0
+    else:
+        bx0 = by0 = float("-inf")
+        bx1 = by1 = float("inf")
+
+    keep = set(anchored) | set(dense)
+    pushed = 0
+    for dref in dense:
+        zone = create_keepout_from_component(pcb, dref, clearance_mm=halo_mm)
+        if zone is None:
+            continue
+        dfp = next(fp for fp in pcb.footprints if fp.reference == dref)
+        dcx, dcy = dfp.position
+        for fp in pcb.footprints:
+            if fp.reference in keep:
+                continue
+            x, y = fp.position
+            if not zone.contains_point(x, y):
+                continue
+            dx, dy = x - dcx, y - dcy
+            d = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / d, dy / d
+            nx, ny = x, y
+            for _ in range(_HALO_PUSH_MAX_STEPS):
+                if not zone.contains_point(nx, ny):
+                    break
+                nx += ux * _HALO_PUSH_STEP_MM
+                ny += uy * _HALO_PUSH_STEP_MM
+            nx = min(max(nx, bx0), bx1)
+            ny = min(max(ny, by0), by1)
+            if (nx, ny) != (x, y):
+                fp.position = (nx, ny)
+                pushed += 1
+
+    if pushed:
+        pcb.save(str(pcb_path))
+        # Overlaps induits par le push → réparation locale native (dense + ancrés figés).
+        _resolve_remaining_conflicts(pcb_path, list(keep))
+    return pushed
+
+
+# ---------------------------------------------------------------------------
 # Mode 2 : auto-placement — commande native kct placement optimize --cluster
 # ---------------------------------------------------------------------------
 
@@ -425,6 +535,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                         "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
                         n_err_before, n_err_after,
                     )
+
+        # ── Brique 1 : halo d'escape — dégage le canal de routage des boîtiers
+        # denses (fine-pitch) en écartant leurs voisins mobiles. No-op sur une
+        # carte sans composant dense. Dernière étape placement : ni le GA ni le
+        # CMA-ES ne peuvent re-tasser les voisins ensuite.
+        n_halo = _reserve_escape_halos(out, conn)
+        if n_halo:
+            logger.info(
+                "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
+                "des composants denses (fine-pitch)", n_halo)
 
         footprints = PCB.load(str(out)).footprints
         return {

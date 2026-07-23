@@ -31,6 +31,9 @@ from tools.placement import (
     _resolve_remaining_conflicts,
     _refine_with_cmaes,
     _max_displacement_mm,
+    _dense_part_refs,
+    _reserve_escape_halos,
+    _DENSE_PAD_COUNT,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -609,3 +612,124 @@ def test_auto_place_survives_cmaes_exception(tmp_path, monkeypatch):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     assert result["placed_count"] > 0
+
+
+# ===========================================================================
+# Brique 1 — Halo d'escape autour des composants fine-pitch (2026-07-22)
+# ===========================================================================
+# Prouvé iso-prod Docker : donner un canal d'escape au LQFP-48 fait monter la
+# complétion PROPRE (55% -> 73%, 0 court réel). Le seuil « dense » = >=16 pads
+# est celui de kicad_tools.optim.fom_features._dense_package_count.
+
+
+def _dense_ic_sexp(ref: str, uuid: str, x_abs: float, y_abs: float, n_pads: int = 20) -> str:
+    """IC fine-pitch : ``n_pads`` pads SMD répartis sur un corps ~5x5mm.
+
+    >= _DENSE_PAD_COUNT pads → identifié comme composant dense (QFP/QFN/BGA)."""
+    pads = []
+    half = (n_pads + 3) // 4
+    for i in range(n_pads):
+        side, k = divmod(i, half)
+        off = -2.0 + 4.0 * (k / max(half - 1, 1))
+        if side == 0:
+            px, py = off, -2.5
+        elif side == 1:
+            px, py = 2.5, off
+        elif side == 2:
+            px, py = off, 2.5
+        else:
+            px, py = -2.5, off
+        pads.append(
+            f'    (pad "{i + 1}" smd roundrect (at {px:.2f} {py:.2f}) (size 0.3 0.3) '
+            f'(layers "F.Cu" "F.Paste" "F.Mask") (net 0 ""))')
+    pad_block = "\n".join(pads)
+    return f"""\
+  (footprint "Package_QFP:LQFP-{n_pads}"
+    (layer "F.Cu")
+    (uuid "{uuid}")
+    (at {x_abs} {y_abs})
+    (property "Reference" "{ref}" (at 0 -4 0) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (property "Value" "MCU" (at 0 4 0) (layer "F.Fab")
+      (effects (font (size 1 1) (thickness 0.15))))
+{pad_block}
+  )
+"""
+
+
+def _board_with_dense_ic_and_crowder(tmp_path: Path) -> Path:
+    """Board 60x40 : IC dense U2 au centre + résistance R1 collée dans son halo."""
+    pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
+    ox, oy = pcb.board_origin
+    board_path = tmp_path / "board.kicad_pcb"
+    pcb.save(str(board_path))
+
+    text = board_path.read_text(encoding="utf-8")
+    close_idx = text.rstrip().rfind(")")
+    inject = _dense_ic_sexp("U2", "22222220-2222-2222-2222-222222222220", ox + 30.0, oy + 20.0)
+    # R1 collée à 3.5mm du centre de U2 (dans le halo d'escape)
+    inject += _resistor_sexp("R1", "11111111-1111-1111-1111-111111111111", ox + 33.5, oy + 20.0, net=1)
+    text = text[:close_idx] + inject + text[close_idx:]
+    board_path.write_text(text, encoding="utf-8")
+    return board_path
+
+
+def test_dense_part_refs_identifies_high_pad_count(tmp_path):
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    pcb = PCB.load(str(board))
+    dense = _dense_part_refs(pcb)
+    assert dense == ["U2"]
+    # sanity : U2 a bien >= au seuil natif
+    u2 = next(fp for fp in pcb.footprints if fp.reference == "U2")
+    assert len(u2.pads) >= _DENSE_PAD_COUNT
+
+
+def test_dense_part_refs_empty_for_simple_board(tmp_path):
+    board_bytes = _board_with_movable_components(tmp_path)   # que des R 2 pads
+    p = tmp_path / "simple.kicad_pcb"
+    p.write_bytes(board_bytes)
+    assert _dense_part_refs(PCB.load(str(p))) == []
+
+
+def test_reserve_escape_halos_pushes_crowder_out(tmp_path):
+    import math
+
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    pcb0 = PCB.load(str(board))
+    u2b = next(fp for fp in pcb0.footprints if fp.reference == "U2").position
+    r1b = next(fp for fp in pcb0.footprints if fp.reference == "R1").position
+    d_before = math.hypot(r1b[0] - u2b[0], r1b[1] - u2b[1])
+
+    pushed = _reserve_escape_halos(board, anchored=[])
+    assert pushed >= 1
+
+    pcb1 = PCB.load(str(board))
+    u2a = next(fp for fp in pcb1.footprints if fp.reference == "U2").position
+    r1a = next(fp for fp in pcb1.footprints if fp.reference == "R1").position
+    d_after = math.hypot(r1a[0] - u2a[0], r1a[1] - u2a[1])
+    # U2 (dense) n'a pas bougé ; R1 s'est éloignée du centre de U2 (hors du halo).
+    assert u2a == u2b
+    assert d_after > d_before
+
+
+def test_reserve_escape_halos_noop_without_dense_part(tmp_path):
+    board_bytes = _board_with_movable_components(tmp_path)
+    p = tmp_path / "simple.kicad_pcb"
+    p.write_bytes(board_bytes)
+    before = [fp.position for fp in PCB.load(str(p)).footprints]
+    pushed = _reserve_escape_halos(p, anchored=[])
+    assert pushed == 0
+    after = [fp.position for fp in PCB.load(str(p)).footprints]
+    assert before == after
+
+
+def test_reserve_escape_halos_keeps_anchored_crowder(tmp_path):
+    """Un composant ancré (connecteur) dans le halo n'est PAS déplacé."""
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    # renomme R1 -> J1 (ancré) via edit texte
+    text = board.read_text(encoding="utf-8").replace('"R1"', '"J1"')
+    board.write_text(text, encoding="utf-8")
+    j1_before = next(fp for fp in PCB.load(str(board)).footprints if fp.reference == "J1").position
+    _reserve_escape_halos(board, anchored=["J1"])
+    j1_after = next(fp for fp in PCB.load(str(board)).footprints if fp.reference == "J1").position
+    assert j1_after == j1_before

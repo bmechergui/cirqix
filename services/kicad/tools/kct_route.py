@@ -87,6 +87,68 @@ _VCC_RENAME: dict[str, str] = {"+5V": "P5V0", "+3.3V": "P3V3"}
 # nécessaire — les boards simples restent au tier standard.
 _MFR_TIER_LADDER: str = "jlcpcb,jlcpcb-tier1"
 
+# Piste 4 (2026-07-19) — alignement DRC sur le tier escaladé. Quand l'escalade
+# retient un tier plus fin (via-in-pad…), le juge kicad-cli doit évaluer le
+# board avec les règles de CE tier, pas les défauts KiCad (plus stricts →
+# résiduels copper_edge/annular_width garantis). Le tier retenu est parsé du
+# stdout de route_with_mfr_tier_escalation puis transporté IN-BAND dans le
+# board (property racine KiCad) — aucun changement de contrat entre les étapes
+# routage → DRC. Le router DRC retire le marqueur avant kicad-cli et écrit un
+# sidecar .kicad_pro aux règles du profil (tools/drc.write_mfr_project_sidecar).
+_MFR_TIER_PROPERTY = "cirqix_mfr_tier"
+_TIER_SUCCESS_RE = re.compile(r"Tier (\S+) achieved routing success")
+_TIER_RECO_RE = re.compile(r"Recommendation: order from (\S+?)\.")
+_TIER_ATTEMPT_RE = re.compile(r"Tier \d+/\d+: (\S+)")
+_MFR_TIER_MARKER_RE = re.compile(
+    r'\n?[ \t]*\(property "' + _MFR_TIER_PROPERTY + r'" "([^"]+)"\)')
+
+
+def parse_retained_tier(stdout: str) -> str | None:
+    """Tier fabricant réellement retenu par l'escalade, depuis le stdout kct.
+
+    Ordre de préférence (messages réels de route_with_mfr_tier_escalation) :
+      1. dernière ligne « Tier X achieved routing success » (définitif) ;
+      2. « Recommendation: order from X. » (résumé final) ;
+      3. dernière tentative « Tier i/n: X » (best-effort, routage partiel) ;
+      4. None — aucun mode escalade dans la sortie.
+    """
+    matches = _TIER_SUCCESS_RE.findall(stdout or "")
+    if matches:
+        return matches[-1]
+    m = _TIER_RECO_RE.search(stdout or "")
+    if m:
+        return m.group(1)
+    attempts = _TIER_ATTEMPT_RE.findall(stdout or "")
+    if attempts:
+        return attempts[-1]
+    return None
+
+
+def strip_mfr_tier(pcb_bytes: bytes) -> bytes:
+    """Retire le marqueur de tier du board (kicad-cli ne doit jamais le voir)."""
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    return _MFR_TIER_MARKER_RE.sub("", text).encode("utf-8")
+
+
+def extract_mfr_tier(pcb_bytes: bytes) -> str | None:
+    """Tier fabricant estampillé dans le board, ou None (pas d'escalade)."""
+    m = _MFR_TIER_MARKER_RE.search(pcb_bytes.decode("utf-8", errors="replace"))
+    return m.group(1) if m else None
+
+
+def stamp_mfr_tier(pcb_bytes: bytes, tier: str) -> bytes:
+    """Estampille le tier retenu dans le board (property racine KiCad).
+
+    Idempotent : un marqueur existant est remplacé, jamais empilé (le rescue
+    re-route le même board plusieurs fois). Insertion avant la parenthèse
+    fermante racine — S-expr équilibrée garantie.
+    """
+    text = strip_mfr_tier(pcb_bytes).decode("utf-8", errors="replace").rstrip()
+    if not text.endswith(")"):
+        raise ValueError("stamp_mfr_tier: .kicad_pcb malformé (pas de ')' final)")
+    return (text[:-1].rstrip()
+            + f'\n  (property "{_MFR_TIER_PROPERTY}" "{tier}")\n)\n').encode("utf-8")
+
 
 def parse_routed_pct(stdout: str) -> int:
     """Parse routing completion % from kct route/reason output.
@@ -255,6 +317,169 @@ def _ensure_gnd_both_planes(pcb_bytes: bytes) -> bytes:
         return board.read_bytes()
 
 
+# ---------------------------------------------------------------------------
+# Pads NC stricts (chantier DRC-clean 2026-07-19)
+# ---------------------------------------------------------------------------
+# kicad-tools exempte les pads ``(net 0 "")`` de son validateur de clearance
+# (arbitrage upstream #3281) → le routeur peut TRAVERSER un pad NC. Mesuré sur
+# les boards routés 100 % (runs 7/9 stm32-validation) : 9 shorting_items +
+# 9 solder_mask_bridge, tous contre les pads 33/43 du LQFP-48 — des broches
+# silicium inutilisées, donc des courts RÉELS. On assigne un net unique à
+# chaque pad sans net AVANT le routage (obstacle normal), retiré APRÈS : le
+# board final garde son contrat (pads NC = ``(net 0 "")``).
+# Coût mesuré (scripts/strict_nc_route.py, backend C++) : complétion brute
+# 100→82 % (run 7) / 82→73 % (run 8) — compensé par rescue + retry placement.
+_NC_NET_PREFIX = "CIRQIX_NC_"
+_NC_NET_DECL_RE = re.compile(r'\n[ \t]*\(net \d+ "' + _NC_NET_PREFIX + r'\d+"\)')
+_NC_NET_REF_RE = re.compile(r'\(net \d+ "' + _NC_NET_PREFIX + r'\d+"\)')
+
+
+def assign_nc_nets(text: str) -> tuple[str, int]:
+    """Donne un net unique ``CIRQIX_NC_<n>`` à chaque pad ``(net 0 "")``.
+
+    Seules les références de pad (après le premier ``(footprint``) sont
+    converties — la déclaration racine ``(net 0 "")`` reste intacte. Les
+    déclarations des nouveaux nets sont insérées après la dernière déclaration
+    existante (un net référencé mais non déclaré rendrait le board invalide).
+    Renvoie (board modifié, nombre de pads convertis) ; no-op → (text, 0).
+    """
+    fp = text.find("(footprint")
+    if fp == -1:
+        return text, 0
+    head, body = text[:fp], text[fp:]
+
+    next_net = max([int(n) for n in re.findall(r"\(net (\d+)", text)] or [0]) + 1
+    declarations: list[str] = []
+
+    def _assign(_m: re.Match) -> str:
+        nonlocal next_net
+        n = next_net
+        next_net += 1
+        declarations.append(f'  (net {n} "{_NC_NET_PREFIX}{n}")')
+        return f'(net {n} "{_NC_NET_PREFIX}{n}")'
+
+    body = re.sub(r'\(net 0 ""\)', _assign, body)
+    if not declarations:
+        return text, 0
+
+    last = None
+    for m in re.finditer(r'\n[ \t]*\(net \d+ "[^"]*"\)', head):
+        last = m
+    if last is None:
+        return text, 0  # pas de section nets identifiable → no-op prudent
+    idx = last.end()
+    head = head[:idx] + "\n" + "\n".join(declarations) + head[idx:]
+    return head + body, len(declarations)
+
+
+def strip_nc_nets(text: str) -> str:
+    """Retire les nets temporaires ``CIRQIX_NC_*`` (inverse d'assign_nc_nets).
+
+    Robuste à une re-numérotation par le routeur : le marqueur est le NOM,
+    jamais le numéro. Déclarations (avant le premier footprint) supprimées,
+    références de pad restaurées en ``(net 0 "")``.
+    """
+    fp = text.find("(footprint")
+    if fp == -1:
+        return text
+    head, body = text[:fp], text[fp:]
+    head = _NC_NET_DECL_RE.sub("", head)
+    body = _NC_NET_REF_RE.sub('(net 0 "")', body)
+    return head + body
+
+
+_SEG_VIA_BLOCK_RE = re.compile(r"\n[ \t]*\((segment|via)[\s\n]")
+
+
+def strip_nc_escape_stubs(text: str) -> tuple[str, int]:
+    """Retire les tracks/vias d'escape laissés sur les pads NC.
+
+    Le routeur échappe les pads NC (rendus obstacles par :func:`assign_nc_nets`
+    via des nets ``CIRQIX_NC_*``) avec des segments/vias qui ne transportent
+    **aucun signal**. Une fois :func:`strip_nc_nets` passé, ces stubs deviennent
+    des pistes ``<no net>`` qui court-circuitent les pads NC (shorting_items +
+    solder_mask_bridge : 20 + 20 → 0 mesuré sur STM32 LQFP-48 en iso-prod).
+    On les retire **avant** ``strip_nc_nets``, tant qu'ils sont encore
+    étiquetés ``CIRQIX_NC_*``.
+
+    **Détection par code** : KiCad sérialise les nets des segments/vias par
+    **code seul** ``(net N)``, jamais par nom. On déduit donc les codes des
+    nets NC depuis leurs déclarations ``(net N "CIRQIX_NC_N")`` puis on retire
+    tout bloc segment/via référençant l'un de ces codes.
+
+    Board-agnostique : tout pad NC générera un stub ``CIRQIX_NC_*``, donc la
+    transformation s'applique à n'importe quelle carte. Scan à parenthèses
+    équilibrées, insensible aux parenthèses dans les chaînes quotées (même
+    technique que :func:`_strip_zone_blocks`).
+
+    Args:
+        text: Contenu sérialisé du ``.kicad_pcb`` routé (avant strip_nc_nets).
+
+    Returns:
+        ``(text_nettoyé, nombre_de_stubs_retirés)``. No-op → ``(text, 0)``.
+    """
+    nc_codes = set(re.findall(
+        r'\(net\s+(\d+)\s+"' + re.escape(_NC_NET_PREFIX) + r'\d+"\)', text))
+    if not nc_codes:
+        return text, 0
+
+    out: list[str] = []
+    removed = 0
+    i = 0
+    while True:
+        m = _SEG_VIA_BLOCK_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            return "".join(out), removed
+        paren = text.index("(", m.start())
+        depth, in_str = 0, False
+        j = paren
+        while j < len(text):
+            c = text[j]
+            if in_str:
+                if c == "\\":
+                    j += 1
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if depth != 0:
+            # .kicad_pcb malformé — on garde le bloc intact et on rend la main.
+            out.append(text[i:])
+            return "".join(out), removed
+        block = text[paren:j + 1]
+        # Codes nets référencés par ce segment/via (format KiCad code-only ou nommé).
+        block_codes = set(re.findall(r'\(net\s+(\d+)', block))
+        if block_codes & nc_codes:
+            # Stub d'escape NC : on retire le \n+indentation qui précèdent aussi.
+            out.append(text[i:m.start()])
+            removed += 1
+        else:
+            out.append(text[i:j + 1])
+        i = j + 1
+
+
+def _solid_connect_zones(text: str) -> str:
+    """Zones en connexion solid (``connect_pads yes``) — idempotent.
+
+    Les zones du flux Cirqix sont toutes des plans power (GND posé par
+    ``_ensure_gnd_both_planes``, rails coulés par kct en mode plans) : le
+    frein thermique par défaut y est infaisable entre les pistes d'escape
+    fine-pitch (starved_thermal + pads orphelins mesurés runs 7/9 — éliminés
+    par la connexion solid). ``ZoneConfig``/``zone_node`` (kicad-tools)
+    n'exposent pas le mode de connexion → transformation texte du bloc
+    ``(connect_pads …)`` sérialisé.
+    """
+    return text.replace("(connect_pads (clearance", "(connect_pads yes (clearance")
+
+
 _ZONE_BLOCK_RE = re.compile(r"\n\s*\(zone[\s\n]")
 
 
@@ -301,10 +526,47 @@ def _strip_zone_blocks(text: str) -> str:
         i = j + 1
 
 
-def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.CompletedProcess[str]:
-    """Lance ``kct route`` : stratégie ``negotiated`` + escalade de couches
-    automatique jusqu'à 100% routé (``--auto-layers`` + ``--min-completion 1.0``,
-    sans plafond ``--max-layers`` → défaut 4), auto-fix DRC, seed déterministe."""
+# Protections escape fine-pitch (Brique 2) — activées SEULEMENT si le board
+# contient un boîtier dense (≥16 pads). Mesuré 2026-07-22 : sans elles, le
+# routeur pose des vias in-pad qui frôlent les pads voisins d'un autre net sur
+# QFP/QFN fin → courts réels (kicad-cli). Avec elles + canal d'escape dégagé au
+# placement (Brique 1) : routage propre (0 court). Elles coûtent de la complétion
+# si appliquées sans nécessité → gating strict.
+#   --strict-in-pad-clearance (#3033/#3062) : refuse un via in-pad qui clipperait
+#       un pad voisin d'un net étranger.
+#   --micro-via-in-pad-fallback (#3118) : réessaie avec un micro-via plus petit.
+#   --fine-pitch-clearance : clearance d'escape entre broches < 0,8 mm de pas.
+_FINE_PITCH_CLEARANCE_MM: str = "0.08"
+
+
+def _has_dense_footprint(text: str) -> bool:
+    """True si le board contient un boîtier dense (≥ seuil pads) → déclenche les
+    protections escape fine-pitch. Seuil partagé avec le placement
+    (``tools.placement._DENSE_PAD_COUNT`` = ``_dense_package_count`` kicad-tools).
+
+    Comptage par bloc footprint (texte) — pas de chargement PCB (``route_kct``
+    est appelé en boucle par le reasoner). Les segments/vias/zones en fin de
+    fichier ne portent pas de ``(pad `` : le comptage reste fidèle.
+    """
+    from tools.placement import _DENSE_PAD_COUNT
+    for block in text.split("(footprint")[1:]:
+        if block.count("(pad ") >= _DENSE_PAD_COUNT:
+            return True
+    return False
+
+
+def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
+                     fine_pitch: bool = False) -> list[str]:
+    """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
+
+    Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
+    auto-fix + auto-mfr-tier + seed déterministe. Sur un board **fine-pitch**
+    (``fine_pitch=True``) : ajoute les protections escape ET force
+    ``--starting-layers 4`` — ``--strict-in-pad-clearance`` désactivant
+    l'escalade ``--auto-layers`` (nets refusés proprement ≠ « échec »), on
+    démarre à 4 couches (un LQFP dense requiert de toute façon 4 couches ; il
+    n'est jamais 2 couches DRC-clean).
+    """
     cmd = [
         sys.executable, "-m", "kicad_tools.cli", "route",
         str(src), "-o", str(dst),
@@ -313,15 +575,79 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int) -> subprocess.Completed
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", _CLEARANCE_MM,
+    ]
+    if fine_pitch:
+        cmd += [
+            "--fine-pitch-clearance", _FINE_PITCH_CLEARANCE_MM,
+            "--strict-in-pad-clearance",
+            "--micro-via-in-pad-fallback",
+            "--starting-layers", "4",
+        ]
+    cmd += [
         "--auto-mfr-tier",
         "--mfr-tier-ladder", _MFR_TIER_LADDER,
         "--seed", "42",
         "--timeout", str(timeout_s),
     ]
+    return cmd
+
+
+def _run_kct_route(src: Path, dst: Path, timeout_s: int,
+                   fine_pitch: bool = False) -> subprocess.CompletedProcess[str]:
+    """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
+    protections escape + départ 4 couches sur les boards à boîtier dense."""
+    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
     )
+
+
+def _missing_nets(analysis: str | None) -> list[str]:
+    """Noms des nets listés dans les sections « Unrouted nets » et
+    « Partially connected nets » d'une analyse d'échec du routeur.
+
+    Parsing scopé par section — les lignes « Suggestion: … », les compteurs
+    « (N): » et les causes « BLOCKED_PATH: … » ne sont jamais pris pour des
+    nets (ils partagent le format ``mot:``)."""
+    nets: list[str] = []
+    section: str | None = None
+    for line in (analysis or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("Unrouted nets"):
+            section = "unrouted"
+            continue
+        if s.startswith("Partially connected nets"):
+            section = "partial"
+            continue
+        if s.startswith(("Failure Summary", "Routing Suggestions", "Based on")):
+            section = None
+            continue
+        if section and ":" in s:
+            name = s.split(":", 1)[0].strip()
+            if name and " " not in name and not name.startswith(("Suggestion", "(")):
+                nets.append(name)
+    return nets
+
+
+def _only_power_nets_missing(analysis: str | None) -> bool:
+    """True si TOUS les nets manquants sont des rails power (et qu'il y en a).
+
+    Détection native ``kicad_tools.explain.mistakes.is_power_net`` après
+    re-mapping des noms renommés par la politique vcc_as_traces (P3V3 → +3.3V).
+    C'est la condition de déclenchement du fallback plans power : un signal
+    manquant ne serait PAS résolu par un plan — inutile de re-router."""
+    nets = _missing_nets(analysis)
+    if not nets:
+        return False
+    try:
+        from kicad_tools.explain.mistakes import is_power_net
+    except ImportError:
+        return False  # kicad-tools absent → pas de fallback (comportement inchangé)
+    reverse = {new: old for old, new in _VCC_RENAME.items()}
+    return all(is_power_net(reverse.get(n, n)) for n in nets)
 
 
 def route_kct(
@@ -329,22 +655,51 @@ def route_kct(
     timeout_s: int = _ROUTE_TIMEOUT_S,
     vcc_as_traces: bool = True,
 ) -> tuple[bytes, int, str]:
-    """Route via the official ``kct route`` CLI (negotiated, auto-layers, auto-fix).
+    """Route via kct (negotiated, auto-layers, auto-mfr-tier) + fallback plans power.
 
-    Delegates routing to kicad-tools. By default applies the Cirqix routing
-    policy (``vcc_as_traces=True``): +5V/+3.3V routed as TRACES (not poured as
-    planes) and a GND plane guaranteed on BOTH faces (F.Cu + B.Cu). Set
-    ``vcc_as_traces=False`` for the historical behaviour (kct auto-pours every
-    power net). See ``_VCC_RENAME`` for the why.
+    Politique Cirqix d'abord (``vcc_as_traces=True`` : +5V/+3.3V en PISTES,
+    plan GND garanti double face). **Fallback industriel (2026-07-19)** : si le
+    routage pistes laisse UNIQUEMENT des rails power partiels (cas mesuré board
+    STM32 : tous signaux routés, P3V3 10/15 pads SANS suggestion → plancher
+    91 % indépassable par le rescue), re-route une fois avec
+    ``vcc_as_traces=False`` — kct coule les rails en plans cuivre (pratique
+    standard multi-couches) → 100 % mesuré sur le même placement. Le meilleur
+    des deux résultats est rendu (jamais de régression). Coût pire cas : 2×
+    ``timeout_s``.
+
+    Returns (routed_pcb_bytes, routed_percent, failure_analysis).
+    ``failure_analysis`` is "" when routing is complete.
+    Raises RuntimeError on failure.
+    """
+    routed, pct, analysis = _route_once(pcb_bytes, timeout_s, vcc_as_traces)
+    if pct >= 100 or not vcc_as_traces or not _only_power_nets_missing(analysis):
+        return routed, pct, analysis
+
+    logger.info(
+        "route_kct: seuls des rails power restent partiels (%s) → re-route en "
+        "plans power (fallback industriel)", ", ".join(_missing_nets(analysis)))
+    routed_planes, pct_planes, analysis_planes = _route_once(
+        pcb_bytes, timeout_s, False)
+    if pct_planes > pct:
+        return routed_planes, pct_planes, analysis_planes
+    return routed, pct, analysis
+
+
+def _route_once(
+    pcb_bytes: bytes,
+    timeout_s: int,
+    vcc_as_traces: bool,
+) -> tuple[bytes, int, str]:
+    """Une passe de routage kct complète (rename VCC, route, post-process).
+
+    ``vcc_as_traces=True`` : +5V/+3.3V renommés → routés en pistes, zones kct
+    remplacées par nos plans GND en retrait. ``False`` : comportement kct
+    historique (rails power coulés en plans par le routeur lui-même).
 
     Assumes a PLACED board input (no pre-existing power zones) — the production
     flow (placement → routing) and the reasoner reroute loop both satisfy this.
     A board that already carries a +5V/+3.3V copper zone would keep it (only
     pad/net-declaration names are renamed, not zone ``net_name`` blocks).
-
-    Returns (routed_pcb_bytes, routed_percent, failure_analysis).
-    ``failure_analysis`` is "" when routing is complete.
-    Raises RuntimeError on failure.
     """
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "input.kicad_pcb"
@@ -352,11 +707,22 @@ def route_kct(
 
         # VCC en pistes : renomme +5V/+3.3V en noms non-power AVANT le routage.
         src_text = pcb_bytes.decode("utf-8", errors="replace")
+        # Détection fine-pitch AVANT toute transformation (rename/assign ne
+        # touchent pas au nombre de pads) → active les protections escape.
+        fine_pitch = _has_dense_footprint(src_text)
+        if fine_pitch:
+            logger.info("kct route: boîtier dense détecté → protections escape "
+                        "fine-pitch + départ 4 couches")
         if vcc_as_traces:
             src_text = _rename_nets(src_text, _VCC_RENAME)
+        # Pads NC → obstacles réels le temps du routage (cf. _NC_NET_PREFIX).
+        src_text, nc_count = assign_nc_nets(src_text)
+        if nc_count:
+            logger.info("kct route: %d pad(s) NC convertis en obstacles stricts",
+                        nc_count)
         src.write_text(src_text, encoding="utf-8")
 
-        result = _run_kct_route(src, dst, timeout_s)
+        result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch)
 
         if not dst.exists():
             raise RuntimeError(
@@ -377,6 +743,26 @@ def route_kct(
             )
             restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))
+
+        # Post-traitements communs aux deux modes : retrait des stubs
+        # d'escape NC (courts/solder-mask sur pads NC), des nets NC
+        # temporaires, et zones en connexion solid (chantier DRC-clean).
+        routed_text = routed.decode("utf-8", errors="replace")
+        routed_text, stub_n = strip_nc_escape_stubs(routed_text)
+        if stub_n:
+            logger.info(
+                "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
+                "courts + solder_mask_bridge sur pads NC", stub_n)
+        post = strip_nc_nets(routed_text)
+        routed = _solid_connect_zones(post).encode("utf-8")
+
+        # Piste 4 : estampille le tier retenu SI l'escalade a dépassé le
+        # premier barreau — le router DRC alignera ses règles dessus. No-op
+        # (aucun marqueur) quand le board route au tier standard.
+        retained_tier = parse_retained_tier(result.stdout)
+        if retained_tier and retained_tier != _MFR_TIER_LADDER.split(",")[0]:
+            routed = stamp_mfr_tier(routed, retained_tier)
+            logger.info("kct route: tier fabricant escaladé retenu = %s", retained_tier)
 
         routed_text = routed.decode("utf-8", errors="replace")
         seg_count = len(re.findall(r'\(segment[\s\n]', routed_text))

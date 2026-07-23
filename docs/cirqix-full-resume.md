@@ -484,6 +484,20 @@ Pour un vrai SaaS Cirqix avec plusieurs templates, utilisateurs payants, et agen
 pour protypage on utulise claude SDK
 
 
+> **Synchronisation RL (2026-07-19)** — La spécification RL à jour vit dans
+> `docs/rl/` (proposition Phase 6) : deux politiques (placement, routage) qui
+> produisent des candidats, jugés par `kicad-cli pcb drc`, avec critères
+> d'abandon et coûts chiffrés. Décision d'algorithme : **PPO v1** (SB3),
+> RecurrentPPO si la mémoire manque, DreamerV3 seulement sur conditions
+> mesurées. La piste **DreamerV3 + FreeRouting** est validée par une
+> publication (Chiang et al., 2026, *Expert Systems with Applications* :
+> 96 % de complétion, −21 % de temps d'entraînement vs DQN) et documentée
+> dans `docs/rl/README.md` comme piste de référence post-PPO. La section
+> ci-dessous reste un brainstorm historique : son « Option 1 — RL →
+> FreeRouting » est une alternative MVP valide, mais la spec Phase 6 retient
+> un routeur RL direct avec fallback `kct route` ; FreeRouting y sert de
+> baseline et de source de behavioral cloning.
+
 Important pour ton RL (Cirqix)
 
 Oui, c’est crucial :
@@ -732,6 +746,12 @@ L'Inspecteur (Correction Finale) : kct placement fix carte.kicad_pcb (Corrige le
 --------------
 palcement IA avec RL
 -----------------
+
+> **Note de synchronisation** — la spec Phase 6 (`docs/rl/placement/`)
+> inverse l'ordre décrit ici : le candidat RL vient **après** le placement
+> hybride et son premier contrôle, et remplace progressivement le
+> micro-raffinement CMA-ES (avec revert si dégradation). Le pipeline « RL
+> d'abord » ci-dessous reste une vision long terme, pas la Phase 6a.
 
   C'est le "God-Tier Pipeline". Vous venez de fusionner toutes les technologies de pointe de l'IA et de l'ingénierie électronique en un seul flux de travail ultime.
 

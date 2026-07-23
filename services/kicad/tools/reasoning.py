@@ -238,6 +238,18 @@ _DIRECTION_FR: dict[str, str] = {
     "north": "nord", "south": "sud", "east": "est", "west": "ouest",
 }
 _SUGGESTED_MOVE_MM = 3.0
+_OPPOSITE_DIRECTION: dict[str, str] = {
+    "north": "south", "south": "north", "east": "west", "west": "east",
+}
+# Une même (ref, direction) n'est appliquée QU'UNE FOIS par sauvetage.
+# Le plafond était à 2 (hypothèse « mur persistant → cumul 3mm+3mm utile »),
+# infirmée par la mesure NE555 (2026-07-19, iso-prod Docker) : itération 1
+# applique C3/D1/R1/C2 est (17 %), itération 2 ré-applique C2/C3/D1 est
+# (cumul 6mm) → itération 3 chute à 0 %. Le routeur ré-émet la même suggestion
+# parce qu'il ré-analyse un board neuf, pas parce qu'il demande un cumul.
+_MAX_SAME_MOVE = 1
+# Tolérance float pour « position déjà occupée » (voie 2 — coordonnées LLM).
+_POSITION_EPSILON_MM = 0.05
 
 
 def parse_router_moves(analysis: str | None) -> list[tuple[str, str]]:
@@ -256,6 +268,51 @@ def parse_router_moves(analysis: str | None) -> list[tuple[str, str]]:
                 seen.add((ref, direction))
                 moves.append((ref, direction))
     return moves
+
+
+def _select_applicable_moves(
+    moves: list[tuple[str, str]],
+    history: dict[tuple[str, str], int],
+    max_same: int = _MAX_SAME_MOVE,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Filtre les suggestions du routeur contre l'historique de l'appel en cours.
+
+    Anti-oscillation (cas mesuré STM32 2026-07-14 : « Move U2 east » puis
+    « Move U2 west » = annulation exacte au pas fixe _SUGGESTED_MOVE_MM →
+    itération de routage brûlée pour re-router un board déjà vu) :
+      - une suggestion INVERSE d'un déplacement déjà appliqué est rejetée ;
+      - une suggestion identique est plafonnée à ``max_same`` applications.
+
+    NB : la règle « inverse » suppose le pas fixe _SUGGESTED_MOVE_MM ; si le
+    pas devenait variable, migrer vers un historique de positions (voie 2).
+    Renvoie (suggestions retenues dans l'ordre, messages de rejet à logger).
+    """
+    applicable: list[tuple[str, str]] = []
+    rejected: list[str] = []
+    for ref, direction in moves:
+        if history.get((ref, _OPPOSITE_DIRECTION[direction]), 0) > 0:
+            rejected.append(
+                f"✗ {ref} : suggestion {_DIRECTION_FR[direction]} inverse d'un "
+                f"déplacement déjà appliqué — rejetée (anti-oscillation)")
+            continue
+        if history.get((ref, direction), 0) >= max_same:
+            rejected.append(
+                f"✗ {ref} : suggestion {_DIRECTION_FR[direction]} déjà appliquée "
+                f"{max_same}× — plafond atteint")
+            continue
+        applicable.append((ref, direction))
+    return applicable, rejected
+
+
+def _position_already_tried(
+    seen: list[tuple[float, float]], at) -> bool:
+    """Position (à _POSITION_EPSILON_MM près) déjà occupée par cette ref ?"""
+    try:
+        x, y = float(at[0]), float(at[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return any(abs(x - sx) <= _POSITION_EPSILON_MM
+               and abs(y - sy) <= _POSITION_EPSILON_MM for sx, sy in seen)
 
 
 _ROUTING_BLOCK_RE = re.compile(r'\n\s*\((segment|via|zone)[\s\n]')
@@ -346,6 +403,11 @@ def rescue_with_placement_feedback(
 
     best_bytes, best_pct = pcb_bytes, -1
     current = pcb_bytes
+    # État de dédup LOCAL à cet appel (service stateless : 4 workers uvicorn,
+    # et chaque retry placement de l'orchestrateur repart d'un tirage GA neuf
+    # où l'historique ancien n'a plus de sens).
+    move_history: dict[tuple[str, str], int] = {}
+    positions_seen: dict[str, list[tuple[float, float]]] = {}
 
     with tempfile.TemporaryDirectory() as tmp:
         board = Path(tmp) / "board.kicad_pcb"
@@ -374,8 +436,13 @@ def rescue_with_placement_feedback(
 
             # --- Voie 1 (déterministe) : suggestions natives du routeur ------
             # Le routeur désigne lui-même le mur (« Move D1 north… ») : on
-            # applique ses suggestions telles quelles, sans LLM.
-            for ref, direction in parse_router_moves(analysis)[:max_moves_per_iter]:
+            # applique ses suggestions telles quelles, sans LLM. Le filtre
+            # anti-oscillation précède la coupe max_moves_per_iter — une
+            # suggestion rejetée ne consomme pas le budget de déplacements.
+            applicable, rejected_logs = _select_applicable_moves(
+                parse_router_moves(analysis), move_history)
+            steps_log.extend(rejected_logs)
+            for ref, direction in applicable[:max_moves_per_iter]:
                 comp = agent.state.components.get(ref)
                 if comp is None:
                     steps_log.append(f"⚠ Suggestion routeur : {ref} introuvable — ignorée")
@@ -397,6 +464,9 @@ def rescue_with_placement_feedback(
                 batch_commands.append(command)
                 if result.success:
                     moved_refs.append(ref)
+                    move_history[(ref, direction)] = (
+                        move_history.get((ref, direction), 0) + 1)
+                    positions_seen.setdefault(ref, []).append((x, y))
 
             # --- Voie 2 (LLM, fallback) : aucune suggestion applicable -------
             for _ in range(max_moves_per_iter if not moved_refs else 0):
@@ -417,6 +487,21 @@ def rescue_with_placement_feedback(
                         f"✗ Commande {ctype} interdite (le routage appartient à kct route)")
                     continue
 
+                # Anti-oscillation voie 2 : le LLM donne des coordonnées
+                # arbitraires — rejeter un retour à une position déjà occupée.
+                pre_pos: tuple[float, float] | None = None
+                if ctype == "place_component":
+                    ref = str(command.get("ref", ""))
+                    if ref and _position_already_tried(
+                            positions_seen.get(ref, []), command.get("at")):
+                        steps_log.append(
+                            f"✗ {ref} : retour à une position déjà essayée — "
+                            f"rejeté (anti-oscillation)")
+                        continue
+                    comp = agent.state.components.get(ref)
+                    if comp is not None:
+                        pre_pos = (comp.position[0], comp.position[1])
+
                 try:
                     result, _diag = agent.execute_dict(command)
                 except Exception:
@@ -426,9 +511,12 @@ def rescue_with_placement_feedback(
                 ok = "✓" if result.success else "✗"
                 steps_log.append(f"{ok} {_describe(command)}")
                 batch_commands.append(command)
-                
+
                 if result.success and ctype == "place_component":
                     moved_refs.append(command.get("ref", ""))
+                    if pre_pos is not None:
+                        positions_seen.setdefault(
+                            str(command.get("ref", "")), []).append(pre_pos)
 
             if log_dir and batch_commands:
                 batch_file = Path(log_dir) / f"batch_iter{iteration}.json"

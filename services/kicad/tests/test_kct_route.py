@@ -251,7 +251,7 @@ def test_ensure_gnd_zone_respects_edge_clearance(stm32_board_bytes):
 
 def _fake_route(stdout: str):
     """side_effect : écho src→dst, renvoie un CompletedProcess avec ce stdout."""
-    def _run(src, dst, timeout_s):
+    def _run(src, dst, timeout_s, fine_pitch=False):
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
     return _run
@@ -260,7 +260,7 @@ def _fake_route(stdout: str):
 def test_route_kct_renames_vcc_before_routing(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 5/9 (56%)", stderr="")
@@ -274,7 +274,7 @@ def test_route_kct_renames_vcc_before_routing(monkeypatch):
 
 
 def test_route_kct_restores_vcc_names_in_output(monkeypatch):
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         # Le routeur renvoie un board avec les noms renommés (comme le vrai kct).
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 9/9 (100%)", stderr="")
@@ -363,7 +363,7 @@ def test_route_kct_replaces_kct_zones_with_edge_margin_zones(
     # kct route auto-coule GND collé à l'Edge.Cuts (122 copper_edge_clearance
     # mesurées 2026-07-14 sur la variante 100%) : route_kct doit REMPLACER les
     # zones du routeur par nos plans GND en retrait _ZONE_EDGE_CLEARANCE_MM.
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         # Le routeur renvoie le board de référence (zones GND à 0.3mm du bord).
         Path(dst).write_bytes(stm32_board_bytes)
         return SimpleNamespace(returncode=0, stdout="Nets routed: 11/11 (100%)",
@@ -385,7 +385,7 @@ def test_route_kct_replaces_kct_zones_with_edge_margin_zones(
 def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s):
+    def fake_run(src, dst, timeout_s, fine_pitch=False):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 5/5", stderr="")
@@ -400,3 +400,116 @@ def test_route_kct_flag_off_keeps_vcc_names(monkeypatch):
     # Flag off → comportement historique : pas de renommage, pas de plan forcé.
     assert '"+5V"' in captured["src"] and '"P5V0"' not in captured["src"]
     assert gnd_called["v"] is False
+
+
+# ===========================================================================
+# Fallback plans power (2026-07-19) — dernier levier déterministe vers 100 %
+# ===========================================================================
+#
+# Mesuré sur le board STM32 (run 4, iso-prod Docker backend C++) : la politique
+# vcc_as_traces route TOUS les signaux mais laisse le rail P3V3 partiel
+# (10/15 pads) SANS suggestion → plancher 91 % indépassable par le rescue.
+# Le même placement routé avec vcc_as_traces=False (rails power coulés en
+# plans — pratique industrielle standard en 4 couches) : 100 %.
+# Règle : si le routage en politique pistes laisse UNIQUEMENT des rails power
+# partiels (détection native is_power_net, après re-mapping _VCC_RENAME),
+# re-router une fois en plans power et garder le meilleur résultat.
+
+from tools.kct_route import _missing_nets, _only_power_nets_missing  # noqa: E402
+
+_POWER_ONLY_ANALYSIS = """\
+Partially connected nets
+ (1):
+    P3V3: 10/15 pads connected"""
+
+_SIGNAL_ANALYSIS = """\
+Unrouted nets:
+  NRST: Path blocked by component or trace
+            Suggestion: Move J1 east to create routing channel
+
+Partially connected nets
+ (1):
+    P3V3: 3/15 pads connected
+
+Failure Summary by Cause
+  BLOCKED_PATH: 1 net (100%)"""
+
+
+def test_missing_nets_parses_sections_only():
+    assert _missing_nets(_POWER_ONLY_ANALYSIS) == ["P3V3"]
+    # NRST (unrouted) + P3V3 (partiel) — jamais « Suggestion » ni « BLOCKED_PATH »
+    assert _missing_nets(_SIGNAL_ANALYSIS) == ["NRST", "P3V3"]
+    assert _missing_nets("") == []
+    assert _missing_nets(None) == []
+
+
+def test_only_power_nets_missing_true_for_renamed_vcc_rail():
+    # P3V3 = +3.3V renommé (politique vcc_as_traces) → power net
+    assert _only_power_nets_missing(_POWER_ONLY_ANALYSIS) is True
+
+
+def test_only_power_nets_missing_false_for_signal_net():
+    # NRST est un signal : le fallback plans power ne peut pas le résoudre
+    assert _only_power_nets_missing(_SIGNAL_ANALYSIS) is False
+
+
+def test_only_power_nets_missing_false_when_nothing_missing():
+    assert _only_power_nets_missing("") is False
+    assert _only_power_nets_missing(None) is False
+
+
+def _scripted_route_once(script):
+    """_route_once factice : rejoue (bytes, pct, analysis) et journalise les flags."""
+    calls: list[bool] = []
+
+    def route_once(pcb_bytes, timeout_s, vcc_as_traces):
+        calls.append(vcc_as_traces)
+        return script[min(len(calls), len(script)) - 1]
+
+    route_once.calls = calls  # type: ignore[attr-defined]
+    return route_once
+
+
+def test_route_kct_falls_back_to_power_planes(monkeypatch):
+    fake = _scripted_route_once([
+        (b"TRACES", 91, _POWER_ONLY_ANALYSIS),
+        (b"PLANES", 100, ""),
+    ])
+    monkeypatch.setattr(kct_route, "_route_once", fake)
+
+    out, pct, analysis = kct_route.route_kct(b"(kicad_pcb)")
+
+    assert (out, pct, analysis) == (b"PLANES", 100, "")
+    assert fake.calls == [True, False]      # politique d'abord, plans ensuite
+
+
+def test_route_kct_no_fallback_when_signal_missing(monkeypatch):
+    fake = _scripted_route_once([(b"TRACES", 91, _SIGNAL_ANALYSIS)])
+    monkeypatch.setattr(kct_route, "_route_once", fake)
+
+    out, pct, _ = kct_route.route_kct(b"(kicad_pcb)")
+
+    assert (out, pct) == (b"TRACES", 91)
+    assert fake.calls == [True]             # un seul routage — signaux ≠ plans
+
+
+def test_route_kct_keeps_policy_result_if_fallback_worse(monkeypatch):
+    fake = _scripted_route_once([
+        (b"TRACES", 91, _POWER_ONLY_ANALYSIS),
+        (b"PLANES", 82, "Unrouted nets:\n  SWO: congestion"),
+    ])
+    monkeypatch.setattr(kct_route, "_route_once", fake)
+
+    out, pct, _ = kct_route.route_kct(b"(kicad_pcb)")
+
+    assert (out, pct) == (b"TRACES", 91)    # garde anti-régression
+    assert fake.calls == [True, False]
+
+
+def test_route_kct_explicit_planes_mode_never_double_routes(monkeypatch):
+    fake = _scripted_route_once([(b"PLANES", 91, _POWER_ONLY_ANALYSIS)])
+    monkeypatch.setattr(kct_route, "_route_once", fake)
+
+    kct_route.route_kct(b"(kicad_pcb)", vcc_as_traces=False)
+
+    assert fake.calls == [False]            # déjà en plans → pas de re-route
