@@ -467,7 +467,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 
 **Règle : 1 dossier = 1 cas = 1 question.** Cas existants :
 - `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb`
-- `stm32-full-pipeline/` — les 8 agents depuis un JSON circuit → Gerbers (`run_full_pipeline.py`, driver LLM rôles 1+2)
+
+(`stm32-full-pipeline/` supprimé au commit `8faf685` — ne plus y faire référence.
+La fixture `led-blinker-full-pipeline/` visée par `docs/rl/routing/` n'existe pas
+encore : à créer avant de démarrer la PLAN RL routing.)
 
 ---
 

@@ -20,6 +20,13 @@ Validateur rapide : rejette collisions, keepouts et sortie de carte
 Validateur final : KiCad 10 DRC sur le .kicad_pcb écrit
 ```
 
+Source de vérité unique : le surrogate est une **enveloppe fine de
+`RoutingGrid`** (`kicad_tools/router/grid.py`) et le validateur rapide
+réutilise `VectorCollisionChecker` — les règles de blockage/clearance du
+simulateur sont celles de la production. Sinon la politique apprend à
+exploiter les écarts du simulateur (le gap surrogate/réel documenté plus
+bas).
+
 Les deux niveaux sont des politiques PPO/MLP en v1. Si la mémoire manque au
 routeur local (grille partiellement observable), l'option est RecurrentPPO
 (LSTM, sb3-contrib) — voir « Choix d'algorithme » dans
@@ -74,6 +81,11 @@ dans l'épisode, reçoivent une pénalité et n'écrivent aucun cuivre.
 Le reward accélère l'entraînement ; il n'est pas une preuve de succès. La seule
 preuve est le DRC officiel après écriture du PCB.
 
+Le +1000 « pad cible réellement atteint » est déclenché par
+`ConnectivityValidator` (connexion électrique réelle du net), pas par une
+simple adjacence de grille — sinon la politique apprend à s'arrêter à côté
+du pad.
+
 ## Double environnement
 
 | Environnement | Usage | Validateur |
@@ -118,15 +130,30 @@ La v1 du routeur RL ne traite pas :
 
 - les paires différentielles (USB D+/D- et autres `sensitive_nets`) ;
 - le length matching intra-bus ou intra-paire ;
-- les contraintes RF (impédance contrôlée, stubs).
+- les contraintes RF (impédance contrôlée, stubs) ;
+- les nets de plans (GND/VCC sur plan cuivre) : ils restent à la logique de
+  remplissage existante (`run_fill_zones`, `is_plane_layer`). Cas particulier
+  du LED : ses 3 nets dont GND sont routés en pistes par le RL à titre
+  pédagogique, mais sur les cartes suivantes les nets power basculent sur
+  les plans — la règle est tranchée par fixture dans la config de
+  l'environnement.
 
 Ces nets restent routés par `kct route` ou marqués à router manuellement. Les
 retirer de l'observation du routeur RL v1 évite un reward inatteignable.
 
 ## Processus LED pour le routeur RL direct
 
-Le dernier exemple est le terrain d'apprentissage initial :
-`services/kicad/examples/led-blinker-full-pipeline/`.
+> **Prérequis — fixture à créer.** Le dossier
+> `services/kicad/examples/led-blinker-full-pipeline/` **n'existe pas encore**
+> (vérifié : seul `stm32-validation/` est présent). Il doit être généré et
+> committé AVANT l'[étape 1 de la PLAN](PLAN.md#étapes) : circuit LED 3 nets
+> (VCC, LED_ANODE, GND) + PCB placé, validé `kicad-cli pcb drc`, avec `input/`
+> et `expected/` (règle « 1 dossier = 1 cas » du CLAUDE.md). Tant que la fixture
+> n'existe pas, le routeur RL n'a pas de terrain d'apprentissage et la PLAN ne
+> démarre pas.
+
+Une fois créée, la fixture sert de terrain d'apprentissage initial et de preuve
+de concept instrumentée :
 
 ```text
 1. Prendre input/circuit.json et le PCB placé comme fixture immuable.
@@ -165,6 +192,11 @@ services/kicad/tools/rl/routing/
 Dans `routers/routing.py`, RL est derrière un feature flag. Il produit un
 candidat ; si celui-ci ne passe pas les gates, le pipeline existant utilise
 `kct route`, puis le placement-feedback actuel si le routage reste incomplet.
+
+Candidat partiel : si le RL complète seulement une partie des nets, les nets
+RL **validés** (0 violation sur le pré-filtre) sont conservés et `kct route`
+ne reroute que les nets restants — en réutilisant la fusion de la boucle de
+rescue actuelle (`mergeRescueIntoRouting`), sans tout reprendre à zéro.
 
 ## Critère de passage au board suivant
 

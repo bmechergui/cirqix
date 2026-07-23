@@ -16,24 +16,41 @@ PCB placé (fixture ou production)
   → pré-filtre : DRC natif kicad-tools (27 règles JLCPCB)
   → juge final : kicad-cli pcb drc --format json
   → candidat accepté seulement si 0 violation + 0 unconnected item
-  → sinon : fallback kct route (+ placement-feedback actuel)
+  → sinon : fallback kct route sur les nets restants uniquement
+            (les nets RL validés sont conservés) + placement-feedback actuel
 ```
 
 Le RL produit des candidats, jamais un résultat livré sans gates. `kct route`
-reste la baseline et le fallback derrière un feature flag.
+reste la baseline et le fallback derrière un feature flag. Le surrogate est
+une enveloppe fine de `RoutingGrid` : mêmes règles de blockage/clearance
+qu'en production, pas de modèle parallèle.
 
 ## Étapes
+
+### 0. Prérequis — fixture LED (à créer)
+
+Le dossier `services/kicad/examples/led-blinker-full-pipeline/` **n'existe pas
+encore**. Aucune étape ci-dessous ne démarre tant que la fixture n'est pas
+générée : circuit LED 3 nets (VCC, LED_ANODE, GND) + PCB placé, validé
+`kicad-cli pcb drc`, committé avec `input/` et `expected/` (règle « 1 dossier =
+1 cas » du CLAUDE.md).
+
+- Validation : `input/circuit.json` présent, PCB placé lisible, DRC officiel à
+  0 violation avant tout entraînement.
 
 ### 1. `board_grid.py` — grille 2 couches
 
 Construire la grille depuis le PCB placé du LED
-(`services/kicad/examples/led-blinker-full-pipeline/`), pas fixé à 0,1 mm.
-Rasteriser les 8 canaux d'observation (pads source/cible, cuivre du net,
-cuivre des autres nets, courtyards/keepouts, Edge.Cuts, congestion, curseur,
-distance cible).
+(`services/kicad/examples/led-blinker-full-pipeline/`), pas fixé à 0,1 mm, en
+**enveloppant `RoutingGrid`** (`kicad_tools/router/grid.py`) : conversions
+monde↔grille, masques de clearance et congestion viennent de la primitive de
+production, pas d'un modèle parallèle. Rasteriser les 8 canaux d'observation
+(pads source/cible, cuivre du net, cuivre des autres nets,
+courtyards/keepouts, Edge.Cuts, congestion, curseur, distance cible).
 
 - Validation : la rasterisation correspond au `.kicad_pcb` (test sur la
-  fixture immuable).
+  fixture immuable) ; les masques de blockage sont identiques à ceux que
+  `RoutingGrid` produit pour le même board.
 
 ### 2. `actions.py` — actions + validateur rapide
 
