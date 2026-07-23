@@ -168,9 +168,35 @@ l'objectif, atteinte et générique (no-op sur carte simple).
 **Sur une carte normale** (sans boîtier ≥16 pads) : halo no-op, routage
 inchangé → l'objectif 100 % routable→routé→fabricable reste atteignable.
 
-### Reste (hors budget de cette tâche)
+### Leviers finaux mesurés (2026-07-22/23) — tous confirment le compromis
 
-- Fermer les 3 escapes signaux : reasoner avec clé API valide, ou `--auto-pcb-size`.
+| Levier | Routé | Fabricable (kicad-cli) |
+|---|---|---|
+| Brique 3 (halo 5.0 + escape) | 73 % | **0 court, 0 clearance** ✅ |
+| Brique 4 (auto-analog + auto-pcb-size) | 73 % | +14 clearance ❌ → **REVERTÉ** |
+| 6 couches | — | tué >550s, non viable budget ❌ |
+| **Rescue LLM piloté (moi = driver)** : décision C10→nord + suiveur déterministe déplace C10/J1/U2 +3mm | **82 %** | **5 courts réels** ❌ |
+
+**Le rescue piloté fonctionne** (73→82 %, +9 pts) mais re-crée des courts en
+poussant la complétion — MÊME compromis. La suggestion du routeur (« Move C10,
+J1, U2 north ») implique de bouger le connecteur J1 et le MCU U2 (points fixes
+de conception) ; le rescue déterministe les bouge de 3mm et gagne 9 pts, mais
+au prix de la fabricabilité.
+
+**CONCLUSION MESURÉE : 100 % routé ET fabricable est INATTEIGNABLE sur ce board
+worst-case** (LQFP-48 0,5mm, 60×40, connecteur fixe) avec l'outillage
+déterministe en budget prod. Le corridor U2↔J1 ne peut pas acheminer les 5
+signaux (SWCLK/NRST/SWDIO/SWO/OSC) proprement à ce pas. **Limite DFM réelle**,
+pas un bug. Fermer le reste = décision de CONCEPTION : agrandir le board,
+repositionner J1, ou réduire les signaux vers J1.
+
+**Acquis générique livré** (Bricks 1-3, tous committés/poussés) : la pipeline
+produit un routage PROPRE (0 court) là où la baseline produisait 91 % AVEC
+courts (non fabricable) — et no-op sur carte simple. C'est la vraie valeur.
+
+### Reste (décision produit, hors budget code)
+
+- Fermer le worst-case : agrandir le board / repositionner J1 / clé API valide.
 - Le halo `PlacementFixer` n'est pas halo-aware (peut théoriquement re-rapprocher
   un voisin) — non observé, mais à surveiller.
 
