@@ -103,6 +103,9 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
       status: statusLabel,
       pcb_state: finalized,
       iteration_count: finalized.iteration,
+      // Provenance : ce repli enchaîne les VRAIS handlers (seul l'orchestrateur
+      // Sonnet est court-circuité) → board commandable.
+      agent_mode: 'orchestrator',
       updated_at: new Date().toISOString(),
     }).eq('id', projectId);
   }
