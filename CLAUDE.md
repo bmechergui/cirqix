@@ -276,6 +276,22 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         JAMAIS kicad-cli (faux négatif mesuré 2026-07-04 : 25 courts invisibles)
      ② kicad-cli pcb drc — TOUJOURS exécuté si dispo, fait foi, auto-fix max 3×
      ③ skipped=True — les deux absents
+     ⚠️ FAIL FAST (2026-07-27) : `DRC_CLEAN` ne peut être émis QUE par un DRC
+        réellement exécuté ET réellement propre. Les 3 chemins qui renvoyaient
+        auparavant `pcb_status:'DRC_CLEAN'` + `drc_clean:true` sans qu'aucun DRC
+        n'ait tourné (pas de PCB en cache · `skipped` · service en erreur, dont
+        `KICAD_SERVICE_URL` non configurée) renvoient désormais `status:'error'`.
+        Enjeu : orchestrator-bridge persiste `pcb_status` dans `projects.status`
+        et `POST /api/jlcpcb/order` autorise la commande dès que le statut vaut
+        `DRC_CLEAN` — un DRC fantôme débloquait donc une commande JLCPCB réelle
+        sur un board jamais validé. Garde : tests/handler-drc.test.ts
+        (describe « jamais DRC_CLEAN sans DRC exécuté »).
+     ⚠️ `local-pipeline.ts` (repli sans orchestrateur, sur erreur crédit/402)
+        écrivait un statut CODÉ EN DUR par étape, en ignorant le résultat du
+        handler : un DRC en erreur — ou trouvant de vraies violations — était
+        malgré tout persisté `DRC_CLEAN`. Le handler fait foi désormais
+        (`pcb_status` prioritaire, `status:'error'` interrompt la chaîne sans
+        rien persister). Garde : apps/web/src/test/local-pipeline.test.ts.
   ⑧ call_agent_export     → Ingénieur Fabrication
      POST /export/all
      ① kicad-tools kct export --mfr jlcpcb — GTL/GBL/GKO, BOM LCSC, CPL rotations
