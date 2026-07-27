@@ -1,0 +1,112 @@
+# Exemple de référence — Pipeline COMPLET, description → Gerbers
+
+> **1 dossier = 1 cas = 1 question.** Ce cas : « la chaîne 8 agents tient-elle de
+> bout en bout contre le service réel, avec le backend C++ disponible ? »
+> Pour le cas de STRESS du routage (fine-pitch LQFP-48, plafond DFM), voir
+> `../stm32-validation/`.
+
+Exécuté le **2026-07-27** contre le conteneur `cirqix-kicad` (kicad-cli 10.0.4,
+backend natif C++ 1.0.0 disponible). Le rôle du LLM est tenu par le **driver**
+(cf. « Driver LLM » plus bas) : aucune `ANTHROPIC_API_KEY` n'est requise.
+
+## Le board
+
+LED blinker 5 V : NE555 astable ~1 Hz pilotant une LED.
+8 composants (1 DIP-8 + 7 SMD 0805 + header 2 pts), 6 nets, board 60×45 mm.
+
+Volontairement **simple** — DIP/0805, pas de fine-pitch — pour que la question
+posée soit « le pipeline tient-il ? » et non « le routeur sait-il faire du
+0.5 mm ? ». Le second cas est déjà couvert par `stm32-validation`.
+
+## Reproduire
+
+```bash
+# Conteneur (depuis services/kicad/) — le token doit faire ≥32 caractères,
+# sinon le service échoue fermé en 503 sur TOUTES les routes sauf /health.
+KICAD_SERVICE_TOKEN=$(python -c "import secrets;print(secrets.token_hex(24))") \
+  docker compose up -d kicad
+
+export KICAD_SERVICE_URL=http://127.0.0.1:8766
+export KICAD_SERVICE_TOKEN=<le même token>
+export PYTHONUTF8=1                      # obligatoire sous Windows
+python run_pipeline.py                   # artefacts dans output/ (gitignoré)
+```
+
+## Driver LLM
+
+Là où la prod appelle un modèle, le driver fournit la sortie :
+
+| Étape prod | Modèle | Ici |
+|---|---|---|
+| `call_agent_schema` | Haiku 4.5 | `input/schema.json`, écrit à la main |
+| `call_agent_footprint` | Haiku (cascade) | footprints déjà résolus dans le JSON |
+| `call_agent_reason` | Haiku | non déclenché (routage à 100 %) |
+
+Même dispositif que `../stm32-validation/` (`decisions.json`) : c'est ainsi qu'a
+été trouvé le bug `_refresh_agent` du reasoner en 2026-06-03.
+
+## Résultat mesuré (2026-07-27)
+
+| Étape | Résultat | Temps |
+|---|---|---|
+| ① Schéma | `.kicad_sch` 39 528 o | 0.9 s |
+| ② ERC | **clean, 0 violation** — kicad-cli officiel | 0.9 s |
+| ④ gen_pcb | `.kicad_pcb` 21 547 o, niveau 1 kicad-tools | 0.3 s |
+| ⑤ Placement | 8/8 placés | 34 s |
+| ⑥ Routage | **100 %**, 2 couches, 0 via | 40 s |
+| ⑥b Reasoner | **non déclenché** — conforme au seuil `< 100` | — |
+| ⑦ DRC | s'exécute, **186 violations** (174 bloquantes) | 1.5 s |
+| ⑧ Export | **20 fichiers** (Gerbers + drill + `pos.csv`), devis $15 | 6.4 s |
+
+**Le pipeline est mécaniquement complet ; le board n'est PAS DRC-clean.** Les
+violations dominantes sont `copper_edge_clearance` : le placement pousse du
+cuivre à moins de 0.5 mm du bord. Le nombre varie fortement d'un run à l'autre
+(26 → 186 sur deux runs) — le placement GA est stochastique et sans seed, limite
+déjà documentée dans `docs/agents/handoffs/2026-07-19-routage-100-industriel.md`.
+
+Conclusion honnête du cas : **la plomberie tient, la qualité DFM non.** Le point
+suivant est le placement (garde de bord), pas le routage.
+
+## Bug trouvé pendant cette validation
+
+### Valeurs de propriété numériques non quotées → board illisible par KiCad
+
+`kicad_tools/sexp/parser.py` ne quote un atome chaîne que s'il a été *lu* depuis
+un token quoté (`_originally_quoted`) ou s'il ne ressemble pas à un nombre. Ce
+drapeau vaut **False pour les atomes construits programmatiquement** — donc pour
+toute valeur de composant injectée depuis notre JSON. Avec `R3 = 330` :
+
+```
+(property "Value" 330          ← atome nu, S-expression invalide
+```
+
+KiCad 10.0.4 refuse alors le **fichier entier** : `kicad-cli` affiche
+`Failed to load board` et `pcbnew.LoadBoard` renvoie `None`. Le parseur de
+kicad-tools étant plus permissif, le board se **place et se route normalement**,
+puis DRC et export échouent — sur un board pourtant routé à 100 %.
+
+Les valeurs sans unité (330, 100, 4700, 10…) sont la norme : tout schéma
+contenant une résistance ainsi notée était affecté.
+
+**Garde livré** : `tools/pcb.py::_quote_bare_property_values`, appliqué aux deux
+niveaux de `generate_pcb`. Board-agnostique, idempotent, et ne touche qu'aux
+valeurs de `(property …)` — les atomes numériques légitimes (`(at …)`,
+`(size …)`, `(version …)`) sont préservés. Tests :
+`services/kicad/tests/test_pcb_property_quoting.py` (7 tests).
+Le fix de fond appartient à `kicad_tools` (défaut d'`_originally_quoted`
+inadapté à la construction programmatique) → procédure fork/rebase de
+`DEPENDENCIES.md`.
+
+## Deux autres constats
+
+- **Token trop court = service muet.** `docker-compose.yml` impose que
+  `KICAD_SERVICE_TOKEN` soit *défini* (`:?`) mais pas qu'il fasse ≥32 caractères,
+  seuil exigé par `security.py`. Un token plus court fait démarrer le conteneur,
+  le rend **`healthy`** (car `/health` est public) et renvoie 503 sur tout le
+  reste. Le healthcheck ne peut pas le détecter.
+- **CMA-ES mort sous uvicorn.** `auto_place` journalise
+  `ValueError: signal only works in main thread of the main interpreter` :
+  `run_optimize_placement` installe un handler de signal, impossible hors thread
+  principal. Le filet de sécurité fait son travail (board pré-CMA-ES conservé),
+  donc le placement aboutit — mais l'étape « Géomètre » longuement documentée
+  dans `CLAUDE.md` **ne s'exécute jamais** dans le conteneur.
