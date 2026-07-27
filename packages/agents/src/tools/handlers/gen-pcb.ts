@@ -54,7 +54,24 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
     kicadPcbContent = tsResult.kicad_pcb_content;
   }
 
+  // Un board vide n'est pas un succès. Le service court-circuite ses deux
+  // niveaux Python quand aucun .kicad_sch n'est en cache et rend "" ; si le
+  // générateur TS de repli rend lui aussi une chaîne vide, annoncer un succès
+  // (et promouvoir ERC_CLEAN) ne fait que déplacer l'échec sur le placement,
+  // qui échouera sans cause lisible. Le cache n'est pas écrasé : un board
+  // précédent, même imparfait, vaut mieux que rien.
   const finalPcb = kicadPcbContent ?? '';
+  if (finalPcb.length === 0) {
+    log.error({ projectId }, 'call_agent_gen_pcb: aucun .kicad_pcb produit');
+    return {
+      status: 'error',
+      error: 'aucun .kicad_pcb produit',
+      note:
+        'Génération PCB impossible — ni le service KiCad ni le générateur TS n\'ont '
+        + 'produit de board. Vérifie que call_agent_schema a réussi et que le conteneur '
+        + 'Docker KiCad tourne (KICAD_SERVICE_URL).',
+    };
+  }
   pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
 
   return {

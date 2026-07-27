@@ -596,9 +596,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
+            # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
+            # attendu par le client TS (`placement-service.ts::isValidPosition`).
+            # Le code émettait `x`/`y`, contredisant son propre modèle : le client
+            # filtrait donc TOUTES les positions et `call_agent_placement`
+            # renvoyait `placements: []`. Invisible aux tests mockés, qui
+            # reproduisaient l'hypothèse du client et non la réalité du service ;
+            # révélé le 2026-07-27 par `pipeline-live.test.ts`.
             "positions": [
                 {"ref": fp.reference,
-                 "x": round(fp.position[0], 2), "y": round(fp.position[1], 2)}
+                 "x_mm": round(fp.position[0], 2), "y_mm": round(fp.position[1], 2)}
                 for fp in footprints
             ],
         }

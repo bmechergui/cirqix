@@ -233,6 +233,21 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement   [100% natif, 1 appel]
+     ⚠️ 3 bugs de CÂBLAGE corrigés le 2026-07-27, tous invisibles aux tests
+        mockés (les mocks reproduisaient l'hypothèse du client, pas la réalité du
+        service) et révélés par `packages/agents/src/tests/pipeline-live.test.ts`,
+        premier test à faire tourner la chaîne TS contre le service réel :
+        1. `handlePlacement` RÉGÉNÉRAIT le board via le générateur TS
+           (`runPCBEngine`), écrasant celui que `gen_pcb` venait de produire — que
+           le service ne parvenait même pas à parser (`500 ParseError`). Il
+           utilise désormais le board du cache, comme `handleRouting`.
+        2. `PLACEMENT_TIMEOUT_MS` valait 10 s pour une étape mesurée à 34-45 s :
+           le placement expirait SYSTÉMATIQUEMENT en production. Porté à 180 s.
+           (`ROUTING_TIMEOUT_MS` 90 s → 330 s pour la même raison : le service
+           s'accorde 300 s.)
+        3. `/place/auto` renvoyait `{ref, x, y}` alors que son propre modèle de
+           réponse et le client TS documentent `{ref, x_mm, y_mm}` : le client
+           filtrait TOUTES les positions et `placements` sortait vide.
      POST /place/auto (kicad_pcb_b64) — gen_pcb fournit une grille de départ
      Commande native : OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
          enable_clustering=True, fixed_refs=<J*/P*>, generations=100,

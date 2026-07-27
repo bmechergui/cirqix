@@ -252,7 +252,7 @@ def test_auto_place_actually_moves_movable_components(tmp_path):
 
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
-    pos = {p["ref"]: (p["x"], p["y"]) for p in result["positions"]
+    pos = {p["ref"]: (p["x_mm"], p["y_mm"]) for p in result["positions"]
            if p["ref"] in ("R1", "R2", "R3")}
     # au moins un composant doit avoir quitté le point de départ (30, 20)
     moved = [r for r, (x, y) in pos.items()
@@ -270,8 +270,8 @@ def test_auto_place_clamps_connector_outside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j1 = next(p for p in result["positions"] if p["ref"] == "J1")
-    assert 0.0 <= j1["x"] <= _BOARD_W_MM, f"J1.x={j1['x']} hors contour [0,{_BOARD_W_MM}]"
-    assert 0.0 <= j1["y"] <= _BOARD_H_MM, f"J1.y={j1['y']} hors contour [0,{_BOARD_H_MM}]"
+    assert 0.0 <= j1["x_mm"] <= _BOARD_W_MM, f"J1.x_mm={j1['x_mm']} hors contour [0,{_BOARD_W_MM}]"
+    assert 0.0 <= j1["y_mm"] <= _BOARD_H_MM, f"J1.y_mm={j1['y_mm']} hors contour [0,{_BOARD_H_MM}]"
 
 
 def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
@@ -284,8 +284,8 @@ def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y"] == pytest.approx(20.0, abs=0.5)
+    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -528,8 +528,8 @@ def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y"] == pytest.approx(20.0, abs=0.5)
+    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
 
 
 def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monkeypatch):
@@ -570,7 +570,7 @@ def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monke
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     r1 = next(p for p in result["positions"] if p["ref"] == "R1")
-    assert (r1["x"], r1["y"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
+    assert (r1["x_mm"], r1["y_mm"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
 
 
 def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, monkeypatch):
@@ -610,7 +610,7 @@ def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, mo
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     r1 = next(p for p in result["positions"] if p["ref"] == "R1")
-    assert r1["x"] == pytest.approx(captured["pre_x"], abs=0.01), (
+    assert r1["x_mm"] == pytest.approx(captured["pre_x"], abs=0.01), (
         "le board livré inclut le déplacement de 30mm du CMA-ES malgré 0 ERROR — "
         "le filet de sécurité Option B (déplacement) ne s'est pas déclenché"
     )

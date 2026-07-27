@@ -123,6 +123,37 @@ describe('résolution des dimensions du board', () => {
   });
 });
 
+describe('board envoyé au service pcbnew', () => {
+  /**
+   * `call_agent_gen_pcb` produit un board via le service (kicad-tools /
+   * pcbnew). `handlePlacement` le REMPLAÇAIT systématiquement par un board
+   * régénéré avec le générateur TS de repli (`runPCBEngine` →
+   * `runCircuitSynthEngine`, purement TypeScript, sans appel service).
+   *
+   * Découvert le 2026-07-27 par le test d'intégration live : le service
+   * renvoyait `500 ParseError: Unexpected end of input` — il n'arrivait même
+   * pas à parser le board TS. `handleRouting` évite déjà ce piège
+   * explicitement ; le placement doit faire pareil.
+   */
+  it('utilise le board du cache produit par gen_pcb, sans le régénérer', async () => {
+    seedCache({ kicad_pcb_content: '(kicad_pcb (net 0 "") (service yes))' });
+
+    await handlePlacement({}, PROJECT);
+
+    expect(engineMock.runPCBEngine).not.toHaveBeenCalled();
+    const sent = placementMock.runRealPlacement.mock.calls[0]?.[0] as { kicadPcbContent: string };
+    expect(sent.kicadPcbContent).toContain('(service yes)');
+  });
+
+  it('régénère seulement sur cache froid (placement appelé seul)', async () => {
+    pcbStateCache.set(PROJECT, { schema: CACHED_SCHEMA, boardW: 60, boardH: 45 } as never);
+
+    await handlePlacement({}, PROJECT);
+
+    expect(engineMock.runPCBEngine).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('placement nominal via pcbnew', () => {
   it('mappe les positions du service et normalise rotation/face', async () => {
     seedCache();

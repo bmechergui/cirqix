@@ -200,6 +200,58 @@ le bind-mount de développement.
        `placement_bounds` ajoutés (kwonly).
     5. **Appel étendu** dans `run_optimize_placement` — passe `pcb_path`, `board_origin`,
        `placement_bounds` à `_generate_seed` pour seed_method="current".
+  - 🕓 **Patch #9 — PROPOSÉ, PAS ENCORE DANS LE FORK** (2026-07-27)
+    `src/kicad_tools/sexp/parser.py::_format_atom` — une valeur `str` construite
+    PROGRAMMATIQUEMENT et dont le texte ressemble à un nombre sort **non quotée**,
+    ce qui change silencieusement son type à la relecture. `_needs_quoting` fait
+    explicitement `float(s) → return False`, et `_originally_quoted` (qui protège
+    les valeurs *lues* depuis un token quoté) vaut False pour tout atome construit
+    en Python. Conséquence mesurée sur `examples/led-blinker-full-pipeline` avec
+    une résistance `330 Ω` :
+
+        (property "Value" 330          ← atome nu, S-expression invalide
+
+    KiCad 10.0.4 refuse alors le **fichier entier** (`kicad-cli` : « Failed to load
+    board » ; `pcbnew.LoadBoard` : `None`), tandis que le parseur de kicad-tools,
+    plus permissif, l'accepte : le board se place et se route à 100 %, puis DRC et
+    export échouent. Toute valeur sans unité (330, 100, 4700, 10…) est concernée —
+    c'est-à-dire la majorité des résistances.
+
+    Correctif proposé, minimal et sans risque pour les mots-clés (`yes`, `F.Cu`…
+    ne sont pas numériques, donc restent nus) :
+
+    ```diff
+    @@ def _format_atom(self) -> str:
+             if isinstance(self.value, str):
+    -            if self._originally_quoted or self._needs_quoting(self.value):
+    +            # Une valeur typée `str` dont le texte se relit comme un nombre
+    +            # DOIT être quotée : sans quotes, le round-trip la convertit en
+    +            # nombre et KiCad rejette le fichier là où un champ attend une
+    +            # chaîne (ex. (property "Value" 330)). `_originally_quoted` ne
+    +            # couvre que les atomes PARSÉS, pas ceux construits en Python.
+    +            if (
+    +                self._originally_quoted
+    +                or self._needs_quoting(self.value)
+    +                or _looks_like_number(self.value)
+    +            ):
+    ```
+
+    avec un helper `_looks_like_number(s)` = `float(s)` réussit (hors préfixe
+    `0x`, qui reste un vrai littéral numérique KiCad).
+
+    **Contourné en attendant** par `tools/pcb.py::_quote_bare_property_values`
+    (garde board-agnostique appliqué aux deux niveaux de `generate_pcb`, tests :
+    `tests/test_pcb_property_quoting.py`). Le garde deviendra un no-op une fois le
+    patch #9 dans le fork — le conserver en défense en profondeur.
+
+  - 🕓 **Patch #10 — PROPOSÉ, optionnel** (2026-07-27)
+    `src/kicad_tools/cli/parser.py` — `--seed` n'accepte que
+    `force-directed|random`, alors que le patch #5 expose `seed_method="current"`
+    côté API Python. Le CLI ne peut donc pas servir de substitut à l'API pour le
+    micro-raffinement. Non bloquant : `tools/cmaes_runner.py` appelle l'API depuis
+    un processus enfant (cf. `CLAUDE.md` §Géomètre). Ajouter `"current"` aux
+    `choices` simplifierait ce détour.
+
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.
     Contournement : retirer les zones avant `route_net`, les redéfinir après via
