@@ -3,6 +3,26 @@ import { runPCBEngine } from '../../engines/engine-router';
 import { runRealRouting, RoutingServiceUnavailableError } from '../../engines/routing-service';
 import { stripTrackSegments, addGroundPlane } from '../pcb-helpers';
 
+/**
+ * Aucun routage n'a eu lieu → échec explicite.
+ *
+ * Ces chemins renvoyaient auparavant `routed_percent: 100` avec un simple plan
+ * de masse. Conséquence : shouldRescueRouting ET shouldRetryPlacement étaient
+ * désarmés par ce pourcentage fantôme, et l'orchestrateur enchaînait sur
+ * DRC/export en annonçant un board « routé à 100% » qui n'avait aucune piste.
+ * Un board sans piste n'est pas livrable — même contrat que handlePlacement :
+ * fail fast, cache laissé intact pour ne pas écraser le board placé.
+ */
+function routingFailure(cause: string): Record<string, unknown> {
+  return {
+    status: 'error',
+    error: cause,
+    note:
+      'Routage impossible — aucune piste posée. Vérifie que le conteneur Docker ' +
+      'KiCad tourne (KICAD_SERVICE_URL).',
+  };
+}
+
 export async function handleRouting(projectId: string): Promise<Record<string, unknown>> {
   const cached = pcbStateCache.get(projectId);
   const schema = cached?.schema ?? { components: [], nets: [] };
@@ -48,20 +68,8 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     });
 
     if (service.skipped) {
-      const skippedPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
-      if (cached) pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: skippedPcb });
-      return {
-        status: 'success',
-        pcb_status: 'ROUTING_DONE',
-        routed_percent: 100,
-        layers: decidedLayers,
-        via_count: Math.floor(schema.components.length * 0.5),
-        track_length_mm: +(schema.nets.length * 15).toFixed(1),
-        kicad_pcb_content: skippedPcb,
-        engine: 'fallback-ts',
-        warning: service.warning,
-        note: `Routage simulé + GND plane B.Cu — ${schema.nets.length} nets, ${decidedLayers} couches. Freerouting indisponible.`,
-      };
+      log.error({ projectId, warning: service.warning }, 'routing skipped — no traces laid');
+      return routingFailure(service.warning ?? 'routing service skipped');
     }
 
     // Add GND copper pour on B.Cu — ensures GND connectivity when Freerouting
@@ -92,23 +100,8 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     };
   } catch (err) {
     if (!(err instanceof RoutingServiceUnavailableError)) {
-      log.warn({ err }, 'routing service threw unexpected error — falling back');
+      log.warn({ err }, 'routing service threw unexpected error');
     }
-    const fallbackPcb = addGroundPlane(cleanPcbContent, boardW, boardH);
-    if (cached) {
-      pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: fallbackPcb });
-    }
-    return {
-      status: 'success',
-      pcb_status: 'ROUTING_DONE',
-      routed_percent: 100,
-      layers: decidedLayers,
-      via_count: Math.floor(schema.components.length * 0.5),
-      track_length_mm: +(schema.nets.length * 15).toFixed(1),
-      kicad_pcb_content: fallbackPcb,
-      engine: 'fallback-ts',
-      warning: err instanceof Error ? err.message : 'routing service unavailable',
-      note: `Routage simulé (fallback) + GND plane B.Cu — ${schema.nets.length} nets, ${decidedLayers} couches, Circuit-Synth.`,
-    };
+    return routingFailure(err instanceof Error ? err.message : 'routing service unavailable');
   }
 }

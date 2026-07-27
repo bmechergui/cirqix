@@ -115,15 +115,14 @@ describe('heuristique du nombre de couches', () => {
     [5, 31, 4],
     [80, 80, 4],
   ])('%i composants / %i nets → %i couches', async (comps, nets, expected) => {
-    seedCache({ schema: schemaOf(comps, nets) });
-    // Service indisponible → le handler retombe sur SA décision de couches.
-    routingMock.runRealRouting.mockRejectedValue(
-      new routingMock.RoutingServiceUnavailableError('down'),
-    );
+    seedCache({ schema: schemaOf(comps, nets), kicad_pcb_content: PCB_WITH_TRACK });
 
-    const result = await handleRouting(PROJECT);
+    await handleRouting(PROJECT);
 
-    expect(result['layers']).toBe(expected);
+    // On observe la DÉCISION du handler (ce qu'il demande au service), pas
+    // l'écho du service — c'est le handler qui porte l'heuristique.
+    const sent = routingMock.runRealRouting.mock.calls[0]?.[0] as { layers: number };
+    expect(sent.layers).toBe(expected);
   });
 });
 
@@ -172,61 +171,84 @@ describe('préparation du board avant routage', () => {
   });
 });
 
-describe('modes dégradés', () => {
+describe('fail fast quand aucun routage n’a eu lieu', () => {
   /**
-   * CARACTÉRISATION — comportement actuel, pas un jugement de valeur.
-   * Les deux chemins de repli renvoient routed_percent: 100 alors qu'AUCUN
-   * routage n'a eu lieu (seul un plan de masse est ajouté). Conséquence :
-   * shouldRescueRouting et shouldRetryPlacement sont tous deux court-circuités.
-   * Ces tests verrouillent le comportement observé ; ils échoueront volontairement
-   * si le repli passe un jour à un pourcentage honnête — ce qui sera un
-   * changement voulu, à valider explicitement.
+   * Un board sans piste n'est pas livrable. Les deux chemins dégradés
+   * renvoyaient auparavant routed_percent: 100 avec un simple plan de masse —
+   * ce qui désarmait shouldRescueRouting ET shouldRetryPlacement, et faisait
+   * enchaîner Sonnet sur DRC/export en annonçant « routé à 100% ».
+   *
+   * Ils remontent désormais une erreur, par cohérence avec handlePlacement.
+   * L'invariant clé : AUCUN routed_percent n'est émis sur ces chemins, donc
+   * aucun trigger déterministe ne peut être armé par un pourcentage fantôme.
    */
-  it('service skipped → 100% simulé, engine fallback-ts, warning remonté', async () => {
+  it.each([
+    [
+      'service skipped',
+      () =>
+        routingMock.runRealRouting.mockResolvedValue(
+          serviceResult({ skipped: true, warning: 'freerouting absent' }),
+        ),
+      'freerouting absent',
+    ],
+    [
+      'service injoignable',
+      () =>
+        routingMock.runRealRouting.mockRejectedValue(
+          new routingMock.RoutingServiceUnavailableError('KICAD_SERVICE_URL injoignable'),
+        ),
+      'KICAD_SERVICE_URL injoignable',
+    ],
+    [
+      'erreur inattendue',
+      () => routingMock.runRealRouting.mockRejectedValue(new TypeError('bug inattendu')),
+      'bug inattendu',
+    ],
+  ])('%s → status error portant la cause', async (_label, arrange, expectedCause) => {
     seedCache({ kicad_pcb_content: PCB_WITH_TRACK });
-    routingMock.runRealRouting.mockResolvedValue(
-      serviceResult({ skipped: true, warning: 'freerouting absent' }),
-    );
+    arrange();
 
     const result = await handleRouting(PROJECT);
 
-    expect(result['routed_percent']).toBe(100);
-    expect(result['engine']).toBe('fallback-ts');
-    expect(result['warning']).toBe('freerouting absent');
+    expect(result['status']).toBe('error');
+    expect(result['error']).toBe(expectedCause);
   });
 
-  it('service indisponible → 100% simulé, engine fallback-ts, warning = message d’erreur', async () => {
+  it('n’émet AUCUN routed_percent — aucun trigger armé par un pourcentage fantôme', async () => {
     seedCache({ kicad_pcb_content: PCB_WITH_TRACK });
-    routingMock.runRealRouting.mockRejectedValue(
-      new routingMock.RoutingServiceUnavailableError('KICAD_SERVICE_URL injoignable'),
-    );
+    routingMock.runRealRouting.mockRejectedValue(new Error('down'));
 
     const result = await handleRouting(PROJECT);
 
-    expect(result['status']).toBe('success');
-    expect(result['routed_percent']).toBe(100);
-    expect(result['engine']).toBe('fallback-ts');
-    expect(result['warning']).toBe('KICAD_SERVICE_URL injoignable');
+    expect(result).not.toHaveProperty('routed_percent');
+    expect(result).not.toHaveProperty('pcb_status');
   });
 
-  it('erreur inattendue (non RoutingServiceUnavailableError) → même repli, boucle vivante', async () => {
+  it('ne corrompt pas le cache avec un board non routé', async () => {
+    seedCache({ kicad_pcb_content: 'BOARD_PLACE' });
+    routingMock.runRealRouting.mockRejectedValue(new Error('down'));
+
+    await handleRouting(PROJECT);
+
+    expect(pcbStateCache.get(PROJECT)?.kicad_pcb_content).toBe('BOARD_PLACE');
+  });
+
+  it('mentionne KICAD_SERVICE_URL pour orienter le diagnostic', async () => {
     seedCache({ kicad_pcb_content: PCB_WITH_TRACK });
-    routingMock.runRealRouting.mockRejectedValue(new TypeError('bug inattendu'));
+    routingMock.runRealRouting.mockRejectedValue(new Error('down'));
 
     const result = await handleRouting(PROJECT);
 
-    expect(result['status']).toBe('success');
-    expect(result['engine']).toBe('fallback-ts');
-    expect(result['warning']).toBe('bug inattendu');
+    expect(String(result['note'])).toContain('KICAD_SERVICE_URL');
   });
 
-  it('schéma vide → sortie anticipée sans appeler le service de routage', async () => {
+  it('schéma vide → succès à 100%, rien à router n’est pas une erreur', async () => {
     seedCache({ schema: schemaOf(0, 0) });
 
     const result = await handleRouting(PROJECT);
 
+    expect(result['status']).toBe('success');
     expect(result['routed_percent']).toBe(100);
-    expect(result['engine']).toBe('fallback-ts');
     expect(routingMock.runRealRouting).not.toHaveBeenCalled();
   });
 });

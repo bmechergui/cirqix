@@ -243,6 +243,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         pour les power nets en zones + route les signaux + escalade couches)
      ② Freerouting REST API / subprocess — fallback historique (port 37864)
      → renvoie routed_percent RÉEL (tools/handlers/routing.ts : plus jamais hardcodé 100)
+     ⚠️ FAIL FAST (2026-07-27) : si le service est injoignable ou renvoie skipped,
+        handleRouting retourne `status:'error'` — PAS un `routed_percent: 100` avec
+        un simple plan de masse comme avant. L'ancien repli désarmait à la fois
+        shouldRescueRouting ET shouldRetryPlacement (pourcentage fantôme) et faisait
+        enchaîner Sonnet sur DRC/export en annonçant « routé à 100% » un board sans
+        aucune piste. Le cache n'est plus écrasé par le board non routé. Même contrat
+        que handlePlacement. Gardes : tests/handler-routing.test.ts (describe
+        « fail fast quand aucun routage n'a eu lieu »).
   ⑥b Reasoner IA   [SOUS-ÉTAPE DÉTERMINISTE de ROUTING — déclenchée par CODE, pas par Sonnet]
      orchestrator.ts : SI call_agent_routing renvoie routed_percent < 100, l'orchestrateur
      lance LUI-MÊME call_agent_reason (règle métier à seuil, shouldRescueRouting()).
