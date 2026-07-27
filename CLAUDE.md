@@ -210,6 +210,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
      ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
+     ⚠️ (2026-07-27) `ERC_CLEAN` ne peut être accordé que par un contrôle
+        réellement exécuté et réellement passé. Auparavant `skipped` figurait dans
+        le OU qui promeut `ERC_CLEAN`, et l'absence de `.kicad_sch` en cache
+        renvoyait `ERC_CLEAN` — deux validations sans le moindre contrôle.
+        Désormais : `skipped` bascule sur `runErcFallback()` (ERC TypeScript RÉEL
+        — refs dupliquées, nets flottants, GND manquant, composants non
+        connectés) et son verdict fait foi ; on n'échoue que si lui-même n'a rien
+        à contrôler. Contrairement au routage/DRC/export, le repli n'est donc PAS
+        un fail fast : il existe ici un vérificateur de secours légitime.
+        Garde : tests/handler-erc.test.ts.
   ③ call_agent_footprint  → Ingénieur Composants (1 appel par ref dans unresolved_footprints)
      Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku
      Met à jour _pcbStateCache[projectId].schema.components[ref].footprint
@@ -297,6 +307,17 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ① kicad-tools kct export --mfr jlcpcb — GTL/GBL/GKO, BOM LCSC, CPL rotations
      ② kicad-cli pcb export {gerbers,drill,pos} — si kicad-tools échoue
      ③ skipped=True — kicad-cli absent → BOM CSV seulement
+     ⚠️ FAIL FAST (2026-07-27) : `PCB_LIVRÉ` ne peut être émis QUE par un export
+        ayant réellement produit des fichiers. Les 3 chemins dégradés (pas de PCB
+        en cache · `skipped` · service en erreur) renvoyaient `PCB_LIVRÉ` — statut
+        qui fait AUSSI partie du gate de `POST /api/jlcpcb/order` — et deux d'entre
+        eux FABRIQUAIENT `gerber_layers: 7` + `quote_usd: 12.5`, un prix inventé
+        présenté comme réel, avec une note invitant à répondre « OUI JE CONFIRME ».
+        ExportView distingue pourtant déjà un vrai devis d'un placeholder
+        (`quoteIsReal = state.quoteUsd != null`) : le montant fabriqué défaisait
+        cette logique. Ces chemins renvoient `status:'error'` ; le `bom_csv` est
+        conservé (donnée réelle dérivée du schéma), sans promotion de statut.
+        Garde : tests/handler-export.test.ts.
      ↓ Upload Supabase Storage → signed URLs KiCanvas
 ```
 
