@@ -14,6 +14,9 @@ Invariants testés :
 from __future__ import annotations
 
 import base64
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -395,11 +398,63 @@ def test_refine_with_cmaes_separates_overlap_and_preserves_anchored(tmp_path):
     assert moved, f"aucune résistance affinée par le CMA-ES — positions={pos}"
 
 
+def test_refine_with_cmaes_works_off_the_main_thread(tmp_path):
+    """Le Géomètre doit fonctionner HORS thread principal — condition de la prod.
+
+    En Docker, FastAPI/uvicorn exécute `auto_place` dans un thread de worker.
+    Or `run_optimize_placement` installe des handlers de signal
+    (`signal.signal(SIGINT/SIGTERM, …)`) dès son entrée, ce qui lève
+    `ValueError: signal only works in main thread of the main interpreter`
+    AVANT la moindre itération d'optimisation.
+
+    Constaté en conteneur le 2026-07-27 en validant le pipeline complet : le
+    filet de sécurité rattrapait l'exception et conservait le board
+    pré-CMA-ES, si bien que l'étape « Géomètre » — pourtant documentée en
+    détail, calibrée (_CMAES_MAX_ITERATIONS) et couverte par des tests
+    exécutés, eux, dans le thread principal de pytest — ne tournait JAMAIS en
+    production. Le placement aboutissait, simplement sans raffinement.
+
+    Ce test échoue tant que le raffinement s'exécute in-process.
+    """
+    import threading
+
+    pcb_bytes = _board_with_connector_and_movable(tmp_path)
+    board_path = tmp_path / "board.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    captured: dict = {}
+
+    def worker() -> None:
+        try:
+            captured["result"] = _refine_with_cmaes(
+                board_path, anchored=["J1"], time_budget_s=10.0
+            )
+        except BaseException as exc:  # noqa: BLE001 — on veut TOUT remonter
+            captured["error"] = exc
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout=180)
+    assert not thread.is_alive(), "le raffinement CMA-ES ne s'est pas terminé"
+
+    assert "error" not in captured, (
+        f"_refine_with_cmaes a levé hors thread principal : {captured.get('error')!r}"
+    )
+    assert captured["result"]["refined"] is True, (
+        "le raffinement a été silencieusement abandonné hors thread principal — "
+        "c'est exactement le symptôme observé en production"
+    )
+
+
 def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeypatch):
-    """Vérifie le câblage de l'appel : ``max_iterations`` est passé
-    explicitement à ``run_optimize_placement`` (test de wiring — ne fait
-    pas tourner le vrai CMA-ES, voir le test comportemental suivant pour la
-    mesure de déplacement réelle, seule garante d'une régression du réglage).
+    """Vérifie le câblage de l'appel : ``max_iterations`` et ``seed=current``
+    parviennent au CMA-ES (test de wiring — ne fait pas tourner le vrai CMA-ES,
+    voir le test comportemental suivant pour la mesure de déplacement réelle,
+    seule garante d'une régression du réglage).
+
+    Le raffinement s'exécute désormais dans un PROCESSUS enfant (cf.
+    ``_run_cmaes_in_subprocess``) : on inspecte donc le payload JSON de la
+    ligne de commande plutôt que les kwargs d'un appel in-process.
     """
     pcb_bytes = _board_with_connector_and_movable(tmp_path)
     board_path = tmp_path / "board.kicad_pcb"
@@ -407,14 +462,13 @@ def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeyp
 
     captured: dict = {}
 
-    def fake_run_optimize_placement(*args, **kwargs):
-        captured.update(kwargs)
-        return 1  # échec forcé — on n'a besoin que des kwargs passés
+    def fake_run(cmd, **_kwargs):
+        captured.update(json.loads(cmd[-1]))
+        captured["executable"] = cmd[0]
+        captured["script"] = cmd[1]
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(
-        "kicad_tools.cli.optimize_placement_cmd.run_optimize_placement",
-        fake_run_optimize_placement,
-    )
+    monkeypatch.setattr(placement_module.subprocess, "run", fake_run)
 
     _refine_with_cmaes(board_path, anchored=["J1"], time_budget_s=5.0)
 
@@ -422,6 +476,10 @@ def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeyp
     assert captured["max_iterations"] <= 30, (
         f"max_iterations={captured['max_iterations']} trop élevé pour un micro-raffinement"
     )
+    # Le seeding sur la position courante est ce qui fait du CMA-ES un
+    # raffinement plutôt qu'un replacement : il vit dans le runner, pas ici.
+    assert captured["script"].endswith("cmaes_runner.py")
+    assert captured["executable"] == sys.executable
 
 
 def test_refine_with_cmaes_keeps_displacement_small(tmp_path):

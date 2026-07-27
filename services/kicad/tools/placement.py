@@ -22,11 +22,19 @@ Cirqix — Placement (tools/placement.py)
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import math
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+# Env partagé des sous-processus kicad-tools : UTF-8 forcé + PYTHONPATH vers
+# kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
+# pip-installé avec le backend C++).
+from tools.kct_route import _kct_env
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +180,44 @@ def _max_displacement_mm(
     return max(displacements) if displacements else 0.0
 
 
+_CMAES_RUNNER = Path(__file__).resolve().parent / "cmaes_runner.py"
+
+
+def _run_cmaes_in_subprocess(pcb_path: Path, out_path: Path, time_budget_s: float) -> int:
+    """Lance le CMA-ES dans un processus enfant. Retourne son code de sortie.
+
+    ``run_optimize_placement`` installe des handlers de signal, interdits hors
+    thread principal — or uvicorn exécute ``auto_place`` dans un thread de
+    worker. En appel direct, l'exception tombait AVANT toute optimisation et le
+    Géomètre ne tournait jamais en production (mesuré en conteneur le
+    2026-07-27). Un processus enfant a un vrai thread principal.
+
+    Voir ``tools/cmaes_runner.py`` pour le détail, notamment pourquoi le CLI
+    ``kct optimize-placement`` ne convient pas (pas de ``--seed current``).
+    """
+    payload = json.dumps({
+        "pcb": str(pcb_path),
+        "output": str(out_path),
+        "max_iterations": _CMAES_MAX_ITERATIONS,
+        "time_budget": time_budget_s,
+    })
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_CMAES_RUNNER), payload],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=time_budget_s + 120, check=False, env=_kct_env(),
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("_refine_with_cmaes: sous-processus CMA-ES expiré")
+        return 1
+    if proc.returncode not in (0, 2):
+        logger.warning(
+            "_refine_with_cmaes: sous-processus CMA-ES exit=%d — stderr: %s",
+            proc.returncode, (proc.stderr or "").strip()[:300],
+        )
+    return proc.returncode
+
+
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
     cmaes --seed-method current`` (CMAwM, patch Cirqix ``seed="current"`` :
@@ -193,23 +239,13 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
 
     Retourne ``{"refined": bool, "elapsed_s": float}``.
     """
-    from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
     from kicad_tools.schema.pcb import PCB
 
     before = {fp.reference: (fp.position, fp.rotation) for fp in PCB.load(str(pcb_path)).footprints}
 
     cmaes_out = pcb_path.with_name(pcb_path.stem + "_cmaes" + pcb_path.suffix)
     start = time.monotonic()
-    exit_code = run_optimize_placement(
-        str(pcb_path),
-        strategy_name="cmaes",
-        seed_method="current",
-        output_path=str(cmaes_out),
-        max_iterations=_CMAES_MAX_ITERATIONS,
-        time_budget=time_budget_s,
-        quiet=True,
-        allow_infeasible=True,
-    )
+    exit_code = _run_cmaes_in_subprocess(pcb_path, cmaes_out, time_budget_s)
     elapsed = time.monotonic() - start
 
     if exit_code not in (0, 2) or not cmaes_out.exists():

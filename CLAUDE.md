@@ -339,6 +339,21 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
      première fois ici pour garantir 0 ERROR avant de tenter le Géomètre.
   ② **Géomètre** (`_refine_with_cmaes`, kct optimize-placement --strategy cmaes
      --seed-method current --max-iterations 30) — micro-raffine la position ①
+     ⚠️ **S'exécute dans un PROCESSUS ENFANT** (`tools/cmaes_runner.py`, appelé
+     par `_run_cmaes_in_subprocess`) depuis le 2026-07-27. `run_optimize_placement`
+     installe des handlers de signal dès son entrée, or `signal.signal` est
+     interdit hors thread principal — et uvicorn exécute `auto_place` dans un
+     thread de worker. En appel direct, `ValueError: signal only works in main
+     thread of the main interpreter` tombait AVANT toute itération : le filet de
+     sécurité conservait le board pré-CMA-ES et **le Géomètre ne tournait JAMAIS
+     en production**, alors que ses tests passaient (pytest, thread principal).
+     Mesuré en conteneur en validant `examples/led-blinker-full-pipeline/`.
+     Le CLI `kct optimize-placement` ne convient PAS comme substitut : son
+     parseur n'accepte que `--seed force-directed|random`, alors que
+     `seed_method="current"` (patch Cirqix, côté API Python uniquement) est ce
+     qui fait du CMA-ES un raffinement et non un replacement depuis zéro.
+     Garde de régression : `test_refine_with_cmaes_works_off_the_main_thread`
+     (exécute le raffinement dans un `threading.Thread`).
      (déplacement moyen 2-3mm, max <12mm sur le board STM32 réel) ; connecteurs
      restaurés après coup (le CLI natif n'a pas de verrouillage par position).
      **Bug trouvé + corrigé (2026-06-19)** : `seed_method="current"` seede bien
