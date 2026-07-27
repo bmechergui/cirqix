@@ -282,6 +282,15 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Trigger déterministe : commit 13b919c (shouldRescueRouting/mergeRescueIntoRouting, TDD)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
+     ⚠️ RETRY PLACEMENT PILOTÉ PAR LE DRC (2026-07-27) — jumelle du retry
+        routage : `shouldRetryForDrc`/`keepBestDrc` dans orchestrator.ts. Le
+        re-tirage déterministe n'était armé que par `routed_percent < 100`, or un
+        board peut être routé à 100 % ET refusé par le DRC. Mesuré sur
+        `examples/led-blinker-full-pipeline` : 3 tirages GA à 100 % routé donnent
+        0, 12 et 4 violations — le placement est stochastique et sans seed, donc
+        re-tirer est le levier. Anti-régression : un board clean l'emporte
+        toujours ; à égalité, le moins de violations. Pas de retry sur
+        `status:'error'` (re-placer ne répare pas un service éteint).
      ① kicad-tools 27 règles JLCPCB — pré-filtre seulement, ne court-circuite
         JAMAIS kicad-cli (faux négatif mesuré 2026-07-04 : 25 courts invisibles)
      ② kicad-cli pcb drc — TOUJOURS exécuté si dispo, fait foi, auto-fix max 3×
