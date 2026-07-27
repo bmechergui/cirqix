@@ -76,6 +76,11 @@ next-env.d.ts
 # Debug screenshots
 *.png
 *.jpg.bak
+# …sauf le rendu de référence des cas d'étude : CLAUDE.md impose que
+# examples/<cas>/expected/ contienne 1 board final + 1 rendu. Sans cette
+# exception il faut un `git add -f` à chaque fois (c'est ainsi que le rendu de
+# stm32-validation a été committé) — donc une convention qui ne tient pas seule.
+!services/kicad/examples/*/expected/*.png
 
 # Playwright MCP cache
 .playwright-mcp/
