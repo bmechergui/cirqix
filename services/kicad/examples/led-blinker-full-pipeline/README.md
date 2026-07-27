@@ -76,9 +76,26 @@ plusieurs runs. Violations DRC totales (le service additionne violations et
 | \+ marge courtyard 0.5 mm | **0** ✅ | 12 | **4** ✅ (warnings silk) |
 
 **2 runs sur 3 sont DRC-clean.** Le run restant est un mauvais tirage GA. Le
-levier existe déjà côté orchestrateur (`MAX_PLACEMENT_ATTEMPTS`, re-tirage
-déterministe) mais n'est câblé que sur `routed_percent < 100`, pas sur le DRC —
-c'est le prochain chantier pour rendre le résultat systématique.
+re-tirage déterministe est désormais câblé sur le DRC aussi
+(`shouldRetryForDrc`/`keepBestDrc`, cf. `CLAUDE.md` §⑦), ce qui ramène l'échec
+attendu sous ~4 % sur trois tentatives.
+
+### Ablation du Géomètre (CMA-ES) — aucun effet mesurable ici
+
+Le Géomètre ne s'exécutait jamais en conteneur avant le 2026-07-27 (handlers de
+signal hors thread principal). Une fois réparé, son apport a été mesuré par
+ablation, 3 runs par bras :
+
+| | run 1 | run 2 | run 3 | clean |
+|---|---|---|---|---|
+| Avec Géomètre | 0 | 12 | 4 | 2/3 |
+| Sans Géomètre | 4 | 2 | 10 | 2/3 |
+
+**Aucune différence détectable sur ce board.** À retenir avec prudence : n=3 par
+bras face à une variance de 0 à 12, c'est un ordre de grandeur, pas une
+statistique — et le bénéfice documenté du Géomètre (resserrement d'adjacence) a
+été mesuré sur le board STM32 dense, pas sur ce cas volontairement simple. La
+conclusion honnête est « pas d'effet visible ici », pas « inutile ».
 
 ## Deux bugs bloquants trouvés et corrigés pendant cette validation
 
