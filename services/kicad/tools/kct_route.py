@@ -76,6 +76,57 @@ _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
 # pads référencent le net par NUMÉRO, seul le label change.
 _VCC_RENAME: dict[str, str] = {"+5V": "P5V0", "+3.3V": "P3V3"}
 
+# Noms de masse : les SEULS nets qu'on laisse couler en plan (cf. politique
+# ci-dessus). Tout autre rail power doit être routé en pistes.
+_GROUND_NAMES: frozenset[str] = frozenset({"GND", "AGND", "DGND", "PGND", "VSS", "EARTH"})
+
+# Préfixe des noms neutres. Doit échapper à TOUTES les regex POWER de
+# kicad_tools.router.net_class (ancrées en ^) — d'où un préfixe qui ne commence
+# ni par V, ni par +, ni par PWR/POWER.
+_NEUTRAL_NET_PREFIX: str = "CIRQIX_NET_"
+
+
+def _is_ground_net(name: str) -> bool:
+    upper = name.upper()
+    return upper in _GROUND_NAMES or upper.startswith("GND")
+
+
+def _power_rename_map(text: str) -> dict[str, str]:
+    """``{nom_power: nom_neutre}`` pour TOUS les rails power du board sauf la masse.
+
+    La table statique ``_VCC_RENAME`` ne couvrait que ``+5V``/``+3.3V``. Or le
+    routeur classe POWER par regex — ``^(VCC|VDD|VBUS|VIN|VOUT|PWR|POWER|AVDD|
+    DVDD)…`` — et EXCLUT du pathfinding tout net ainsi classé, en supposant qu'il
+    sera coulé en plan. Notre flux ne coule que GND : un rail nommé ``VCC``
+    ressortait donc sans le moindre segment ni zone (non connecté), pendant que
+    ``kct route`` annonçait 100 % puisqu'il ne compte pas les nets power. Mesuré
+    le 2026-07-27 sur ``examples/led-blinker-full-pipeline`` : 4 pads VCC
+    orphelins vus par kicad-cli, DRC jamais clean.
+
+    La map est donc dérivée du board plutôt que codée en dur : elle suit la liste
+    de la lib au lieu d'en dupliquer un extrait. ``+5V``/``+3.3V`` conservent
+    leurs noms historiques pour ne pas invalider les mesures antérieures.
+
+    Oracle : ``router.net_class.classify_from_name`` — celui que le routeur
+    utilise RÉELLEMENT pour exclure un net. Ne pas confondre avec
+    ``explain.mistakes.is_power_net``, qui travaille par sous-chaîne et diverge
+    dans les deux sens : il rate ``VBUS`` (que le routeur, lui, exclut) et
+    classe ``P5V0`` comme power (alors que le routeur le voit comme un signal —
+    c'est précisément ce qui fait marcher le renommage historique).
+    """
+    try:
+        from kicad_tools.router.net_class import NetClass, classify_from_name
+    except ImportError:
+        return dict(_VCC_RENAME)  # kicad-tools absent → comportement inchangé
+
+    names = sorted({m.group(2) for m in re.finditer(r'\(net (\d+) "([^"]+)"\)', text)})
+    mapping: dict[str, str] = {}
+    for index, name in enumerate(names):
+        if _is_ground_net(name) or classify_from_name(name) is not NetClass.POWER:
+            continue
+        mapping[name] = _VCC_RENAME.get(name, f"{_NEUTRAL_NET_PREFIX}{index}")
+    return mapping
+
 # Escalade de tier fabricant — benchmark 2026-07-14 (board STM32 placé,
 # baseline negotiated 91%, juge kicad-cli pcb drc) : le net restant échouait
 # sur l'échappement du pad LQFP 0.5mm (« via-in-pad non supporté par le profil
@@ -713,8 +764,11 @@ def _route_once(
         if fine_pitch:
             logger.info("kct route: boîtier dense détecté → protections escape "
                         "fine-pitch + départ 4 couches")
-        if vcc_as_traces:
-            src_text = _rename_nets(src_text, _VCC_RENAME)
+        power_rename = _power_rename_map(src_text) if vcc_as_traces else {}
+        if power_rename:
+            logger.info("kct route: rails power routés en pistes — %s",
+                        ", ".join(sorted(power_rename)))
+            src_text = _rename_nets(src_text, power_rename)
         # Pads NC → obstacles réels le temps du routage (cf. _NC_NET_PREFIX).
         src_text, nc_count = assign_nc_nets(src_text)
         if nc_count:
@@ -739,7 +793,7 @@ def _route_once(
             # par nos plans GND en retrait, sur les 2 faces.
             restored = _rename_nets(
                 routed.decode("utf-8", errors="replace"),
-                {new: old for old, new in _VCC_RENAME.items()},
+                {new: old for old, new in power_rename.items()},
             )
             restored = _strip_zone_blocks(restored)
             routed = _ensure_gnd_both_planes(restored.encode("utf-8"))

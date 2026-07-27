@@ -98,6 +98,75 @@ def test_rename_nets_roundtrip():
     assert back == _BOARD  # renommage réversible, connectivité (numéros) intacte
 
 
+def test_power_rename_map_covers_every_power_rail_not_just_plus5v():
+    """Tout rail power du board doit être renommé — pas seulement +5V/+3.3V.
+
+    Bug mesuré le 2026-07-27 (examples/led-blinker-full-pipeline) : le net `VCC`
+    est classé POWER par le routeur (net_class : ^(VCC|VDD|VBUS|VIN|VOUT|…)),
+    donc EXCLU du pathfinding en attendant d'être coulé en plan. Or notre flux ne
+    coule que GND (`_ensure_gnd_both_planes`). Résultat : VCC ressortait sans
+    aucun segment NI zone — non connecté — pendant que kct route annonçait
+    100 % (il ne compte pas les nets power). kicad-cli voyait bien les 4 pads
+    VCC orphelins, donc DRC jamais clean.
+
+    La table statique {+5V, +3.3V} ne couvrait qu'une partie des noms. La
+    politique documentée est « GND reste le seul net coulé » : la map doit donc
+    être DÉRIVÉE du board.
+    """
+    text = (
+        '(net 0 "")\n(net 1 "GND")\n(net 2 "VCC")\n(net 3 "TRIG_THR")\n'
+        '(net 4 "+5V")\n(net 5 "VBUS")\n(net 6 "OUT")\n'
+    )
+    mapping = kct_route._power_rename_map(text)
+
+    assert "VCC" in mapping, "VCC doit être routé en pistes, pas laissé au plan"
+    assert "VBUS" in mapping
+    assert "+5V" in mapping
+    # La masse reste coulée — c'est elle qui porte le plan.
+    assert "GND" not in mapping
+    # Les signaux ne sont pas touchés.
+    assert "TRIG_THR" not in mapping and "OUT" not in mapping
+
+
+def test_power_rename_map_keeps_historical_names_for_plus_rails():
+    """Stabilité : +5V/+3.3V gardent les noms de la table historique."""
+    text = '(net 1 "+5V")\n(net 2 "+3.3V")\n'
+    mapping = kct_route._power_rename_map(text)
+    assert mapping["+5V"] == "P5V0"
+    assert mapping["+3.3V"] == "P3V3"
+
+
+def test_power_rename_map_produces_non_power_names():
+    """Invariant central : le nom de remplacement ne doit PAS être reclassé
+    power PAR LE ROUTEUR, sinon le renommage ne change rien et le net reste
+    exclu du pathfinding.
+
+    L'oracle est `router.net_class.classify_from_name` — celui qu'utilise
+    réellement le routeur. `explain.mistakes.is_power_net` travaille par
+    sous-chaîne et classerait `P5V0` comme power (« 5V »), alors que le routeur
+    le voit comme un signal : c'est exactement ce qui fait marcher le renommage
+    historique. Se tromper d'oracle ici ferait passer un test qui ne prouve rien.
+    """
+    from kicad_tools.router.net_class import NetClass, classify_from_name
+
+    text = '(net 1 "VCC")\n(net 2 "VDD")\n(net 3 "VIN")\n(net 4 "VOUT")\n(net 5 "+5V")\n'
+    mapping = kct_route._power_rename_map(text)
+    assert mapping, "aucun rail power détecté — le test ne prouverait rien"
+    for new in mapping.values():
+        assert classify_from_name(new) is not NetClass.POWER, (
+            f"nom de remplacement encore classé POWER par le routeur : {new}"
+        )
+
+
+def test_power_rename_round_trip_restores_original_names():
+    text = '(net 1 "GND")\n(net 2 "VCC")\n(net 3 "SIG")\n'
+    mapping = kct_route._power_rename_map(text)
+    renamed = kct_route._rename_nets(text, mapping)
+    assert '"VCC"' not in renamed
+    restored = kct_route._rename_nets(renamed, {v: k for k, v in mapping.items()})
+    assert restored == text
+
+
 def test_rename_nets_targets_only_net_declarations():
     # Un texte de propriété « +5V » (valeur/silk) ne doit PAS être renommé —
     # seules les déclarations (net N "…") le sont.

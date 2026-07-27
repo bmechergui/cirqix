@@ -113,7 +113,7 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     from kicad_tools.placement.conflict import ConflictSeverity
     from kicad_tools.placement.fixer import FixStrategy, PlacementFixer
 
-    rules = DesignRules()
+    rules = DesignRules(courtyard_margin=_COURTYARD_MARGIN_MM)
     before = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
     n_errors_before = sum(1 for c in before if c.severity == ConflictSeverity.ERROR)
     # Le fixer natif résout aussi les WARNING (courtyard_overlap via
@@ -179,6 +179,16 @@ def _max_displacement_mm(
     ]
     return max(displacements) if displacements else 0.0
 
+
+# PlacementAnalyzer APPROXIME le courtyard par « pads + marge », alors que
+# kicad-cli utilise la géométrie réelle F.CrtYd du footprint. Sur un boîtier
+# traversant (DIP-8), le corps déborde largement des pads : l'analyseur voyait
+# « 0 conflit » là où kicad-cli rapportait un courtyards_overlap ERROR, que
+# l'Inspecteur ne corrigeait donc jamais. Mesuré le 2026-07-27 sur
+# examples/led-blinker-full-pipeline (NE555 DIP-8 + 0805).
+# Marge élargie pour que l'approximation couvre le courtyard réel — valeur
+# calibrée par mesure, cf. le README de la fixture.
+_COURTYARD_MARGIN_MM: float = 0.5
 
 _CMAES_RUNNER = Path(__file__).resolve().parent / "cmaes_runner.py"
 

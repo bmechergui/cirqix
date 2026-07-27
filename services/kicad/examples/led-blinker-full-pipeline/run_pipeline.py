@@ -203,6 +203,13 @@ def main() -> int:
 
     # Verdict ----------------------------------------------------------------
     print(f"\n{'=' * 62}")
+    # Ligne de synthèse parsable — sert aux campagnes de mesure (le placement GA
+    # est stochastique : toute conclusion demande plusieurs runs).
+    from collections import Counter
+    types = Counter(str(v.get("type", "?")) for v in violations)
+    breakdown = ",".join(f"{k}:{n}" for k, n in sorted(types.items(), key=lambda kv: -kv[1]))
+    print(f"SUMMARY routed={routed} drc_violations={len(violations)} "
+          f"drc_clean={drc_clean} files={len(res.get('files', []))} types={breakdown or '-'}")
     ok = routed == 100 and drc_clean is True and not drc_skipped and bool(res.get("files"))
     print(f"VERDICT : routage {routed}% · DRC clean={drc_clean} (skipped={drc_skipped}) "
           f"· {len(res.get('files', []))} fichiers exportés")
