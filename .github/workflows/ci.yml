@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  # Mesure à la demande : le job kicad-docker rejoue la fixture
+  # led-blinker-full-pipeline sur la branche choisie. Ajouté parce que la mesure
+  # n'était déclenchable que par une PR touchant un submodule — impossible donc
+  # de mesurer `main` une fois le bump mergé, ce qui a bloqué le diagnostic de
+  # l'issue #72. Utile aussi pour vérifier l'état du pipeline sans attendre une PR.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -182,15 +188,22 @@ jobs:
       # Ces étapes rejouent la fixture led-blinker-full-pipeline contre l'image
       # fraîchement construite et publient les chiffres sur la PR, pour que la
       # Porte 4 (merge humain) s'appuie sur des faits et non sur « c'est vert ».
-      - name: Détecter une PR touchant un submodule KiCad
-        if: github.event_name == 'pull_request'
+      - name: Décider si la mesure du pipeline doit tourner
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         id: detect_submodule
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Via l'API plutôt que git diff : le checkout est en --depth=1, la
-          # base n'est pas dans l'historique local.
+          # Déclenchement manuel : on mesure la branche telle quelle, sans
+          # condition. C'est le seul moyen de mesurer `main` après le merge d'un
+          # bump — il n'y a plus de PR à inspecter (cf. issue #72).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Sur PR : via l'API plutôt que git diff, le checkout étant en
+          # --depth=1 (la base n'est pas dans l'historique local).
           if gh pr view "${{ github.event.pull_request.number }}" --json files \
                --jq '.files[].path' \
              | grep -qE '^services/kicad/(kicad-tools|circuit_synth)$'; then
@@ -253,8 +266,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
 
+      # Uniquement sur PR : un déclenchement manuel n'a pas de PR où commenter,
+      # ses chiffres sont dans le log du job et dans l'artefact.
       - name: Publier la mesure sur la PR
-        if: always() && steps.detect_submodule.outputs.touched == 'true'
+        if: always() && steps.detect_submodule.outputs.touched == 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLEAN_RUNS: ${{ steps.pipeline_runs.outputs.clean_runs }}
