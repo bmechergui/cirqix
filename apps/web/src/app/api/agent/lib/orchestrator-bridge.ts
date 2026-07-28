@@ -134,6 +134,8 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
               status,
               pcb_state: finalized,
               iteration_count: finalized.iteration,
+              // Provenance : pipeline réel → board commandable (gate JLCPCB).
+              agent_mode: 'orchestrator',
               updated_at: new Date().toISOString(),
             })
             .eq('id', projectId);

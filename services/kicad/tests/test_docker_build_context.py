@@ -48,6 +48,7 @@ class DockerBuildContextTests(unittest.TestCase):
         dockerfile = (SERVICE_DIR / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("FROM ubuntu:24.04 AS base", dockerfile)
         self.assertIn("/ubuntu noble main", dockerfile)
+        self.assertIn("kicad-10.0-releases", dockerfile)
         self.assertRegex(
             dockerfile,
             r"sys\.version_info\s*>=\s*\(3,\s*12\)",

@@ -75,6 +75,11 @@ def _run_kicad_drc(cli_path: str, pcb_path: Path) -> str:
         "--output", str(report_path),
         "--format", "json",
         "--severity-all",
+        # Sans refill, kicad-cli juge les zones cuivre telles qu'écrites par le
+        # routeur (non remplies) → les pads alimentés par un plan comptent comme
+        # orphelins. Mesuré sur les boards STM32 routés à 100 % (2026-07-19) :
+        # 34 « unconnected_items » fantômes sans le flag, 10 et 8 avec.
+        "--refill-zones",
     ]
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
@@ -89,22 +94,28 @@ def _run_kicad_drc(cli_path: str, pcb_path: Path) -> str:
 def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[bytes, int]:
     """Best-effort safe DRC fixes on the .kicad_pcb byte content.
 
-    Currently:
-    - Refill zones (handled by pcbnew on next ZONE_FILLER run; here a no-op marker
-      since we cannot manipulate the board without pcbnew).
-    - For now this is a stub returning ``(content, 0)`` when pcbnew is absent —
-      the router will exit the auto-fix loop and return remaining violations.
-
-    Future iterations will widen narrow tracks via pcbnew when available.
+    1. **Via-in-pad micro vers le plan** (texte pur, sans pcbnew) : un pad
+       d'un net « plan » (GND…) encerclé par les pistes d'escape reste
+       orphelin malgré refill + connexion solid → un via micro au centre du
+       pad le raccorde au plan de l'autre face (tools/drc.py,
+       ``add_zone_via_for_unconnected_pads``).
+    2. **Refill zones** via pcbnew quand disponible (unfilled_zone…).
     """
+    from tools.drc import add_zone_via_for_unconnected_pads
+
+    text = pcb_content.decode("utf-8", errors="replace")
+    new_text, vias_added = add_zone_via_for_unconnected_pads(text, violations)
+    if vias_added:
+        pcb_content = new_text.encode("utf-8")
+
     try:
         import pcbnew  # type: ignore[import-not-found]
     except ImportError:
-        return pcb_content, 0
+        return pcb_content, vias_added
 
     fixable = [v for v in violations if v.get("type") in ("unfilled_zone", "zone_has_empty_net")]
     if not fixable:
-        return pcb_content, 0
+        return pcb_content, vias_added
 
     with tempfile.TemporaryDirectory() as tmp:
         in_path = Path(tmp) / "in.kicad_pcb"
@@ -112,11 +123,14 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
         in_path.write_bytes(pcb_content)
         board = pcbnew.LoadBoard(str(in_path))
         for zone in board.Zones():
-            zone.SetFilled(True)
+            # KiCad 10 : ZONE.SetFilled n'existe plus (c'est SetIsFilled) ;
+            # sous KiCad 9 les deux existent. On force le flag « rempli » puis
+            # ZONE_FILLER.Fill calcule le remplissage réel juste après.
+            zone.SetIsFilled(True)
         filler = pcbnew.ZONE_FILLER(board)
         filler.Fill(board.Zones())
         pcbnew.SaveBoard(str(out_path), board)
-        return out_path.read_bytes(), len(fixable)
+        return out_path.read_bytes(), vias_added + len(fixable)
 
 
 # ----------------------------------------------------------------------------
@@ -174,6 +188,18 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
+    # ── Piste 4 : tier fabricant escaladé (marqueur in-band posé par route_kct)
+    # Le marqueur est retiré AVANT tout DRC (ni kicad-tools ni kicad-cli ne le
+    # voient) ; s'il est présent, un sidecar .kicad_pro aux règles du profil
+    # est écrit à côté du board temporaire → kicad-cli juge aux règles du tier
+    # réellement routé, plus aux défauts KiCad (résiduels copper_edge/annular).
+    from tools.kct_route import extract_mfr_tier, strip_mfr_tier
+
+    mfr_tier = extract_mfr_tier(pcb_bytes)
+    if mfr_tier:
+        pcb_bytes = strip_mfr_tier(pcb_bytes)
+        logger.info("DRC: board routé au tier escaladé %s — règles alignées", mfr_tier)
+
     # ── Niveau 1 : kicad-tools Python DRC ────────────────────────────────────
     # Le niveau 1 ne court-circuite PAS le niveau 2 : même propre, le board
     # doit être validé par kicad-cli officiel s'il est disponible (faux
@@ -222,6 +248,19 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     try:
         with tempfile.TemporaryDirectory() as tmp:
             pcb_path = Path(tmp) / "board.kicad_pcb"
+
+            if mfr_tier:
+                from tools.drc import copper_layer_count, write_mfr_project_sidecar
+                try:
+                    pcb_text = pcb_bytes.decode("utf-8", errors="replace")
+                    write_mfr_project_sidecar(
+                        pcb_path, mfr_tier,
+                        copper_layer_count(pcb_text), pcb_text=pcb_text)
+                except Exception as exc:
+                    # Défense : tier inconnu/profil indisponible → le DRC
+                    # continue aux règles par défaut, jamais de crash 500.
+                    logger.warning("DRC: sidecar tier %s impossible (%s) — "
+                                   "règles par défaut", mfr_tier, exc)
 
             violations: list[dict[str, Any]] = []
             total_fixed = 0

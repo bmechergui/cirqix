@@ -17,7 +17,15 @@ const log = pino({
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 
-const ROUTING_TIMEOUT_MS = 90_000;
+/**
+ * `/route/auto` s'accorde 300 s côté service (`routers/routing.py
+ * _DEFAULT_TIMEOUT_S`), et `kct_route` jusqu'à 600 s. Le client coupait à 90 s :
+ * il abandonnait donc des routages longs mais légitimes, transformant une
+ * réussite en « service indisponible ». Observé le 2026-07-27 sur un tirage GA
+ * défavorable (`pipeline-live.test.ts`, échec à ~90 s puis succès en 58 s au run
+ * suivant). Aligné sur le budget du service + marge réseau.
+ */
+const ROUTING_TIMEOUT_MS = 330_000;
 
 export class RoutingServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {

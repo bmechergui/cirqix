@@ -150,6 +150,9 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
       status: 'SCHEMA_DONE',
       pcb_state: schemaState,
       iteration_count: schemaState.iteration,
+      // Provenance : états FABRIQUÉS pour la démo. Le gate JLCPCB refuse ce
+      // marquage — le simulateur atteint DRC_CLEAN sans qu'aucun DRC ne tourne.
+      agent_mode: 'simulator',
       updated_at: new Date().toISOString(),
     })
     .eq('id', projectId);
@@ -162,7 +165,7 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'PLACEMENT_DONE' })));
   await supabase
     .from('projects')
-    .update({ status: 'PLACEMENT_DONE', pcb_state: placementState, updated_at: new Date().toISOString() })
+    .update({ status: 'PLACEMENT_DONE', pcb_state: placementState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
 
   await wait(800);
@@ -173,7 +176,7 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'ROUTING_DONE' })));
   await supabase
     .from('projects')
-    .update({ status: 'ROUTING_DONE', pcb_state: routingState, updated_at: new Date().toISOString() })
+    .update({ status: 'ROUTING_DONE', pcb_state: routingState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
 
   await wait(600);
@@ -181,7 +184,10 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   await streamText(
     controller,
     encoder,
-    `**DRC clean** — 0 violations. Your PCB is manufacturable. Ready to export Gerbers or order from JLCPCB.`,
+    `**DRC clean** — 0 violations.\n\n`
+      + `_Simulated run: this board was generated for demonstration and was never `
+      + `validated by KiCad. Ordering is disabled for simulated boards — set `
+      + `CIRQIX_AGENT_MODE=orchestrator to run the real pipeline._`,
   );
   const drcState: PCBState = { ...routingState, status: 'DRC_CLEAN', drcViolations: [] };
   controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: drcState })));
@@ -189,7 +195,7 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
   await supabase
     .from('projects')
-    .update({ status: 'DRC_CLEAN', pcb_state: drcState, updated_at: new Date().toISOString() })
+    .update({ status: 'DRC_CLEAN', pcb_state: drcState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
 
   const totalCost = 8.5;

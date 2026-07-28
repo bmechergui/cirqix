@@ -32,10 +32,17 @@ export async function handlePlacement(
     schema = cached?.schema ?? { components: [], nets: [] };
   }
 
-  // Refresh the .kicad_pcb with the requested board size via Circuit-Synth.
-  // This guarantees we always have a valid native file to ship to the viewer,
-  // regardless of whether the pcbnew placement service succeeds.
-  const base = await runPCBEngine(schema, boardW, boardH, projectId);
+  // Utilise le .kicad_pcb produit par call_agent_gen_pcb (service kicad-tools /
+  // pcbnew, vrais footprints et nets) quand il est en cache ; ne régénère via
+  // le générateur TS que sur cache froid (placement appelé seul).
+  //
+  // Ce handler régénérait AUPARAVANT systématiquement, écrasant le board du
+  // service par le repli TypeScript — que le service ne parvenait même pas à
+  // parser (`500 ParseError: Unexpected end of input`, mesuré le 2026-07-27 par
+  // le test d'intégration live). handleRouting applique déjà cette règle.
+  const base = cachedDims?.kicad_pcb_content
+    ? { kicad_pcb_content: cachedDims.kicad_pcb_content }
+    : await runPCBEngine(schema, boardW, boardH, projectId);
 
   // Empty schema → return early with no placements
   if (schema.components.length === 0) {

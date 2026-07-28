@@ -351,6 +351,40 @@ def _snap_labels_to_pins(sch_content: str, tolerance_mm: float = 8.0) -> str:
     return processed
 
 
+_BARE_PROPERTY_RE = re.compile(
+    r'(\(property\s+"[^"]*"\s+)(-?\d+(?:\.\d+)?)(?=[\s()])'
+)
+
+
+def _quote_bare_property_values(text: str) -> tuple[str, int]:
+    """Requote les valeurs de propriété sérialisées en atome nu.
+
+    `kicad_tools/sexp/parser.py` ne quote un atome chaîne que s'il a été LU
+    depuis un token quoté (`_originally_quoted`) ou s'il ne ressemble pas à un
+    nombre. Ce drapeau vaut False pour les atomes construits programmatiquement
+    — c'est-à-dire pour toute valeur de composant injectée depuis notre schéma
+    JSON. Une valeur purement numérique ressort donc nue :
+
+        (property "Value" 330          ← S-expression invalide
+
+    KiCad 10.0.4 rejette alors le fichier ENTIER (`Failed to load board`, et
+    `pcbnew.LoadBoard` renvoie None), alors que le parseur de kicad-tools, plus
+    permissif, l'accepte : le board se place et se route normalement, puis DRC
+    et export échouent — sur un board pourtant routé à 100 %. Mesuré le
+    2026-07-27 sur le cas led-blinker (R3 = 330 Ω).
+
+    Les valeurs numériques sans unité sont la norme (330, 100, 4700, 10…), donc
+    le correctif est board-agnostique et s'applique à toute propriété. Il ne
+    touche QUE les valeurs de `(property "…" …)` : les atomes numériques
+    légitimes (`(at …)`, `(size …)`, `(version …)`) sont préservés.
+
+    Le fix appartient à `kicad_tools` (le défaut d'`_originally_quoted` est
+    inadapté à la construction programmatique) ; ce garde vit ici en attendant,
+    le submodule suivant la procédure fork/rebase de DEPENDENCIES.md.
+    """
+    return _BARE_PROPERTY_RE.subn(r'\1"\2"', text)
+
+
 def _generate_with_kicad_tools(
     kicad_sch_content: str,
     board_w: float,
@@ -722,6 +756,12 @@ def generate_pcb(
                 kicad_net_content=kicad_net_content,
             )
             if content:
+                content, requoted = _quote_bare_property_values(content)
+                if requoted:
+                    logger.warning(
+                        "generate_pcb: %d valeur(s) de propriété requotée(s) — "
+                        "sans ce garde KiCad refuse le board entier", requoted,
+                    )
                 logger.info("generate_pcb: niveau 1 kicad-tools OK")
                 return content
         except Exception as exc:
@@ -732,6 +772,7 @@ def generate_pcb(
         try:
             content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
+                content, _ = _quote_bare_property_values(content)
                 logger.info("generate_pcb: niveau 2 pcbnew OK")
                 return content
         except Exception as exc:
