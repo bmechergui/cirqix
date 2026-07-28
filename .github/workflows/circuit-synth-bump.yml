@@ -99,13 +99,25 @@ jobs:
           # bloquée à chaque exécution (constaté 2026-07-28).
           git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
           git push --force-with-lease origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          # Voir kicad-tools-bump.yml : le `|| echo` avalait toute erreur, y
+          # compris « GitHub Actions is not permitted to create pull requests ».
+          # Le job passait au vert sans avoir rien produit. On ne tolere plus
+          # QUE le cas benin « PR deja ouverte ».
+          if ! gh pr create --base main --head "$BRANCH" \
             --title "chore: bump circuit_synth submodule -> ${SHORT}" \
             --body "Mise a jour automatique du submodule circuit_synth vers la branche \`cirqix\` du fork (@ ${SHORT}).
 
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
-          Voir services/kicad/DEPENDENCIES.md." || echo "PR existe peut-etre deja"
+          Voir services/kicad/DEPENDENCIES.md." 2>/tmp/pr_err; then
+            if grep -qi "already exists" /tmp/pr_err; then
+              echo "PR deja ouverte pour $BRANCH — rien a faire."
+            else
+              cat /tmp/pr_err >&2
+              echo "::error::Porte 3 muette — le bump est pousse mais AUCUNE PR n a ete creee."
+              exit 1
+            fi
+          fi
 
       - name: Remove private submodule credentials
         if: always()
