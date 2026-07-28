@@ -16,6 +16,7 @@ import base64
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
 if str(_SERVICE_ROOT) not in sys.path:
@@ -200,3 +201,37 @@ def test_both_validators_absent_returns_skipped(monkeypatch):
     assert resp.skipped is True
     assert resp.drc_clean is True
     assert resp.violations == []
+
+
+# ===========================================================================
+# Refill des zones avant le DRC officiel (2026-07-19)
+# ===========================================================================
+#
+# Mesuré sur les boards STM32 routés à 100 % (runs 7/9, iso-prod Docker) :
+# sans --refill-zones, kicad-cli compte les zones cuivre NON REMPLIES telles
+# qu'écrites par le routeur → 34 « unconnected_items » fantômes (les pads
+# alimentés par un plan apparaissent orphelins). Avec le refill : 10 et 8.
+# Le juge doit remplir les zones avant de juger, sinon il juge un board qui
+# n'existe pas.
+
+def test_kicad_drc_command_refills_zones(monkeypatch, tmp_path):
+    """_run_kicad_drc passe --refill-zones à kicad-cli (sinon unconnected
+    fantômes sur tout board à plans de cuivre)."""
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        # kicad-cli écrit le rapport à l'emplacement demandé
+        out = cmd[cmd.index("--output") + 1]
+        Path(out).write_text(_CLI_REPORT_CLEAN, encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(drc_router.subprocess, "run", fake_run)
+    pcb = tmp_path / "board.kicad_pcb"
+    pcb.write_bytes(b"(kicad_pcb)")
+
+    drc_router._run_kicad_drc("/fake/kicad-cli", pcb)
+
+    assert "--refill-zones" in captured["cmd"], captured["cmd"]
+    # --save-board exige --refill-zones ; on ne sauve pas (board jugé en place)
+    assert "--save-board" not in captured["cmd"]

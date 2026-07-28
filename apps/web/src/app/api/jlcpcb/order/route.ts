@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('id, status')
+    .select('id, status, agent_mode')
     .eq('id', projectId)
     .single();
 
@@ -49,6 +49,22 @@ export async function POST(req: NextRequest) {
   if (project.status !== 'DRC_CLEAN' && project.status !== 'PCB_LIVRÉ') {
     return NextResponse.json(
       { success: false, error: 'DRC must pass before ordering' },
+      { status: 422 },
+    );
+  }
+  // Le statut seul ne suffit pas : le simulateur persiste lui aussi DRC_CLEAN
+  // (avec des drcViolations fabriqués), et resolveAgentMode() renvoie
+  // 'simulator' par défaut. Seul un board produit par le pipeline réel est
+  // commandable. Fail closed : une provenance inconnue (NULL, projets
+  // antérieurs à la migration 007) est refusée — « inconnu » n'est pas « vérifié ».
+  if (project.agent_mode !== 'orchestrator') {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'This board was not produced by the real pipeline (simulated or unknown '
+          + 'provenance) and cannot be ordered. Re-run it with the agent enabled.',
+      },
       { status: 422 },
     );
   }

@@ -210,6 +210,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
      ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
+     ⚠️ (2026-07-27) `ERC_CLEAN` ne peut être accordé que par un contrôle
+        réellement exécuté et réellement passé. Auparavant `skipped` figurait dans
+        le OU qui promeut `ERC_CLEAN`, et l'absence de `.kicad_sch` en cache
+        renvoyait `ERC_CLEAN` — deux validations sans le moindre contrôle.
+        Désormais : `skipped` bascule sur `runErcFallback()` (ERC TypeScript RÉEL
+        — refs dupliquées, nets flottants, GND manquant, composants non
+        connectés) et son verdict fait foi ; on n'échoue que si lui-même n'a rien
+        à contrôler. Contrairement au routage/DRC/export, le repli n'est donc PAS
+        un fail fast : il existe ici un vérificateur de secours légitime.
+        Garde : tests/handler-erc.test.ts.
   ③ call_agent_footprint  → Ingénieur Composants (1 appel par ref dans unresolved_footprints)
      Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku
      Met à jour _pcbStateCache[projectId].schema.components[ref].footprint
@@ -223,6 +233,21 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement   [100% natif, 1 appel]
+     ⚠️ 3 bugs de CÂBLAGE corrigés le 2026-07-27, tous invisibles aux tests
+        mockés (les mocks reproduisaient l'hypothèse du client, pas la réalité du
+        service) et révélés par `packages/agents/src/tests/pipeline-live.test.ts`,
+        premier test à faire tourner la chaîne TS contre le service réel :
+        1. `handlePlacement` RÉGÉNÉRAIT le board via le générateur TS
+           (`runPCBEngine`), écrasant celui que `gen_pcb` venait de produire — que
+           le service ne parvenait même pas à parser (`500 ParseError`). Il
+           utilise désormais le board du cache, comme `handleRouting`.
+        2. `PLACEMENT_TIMEOUT_MS` valait 10 s pour une étape mesurée à 34-45 s :
+           le placement expirait SYSTÉMATIQUEMENT en production. Porté à 180 s.
+           (`ROUTING_TIMEOUT_MS` 90 s → 330 s pour la même raison : le service
+           s'accorde 300 s.)
+        3. `/place/auto` renvoyait `{ref, x, y}` alors que son propre modèle de
+           réponse et le client TS documentent `{ref, x_mm, y_mm}` : le client
+           filtrait TOUTES les positions et `placements` sortait vide.
      POST /place/auto (kicad_pcb_b64) — gen_pcb fournit une grille de départ
      Commande native : OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
          enable_clustering=True, fixed_refs=<J*/P*>, generations=100,
@@ -243,6 +268,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         pour les power nets en zones + route les signaux + escalade couches)
      ② Freerouting REST API / subprocess — fallback historique (port 37864)
      → renvoie routed_percent RÉEL (tools/handlers/routing.ts : plus jamais hardcodé 100)
+     ⚠️ FAIL FAST (2026-07-27) : si le service est injoignable ou renvoie skipped,
+        handleRouting retourne `status:'error'` — PAS un `routed_percent: 100` avec
+        un simple plan de masse comme avant. L'ancien repli désarmait à la fois
+        shouldRescueRouting ET shouldRetryPlacement (pourcentage fantôme) et faisait
+        enchaîner Sonnet sur DRC/export en annonçant « routé à 100% » un board sans
+        aucune piste. Le cache n'est plus écrasé par le board non routé. Même contrat
+        que handlePlacement. Gardes : tests/handler-routing.test.ts (describe
+        « fail fast quand aucun routage n'a eu lieu »).
   ⑥b Reasoner IA   [SOUS-ÉTAPE DÉTERMINISTE de ROUTING — déclenchée par CODE, pas par Sonnet]
      orchestrator.ts : SI call_agent_routing renvoie routed_percent < 100, l'orchestrateur
      lance LUI-MÊME call_agent_reason (règle métier à seuil, shouldRescueRouting()).
@@ -264,15 +297,51 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Trigger déterministe : commit 13b919c (shouldRescueRouting/mergeRescueIntoRouting, TDD)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
+     ⚠️ RETRY PLACEMENT PILOTÉ PAR LE DRC (2026-07-27) — jumelle du retry
+        routage : `shouldRetryForDrc`/`keepBestDrc` dans orchestrator.ts. Le
+        re-tirage déterministe n'était armé que par `routed_percent < 100`, or un
+        board peut être routé à 100 % ET refusé par le DRC. Mesuré sur
+        `examples/led-blinker-full-pipeline` : 3 tirages GA à 100 % routé donnent
+        0, 12 et 4 violations — le placement est stochastique et sans seed, donc
+        re-tirer est le levier. Anti-régression : un board clean l'emporte
+        toujours ; à égalité, le moins de violations. Pas de retry sur
+        `status:'error'` (re-placer ne répare pas un service éteint).
      ① kicad-tools 27 règles JLCPCB — pré-filtre seulement, ne court-circuite
         JAMAIS kicad-cli (faux négatif mesuré 2026-07-04 : 25 courts invisibles)
      ② kicad-cli pcb drc — TOUJOURS exécuté si dispo, fait foi, auto-fix max 3×
      ③ skipped=True — les deux absents
+     ⚠️ FAIL FAST (2026-07-27) : `DRC_CLEAN` ne peut être émis QUE par un DRC
+        réellement exécuté ET réellement propre. Les 3 chemins qui renvoyaient
+        auparavant `pcb_status:'DRC_CLEAN'` + `drc_clean:true` sans qu'aucun DRC
+        n'ait tourné (pas de PCB en cache · `skipped` · service en erreur, dont
+        `KICAD_SERVICE_URL` non configurée) renvoient désormais `status:'error'`.
+        Enjeu : orchestrator-bridge persiste `pcb_status` dans `projects.status`
+        et `POST /api/jlcpcb/order` autorise la commande dès que le statut vaut
+        `DRC_CLEAN` — un DRC fantôme débloquait donc une commande JLCPCB réelle
+        sur un board jamais validé. Garde : tests/handler-drc.test.ts
+        (describe « jamais DRC_CLEAN sans DRC exécuté »).
+     ⚠️ `local-pipeline.ts` (repli sans orchestrateur, sur erreur crédit/402)
+        écrivait un statut CODÉ EN DUR par étape, en ignorant le résultat du
+        handler : un DRC en erreur — ou trouvant de vraies violations — était
+        malgré tout persisté `DRC_CLEAN`. Le handler fait foi désormais
+        (`pcb_status` prioritaire, `status:'error'` interrompt la chaîne sans
+        rien persister). Garde : apps/web/src/test/local-pipeline.test.ts.
   ⑧ call_agent_export     → Ingénieur Fabrication
      POST /export/all
      ① kicad-tools kct export --mfr jlcpcb — GTL/GBL/GKO, BOM LCSC, CPL rotations
      ② kicad-cli pcb export {gerbers,drill,pos} — si kicad-tools échoue
      ③ skipped=True — kicad-cli absent → BOM CSV seulement
+     ⚠️ FAIL FAST (2026-07-27) : `PCB_LIVRÉ` ne peut être émis QUE par un export
+        ayant réellement produit des fichiers. Les 3 chemins dégradés (pas de PCB
+        en cache · `skipped` · service en erreur) renvoyaient `PCB_LIVRÉ` — statut
+        qui fait AUSSI partie du gate de `POST /api/jlcpcb/order` — et deux d'entre
+        eux FABRIQUAIENT `gerber_layers: 7` + `quote_usd: 12.5`, un prix inventé
+        présenté comme réel, avec une note invitant à répondre « OUI JE CONFIRME ».
+        ExportView distingue pourtant déjà un vrai devis d'un placeholder
+        (`quoteIsReal = state.quoteUsd != null`) : le montant fabriqué défaisait
+        cette logique. Ces chemins renvoient `status:'error'` ; le `bom_csv` est
+        conservé (donnée réelle dérivée du schéma), sans promotion de statut.
+        Garde : tests/handler-export.test.ts.
      ↓ Upload Supabase Storage → signed URLs KiCanvas
 ```
 
@@ -294,6 +363,21 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
      première fois ici pour garantir 0 ERROR avant de tenter le Géomètre.
   ② **Géomètre** (`_refine_with_cmaes`, kct optimize-placement --strategy cmaes
      --seed-method current --max-iterations 30) — micro-raffine la position ①
+     ⚠️ **S'exécute dans un PROCESSUS ENFANT** (`tools/cmaes_runner.py`, appelé
+     par `_run_cmaes_in_subprocess`) depuis le 2026-07-27. `run_optimize_placement`
+     installe des handlers de signal dès son entrée, or `signal.signal` est
+     interdit hors thread principal — et uvicorn exécute `auto_place` dans un
+     thread de worker. En appel direct, `ValueError: signal only works in main
+     thread of the main interpreter` tombait AVANT toute itération : le filet de
+     sécurité conservait le board pré-CMA-ES et **le Géomètre ne tournait JAMAIS
+     en production**, alors que ses tests passaient (pytest, thread principal).
+     Mesuré en conteneur en validant `examples/led-blinker-full-pipeline/`.
+     Le CLI `kct optimize-placement` ne convient PAS comme substitut : son
+     parseur n'accepte que `--seed force-directed|random`, alors que
+     `seed_method="current"` (patch Cirqix, côté API Python uniquement) est ce
+     qui fait du CMA-ES un raffinement et non un replacement depuis zéro.
+     Garde de régression : `test_refine_with_cmaes_works_off_the_main_thread`
+     (exécute le raffinement dans un `threading.Thread`).
      (déplacement moyen 2-3mm, max <12mm sur le board STM32 réel) ; connecteurs
      restaurés après coup (le CLI natif n'a pas de verrouillage par position).
      **Bug trouvé + corrigé (2026-06-19)** : `seed_method="current"` seede bien
@@ -466,8 +550,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 `examples/<cas>/` = cas d'étude complet input→output (board, batches, README, résultat attendu dans `expected/`). Pas des tests automatisés — jamais de `test_*.py` ici. Les outputs intermédiaires régénérables ne sont jamais committés ; seuls `input/`, `batches/`, `README.md` et `expected/` (1 board final + 1 rendu) le sont.
 
 **Règle : 1 dossier = 1 cas = 1 question.** Cas existants :
-- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb`
-- `stm32-full-pipeline/` — les 8 agents depuis un JSON circuit → Gerbers (`run_full_pipeline.py`, driver LLM rôles 1+2)
+- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb` ; cas de **stress DFM** (LQFP-48 fine-pitch)
+- `led-blinker-full-pipeline/` — pipeline **complet** ①→⑧ description → Gerbers (`run_pipeline.py`) ; board simple NE555+LED (8 composants, **6 nets** dans `input/schema.json`, 60×45 mm) ; `expected/led_blinker_final.kicad_pcb` = 100 % routé / DRC-clean (2026-07-27). **Terrain d'apprentissage RL routing** documenté dans `docs/rl/routing/` — ne plus écrire que la fixture « n'existe pas »
+
+(`stm32-full-pipeline/` supprimé au commit `8faf685` — ne plus y faire référence.)
 
 ---
 

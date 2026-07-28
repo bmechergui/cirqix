@@ -14,6 +14,9 @@ Invariants testés :
 from __future__ import annotations
 
 import base64
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,6 +34,9 @@ from tools.placement import (
     _resolve_remaining_conflicts,
     _refine_with_cmaes,
     _max_displacement_mm,
+    _dense_part_refs,
+    _reserve_escape_halos,
+    _DENSE_PAD_COUNT,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -246,7 +252,7 @@ def test_auto_place_actually_moves_movable_components(tmp_path):
 
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
-    pos = {p["ref"]: (p["x"], p["y"]) for p in result["positions"]
+    pos = {p["ref"]: (p["x_mm"], p["y_mm"]) for p in result["positions"]
            if p["ref"] in ("R1", "R2", "R3")}
     # au moins un composant doit avoir quitté le point de départ (30, 20)
     moved = [r for r, (x, y) in pos.items()
@@ -264,8 +270,8 @@ def test_auto_place_clamps_connector_outside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j1 = next(p for p in result["positions"] if p["ref"] == "J1")
-    assert 0.0 <= j1["x"] <= _BOARD_W_MM, f"J1.x={j1['x']} hors contour [0,{_BOARD_W_MM}]"
-    assert 0.0 <= j1["y"] <= _BOARD_H_MM, f"J1.y={j1['y']} hors contour [0,{_BOARD_H_MM}]"
+    assert 0.0 <= j1["x_mm"] <= _BOARD_W_MM, f"J1.x_mm={j1['x_mm']} hors contour [0,{_BOARD_W_MM}]"
+    assert 0.0 <= j1["y_mm"] <= _BOARD_H_MM, f"J1.y_mm={j1['y_mm']} hors contour [0,{_BOARD_H_MM}]"
 
 
 def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
@@ -278,8 +284,8 @@ def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y"] == pytest.approx(20.0, abs=0.5)
+    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -392,11 +398,63 @@ def test_refine_with_cmaes_separates_overlap_and_preserves_anchored(tmp_path):
     assert moved, f"aucune résistance affinée par le CMA-ES — positions={pos}"
 
 
+def test_refine_with_cmaes_works_off_the_main_thread(tmp_path):
+    """Le Géomètre doit fonctionner HORS thread principal — condition de la prod.
+
+    En Docker, FastAPI/uvicorn exécute `auto_place` dans un thread de worker.
+    Or `run_optimize_placement` installe des handlers de signal
+    (`signal.signal(SIGINT/SIGTERM, …)`) dès son entrée, ce qui lève
+    `ValueError: signal only works in main thread of the main interpreter`
+    AVANT la moindre itération d'optimisation.
+
+    Constaté en conteneur le 2026-07-27 en validant le pipeline complet : le
+    filet de sécurité rattrapait l'exception et conservait le board
+    pré-CMA-ES, si bien que l'étape « Géomètre » — pourtant documentée en
+    détail, calibrée (_CMAES_MAX_ITERATIONS) et couverte par des tests
+    exécutés, eux, dans le thread principal de pytest — ne tournait JAMAIS en
+    production. Le placement aboutissait, simplement sans raffinement.
+
+    Ce test échoue tant que le raffinement s'exécute in-process.
+    """
+    import threading
+
+    pcb_bytes = _board_with_connector_and_movable(tmp_path)
+    board_path = tmp_path / "board.kicad_pcb"
+    board_path.write_bytes(pcb_bytes)
+
+    captured: dict = {}
+
+    def worker() -> None:
+        try:
+            captured["result"] = _refine_with_cmaes(
+                board_path, anchored=["J1"], time_budget_s=10.0
+            )
+        except BaseException as exc:  # noqa: BLE001 — on veut TOUT remonter
+            captured["error"] = exc
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout=180)
+    assert not thread.is_alive(), "le raffinement CMA-ES ne s'est pas terminé"
+
+    assert "error" not in captured, (
+        f"_refine_with_cmaes a levé hors thread principal : {captured.get('error')!r}"
+    )
+    assert captured["result"]["refined"] is True, (
+        "le raffinement a été silencieusement abandonné hors thread principal — "
+        "c'est exactement le symptôme observé en production"
+    )
+
+
 def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeypatch):
-    """Vérifie le câblage de l'appel : ``max_iterations`` est passé
-    explicitement à ``run_optimize_placement`` (test de wiring — ne fait
-    pas tourner le vrai CMA-ES, voir le test comportemental suivant pour la
-    mesure de déplacement réelle, seule garante d'une régression du réglage).
+    """Vérifie le câblage de l'appel : ``max_iterations`` et ``seed=current``
+    parviennent au CMA-ES (test de wiring — ne fait pas tourner le vrai CMA-ES,
+    voir le test comportemental suivant pour la mesure de déplacement réelle,
+    seule garante d'une régression du réglage).
+
+    Le raffinement s'exécute désormais dans un PROCESSUS enfant (cf.
+    ``_run_cmaes_in_subprocess``) : on inspecte donc le payload JSON de la
+    ligne de commande plutôt que les kwargs d'un appel in-process.
     """
     pcb_bytes = _board_with_connector_and_movable(tmp_path)
     board_path = tmp_path / "board.kicad_pcb"
@@ -404,14 +462,13 @@ def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeyp
 
     captured: dict = {}
 
-    def fake_run_optimize_placement(*args, **kwargs):
-        captured.update(kwargs)
-        return 1  # échec forcé — on n'a besoin que des kwargs passés
+    def fake_run(cmd, **_kwargs):
+        captured.update(json.loads(cmd[-1]))
+        captured["executable"] = cmd[0]
+        captured["script"] = cmd[1]
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr(
-        "kicad_tools.cli.optimize_placement_cmd.run_optimize_placement",
-        fake_run_optimize_placement,
-    )
+    monkeypatch.setattr(placement_module.subprocess, "run", fake_run)
 
     _refine_with_cmaes(board_path, anchored=["J1"], time_budget_s=5.0)
 
@@ -419,6 +476,10 @@ def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeyp
     assert captured["max_iterations"] <= 30, (
         f"max_iterations={captured['max_iterations']} trop élevé pour un micro-raffinement"
     )
+    # Le seeding sur la position courante est ce qui fait du CMA-ES un
+    # raffinement plutôt qu'un replacement : il vit dans le runner, pas ici.
+    assert captured["script"].endswith("cmaes_runner.py")
+    assert captured["executable"] == sys.executable
 
 
 def test_refine_with_cmaes_keeps_displacement_small(tmp_path):
@@ -467,8 +528,8 @@ def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y"] == pytest.approx(20.0, abs=0.5)
+    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
 
 
 def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monkeypatch):
@@ -509,7 +570,7 @@ def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monke
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     r1 = next(p for p in result["positions"] if p["ref"] == "R1")
-    assert (r1["x"], r1["y"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
+    assert (r1["x_mm"], r1["y_mm"]) != (1.0, 1.0), "board CMA-ES non-résolu livré malgré conflits ERROR restants"
 
 
 def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, monkeypatch):
@@ -549,7 +610,7 @@ def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, mo
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     r1 = next(p for p in result["positions"] if p["ref"] == "R1")
-    assert r1["x"] == pytest.approx(captured["pre_x"], abs=0.01), (
+    assert r1["x_mm"] == pytest.approx(captured["pre_x"], abs=0.01), (
         "le board livré inclut le déplacement de 30mm du CMA-ES malgré 0 ERROR — "
         "le filet de sécurité Option B (déplacement) ne s'est pas déclenché"
     )
@@ -609,3 +670,124 @@ def test_auto_place_survives_cmaes_exception(tmp_path, monkeypatch):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     assert result["placed_count"] > 0
+
+
+# ===========================================================================
+# Brique 1 — Halo d'escape autour des composants fine-pitch (2026-07-22)
+# ===========================================================================
+# Prouvé iso-prod Docker : donner un canal d'escape au LQFP-48 fait monter la
+# complétion PROPRE (55% -> 73%, 0 court réel). Le seuil « dense » = >=16 pads
+# est celui de kicad_tools.optim.fom_features._dense_package_count.
+
+
+def _dense_ic_sexp(ref: str, uuid: str, x_abs: float, y_abs: float, n_pads: int = 20) -> str:
+    """IC fine-pitch : ``n_pads`` pads SMD répartis sur un corps ~5x5mm.
+
+    >= _DENSE_PAD_COUNT pads → identifié comme composant dense (QFP/QFN/BGA)."""
+    pads = []
+    half = (n_pads + 3) // 4
+    for i in range(n_pads):
+        side, k = divmod(i, half)
+        off = -2.0 + 4.0 * (k / max(half - 1, 1))
+        if side == 0:
+            px, py = off, -2.5
+        elif side == 1:
+            px, py = 2.5, off
+        elif side == 2:
+            px, py = off, 2.5
+        else:
+            px, py = -2.5, off
+        pads.append(
+            f'    (pad "{i + 1}" smd roundrect (at {px:.2f} {py:.2f}) (size 0.3 0.3) '
+            f'(layers "F.Cu" "F.Paste" "F.Mask") (net 0 ""))')
+    pad_block = "\n".join(pads)
+    return f"""\
+  (footprint "Package_QFP:LQFP-{n_pads}"
+    (layer "F.Cu")
+    (uuid "{uuid}")
+    (at {x_abs} {y_abs})
+    (property "Reference" "{ref}" (at 0 -4 0) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (property "Value" "MCU" (at 0 4 0) (layer "F.Fab")
+      (effects (font (size 1 1) (thickness 0.15))))
+{pad_block}
+  )
+"""
+
+
+def _board_with_dense_ic_and_crowder(tmp_path: Path) -> Path:
+    """Board 60x40 : IC dense U2 au centre + résistance R1 collée dans son halo."""
+    pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
+    ox, oy = pcb.board_origin
+    board_path = tmp_path / "board.kicad_pcb"
+    pcb.save(str(board_path))
+
+    text = board_path.read_text(encoding="utf-8")
+    close_idx = text.rstrip().rfind(")")
+    inject = _dense_ic_sexp("U2", "22222220-2222-2222-2222-222222222220", ox + 30.0, oy + 20.0)
+    # R1 collée à 3.5mm du centre de U2 (dans le halo d'escape)
+    inject += _resistor_sexp("R1", "11111111-1111-1111-1111-111111111111", ox + 33.5, oy + 20.0, net=1)
+    text = text[:close_idx] + inject + text[close_idx:]
+    board_path.write_text(text, encoding="utf-8")
+    return board_path
+
+
+def test_dense_part_refs_identifies_high_pad_count(tmp_path):
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    pcb = PCB.load(str(board))
+    dense = _dense_part_refs(pcb)
+    assert dense == ["U2"]
+    # sanity : U2 a bien >= au seuil natif
+    u2 = next(fp for fp in pcb.footprints if fp.reference == "U2")
+    assert len(u2.pads) >= _DENSE_PAD_COUNT
+
+
+def test_dense_part_refs_empty_for_simple_board(tmp_path):
+    board_bytes = _board_with_movable_components(tmp_path)   # que des R 2 pads
+    p = tmp_path / "simple.kicad_pcb"
+    p.write_bytes(board_bytes)
+    assert _dense_part_refs(PCB.load(str(p))) == []
+
+
+def test_reserve_escape_halos_pushes_crowder_out(tmp_path):
+    import math
+
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    pcb0 = PCB.load(str(board))
+    u2b = next(fp for fp in pcb0.footprints if fp.reference == "U2").position
+    r1b = next(fp for fp in pcb0.footprints if fp.reference == "R1").position
+    d_before = math.hypot(r1b[0] - u2b[0], r1b[1] - u2b[1])
+
+    pushed = _reserve_escape_halos(board, anchored=[])
+    assert pushed >= 1
+
+    pcb1 = PCB.load(str(board))
+    u2a = next(fp for fp in pcb1.footprints if fp.reference == "U2").position
+    r1a = next(fp for fp in pcb1.footprints if fp.reference == "R1").position
+    d_after = math.hypot(r1a[0] - u2a[0], r1a[1] - u2a[1])
+    # U2 (dense) n'a pas bougé ; R1 s'est éloignée du centre de U2 (hors du halo).
+    assert u2a == u2b
+    assert d_after > d_before
+
+
+def test_reserve_escape_halos_noop_without_dense_part(tmp_path):
+    board_bytes = _board_with_movable_components(tmp_path)
+    p = tmp_path / "simple.kicad_pcb"
+    p.write_bytes(board_bytes)
+    before = [fp.position for fp in PCB.load(str(p)).footprints]
+    pushed = _reserve_escape_halos(p, anchored=[])
+    assert pushed == 0
+    after = [fp.position for fp in PCB.load(str(p)).footprints]
+    assert before == after
+
+
+def test_reserve_escape_halos_keeps_anchored_crowder(tmp_path):
+    """Un composant ancré (connecteur) dans le halo n'est PAS déplacé."""
+    board = _board_with_dense_ic_and_crowder(tmp_path)
+    # renomme R1 -> J1 (ancré) via edit texte
+    text = board.read_text(encoding="utf-8").replace('"R1"', '"J1"')
+    board.write_text(text, encoding="utf-8")
+    j1_before = next(fp for fp in PCB.load(str(board)).footprints if fp.reference == "J1").position
+    _reserve_escape_halos(board, anchored=["J1"])
+    j1_after = next(fp for fp in PCB.load(str(board)).footprints if fp.reference == "J1").position
+    assert j1_after == j1_before
