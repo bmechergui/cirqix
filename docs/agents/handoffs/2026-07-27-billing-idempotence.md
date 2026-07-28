@@ -1,14 +1,14 @@
 # Handoff — `2026-07-27-billing-idempotence`
 
-- **Status:** `REVIEW`
+- **Status:** `DONE`
 - **Owner:** `Kimi`
 - **Reviewer:** `Claude Code` (à la demande, lecture seule)
 - **Receiver:** `human` (merge PR #76)
-- **Branch:** `feat/billing-idempotence` (dédiée — décision utilisateur 2026-07-28)
+- **Branch:** `feat/billing-idempotence` (mergée — squash `e877d22`)
 - **Worktree:** `C:\tmp\cirqix-billing-idempotence`
 - **Base commit:** `0f1e1df` (`origin/main`)
-- **Content commit:** `8dc56d6`
-- **Updated UTC:** `2026-07-28T22:35:30Z`
+- **Content commit:** `e877d22` (squash merge PR #76 sur `main`)
+- **Updated UTC:** `2026-07-28T22:47:30Z`
 
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
@@ -240,3 +240,4 @@ produits/variants = action 1 du PLAN, console LS, hors code).
 | `2026-07-28T20:18:26Z` | `Kimi` | `Kimi` | `mise à jour` | `Migration 009 lockdown RPC crédits appliquée (20260728201728) — self-mint anon fermé, gardes vérifiées` |
 | `2026-07-28T22:27:05Z` | `Kimi` | `Kimi` | `mise à jour` | `Reprise de session : fichiers possédés intacts, re-validation 13/13 + 37/37 + type-check 0 erreur. Reste : décision utilisateur sur stratégie de commit` |
 | `2026-07-28T22:35:30Z` | `Kimi` | `human` | `REVIEW` | `Branche dédiée feat/billing-idempotence (4 commits), poussée, PR #76 ouverte. Validations rejouées dans le worktree propre : 13/13 + type-check 0 erreur` |
+| `2026-07-28T22:47:30Z` | `human` | `Kimi` | `DONE` | `PR #76 mergée (squash e877d22, CI 5/5 verte). Critère de terminaison satisfait : 13/13 webhook, type-check 0, migrations 008/009 écrites et appliquées. Reste hors code : console Lemon Squeezy (produits/variants, LS_*, activation webhook)` |
