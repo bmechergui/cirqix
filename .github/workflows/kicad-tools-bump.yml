@@ -95,6 +95,15 @@ jobs:
           git checkout -b "$BRANCH"
           git add services/kicad/kicad-tools
           git commit -m "chore: bump kicad-tools submodule -> ${SHORT} (Porte 3)"
+          # Le nom de branche dérive du SHA du submodule : tant que le fork
+          # n'avance pas, il est IDENTIQUE d'une semaine à l'autre. Si la branche
+          # existe déjà côté distant (bump précédent non mergé), le runner n'a
+          # aucune référence de suivi locale pour elle et --force-with-lease
+          # refuse de parier à l'aveugle : « ! [rejected] … (stale info) ».
+          # La Porte 3 restait alors bloquée à CHAQUE exécution (constaté
+          # 2026-07-28 sur les deux workflows). On récupère donc la référence
+          # distante d'abord, pour donner au lease une base réelle.
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
           git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore: bump kicad-tools submodule -> ${SHORT}" \

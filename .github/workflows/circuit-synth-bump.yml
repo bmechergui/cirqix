@@ -92,6 +92,12 @@ jobs:
           git checkout -b "$BRANCH"
           git add services/kicad/circuit_synth
           git commit -m "chore: bump circuit_synth submodule -> ${SHORT} (Porte 3)"
+          # Voir kicad-tools-bump.yml pour le détail : le nom de branche dérive
+          # du SHA du submodule, donc il est identique d'une semaine à l'autre
+          # tant que le fork n'avance pas. Sans référence de suivi locale,
+          # --force-with-lease échoue en « stale info » et la Porte 3 reste
+          # bloquée à chaque exécution (constaté 2026-07-28).
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
           git push --force-with-lease origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "chore: bump circuit_synth submodule -> ${SHORT}" \
