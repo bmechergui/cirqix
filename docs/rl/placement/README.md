@@ -78,12 +78,18 @@ est indisponible, échoue ou dégrade le PCB.
 
 ```text
 services/kicad/tools/rl/placement/
-├── env.py          # Gymnasium PlacementEnv
-├── observation.py  # PCB + contraintes → tenseur
-├── reward.py       # adaptateur compute_fom()
-├── policy.py       # PPO/MLP chargé en lecture seule
-└── candidate.py    # applique un candidat via pcbnew
+├── env.py               # Gymnasium PlacementEnv
+├── observation.py       # PCB + contraintes → tenseur
+├── reward.py            # adaptateur compute_fom()
+├── train_placement.py   # smoke / train hors ligne (pas FastAPI)
+├── policy.py            # (à venir) PPO/MLP lecture seule
+└── candidate.py         # (à venir) applique candidat via PCB kicad-tools
 ```
+
+Implémenté (2026-07-28) : `reward.py`, `observation.py`, `env.py`,
+`train_placement.py` (+ tests). `policy.py` / `candidate.py` / flag
+`auto_place` restent après smoke 100k + gate FOM.
+
 
 Le modèle est entraîné hors requête HTTP. En production, le service charge un
 modèle versionné et exécute seulement l'inférence avec un budget borné.
