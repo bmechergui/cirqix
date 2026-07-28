@@ -95,14 +95,37 @@ jobs:
           git checkout -b "$BRANCH"
           git add services/kicad/kicad-tools
           git commit -m "chore: bump kicad-tools submodule -> ${SHORT} (Porte 3)"
+          # Le nom de branche dérive du SHA du submodule : tant que le fork
+          # n'avance pas, il est IDENTIQUE d'une semaine à l'autre. Si la branche
+          # existe déjà côté distant (bump précédent non mergé), le runner n'a
+          # aucune référence de suivi locale pour elle et --force-with-lease
+          # refuse de parier à l'aveugle : « ! [rejected] … (stale info) ».
+          # La Porte 3 restait alors bloquée à CHAQUE exécution (constaté
+          # 2026-07-28 sur les deux workflows). On récupère donc la référence
+          # distante d'abord, pour donner au lease une base réelle.
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
           git push --force-with-lease origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          # `|| echo "PR existe peut-être déjà"` avalait TOUTE erreur, y compris
+          # « GitHub Actions is not permitted to create or approve pull requests ».
+          # Le job passait alors au vert sans avoir rien produit : la Porte 3
+          # semblait fonctionner alors qu'aucune PR n'existait (constaté
+          # 2026-07-28, run 30358342825 — push réussi, PR absente, job vert).
+          # On ne tolère plus QUE le cas bénin « PR déjà ouverte ».
+          if ! gh pr create --base main --head "$BRANCH" \
             --title "chore: bump kicad-tools submodule -> ${SHORT}" \
             --body "Mise à jour automatique du submodule kicad-tools vers la branche \`cirqix\` du fork (@ ${SHORT}).
 
           **Porte 3** : le CI (build Docker + tests) doit passer avant merge (**Porte 4**).
 
-          Voir docs/kicad-tools-fork-strategy.md." || echo "PR existe peut-être déjà"
+          Voir docs/kicad-tools-fork-strategy.md." 2>/tmp/pr_err; then
+            if grep -qi "already exists" /tmp/pr_err; then
+              echo "PR déjà ouverte pour $BRANCH — rien à faire."
+            else
+              cat /tmp/pr_err >&2
+              echo "::error::Porte 3 muette — le bump est poussé mais AUCUNE PR n'a été créée."
+              exit 1
+            fi
+          fi
 
       - name: Remove private submodule credentials
         if: always()
