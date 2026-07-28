@@ -228,7 +228,12 @@ jobs:
             -e KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints \
             -e FREEROUTING_API_URL=http://127.0.0.1:37864 \
             cirqix-kicad:test
-          trap 'docker rm -f kicad-fixture >/dev/null 2>&1 || true' EXIT
+          # PAS de `trap ... EXIT` ici : chaque étape GitHub Actions est un shell
+          # SÉPARÉ, donc le trap détruirait le conteneur à la fin de CETTE étape
+          # et les étapes d'analyse suivantes ne le trouveraient plus
+          # (« No such container: kicad-fixture », run 30403853465 — l'étape même
+          # qui devait nommer les nets fautifs). La destruction est faite en fin
+          # de job, dans une étape dédiée en always().
 
           for attempt in $(seq 1 48); do
             if curl -fsS -m 5 http://127.0.0.1:8766/health >/dev/null 2>&1; then break; fi
@@ -325,3 +330,9 @@ jobs:
             /tmp/run-*.log
           if-no-files-found: warn
           retention-days: 14
+
+      # Le conteneur de mesure survit à toutes les étapes d'analyse ci-dessus ;
+      # il est détruit ici, une fois pour toutes.
+      - name: Nettoyer le conteneur de mesure
+        if: always()
+        run: docker rm -f kicad-fixture >/dev/null 2>&1 || true
