@@ -1,14 +1,14 @@
 # Handoff — `2026-07-27-billing-idempotence`
 
-- **Status:** `IN_PROGRESS`
+- **Status:** `REVIEW`
 - **Owner:** `Kimi`
 - **Reviewer:** `Claude Code` (à la demande, lecture seule)
-- **Receiver:** `none`
-- **Branch:** `feat/routage-100-industriel` (partagée — voir Décisions)
-- **Worktree:** `C:\Users\Mechegui\Desktop\dev\cirqix`
-- **Base commit:** `aad7c0f`
-- **Content commit:** `uncommitted`
-- **Updated UTC:** `2026-07-28T22:27:05Z`
+- **Receiver:** `human` (merge PR #76)
+- **Branch:** `feat/billing-idempotence` (dédiée — décision utilisateur 2026-07-28)
+- **Worktree:** `C:\tmp\cirqix-billing-idempotence`
+- **Base commit:** `0f1e1df` (`origin/main`)
+- **Content commit:** `8dc56d6`
+- **Updated UTC:** `2026-07-28T22:35:30Z`
 
 Le receiver relève le head Git courant local et distant au moment de la
 réception ; ne pas le recopier ici, car le commit de ce fichier le périmerait.
@@ -215,21 +215,21 @@ dédupliqué), `pnpm type-check` 0 erreur, migration 008 idempotente écrite.
 
 ## Prochaine action atomique
 
-Utilisateur : trancher la stratégie de commit (branche dédiée
-`feat/billing-idempotence` vs branche partagée — inclut désormais la
-migration 009), puis activer le webhook dans la console Lemon Squeezy une
-fois les variables LS_* déployées.
+Utilisateur : review + merge de la PR #76, puis activer le webhook dans la
+console Lemon Squeezy une fois les variables LS_* déployées (création des
+produits/variants = action 1 du PLAN, console LS, hors code).
 
 ## Git
 
-- **État initial du worktree:** `5 commits Claude récents (routing/placement),
-  modifications non commitées Claude (placement.py) + préexistants non possédés`
-- **État final du worktree:** `5 fichiers possédés modifiés/créés (webhook route,
-  test, migration 008, .env.example, ce handoff) + préexistants non possédés
-  inchangés (.claude/settings.json, suppressions stm32-validation, untracked
-  .cursor/.gemini/GEMINI.md)`
-- **Commit:** `none`
-- **PR:** `none`
+- **Branche dédiée:** `feat/billing-idempotence` depuis `origin/main` (`0f1e1df`),
+  worktree `C:\tmp\cirqix-billing-idempotence` — fichiers Codex et préexistants
+  du worktree principal NON embarqués (décision utilisateur 2026-07-28).
+- **Commits:** `799946e` (idempotence webhook + migrations 008/009),
+  `cff4fad` (pricing 29/99), `ee513ad` (wordmark Cirqix + icône C),
+  `8dc56d6` (ce handoff).
+- **PR:** `#76` — https://github.com/bmechergui/cirqix/pull/76
+- **Worktree principal:** les mêmes fichiers y restent non commités (copies de
+  travail) — ne pas les stager depuis `main`.
 
 ## Journal de transfert
 
@@ -239,3 +239,4 @@ fois les variables LS_* déployées.
 | `2026-07-28T19:34:17Z` | `Kimi` | `Kimi` | `mise à jour` | `Fail-closed (secret + marker), 13/13 tests, migration 008 appliquée (20260728193336)` |
 | `2026-07-28T20:18:26Z` | `Kimi` | `Kimi` | `mise à jour` | `Migration 009 lockdown RPC crédits appliquée (20260728201728) — self-mint anon fermé, gardes vérifiées` |
 | `2026-07-28T22:27:05Z` | `Kimi` | `Kimi` | `mise à jour` | `Reprise de session : fichiers possédés intacts, re-validation 13/13 + 37/37 + type-check 0 erreur. Reste : décision utilisateur sur stratégie de commit` |
+| `2026-07-28T22:35:30Z` | `Kimi` | `human` | `REVIEW` | `Branche dédiée feat/billing-idempotence (4 commits), poussée, PR #76 ouverte. Validations rejouées dans le worktree propre : 13/13 + type-check 0 erreur` |
