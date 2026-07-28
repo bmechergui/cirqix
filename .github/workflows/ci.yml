@@ -278,3 +278,35 @@ jobs:
             echo "d'être creusé avant merge ; il ne fait pas échouer la CI de lui-même."
           } > /tmp/pr_comment.md
           gh pr comment "$PR_NUMBER" --body-file /tmp/pr_comment.md
+
+      # Sans les boards, la mesure donne un CHIFFRE mais pas de CAUSE. Constaté
+      # sur la PR #69 (issue #72) : 30 unconnected_items reproductibles, sans
+      # moyen de savoir lesquels — GND, VCC, ou un net de signal ? — ce qui
+      # aurait tranché immédiatement. On nomme donc les nets ici, et on archive
+      # les boards pour toute analyse ultérieure.
+      - name: Détailler les nets non connectés (run 1)
+        if: always() && steps.detect_submodule.outputs.touched == 'true'
+        run: |
+          set -uo pipefail
+          BOARD=/tmp/fixture-run-1/6_routed.kicad_pcb
+          if [ ! -f "$BOARD" ]; then
+            echo "Pas de board routé au run 1 — rien à détailler."
+            exit 0
+          fi
+          docker cp "$BOARD" kicad-fixture:/tmp/analyse.kicad_pcb
+          docker exec kicad-fixture kicad-cli pcb drc /tmp/analyse.kicad_pcb -o /tmp/analyse.json --format json --severity-all --refill-zones >/dev/null 2>&1 || true
+          # Script en une ligne : un heredoc imbriqué ici casserait le scalaire
+          # YAML (son délimiteur en colonne 0 ferme le bloc).
+          docker exec kicad-fixture python3 -c 'import json, collections; d=json.load(open("/tmp/analyse.json")); v=d.get("violations",[]); u=d.get("unconnected_items",[]); print("violations=%d unconnected_items=%d" % (len(v), len(u))); [print("  violation %s x%d" % (k,n)) for k,n in collections.Counter(x.get("type") for x in v).most_common()]; nets=collections.Counter(i.get("description","").split("[",1)[1].split("]",1)[0] for x in u for i in x.get("items",[]) if "[" in i.get("description","")); [print("  net non connecte %s x%d" % (k,n)) for k,n in nets.most_common(10)]' 2>&1 | grep -v m_choices || true
+
+      - name: Archiver les boards de la mesure
+        if: always() && steps.detect_submodule.outputs.touched == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-boards
+          path: |
+            /tmp/fixture-run-*/*.kicad_pcb
+            /tmp/fixture-run-*/*.kicad_sch
+            /tmp/run-*.log
+          if-no-files-found: warn
+          retention-days: 14
