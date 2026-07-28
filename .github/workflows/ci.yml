@@ -83,6 +83,11 @@ jobs:
   kicad-docker:
     name: KiCad Docker Build
     runs-on: ubuntu-latest
+    # `contents: read` est hérité du workflow ; ce job publie en plus la mesure
+    # du pipeline en commentaire sur les PR de bump de submodule (fin de job).
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       # Deploy keys SSH pour cloner les submodules privés bmechergui/kicad-tools
       # et bmechergui/circuit-synth (privé depuis le 2026-07-18) — rewrite
@@ -165,3 +170,111 @@ jobs:
           echo "KiCad service did not become healthy within 180 seconds"
           docker logs kicad-test
           exit 1
+
+      # ── Porte 3+ : le board, pas seulement le build ────────────────────────
+      # Une CI verte sur une PR de bump de submodule ne dit que « ça compile ».
+      # Elle ne dit RIEN du board produit. Mesuré le 2026-07-28 : kicad-tools
+      # 0.18.0 s'installe et compile parfaitement, mais refuse désormais de
+      # router un placement dont des composants sortent du contour
+      # (« 7 footprint(s) outside Edge.Cuts — placement invalid ») — un
+      # changement de comportement qu'aucun test unitaire ne voit.
+      #
+      # Ces étapes rejouent la fixture led-blinker-full-pipeline contre l'image
+      # fraîchement construite et publient les chiffres sur la PR, pour que la
+      # Porte 4 (merge humain) s'appuie sur des faits et non sur « c'est vert ».
+      - name: Détecter une PR touchant un submodule KiCad
+        if: github.event_name == 'pull_request'
+        id: detect_submodule
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Via l'API plutôt que git diff : le checkout est en --depth=1, la
+          # base n'est pas dans l'historique local.
+          if gh pr view "${{ github.event.pull_request.number }}" --json files \
+               --jq '.files[].path' \
+             | grep -qE '^services/kicad/(kicad-tools|circuit_synth)$'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rejouer le pipeline complet (3 runs)
+        if: steps.detect_submodule.outputs.touched == 'true'
+        id: pipeline_runs
+        run: |
+          set -euo pipefail
+          # Le service exige un token d'au moins 32 caractères (security.py) —
+          # un token trop court fait démarrer le conteneur, le rend « healthy »
+          # (/health est public) et renvoie 503 sur TOUT le reste.
+          TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+          docker rm -f kicad-fixture >/dev/null 2>&1 || true
+          docker run -d --name kicad-fixture -p 127.0.0.1:8766:8766 \
+            -e KICAD_SERVICE_TOKEN="$TOKEN" \
+            -e KICAD_SYMBOL_DIR=/usr/share/kicad/symbols \
+            -e KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints \
+            -e FREEROUTING_API_URL=http://127.0.0.1:37864 \
+            cirqix-kicad:test
+          trap 'docker rm -f kicad-fixture >/dev/null 2>&1 || true' EXIT
+
+          for attempt in $(seq 1 48); do
+            if curl -fsS -m 5 http://127.0.0.1:8766/health >/dev/null 2>&1; then break; fi
+            if [ "$attempt" = "48" ]; then
+              echo "::error::Le service KiCad n'est pas devenu sain en 240 s"
+              docker logs kicad-fixture | tail -40
+              exit 1
+            fi
+            sleep 5
+          done
+
+          cd services/kicad/examples/led-blinker-full-pipeline
+          : > /tmp/summaries.txt
+          for i in 1 2 3; do
+            PYTHONUTF8=1 KICAD_SERVICE_URL=http://127.0.0.1:8766 \
+            KICAD_SERVICE_TOKEN="$TOKEN" \
+              python3 run_pipeline.py "/tmp/fixture-run-$i" 2>&1 \
+              | tee "/tmp/run-$i.log" | grep '^SUMMARY' \
+              | sed "s/^/run$i /" >> /tmp/summaries.txt || {
+                echo "run$i ECHEC — pipeline interrompu" >> /tmp/summaries.txt
+                tail -20 "/tmp/run-$i.log" || true
+              }
+          done
+          cat /tmp/summaries.txt
+
+          # Le placement GA est stochastique et sans seed : un seul run ne
+          # prouve rien, d'où les 3. On ne fait PAS échouer le job sur un board
+          # non DRC-clean — c'est une mesure à relire, pas une porte.
+          CLEAN=$(grep -c 'drc_clean=True' /tmp/summaries.txt || true)
+          echo "clean_runs=$CLEAN" >> "$GITHUB_OUTPUT"
+          {
+            echo 'summaries<<EOF'
+            cat /tmp/summaries.txt
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+
+      - name: Publier la mesure sur la PR
+        if: always() && steps.detect_submodule.outputs.touched == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLEAN_RUNS: ${{ steps.pipeline_runs.outputs.clean_runs }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Corps écrit dans un fichier : un heredoc imbriqué dans le scalaire
+          # YAML casse le parsing (le délimiteur en colonne 0 ferme le bloc).
+          {
+            echo "### Pipeline complet rejoué sur cette PR"
+            echo
+            echo "Fixture \`led-blinker-full-pipeline\`, 3 runs contre l'image construite ici."
+            echo "**${CLEAN_RUNS:-0}/3 runs DRC-clean.**"
+            echo
+            echo '```'
+            cat /tmp/summaries.txt 2>/dev/null || echo "(aucune mesure — le pipeline n'a pas abouti)"
+            echo '```'
+            echo
+            echo "Le placement GA est stochastique et sans seed : la référence sur \`main\` est"
+            echo "**2 runs clean sur 3** (mesure du 2026-07-28). Un résultat inférieur mérite"
+            echo "d'être creusé avant merge ; il ne fait pas échouer la CI de lui-même."
+          } > /tmp/pr_comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/pr_comment.md
