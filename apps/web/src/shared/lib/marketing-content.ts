@@ -115,7 +115,7 @@ export const PRICING_PLANS: PricingPlan[] = [
   },
   {
     name: 'Pro',
-    price: '25€',
+    price: '29€',
     period: '/mo',
     popular: true,
     credits: '100 credits / month',
@@ -126,7 +126,7 @@ export const PRICING_PLANS: PricingPlan[] = [
   },
   {
     name: 'Pro Max',
-    price: '50€',
+    price: '99€',
     period: '/mo',
     popular: false,
     credits: '300 credits / month',

@@ -198,8 +198,8 @@ Target cost: **~0.12€ per complete PCB**.
 | Plan       | Price      | Credits        | Max layers |
 |------------|------------|----------------|------------|
 | Free       | 0€         | 5 / day        | 2          |
-| Pro        | 25€/mo     | 100 / month    | 4          |
-| Pro Max    | 50€/mo     | 300 / month    | 8          |
+| Pro        | 29€/mo     | 100 / month    | 4          |
+| Pro Max    | 99€/mo     | 300 / month    | 8          |
 | Enterprise | Custom     | Unlimited      | Unlimited  |
 
 ---

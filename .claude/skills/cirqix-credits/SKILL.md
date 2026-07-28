@@ -30,8 +30,8 @@ export type CreditAction = keyof typeof CREDIT_COSTS;
 ```typescript
 export const PLANS = {
   free:       { daily_credits: 5,    monthly_credits: null, price_eur: 0,    layers_max: 2    },
-  pro:        { daily_credits: null, monthly_credits: 100,  price_eur: 25,   layers_max: 4    },
-  pro_max:    { daily_credits: null, monthly_credits: 300,  price_eur: 50,   layers_max: 8    },
+  pro:        { daily_credits: null, monthly_credits: 100,  price_eur: 29,   layers_max: 4    },
+  pro_max:    { daily_credits: null, monthly_credits: 300,  price_eur: 99,   layers_max: 8    },
   enterprise: { daily_credits: null, monthly_credits: null, price_eur: null, layers_max: null }, // illimité
 } as const;
 
