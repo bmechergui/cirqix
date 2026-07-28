@@ -27,30 +27,38 @@ qu'en production, pas de modèle parallèle.
 
 ## Étapes
 
-### 0. Prérequis — fixture LED (à créer)
+### 0. Prérequis — fixture LED ✅ (disponible 2026-07-27)
 
-Le dossier `services/kicad/examples/led-blinker-full-pipeline/` **n'existe pas
-encore**. Aucune étape ci-dessous ne démarre tant que la fixture n'est pas
-générée : circuit LED 3 nets (VCC, LED_ANODE, GND) + PCB placé, validé
-`kicad-cli pcb drc`, committé avec `input/` et `expected/` (règle « 1 dossier =
-1 cas » du CLAUDE.md).
+Le dossier `services/kicad/examples/led-blinker-full-pipeline/` **existe** :
 
-- Validation : `input/circuit.json` présent, PCB placé lisible, DRC officiel à
-  0 violation avant tout entraînement.
+- `input/schema.json` — 8 composants, **6 nets**
+  (`VCC`, `GND`, `TRIG_THR`, `DISCH`, `OUT`, `LED_A`), board 60×45 mm
+- `expected/led_blinker_final.kicad_pcb` — baseline 100 % routé, 0 violation
+  DRC kicad-cli
+- `output/5_placed.kicad_pcb` — PCB placé non routé (régénérable via
+  `run_pipeline.py` si absent du worktree ; outputs intermédiaires non
+  committés)
+
+Aucune étape « créer la fixture » ne reste. Ne pas réintroduire l'ancien
+mini-board 3 nets (`VCC` / `LED_ANODE` / `GND`) ni le chemin `circuit.json`.
+
+- Validation : `input/schema.json` présent ; PCB placé lisible ; baseline
+  `expected/` DRC-clean avant tout entraînement.
 
 ### 1. `board_grid.py` — grille 2 couches
 
 Construire la grille depuis le PCB placé du LED
-(`services/kicad/examples/led-blinker-full-pipeline/`), pas fixé à 0,1 mm, en
+(`output/5_placed.kicad_pcb` régénéré si besoin), pas fixé à 0,1 mm, en
 **enveloppant `RoutingGrid`** (`kicad_tools/router/grid.py`) : conversions
 monde↔grille, masques de clearance et congestion viennent de la primitive de
 production, pas d'un modèle parallèle. Rasteriser les 8 canaux d'observation
 (pads source/cible, cuivre du net, cuivre des autres nets,
-courtyards/keepouts, Edge.Cuts, congestion, curseur, distance cible).
+courtyards/keepouts, Edge.Cuts, congestion, curseur, distance cible) pour
+les **6 nets** du `schema.json`.
 
-- Validation : la rasterisation correspond au `.kicad_pcb` (test sur la
-  fixture immuable) ; les masques de blockage sont identiques à ceux que
-  `RoutingGrid` produit pour le même board.
+- Validation : la rasterisation correspond au `.kicad_pcb` placé ; les masques
+  de blockage sont identiques à ceux que `RoutingGrid` produit pour le même
+  board.
 
 ### 2. `actions.py` — actions + validateur rapide
 
@@ -88,8 +96,9 @@ valeurs mesurées.
 
 ### 6. Entraînement LED — curriculum
 
-1. Un épisode par net (VCC, LED_ANODE, GND), sans via.
-2. Les trois nets dans un ordre choisi par le contrôleur.
+1. Un épisode par net sans via, dans l'ordre suggéré :
+   `LED_A` → `OUT` → `DISCH` → `TRIG_THR` → `VCC` → `GND`.
+2. Les 6 nets dans un ordre choisi par le contrôleur (avec vias si besoin).
 3. Artefacts dans `output/rl-routing/` : `episode_metrics.jsonl`,
    `candidate.kicad_pcb`, `kicad_drc.json`, `summary.json`. Trajectoires
    complètes (`obs`, `action`, `reward`, `done`) loggées en npz/jsonl par
@@ -97,7 +106,7 @@ valeurs mesurées.
    migration » dans [../README.md](../README.md)).
 
 - Validation : `kct route` lancé comme baseline de comparaison sur le même
-  PCB placé.
+  PCB placé (référence committée : `expected/led_blinker_final.kicad_pcb`).
 
 ### 7. Gate de passage — quantifiée
 

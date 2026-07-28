@@ -121,8 +121,9 @@ Pour les étapes 3+ du plan de livraison, un générateur procédural de boards
 est requis : composants placés aléatoirement, densités et tailles de carte
 variées, 2 à 10 composants, nets tirés selon des profils simples (power,
 signal, bus). Le générateur réutilise les fixtures et le format
-`circuit.json` existants, et chaque board généré est validé par
-`kicad-cli pcb drc` avant d'entrer dans le corpus d'entraînement.
+`schema.json` (sortie agent Schéma / driver LLM) existants, et chaque board
+généré est validé par `kicad-cli pcb drc` avant d'entrer dans le corpus
+d'entraînement.
 
 ## Hors scope v1
 
@@ -133,37 +134,49 @@ La v1 du routeur RL ne traite pas :
 - les contraintes RF (impédance contrôlée, stubs) ;
 - les nets de plans (GND/VCC sur plan cuivre) : ils restent à la logique de
   remplissage existante (`run_fill_zones`, `is_plane_layer`). Cas particulier
-  du LED : ses 3 nets dont GND sont routés en pistes par le RL à titre
-  pédagogique, mais sur les cartes suivantes les nets power basculent sur
-  les plans — la règle est tranchée par fixture dans la config de
-  l'environnement.
+  du LED : ses 6 nets, y compris VCC/GND, sont routés en pistes par le RL à
+  titre pédagogique (pas de plans sur ce board 2 couches), mais sur les cartes
+  suivantes les nets power basculent sur les plans — la règle est tranchée par
+  fixture dans la config de l'environnement.
 
 Ces nets restent routés par `kct route` ou marqués à router manuellement. Les
 retirer de l'observation du routeur RL v1 évite un reward inatteignable.
 
 ## Processus LED pour le routeur RL direct
 
-> **Prérequis — fixture à créer.** Le dossier
-> `services/kicad/examples/led-blinker-full-pipeline/` **n'existe pas encore**
-> (vérifié : seul `stm32-validation/` est présent). Il doit être généré et
-> committé AVANT l'[étape 1 de la PLAN](PLAN.md#étapes) : circuit LED 3 nets
-> (VCC, LED_ANODE, GND) + PCB placé, validé `kicad-cli pcb drc`, avec `input/`
-> et `expected/` (règle « 1 dossier = 1 cas » du CLAUDE.md). Tant que la fixture
-> n'existe pas, le routeur RL n'a pas de terrain d'apprentissage et la PLAN ne
-> démarre pas.
+> **Prérequis — fixture disponible (2026-07-27).** Le dossier
+> `services/kicad/examples/led-blinker-full-pipeline/` **existe** et a validé le
+> pipeline complet (100 % routé, 0 violation DRC kicad-cli sur
+> `expected/led_blinker_final.kicad_pcb`). Contenu utile pour le RL :
+>
+> | Artefact | Rôle RL |
+> |---|---|
+> | `input/schema.json` | Netlist source (driver LLM) — **pas** `circuit.json` |
+> | `output/5_placed.kicad_pcb` | PCB placé non routé (régénérable via `run_pipeline.py`) |
+> | `expected/led_blinker_final.kicad_pcb` | Baseline `kct route` 100 % / DRC-clean |
+>
+> **Board réel :** 8 composants (NE555 DIP-8 + 7 SMD 0805 + header 2 pts),
+> board 60×45 mm, **6 nets** :
+> `VCC`, `GND`, `TRIG_THR`, `DISCH`, `OUT`, `LED_A`
+> (pas le mini-board pédagogique 3 nets `VCC`/`LED_ANODE`/`GND` d'une version
+> antérieure de cette doc — ne plus y faire référence).
 
-Une fois créée, la fixture sert de terrain d'apprentissage initial et de preuve
-de concept instrumentée :
+La fixture sert de terrain d'apprentissage initial et de preuve de concept
+instrumentée :
 
 ```text
-1. Prendre input/circuit.json et le PCB placé comme fixture immuable.
-2. Construire une grille deux couches avec les trois nets : VCC, LED_ANODE, GND.
-3. Entraîner d'abord un épisode par net, sans via.
-4. Entraîner ensuite les trois nets dans un ordre choisi par le contrôleur.
+1. Prendre input/schema.json + le PCB placé (output/5_placed.kicad_pcb,
+   régénéré si absent) comme fixture d'entraînement.
+2. Construire une grille deux couches avec les 6 nets du schema.json.
+3. Curriculum : un épisode par net sans via d'abord
+   (ordre suggéré : LED_A → OUT → DISCH → TRIG_THR → VCC → GND).
+4. Entraîner ensuite les 6 nets dans un ordre choisi par le contrôleur.
 5. Exporter les segments gagnants vers un .kicad_pcb temporaire.
-6. Lancer kct route seulement comme baseline de comparaison.
+6. Lancer kct route seulement comme baseline de comparaison
+   (référence : expected/led_blinker_final.kicad_pcb).
 7. Lancer kicad-cli pcb drc --format json.
-8. Copier dans output/ uniquement un candidat avec 0 violation et 0 unconnected item.
+8. Copier dans output/rl-routing/ uniquement un candidat avec 0 violation
+   et 0 unconnected item.
 ```
 
 Les artefacts d'expérimentation proposés sont :

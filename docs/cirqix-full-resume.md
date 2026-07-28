@@ -484,16 +484,17 @@ Pour un vrai SaaS Cirqix avec plusieurs templates, utilisateurs payants, et agen
 pour protypage on utulise claude SDK
 
 
-> **Synchronisation RL (2026-07-19)** — La spécification RL à jour vit dans
+> **Synchronisation RL (2026-07-28)** — La spécification RL à jour vit dans
 > `docs/rl/` (proposition Phase 6) : deux politiques (placement, routage) qui
 > produisent des candidats, jugés par `kicad-cli pcb drc`, avec critères
 > d'abandon et coûts chiffrés. Décision d'algorithme : **PPO v1** (SB3),
 > RecurrentPPO si la mémoire manque, DreamerV3 seulement sur conditions
-> mesurées. La piste **DreamerV3 + FreeRouting** est validée par une
-> publication (Chiang et al., 2026, *Expert Systems with Applications* :
-> 96 % de complétion, −21 % de temps d'entraînement vs DQN) et documentée
-> dans `docs/rl/README.md` comme piste de référence post-PPO. La section
-> ci-dessous reste un brainstorm historique : son « Option 1 — RL →
+> mesurées. Fixture routing LED **disponible** :
+> `services/kicad/examples/led-blinker-full-pipeline/` (`input/schema.json`,
+> 6 nets, baseline `expected/led_blinker_final.kicad_pcb` DRC-clean). La piste
+> **DreamerV3 + FreeRouting** est citée comme référence post-PPO (Chiang et
+> al., 2026 — à valider avant de s'y engager) dans `docs/rl/README.md`. La
+> section ci-dessous reste un brainstorm historique : son « Option 1 — RL →
 > FreeRouting » est une alternative MVP valide, mais la spec Phase 6 retient
 > un routeur RL direct avec fallback `kct route` ; FreeRouting y sert de
 > baseline et de source de behavioral cloning.

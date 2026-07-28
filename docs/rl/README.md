@@ -18,7 +18,9 @@ puis DRC officiel `kicad-cli pcb drc --format json`.
 ## Ordre de livraison
 
 1. RL placement Phase 6a : PPO/MLP, candidat comparé au snapshot pré-RL.
-2. RL routing sur le LED : une carte, deux couches, trois nets.
+2. RL routing sur le LED réel (`led-blinker-full-pipeline/`) : une carte,
+   deux couches, **6 nets** (`VCC`, `GND`, `TRIG_THR`, `DISCH`, `OUT`,
+   `LED_A`) — fixture déjà disponible (2026-07-27).
 3. Extension du routeur RL à des cartes simples de 5 à 10 composants.
 4. RL placement Phase 6b : encodeur GNN seulement après la preuve PPO/MLP.
 5. Cartes STM32 et multicouches seulement après des résultats DRC reproductibles.
@@ -154,8 +156,11 @@ cartes de 10 à 30 composants.
 
 ### RL routing LED
 
-- Entraînement : 10 à 100 M de pas surrogate (grille 2 couches, 3 nets,
-  pas ~10–50 µs vectorisé) → **12 à 48 h GPU par run**.
+- Fixture : `services/kicad/examples/led-blinker-full-pipeline/` (8 composants,
+  6 nets, 60×45 mm) — voir [routing/README.md](routing/README.md).
+- Entraînement : 10 à 100 M de pas surrogate (grille 2 couches, 6 nets,
+  pas ~10–50 µs vectorisé) → **12 à 48 h GPU par run** (ordre de grandeur ;
+  le curriculum mono-net peut être plus court).
 - Évaluations réelles : `kicad-cli pcb drc` ≈ 5–15 s sur le LED ; cadence
   1 checkpoint sur 20, checkpoint tous les 100 k pas → ~5 évaluations par
   run de 10 M de pas, **plafond 50 évaluations par run** (< 15 min au total).

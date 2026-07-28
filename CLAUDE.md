@@ -550,11 +550,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 `examples/<cas>/` = cas d'étude complet input→output (board, batches, README, résultat attendu dans `expected/`). Pas des tests automatisés — jamais de `test_*.py` ici. Les outputs intermédiaires régénérables ne sont jamais committés ; seuls `input/`, `batches/`, `README.md` et `expected/` (1 board final + 1 rendu) le sont.
 
 **Règle : 1 dossier = 1 cas = 1 question.** Cas existants :
-- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb`
+- `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb` ; cas de **stress DFM** (LQFP-48 fine-pitch)
+- `led-blinker-full-pipeline/` — pipeline **complet** ①→⑧ description → Gerbers (`run_pipeline.py`) ; board simple NE555+LED (8 composants, **6 nets** dans `input/schema.json`, 60×45 mm) ; `expected/led_blinker_final.kicad_pcb` = 100 % routé / DRC-clean (2026-07-27). **Terrain d'apprentissage RL routing** documenté dans `docs/rl/routing/` — ne plus écrire que la fixture « n'existe pas »
 
-(`stm32-full-pipeline/` supprimé au commit `8faf685` — ne plus y faire référence.
-La fixture `led-blinker-full-pipeline/` visée par `docs/rl/routing/` n'existe pas
-encore : à créer avant de démarrer la PLAN RL routing.)
+(`stm32-full-pipeline/` supprimé au commit `8faf685` — ne plus y faire référence.)
 
 ---
 
