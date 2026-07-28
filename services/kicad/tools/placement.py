@@ -22,10 +22,19 @@ Cirqix — Placement (tools/placement.py)
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import math
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+# Env partagé des sous-processus kicad-tools : UTF-8 forcé + PYTHONPATH vers
+# kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
+# pip-installé avec le backend C++).
+from tools.kct_route import _kct_env
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +113,7 @@ def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[i
     from kicad_tools.placement.conflict import ConflictSeverity
     from kicad_tools.placement.fixer import FixStrategy, PlacementFixer
 
-    rules = DesignRules()
+    rules = DesignRules(courtyard_margin=_COURTYARD_MARGIN_MM)
     before = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
     n_errors_before = sum(1 for c in before if c.severity == ConflictSeverity.ERROR)
     # Le fixer natif résout aussi les WARNING (courtyard_overlap via
@@ -171,6 +180,54 @@ def _max_displacement_mm(
     return max(displacements) if displacements else 0.0
 
 
+# PlacementAnalyzer APPROXIME le courtyard par « pads + marge », alors que
+# kicad-cli utilise la géométrie réelle F.CrtYd du footprint. Sur un boîtier
+# traversant (DIP-8), le corps déborde largement des pads : l'analyseur voyait
+# « 0 conflit » là où kicad-cli rapportait un courtyards_overlap ERROR, que
+# l'Inspecteur ne corrigeait donc jamais. Mesuré le 2026-07-27 sur
+# examples/led-blinker-full-pipeline (NE555 DIP-8 + 0805).
+# Marge élargie pour que l'approximation couvre le courtyard réel — valeur
+# calibrée par mesure, cf. le README de la fixture.
+_COURTYARD_MARGIN_MM: float = 0.5
+
+_CMAES_RUNNER = Path(__file__).resolve().parent / "cmaes_runner.py"
+
+
+def _run_cmaes_in_subprocess(pcb_path: Path, out_path: Path, time_budget_s: float) -> int:
+    """Lance le CMA-ES dans un processus enfant. Retourne son code de sortie.
+
+    ``run_optimize_placement`` installe des handlers de signal, interdits hors
+    thread principal — or uvicorn exécute ``auto_place`` dans un thread de
+    worker. En appel direct, l'exception tombait AVANT toute optimisation et le
+    Géomètre ne tournait jamais en production (mesuré en conteneur le
+    2026-07-27). Un processus enfant a un vrai thread principal.
+
+    Voir ``tools/cmaes_runner.py`` pour le détail, notamment pourquoi le CLI
+    ``kct optimize-placement`` ne convient pas (pas de ``--seed current``).
+    """
+    payload = json.dumps({
+        "pcb": str(pcb_path),
+        "output": str(out_path),
+        "max_iterations": _CMAES_MAX_ITERATIONS,
+        "time_budget": time_budget_s,
+    })
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_CMAES_RUNNER), payload],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=time_budget_s + 120, check=False, env=_kct_env(),
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("_refine_with_cmaes: sous-processus CMA-ES expiré")
+        return 1
+    if proc.returncode not in (0, 2):
+        logger.warning(
+            "_refine_with_cmaes: sous-processus CMA-ES exit=%d — stderr: %s",
+            proc.returncode, (proc.stderr or "").strip()[:300],
+        )
+    return proc.returncode
+
+
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
     cmaes --seed-method current`` (CMAwM, patch Cirqix ``seed="current"`` :
@@ -192,23 +249,13 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
 
     Retourne ``{"refined": bool, "elapsed_s": float}``.
     """
-    from kicad_tools.cli.optimize_placement_cmd import run_optimize_placement
     from kicad_tools.schema.pcb import PCB
 
     before = {fp.reference: (fp.position, fp.rotation) for fp in PCB.load(str(pcb_path)).footprints}
 
     cmaes_out = pcb_path.with_name(pcb_path.stem + "_cmaes" + pcb_path.suffix)
     start = time.monotonic()
-    exit_code = run_optimize_placement(
-        str(pcb_path),
-        strategy_name="cmaes",
-        seed_method="current",
-        output_path=str(cmaes_out),
-        max_iterations=_CMAES_MAX_ITERATIONS,
-        time_budget=time_budget_s,
-        quiet=True,
-        allow_infeasible=True,
-    )
+    exit_code = _run_cmaes_in_subprocess(pcb_path, cmaes_out, time_budget_s)
     elapsed = time.monotonic() - start
 
     if exit_code not in (0, 2) or not cmaes_out.exists():
@@ -263,6 +310,115 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
             fp.position = (cx, cy)
             clamped.append(fp.reference)
     return clamped
+
+
+# ---------------------------------------------------------------------------
+# Brique 1 — Halo d'escape autour des composants fine-pitch
+# ---------------------------------------------------------------------------
+# Cause racine mesurée (iso-prod Docker, 2026-07-22) du blocage 100% routable →
+# routé → fabricable : un boîtier fine-pitch dense (LQFP-48 0,5mm) encerclé par
+# ses voisins ne peut pas échapper ses broches proprement. À placement égal, le
+# routage strict passe de 55% (voisins collés) à 73% (canal d'escape dégagé), en
+# restant électriquement propre (0 court réel). On réserve donc un canal d'escape
+# autour des composants denses AVANT de livrer le placement. 100% natif :
+# détection = seuil `_dense_package_count` (≥16 pads) ; halo = keepout natif
+# `create_keepout_from_component` ; résolution des overlaps induits = PlacementFixer.
+
+# Seuil « boîtier dense » — identique à
+# kicad_tools.optim.fom_features._dense_package_count (BGA, QFP/QFN denses).
+_DENSE_PAD_COUNT: int = 16
+# Largeur du canal d'escape réservé au-delà du courtyard d'un composant dense.
+# Calibré (iso-prod Docker, board STM32) : 2,5 mm → 73% routé mais 1 court réel
+# résiduel (kicad-cli) ; 5,0 mm approche le halo manuel (~6 mm de clearance) qui
+# donnait 0 court. Un halo trop large sur une petite carte repousse trop de
+# voisins vers les bords → re-mesurer si augmenté.
+_ESCAPE_HALO_MM: float = 5.0
+# Pas et plafond du push radial hors du keepout (borné — jamais de boucle infinie).
+_HALO_PUSH_STEP_MM: float = 0.5
+_HALO_PUSH_MAX_STEPS: int = 60
+
+
+def _dense_part_refs(pcb) -> list[str]:
+    """Refs des composants fine-pitch haut-broches (≥ ``_DENSE_PAD_COUNT`` pads).
+
+    Seuil identique à ``kicad_tools.optim.fom_features._dense_package_count``
+    (pas de constante custom). Ces boîtiers (BGA, QFP/QFN denses) ont besoin
+    d'un canal d'escape dégagé pour router leurs broches sans quasi-courts.
+    """
+    return [fp.reference for fp in pcb.footprints
+            if fp.reference and len(fp.pads) >= _DENSE_PAD_COUNT]
+
+
+def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
+                          halo_mm: float = _ESCAPE_HALO_MM) -> int:
+    """Écarte les voisins mobiles du halo d'escape des composants denses.
+
+    Pour chaque composant dense (``_dense_part_refs``), crée un keepout natif
+    (courtyard + ``halo_mm`` via ``create_keepout_from_component``) et pousse
+    radialement hors du keepout tout footprint mobile dont le centre y tombe.
+    Les composants ancrés (connecteurs) et les composants denses eux-mêmes ne
+    bougent jamais. Les overlaps induits sont résolus par ``PlacementFixer``
+    (``_resolve_remaining_conflicts``). Positions clampées dans le contour.
+
+    Générique : **no-op** (retourne 0, board inchangé) si aucun composant dense
+    — une carte simple (NE555, LED blinker) n'est jamais touchée.
+
+    Renvoie le nombre de footprints déplacés.
+    """
+    from kicad_tools.schema.pcb import PCB
+    from kicad_tools.optim.keepout import create_keepout_from_component
+    from kicad_tools.optim.board_outline import extract_board_outline
+
+    pcb = PCB.load(str(pcb_path))
+    dense = _dense_part_refs(pcb)
+    if not dense:
+        return 0
+
+    outline = extract_board_outline(pcb)
+    ox, oy = pcb.board_origin
+    if outline is not None and outline.vertices:
+        xs = [v.x - ox for v in outline.vertices]
+        ys = [v.y - oy for v in outline.vertices]
+        bx0, bx1 = min(xs) + 2.0, max(xs) - 2.0
+        by0, by1 = min(ys) + 2.0, max(ys) - 2.0
+    else:
+        bx0 = by0 = float("-inf")
+        bx1 = by1 = float("inf")
+
+    keep = set(anchored) | set(dense)
+    pushed = 0
+    for dref in dense:
+        zone = create_keepout_from_component(pcb, dref, clearance_mm=halo_mm)
+        if zone is None:
+            continue
+        dfp = next(fp for fp in pcb.footprints if fp.reference == dref)
+        dcx, dcy = dfp.position
+        for fp in pcb.footprints:
+            if fp.reference in keep:
+                continue
+            x, y = fp.position
+            if not zone.contains_point(x, y):
+                continue
+            dx, dy = x - dcx, y - dcy
+            d = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / d, dy / d
+            nx, ny = x, y
+            for _ in range(_HALO_PUSH_MAX_STEPS):
+                if not zone.contains_point(nx, ny):
+                    break
+                nx += ux * _HALO_PUSH_STEP_MM
+                ny += uy * _HALO_PUSH_STEP_MM
+            nx = min(max(nx, bx0), bx1)
+            ny = min(max(ny, by0), by1)
+            if (nx, ny) != (x, y):
+                fp.position = (nx, ny)
+                pushed += 1
+
+    if pushed:
+        pcb.save(str(pcb_path))
+        # Overlaps induits par le push → réparation locale native (dense + ancrés figés).
+        _resolve_remaining_conflicts(pcb_path, list(keep))
+    return pushed
 
 
 # ---------------------------------------------------------------------------
@@ -426,13 +582,30 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                         n_err_before, n_err_after,
                     )
 
+        # ── Brique 1 : halo d'escape — dégage le canal de routage des boîtiers
+        # denses (fine-pitch) en écartant leurs voisins mobiles. No-op sur une
+        # carte sans composant dense. Dernière étape placement : ni le GA ni le
+        # CMA-ES ne peuvent re-tasser les voisins ensuite.
+        n_halo = _reserve_escape_halos(out, conn)
+        if n_halo:
+            logger.info(
+                "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
+                "des composants denses (fine-pitch)", n_halo)
+
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
+            # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
+            # attendu par le client TS (`placement-service.ts::isValidPosition`).
+            # Le code émettait `x`/`y`, contredisant son propre modèle : le client
+            # filtrait donc TOUTES les positions et `call_agent_placement`
+            # renvoyait `placements: []`. Invisible aux tests mockés, qui
+            # reproduisaient l'hypothèse du client et non la réalité du service ;
+            # révélé le 2026-07-27 par `pipeline-live.test.ts`.
             "positions": [
                 {"ref": fp.reference,
-                 "x": round(fp.position[0], 2), "y": round(fp.position[1], 2)}
+                 "x_mm": round(fp.position[0], 2), "y_mm": round(fp.position[1], 2)}
                 for fp in footprints
             ],
         }

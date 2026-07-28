@@ -76,6 +76,52 @@ export function keepBestRouting(
   return c > b ? candidate : best;
 }
 
+/**
+ * Nombre TOTAL de passages placement→routage→DRC (1 initial + retries).
+ * Mesuré 2026-07-27 (examples/led-blinker-full-pipeline, juge kicad-cli) : à
+ * 100% routé, 3 tirages GA donnent 0, 12 et 4 violations — 2 boards livrables
+ * sur 3, le troisième n'étant qu'un mauvais tirage. Le placement est
+ * stochastique et sans seed : re-tirer est le levier déterministe.
+ */
+export const MAX_DRC_ATTEMPTS = 3;
+
+function violationCount(result: Record<string, unknown>): number {
+  const v = result['drcViolations'];
+  return Array.isArray(v) ? v.length : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Décision à seuil : faut-il re-tirer un placement parce que le DRC refuse le
+ * board ? Jumelle de `shouldRetryPlacement`, qui ne couvrait que le routage —
+ * or un board peut être routé à 100% ET refusé par le DRC.
+ *
+ * On ne re-tire PAS sur `status: 'error'` : re-placer ne répare pas un service
+ * KiCad éteint, ça ne ferait que brûler le budget d'itérations.
+ */
+export function shouldRetryForDrc(
+  result: Record<string, unknown>,
+  attempt: number,
+  maxAttempts: number = MAX_DRC_ATTEMPTS,
+): boolean {
+  if (result['status'] === 'error') return false;
+  if (result['drc_clean'] === true) return false;
+  return attempt < maxAttempts;
+}
+
+/**
+ * Anti-régression inter-tentatives : un board clean l'emporte toujours ; à
+ * égalité, celui qui porte le moins de violations. Un re-tirage ne peut donc
+ * jamais dégrader le résultat livré.
+ */
+export function keepBestDrc(
+  best: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+): Record<string, unknown> {
+  if (best['drc_clean'] === true) return best;
+  if (candidate['drc_clean'] === true) return candidate;
+  return violationCount(candidate) < violationCount(best) ? candidate : best;
+}
+
 function extractReasoningSteps(result: Record<string, unknown>): string[] {
   return Array.isArray(result['reasoning_steps'])
     ? (result['reasoning_steps'] as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -269,6 +315,25 @@ export async function* runOrchestrator(
             retry = mergeRescueIntoRouting(retry, reason);
           }
           result = keepBestRouting(result, retry);
+        }
+      }
+
+      // Retry placement piloté par le DRC — même philosophie que le retry
+      // routage ci-dessus : règle métier à seuil, donc CODE et non jugement de
+      // Sonnet. Un board peut être routé à 100% et refusé par le DRC ; le
+      // placement étant stochastique, re-tirer est le levier déterministe.
+      if (tool.name === 'call_agent_drc') {
+        let attempt = 1;
+        while (shouldRetryForDrc(result, attempt)) {
+          attempt++;
+          yield { type: 'step', step: 'PLACEMENT' };
+          const placement = await executeToolStub('call_agent_placement', {}, options.projectId);
+          yield { type: 'pcb_state', projectId: options.projectId, state: placement };
+          yield { type: 'step', step: 'ROUTING' };
+          await executeToolStub('call_agent_routing', {}, options.projectId);
+          yield { type: 'step', step: 'DRC' };
+          const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
+          result = keepBestDrc(result, retry);
         }
       }
 

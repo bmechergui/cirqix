@@ -7,6 +7,9 @@ import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'local-pipeline' });
 
+/** Étape du pipeline dont le handler a renvoyé status:'error' — interrompt la chaîne. */
+class PipelineStepError extends Error {}
+
 interface PipelineOptions {
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
@@ -39,24 +42,48 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     status: 'INITIAL',
   };
 
-  async function updateState(toolName: string, rawResult: any, statusLabel: PCBStatus, stepName: AgentStep) {
+  async function updateState(
+    toolName: string,
+    rawResult: Record<string, unknown>,
+    fallbackStatus: PCBStatus,
+    stepName: AgentStep,
+  ) {
     controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: stepName })));
-    
+
+    // Le handler fait foi. Un outil en échec n'accorde AUCUN statut : on
+    // interrompt le pipeline sans rien persister. Sans ce garde-fou, un DRC en
+    // erreur (kicad-cli absent, KICAD_SERVICE_URL non configurée…) était écrit
+    // DRC_CLEAN en base — or POST /api/jlcpcb/order autorise une commande dès
+    // que projects.status vaut DRC_CLEAN, donc sur un board jamais validé.
+    if (rawResult['status'] === 'error') {
+      throw new PipelineStepError(
+        String(rawResult['error'] ?? `${toolName} a échoué`),
+      );
+    }
+
+    const schContent = rawResult['kicad_sch_content'];
+    const pcbContent = rawResult['kicad_pcb_content'];
+
     let kicad_sch_url: string | undefined;
     let kicad_pcb_url: string | undefined;
-    
-    if (typeof rawResult.kicad_sch_content === 'string' && rawResult.kicad_sch_content.length > 0) {
-      const up = await uploadKicadArtifact(supabase, userId, projectId, 'schematic.kicad_sch', rawResult.kicad_sch_content);
+
+    if (typeof schContent === 'string' && schContent.length > 0) {
+      const up = await uploadKicadArtifact(supabase, userId, projectId, 'schematic.kicad_sch', schContent);
       if (up.signedUrl) kicad_sch_url = up.signedUrl;
     }
-    if (typeof rawResult.kicad_pcb_content === 'string' && rawResult.kicad_pcb_content.length > 0) {
-      const up = await uploadKicadArtifact(supabase, userId, projectId, 'pcb.kicad_pcb', rawResult.kicad_pcb_content);
+    if (typeof pcbContent === 'string' && pcbContent.length > 0) {
+      const up = await uploadKicadArtifact(supabase, userId, projectId, 'pcb.kicad_pcb', pcbContent);
       if (up.signedUrl) kicad_pcb_url = up.signedUrl;
     }
 
     const rawWithoutContent = { ...rawResult };
-    delete rawWithoutContent.kicad_sch_content;
-    delete rawWithoutContent.kicad_pcb_content;
+    delete rawWithoutContent['kicad_sch_content'];
+    delete rawWithoutContent['kicad_pcb_content'];
+
+    // Ne jamais promouvoir au-delà de ce que le handler a réellement accordé :
+    // un DRC ayant trouvé des violations renvoie ROUTING_DONE, pas DRC_CLEAN.
+    const statusLabel: PCBStatus =
+      (rawResult['pcb_status'] as PCBStatus | undefined) ?? fallbackStatus;
 
     mergedState = {
       ...mergedState,
@@ -76,6 +103,9 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
       status: statusLabel,
       pcb_state: finalized,
       iteration_count: finalized.iteration,
+      // Provenance : ce repli enchaîne les VRAIS handlers (seul l'orchestrateur
+      // Sonnet est court-circuité) → board commandable.
+      agent_mode: 'orchestrator',
       updated_at: new Date().toISOString(),
     }).eq('id', projectId);
   }

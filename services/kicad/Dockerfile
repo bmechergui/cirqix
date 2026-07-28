@@ -1,6 +1,6 @@
 # ============================================================
 # Cirqix KiCad Service — Docker headless
-# Base : KiCad 8.0 + Python 3.12 + FastAPI + Freerouting
+# Base : KiCad 10.0 + Python 3.12 + FastAPI + Freerouting
 # Port : 8766 (matches KICAD_SERVICE_URL in .env.local)
 # ============================================================
 
@@ -17,8 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
     && rm -rf /var/lib/apt/lists/* \
-    && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-8.0-releases/ubuntu noble main" \
-        > /etc/apt/sources.list.d/kicad-kicad-8_0-releases.list \
+    && echo "deb https://ppa.launchpadcontent.net/kicad/kicad-10.0-releases/ubuntu noble main" \
+        > /etc/apt/sources.list.d/kicad-kicad-10_0-releases.list \
     && mkdir -p /root/.gnupg && chmod 700 /root/.gnupg \
     && for i in 1 2 3; do \
            curl -fsSL \

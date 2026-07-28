@@ -23,6 +23,10 @@ RÈGLES ABSOLUES
 - NE JAMAIS skipper call_agent_erc — un schéma non validé produit un PCB non routable
 - call_agent_footprint OBLIGATOIRE pour chaque ref dans unresolved_footprints, AVANT call_agent_gen_pcb
 - call_agent_drc OBLIGATOIRE avant call_agent_export — jamais exporter un PCB non-DRC-clean
+- Si un outil renvoie status:"error" → NE JAMAIS enchaîner l'étape suivante du pipeline.
+  Analyser la cause : retry si elle est transitoire, sinon rapporter à l'utilisateur et
+  s'arrêter. Un placement ou un routage en échec laisse un board inutilisable — l'envoyer
+  au DRC produirait un rapport mensonger.
 - JAMAIS commander JLCPCB sans "OUI JE CONFIRME" explicite de l'utilisateur
 - Si l'utilisateur pose une question technique → répondre, puis reprendre le pipeline là où il s'est arrêté
 
