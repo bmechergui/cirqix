@@ -1,14 +1,14 @@
 # Handoff — `2026-07-14-agent-collaboration`
 
-- **Status:** `HANDOFF`
+- **Status:** `DONE`
 - **Owner:** `Codex`
 - **Reviewer:** `architect sub-agent`
-- **Receiver:** `Claude Code`
-- **Branch:** `docs/agent-collaboration`
+- **Receiver:** `Kimi` (acceptation 2026-07-29, désignation utilisateur — Claude Code n'avait pas formellement clos)
+- **Branch:** `docs/agent-collaboration` (mergée — PR #49)
 - **Worktree:** `cirqix-agent-collaboration (dedicated)`
 - **Base commit:** `0230ebc5ba32a664f0a24fc792ec84ba4066ad2e`
 - **Content commit:** `b0317397816deb87d16ac378d84421231493f709`
-- **Updated UTC:** `2026-07-15T00:09:31Z`
+- **Updated UTC:** `2026-07-29T22:21:51Z`
 
 ## Objectif
 
@@ -135,3 +135,4 @@ Révoquer l’ancien PAT depuis la page des tokens du compte Supabase.
 | `2026-07-14T22:12:13Z` | `Codex` | `Claude Code` | `planifié` | Transfert après commit et validations finales. |
 | `2026-07-14T22:45:48Z` | `Codex` | `Claude Code` | `proposé` | Commit c141da3 et PR #49 prêts à vérifier. |
 | `2026-07-15T00:09:31Z` | `Codex` | `Claude Code` | `proposé` | Reviews APPROVE/PASS et content commit b031739 prêts à vérifier. |
+| `2026-07-29T22:21:51Z` | `Kimi` | `Kimi` | `DONE` | Acceptation du receiver (désignation utilisateur). Vérifié : PR #49 mergée 2026-07-15, b031739 + e7fdf9d ancêtres d'origin/main, AGENTS.md adaptateur court en place, COLLABORATION.md + template utilisés, `.codex/config.toml` gitignoré (l.29). Critère de terminaison satisfait. Reste action humaine externe : révoquer l'ancien PAT Supabase dans le dashboard. |
