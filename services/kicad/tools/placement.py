@@ -88,6 +88,86 @@ def _connector_refs(pcb) -> list[str]:
             if fp.reference and fp.reference[0] in ("J", "P")]
 
 
+def _outline_extent_board_frame(pcb) -> Optional[tuple[float, float]]:
+    """Coin bas-droit du contour Edge.Cuts, ramené en repère board.
+
+    ``fp.position`` est board-relative (l'API PCB soustrait ``board_origin``),
+    les graphiques Edge.Cuts sont sheet-absolute — d'où la soustraction ici.
+    """
+    ox, oy = pcb.board_origin
+    xs: list[float] = []
+    ys: list[float] = []
+    for attr in ("graphic_items", "graphics", "lines"):
+        for item in getattr(pcb, attr, None) or []:
+            if getattr(item, "layer", None) != "Edge.Cuts":
+                continue
+            for point_attr in ("start", "end"):
+                pt = getattr(item, point_attr, None)
+                if pt is not None:
+                    xs.append(pt[0] - ox)
+                    ys.append(pt[1] - oy)
+    if not xs or not ys:
+        return None
+    return max(xs), max(ys)
+
+
+def _normalize_to_board_frame(pcb_path: Path) -> int:
+    """Ramène les positions en repère board si elles ont été écrites en absolu.
+
+    ``OptimizationWorkflow.write_to_pcb()`` a changé de convention entre
+    kicad-tools 0.13.0 et 0.18.0 (bump PR #69) : il écrit désormais les positions
+    en **sheet-absolute** dans un champ que l'API PCB relit en **board-relative**.
+    Sur la fixture led-blinker (``board_origin`` = 118.5, 82.5), les composants
+    ressortaient à x≈124-147 / y≈88-111 pour un contour de 60×45 mm — soit
+    exactement ``position + board_origin``. ``kct route`` refusait alors le
+    placement, le repli Freerouting rendait un board sans netlist, et le tout
+    était rapporté « routé à 100 % » (issue #72).
+
+    Correctif défensif plutôt que dépendant d'une version : on ne translate que
+    si le décalage de ``board_origin`` explique l'écart pour TOUS les composants
+    hors contour. Un débordement isolé (un composant réellement mal placé) n'est
+    pas un problème de repère et n'est pas touché — sinon on déplacerait sept
+    composants corrects pour « réparer » le huitième.
+
+    Retourne le nombre de footprints translatés (0 si rien à faire).
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    pcb = PCB.load(str(pcb_path))
+    extent = _outline_extent_board_frame(pcb)
+    if extent is None:
+        return 0
+    width, height = extent
+    ox, oy = pcb.board_origin
+    if ox == 0 and oy == 0:
+        return 0
+
+    def inside(x: float, y: float) -> bool:
+        return 0.0 <= x <= width and 0.0 <= y <= height
+
+    outside = [fp for fp in pcb.footprints if not inside(*fp.position[:2])]
+    if not outside:
+        return 0
+    # Le décalage doit expliquer TOUS les cas, sinon ce n'est pas le repère.
+    if not all(inside(fp.position[0] - ox, fp.position[1] - oy) for fp in outside):
+        logger.warning(
+            "_normalize_to_board_frame: %d composant(s) hors contour NON expliqués par "
+            "board_origin — placement réellement fautif, pas un décalage de repère",
+            len(outside),
+        )
+        return 0
+
+    for fp in outside:
+        fp.position = (fp.position[0] - ox, fp.position[1] - oy)
+    pcb.save(str(pcb_path))
+    logger.warning(
+        "_normalize_to_board_frame: %d position(s) réécrites en repère board "
+        "(décalage board_origin %.2f,%.2f appliqué par write_to_pcb — cf. issue #72)",
+        len(outside), ox, oy,
+    )
+    return len(outside)
+
+
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
 
@@ -529,6 +609,12 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         )
 
         pcb.save(str(out))
+
+        # write_to_pcb() peut écrire en sheet-absolute selon la version de
+        # kicad-tools (régression 0.18.0, issue #72) : on ramène en repère board
+        # AVANT toute analyse de conflits, sinon l'Inspecteur travaille sur des
+        # positions fausses et le routeur refuse le placement.
+        _normalize_to_board_frame(out)
 
         # Architecte garanti 0 erreur AVANT le micro-raffinement — snapshot de
         # secours : le CLI CMA-ES n'a pas de verrouillage de position et peut
