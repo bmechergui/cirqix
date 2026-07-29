@@ -130,7 +130,7 @@ export function Hero() {
             </div>
 
             {/* Headline — display font */}
-            <h1 className="font-display text-[2rem] leading-[1.08] font-extrabold tracking-tight mb-6 sm:text-[2.6rem] md:text-[3rem] xl:text-[3rem]">
+            <h1 className="font-display text-[2rem] leading-[1.08] font-extrabold tracking-tight mb-6 sm:text-[2.6rem] md:text-[3rem]">
               From idea to<br />
               manufacturable<br />
               <span className="text-gradient">PCB, autonomously</span>

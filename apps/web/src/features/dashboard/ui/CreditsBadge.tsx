@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Coins } from 'lucide-react';
 import { useAppStore } from '@/shared/store/app-store';
 
@@ -35,12 +36,12 @@ export function CreditsBadge() {
         <span className="text-muted-foreground font-normal">cr · {credits.plan}</span>
       </div>
       {isLow && (
-        <a
+        <Link
           href="/dashboard/billing"
           className="text-xs text-primary hover:underline font-medium"
         >
           Recharge →
-        </a>
+        </Link>
       )}
     </div>
   );

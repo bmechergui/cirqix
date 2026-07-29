@@ -65,6 +65,7 @@ export function WaitlistForm() {
                 onChange={(e) => { setEmail(e.target.value); if (state === 'error') setState('idle'); }}
                 required
                 className="flex-1 h-12 text-base"
+                aria-invalid={state === 'error'}
                 aria-describedby={state === 'error' ? 'waitlist-error' : undefined}
               />
               <Button type="submit" size="lg" disabled={state === 'loading'} className="px-6 glow-cyan-sm">

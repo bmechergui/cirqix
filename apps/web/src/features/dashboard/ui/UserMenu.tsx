@@ -49,6 +49,8 @@ export function UserMenu() {
         onClick={() => setOpen((v) => !v)}
         className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-xs font-bold text-primary hover:bg-primary/30 transition-colors overflow-hidden"
         aria-label="User menu"
+        aria-expanded={open}
+        aria-haspopup="true"
       >
         {user?.avatar_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -59,7 +61,7 @@ export function UserMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 w-56 bg-[#111111] border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-10 w-56 bg-[#111111] border border-border rounded-xl shadow-xl z-50 overflow-hidden" role="menu">
           {/* User info */}
           <div className="px-4 py-3 border-b border-border">
             <p className="text-sm font-medium text-foreground truncate">
@@ -72,6 +74,7 @@ export function UserMenu() {
           <div className="py-1">
             <button
               type="button"
+              role="menuitem"
               onClick={() => { router.push('/dashboard/settings'); setOpen(false); }}
               className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] transition-colors"
             >
@@ -80,6 +83,7 @@ export function UserMenu() {
             </button>
             <button
               type="button"
+              role="menuitem"
               onClick={() => { router.push('/dashboard/settings#profile'); setOpen(false); }}
               className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-[#1a1a1a] transition-colors"
             >
@@ -91,6 +95,7 @@ export function UserMenu() {
           <div className="border-t border-border py-1">
             <button
               type="button"
+              role="menuitem"
               onClick={handleSignOut}
               disabled={signingOut}
               className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-wait"

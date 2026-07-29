@@ -81,6 +81,8 @@ export function LoginForm() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
+            aria-invalid={!!error}
+            aria-describedby={error ? 'login-error' : undefined}
           />
         </div>
 
@@ -96,10 +98,12 @@ export function LoginForm() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
+            aria-invalid={!!error}
+            aria-describedby={error ? 'login-error' : undefined}
           />
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p id="login-error" className="text-sm text-red-400" role="alert">{error}</p>}
 
         <Button type="submit" className="w-full glow-cyan-sm" disabled={loading}>
           {loading ? 'Signing in…' : 'Sign in'}

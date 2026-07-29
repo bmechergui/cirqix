@@ -13,9 +13,9 @@ export function Comparison() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-4 pr-8 text-muted-foreground font-medium text-sm w-1/3 min-w-0">Feature</th>
+                <th scope="col" className="text-left py-4 pr-8 text-muted-foreground font-medium text-sm w-1/3 min-w-0">Feature</th>
                 {COMPARISON_TOOLS.map((t) => (
-                  <th key={t.name} className={`text-center py-4 px-4 text-sm font-semibold min-w-[90px] ${t.name === 'Cirqix' ? 'text-primary' : 'text-foreground'}`}>
+                  <th key={t.name} scope="col" className={`text-center py-4 px-4 text-sm font-semibold min-w-[90px] ${t.name === 'Cirqix' ? 'text-primary' : 'text-foreground'}`}>
                     {t.name}
                   </th>
                 ))}
@@ -28,9 +28,9 @@ export function Comparison() {
                   {COMPARISON_TOOLS.map((t) => (
                     <td key={t.name} className="py-3 px-4 text-center">
                       {t.values[i] ? (
-                        <Check size={16} className="text-[#22C55E] mx-auto" />
+                        <Check size={16} className="text-[#22C55E] mx-auto" aria-hidden="true" />
                       ) : (
-                        <X size={16} className="text-muted-foreground/40 mx-auto" />
+                        <X size={16} className="text-muted-foreground/40 mx-auto" aria-hidden="true" />
                       )}
                     </td>
                   ))}

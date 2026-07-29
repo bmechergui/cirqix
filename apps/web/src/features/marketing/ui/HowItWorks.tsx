@@ -32,8 +32,8 @@ export function HowItWorks() {
               <h3 className="relative z-10 font-display text-xl font-bold text-foreground mb-3">{title}</h3>
               <p className="relative z-10 text-muted-foreground text-sm leading-relaxed">{desc}</p>
 
-              {/* Watermark number */}
-              <span className="absolute bottom-4 right-6 text-7xl font-extrabold text-white opacity-[0.04] select-none font-display leading-none pointer-events-none z-0">
+              {/* Watermark number — decorative only */}
+              <span className="absolute bottom-4 right-6 text-7xl font-extrabold text-white opacity-[0.04] select-none font-display leading-none pointer-events-none z-0" aria-hidden="true">
                 {num}
               </span>
             </div>
