@@ -37,6 +37,7 @@ from tools.placement import (
     _dense_part_refs,
     _reserve_escape_halos,
     _DENSE_PAD_COUNT,
+    _CMAES_MAX_DISPLACEMENT_MM,
 )
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
@@ -483,19 +484,32 @@ def test_refine_with_cmaes_passes_bounded_max_iterations_kwarg(tmp_path, monkeyp
 
 
 def test_refine_with_cmaes_keeps_displacement_small(tmp_path):
-    """Test comportemental (vrai CMA-ES, pas de mock) : sur le board fixture,
-    le déplacement des résistances mobiles reste petit avec le plafond actuel.
+    """Test comportemental (vrai CMA-ES, pas de mock) : le Géomètre reste un
+    raffinement — son déplacement tient sous le plafond que le filet de
+    sécurité de production tolère.
 
-    Garde de régression pour le bug du 2026-06-19 : sans plafond explicite de
-    ``max_iterations`` (défaut lib = 1000), ``seed_method="current"`` seede
-    bien la moyenne initiale sur la position Architecte (vérifié dans
-    kicad_tools/placement/cmaes_strategy.py) mais l'optimiseur a largement le
-    temps, dans le budget de 20s, de dériver loin de ce seed — sur ce board
-    fixture, max_iterations=1000 déplace les résistances de ~8-9mm contre
-    ~3-5mm avec le plafond de 30 (board STM32 réel : 7.5mm moyen/68mm max
-    contre 2.1mm moyen/4.0mm). Si ce test casse après une hausse de
-    ``_CMAES_MAX_ITERATIONS``, re-mesurer le déplacement avant d'augmenter
-    le seuil ci-dessous.
+    Le seuil est ``_CMAES_MAX_DISPLACEMENT_MM`` et non un nombre calibré à la
+    main, parce que **le déplacement dépend de l'environnement** (constaté le
+    2026-07-29 en ajoutant cette suite à la CI) :
+
+    * hors conteneur (backend Python) : 4.86mm, déterministe sur 5 essais,
+      atteint en ~5s — le budget de temps ne borne jamais rien ;
+    * dans l'image (backend natif C++ compilé par ``kct build-native``) :
+      max 8.42mm sur les mêmes 30 itérations.
+
+    Les deux valeurs sont déterministes dans leur environnement : ce n'est pas
+    du bruit stochastique ni un artefact de vitesse, c'est un paysage de coût
+    différent selon le backend d'évaluation. Un seuil absolu calibré sur une
+    machine ne survit donc pas au passage sur l'autre — la version précédente
+    de ce test fixait 6.0mm d'après la mesure locale et échouait en conteneur.
+
+    Ce test ne garde PAS l'application du plafond d'itérations (bug du
+    2026-06-19, ``max_iterations`` par défaut = 1000 → jusqu'à 68mm sur le
+    board STM32 réel) : cette garde-là est
+    ``test_refine_with_cmaes_passes_bounded_max_iterations_kwarg``, qui vérifie
+    l'argument transmis et reste vraie dans tout environnement. Ici on vérifie
+    l'invariant de bout en bout : le Géomètre ne dérive pas au-delà de ce que
+    ``auto_place`` accepte sans restaurer le board pré-CMA-ES.
     """
     pcb_bytes = _board_with_connector_and_movable(tmp_path)
     board_path = tmp_path / "board.kicad_pcb"
@@ -510,9 +524,10 @@ def test_refine_with_cmaes_keeps_displacement_small(tmp_path):
         ((before[r][0] - after[r][0]) ** 2 + (before[r][1] - after[r][1]) ** 2) ** 0.5
         for r in ("R1", "R2", "R3")
     ]
-    assert max(displacements) < 6.0, (
-        f"déplacement trop important pour un micro-raffinement : {displacements} "
-        "(la version sans plafond max_iterations atteint ~9mm sur ce board)"
+    assert max(displacements) < _CMAES_MAX_DISPLACEMENT_MM, (
+        f"déplacement au-delà de ce que le filet de sécurité tolère : {displacements} "
+        f"(plafond production {_CMAES_MAX_DISPLACEMENT_MM}mm ; mesures de référence "
+        "4.86mm hors conteneur, 8.42mm avec le backend natif)"
     )
 
 

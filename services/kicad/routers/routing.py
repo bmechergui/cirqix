@@ -302,6 +302,55 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------------
+# Garde de netlist
+# ----------------------------------------------------------------------------
+
+# Une DÉCLARATION de net est `(net N "nom")` ; `(net N)` dans un segment n'est
+# qu'une référence. Ne compter que les déclarations, sinon un board réduit à des
+# pistes orphelines satisferait la garde.
+_NET_DECL_RE = re.compile(rb'\(net \d+ "')
+
+
+def _net_decl_count(pcb: bytes) -> int:
+    return len(_NET_DECL_RE.findall(pcb))
+
+
+def _guard_netlist_preserved(pcb: bytes, input_nets: int, source: str) -> None:
+    """Refuse de renvoyer un board qui a perdu TOUTE sa netlist.
+
+    Mesuré le 2026-07-28 (issue #72) : le board entrait au routage avec 30
+    déclarations de net et en ressortait avec **zéro** — pistes absentes,
+    fichier réécrit par le repli pcbnew — pendant que l'endpoint rapportait
+    ``routed_percent=100, skipped=False, warning=None``.
+
+    Les 6 nets ressortaient alors non connectés au DRC, avec ``violations=0`` :
+    sans netlist il n'y a plus de règle à violer, donc le board paraît « propre »
+    parce qu'il est vide. Un board de 31 Ko sans une seule déclaration de net
+    n'est pas un routage réussi.
+
+    On ne contrôle QUE la disparition totale : un routage peut légitimement
+    fusionner ou renommer des nets. Et si l'entrée n'avait déjà pas de netlist,
+    ce n'est pas au routeur de s'en plaindre — lever ici masquerait la cause amont.
+    """
+    if input_nets == 0:
+        return
+    if _net_decl_count(pcb) > 0:
+        return
+    logger.error(
+        "route_auto: %s a renvoyé un board SANS netlist (%d nets en entrée, 0 en sortie) "
+        "— refus de le livrer",
+        source, input_nets,
+    )
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            f"routing produced a board without netlist ({source}): "
+            f"{input_nets} nets in, 0 out"
+        ),
+    )
+
+
+# ----------------------------------------------------------------------------
 # Endpoints
 # ----------------------------------------------------------------------------
 
@@ -320,6 +369,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
+    # Netlist d'entrée : sert de référence à la garde anti-board-vide (issue #72).
+    input_nets = _net_decl_count(pcb_bytes)
     net_count = _count_routable_nets(pcb_bytes)
     comp_count = _count_footprints(pcb_bytes)
     is_simple = net_count <= _KICAD_TOOLS_MAX_NETS and comp_count <= _KICAD_TOOLS_MAX_COMPS
@@ -338,6 +389,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
             logger.info("kicad-tools A*: %d%% routé", routed_pct)
             if routed_pct >= _MIN_ROUTED_PCT:
+                _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
                 return RouteAutoResponse(
                     kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                     routed_percent=routed_pct,
@@ -359,6 +411,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         try:
             new_pcb = _route_with_freerouting_api(pcb_bytes, req.timeout_s)
             logger.info("Freerouting API: 100%% routé")
+            _guard_netlist_preserved(new_pcb, input_nets, "freerouting-api")
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=100,
@@ -379,6 +432,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 _run_freerouting(paths, dsn, ses, req.timeout_s)
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
             logger.info("Freerouting: 100%% routé")
+            _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=100,
@@ -401,6 +455,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         else:
             new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
         logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
+        _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
         return RouteAutoResponse(
             kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
             routed_percent=routed_pct,

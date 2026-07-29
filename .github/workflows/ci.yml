@@ -155,6 +155,27 @@ jobs:
           -m unittest discover -s /app/circuit_synth/tests/unit
           -p 'test_cirqix_*.py' -v
 
+      # Les 180 tests pytest du service ne tournaient NULLE PART en CI : ce job
+      # ne lançait que test_service_security et les régressions Circuit-Synth,
+      # et `pnpm turbo test` ne couvre que le TypeScript. C'est ce trou qui a
+      # laissé passer le bump #69 — `test_auto_place_result_has_no_error_conflicts`
+      # échoue 3 fois sur 3 avec kicad-tools 0.18.0 (issue #72), sans que rien
+      # ne le signale. On les exécute dans l'image, seul endroit où pcbnew et
+      # kicad-tools sont installés.
+      #
+      # Deux exclusions, chacune parce que le contexte du conteneur diffère :
+      #   - test_docker_build_context vérifie des chemins relatifs à la RACINE
+      #     du dépôt ; dans l'image le layout est /app, sa COLLECTE lève
+      #     IndexError. Il tourne déjà à l'étape « Verify pinned KiCad build
+      #     sources », sur le runner, là où il a du sens.
+      #   - -p no:cacheprovider : /app n'est pas inscriptible par l'utilisateur
+      #     du conteneur (PytestCacheWarning, Errno 13).
+      - name: Suite pytest du service KiCad
+        run: >-
+          docker run --rm --entrypoint python3 cirqix-kicad:test
+          -m pytest tests/ -q -p no:cacheprovider
+          --ignore=tests/test_docker_build_context.py
+
       - name: Test /health endpoint
         run: |
           set -euo pipefail
