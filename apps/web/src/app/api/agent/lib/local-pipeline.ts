@@ -4,6 +4,7 @@ import { executeToolStub } from '@cirqix/agents';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
 import { logger } from '@cirqix/logger';
+import { deductPipelineCost } from './credits';
 
 const log = logger.child({ module: 'local-pipeline' });
 
@@ -132,8 +133,12 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
 
     await streamText(controller, encoder, "5. Running DRC...\n");
     const drc = await executeToolStub('call_agent_drc', { auto_fix: true }, projectId);
-    await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
+    if (drc['status'] === 'error') {
+      await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
+    }
 
+    await deductPipelineCost(supabase, userId, projectId);
+    await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
     controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
     controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 
