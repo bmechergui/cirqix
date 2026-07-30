@@ -28,9 +28,11 @@ vi.mock('@cirqix/logger', () => ({
 
 import { runLocalPipeline } from '../app/api/agent/lib/local-pipeline';
 
-function makeSupabase() {
+function makeSupabase(rpcError: { message: string } | null = null) {
   const updates: Array<Record<string, unknown>> = [];
+  const rpc = vi.fn().mockResolvedValue({ error: rpcError });
   const client = {
+    rpc,
     from: () => ({
       update: (payload: Record<string, unknown>) => {
         updates.push(payload);
@@ -38,7 +40,7 @@ function makeSupabase() {
       },
     }),
   };
-  return { client, updates };
+  return { client, updates, rpc };
 }
 
 function makeController() {
@@ -53,8 +55,8 @@ function makeController() {
 }
 
 /** Statuts successivement persistés en base, dans l'ordre. */
-async function runAndCollect() {
-  const { client, updates } = makeSupabase();
+async function runAndCollect(rpcError: { message: string } | null = null) {
+  const { client, updates, rpc } = makeSupabase(rpcError);
   const { controller, chunks } = makeController();
 
   await runLocalPipeline({
@@ -72,6 +74,7 @@ async function runAndCollect() {
     statuses: updates.map((u) => u['status']),
     lastStatus: updates[updates.length - 1]?.['status'],
     sse: chunks.join(''),
+    rpc,
   };
 }
 
@@ -108,6 +111,26 @@ describe('pipeline nominal', () => {
       'DRC_CLEAN',
     ]);
     expect(lastStatus).toBe('DRC_CLEAN');
+  });
+
+  it('débite le coût complet via la RPC atomique avant done', async () => {
+    const { rpc, sse } = await runAndCollect();
+
+    expect(rpc).toHaveBeenCalledWith('deduct_credits', {
+      p_user_id: 'u1',
+      p_amount: 8.5,
+      p_action: 'full_pcb_pipeline',
+      p_project_id: 'p1',
+    });
+    expect(sse).toContain('"type":"done"');
+  });
+
+  it('n’émet pas done quand le débit atomique échoue', async () => {
+    const { lastStatus, sse } = await runAndCollect({ message: 'insufficient_credits' });
+
+    expect(sse).toContain('"type":"error"');
+    expect(sse).not.toContain('"type":"done"');
+    expect(lastStatus).toBe('ROUTING_DONE');
   });
 });
 
