@@ -65,13 +65,13 @@ function seedCache(overrides: Record<string, unknown> = {}) {
 }
 
 describe('export réellement produit', () => {
-  it('promeut PCB_LIVRÉ avec les fichiers et le devis du service', async () => {
+  it('conserve DRC_CLEAN avec les fichiers et l’estimation du service', async () => {
     seedCache();
 
     const result = await handleExport(PROJECT);
 
     expect(result['status']).toBe('success');
-    expect(result['pcb_status']).toBe('PCB_LIVRÉ');
+    expect(result['pcb_status']).toBe('DRC_CLEAN');
     expect(result['gerber_layers']).toBe(3);
     expect(result['files']).toEqual(['top.gtl', 'bottom.gbl', 'outline.gko']);
     expect(result['zip_b64']).toBe('UEsDBBQ=');

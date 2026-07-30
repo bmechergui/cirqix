@@ -53,7 +53,7 @@ export async function handleExport(projectId: string): Promise<Record<string, un
     }
     return {
       status: 'success',
-      pcb_status: 'PCB_LIVRÉ',
+      pcb_status: 'DRC_CLEAN',
       gerber_layers: result.files.length,
       files: result.files,
       zip_b64: result.zipB64,
@@ -61,7 +61,7 @@ export async function handleExport(projectId: string): Promise<Record<string, un
       quote_usd: result.quoteUsd,
       lead_time_days: result.leadTimeDays,
       engine: 'kicad-cli',
-      note: `Export prêt — ${result.files.length} fichiers (${result.files.join(', ')}). Devis: $${result.quoteUsd} (${result.leadTimeDays} jours). Confirme avec "OUI JE CONFIRME".`,
+      note: `Export prêt — ${result.files.length} fichiers (${result.files.join(', ')}). Estimation: $${result.quoteUsd} (${result.leadTimeDays} jours). Aucun ordre n'a été envoyé.`,
     };
   } catch (err) {
     if (!(err instanceof ExportServiceUnavailableError)) {

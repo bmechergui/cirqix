@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
-import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import { createAdminClient, createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { encodeSse, sseHeaders } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
 
   const requestedMode = resolveAgentMode();
   const useOrchestrator = requestedMode === 'orchestrator' && isOrchestratorAvailable();
+  const pipelineClient = createAdminClient();
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
             await runRealOrchestrator({
               controller,
               encoder,
-              supabase,
+              supabase: pipelineClient,
               userId: user.id,
               projectId,
               prompt,
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
               await runLocalPipeline({
                 controller,
                 encoder,
-                supabase,
+                supabase: pipelineClient,
                 userId: user.id,
                 projectId,
                 prompt,
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
           await runSimulatorAgent({
             controller,
             encoder,
-            supabase,
+            supabase: pipelineClient,
             userId: user.id,
             projectId,
             prompt,

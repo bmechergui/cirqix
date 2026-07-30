@@ -24,7 +24,10 @@ interface ProjectRow {
   id: string;
   status: string;
   agent_mode: string | null;
+  pcb_state?: Record<string, unknown>;
 }
+
+const EXPORTED_STATE = { gerberZipB64: 'UEsDBBQ=', bomCsv: 'ref,value\nR1,1k' };
 
 function makeClient(opts: { user?: { id: string } | null; project?: ProjectRow | null }) {
   const updates: Array<Record<string, unknown>> = [];
@@ -37,7 +40,7 @@ function makeClient(opts: { user?: { id: string } | null; project?: ProjectRow |
         eq: () => ({
           single: async () => ({
             data: opts.project === undefined
-              ? { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator' }
+              ? { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator', pcb_state: EXPORTED_STATE }
               : opts.project,
           }),
         }),
@@ -107,18 +110,21 @@ describe('garde-fous existants', () => {
 describe('provenance du board — le gate ne doit pas être dupable par le simulateur', () => {
   it('accepte un board DRC_CLEAN issu du pipeline réel', async () => {
     const { response, json, updates } = await order(VALID_BODY, {
-      project: { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator' },
+      project: { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator', pcb_state: EXPORTED_STATE },
     });
 
     expect(response.status).toBe(200);
     expect(json.success).toBe(true);
-    expect(String(json.data.orderRef)).toMatch(/^CIRQIX-/);
-    expect(updates[0]).toMatchObject({ status: 'PCB_LIVRÉ' });
+    expect(String(json.data.requestRef)).toMatch(/^CIRQIX-PREP-/);
+    expect(json.data.submitted).toBe(false);
+    expect(json.data.status).toBe('ready_for_manual_submission');
+    expect(String(json.data.message)).toContain('No order was sent');
+    expect(updates).toHaveLength(0);
   });
 
   it('accepte un board déjà livré issu du pipeline réel', async () => {
     const { response } = await order(VALID_BODY, {
-      project: { id: 'p1', status: 'PCB_LIVRÉ', agent_mode: 'orchestrator' },
+      project: { id: 'p1', status: 'PCB_LIVRÉ', agent_mode: 'orchestrator', pcb_state: EXPORTED_STATE },
     });
 
     expect(response.status).toBe(200);
@@ -131,6 +137,16 @@ describe('provenance du board — le gate ne doit pas être dupable par le simul
 
     expect(response.status).toBe(422);
     expect(String(json.error)).toContain('simul');
+    expect(updates).toHaveLength(0);
+  });
+
+  it('refuse la préparation sans Gerber et BOM exportés', async () => {
+    const { response, json, updates } = await order(VALID_BODY, {
+      project: { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator' },
+    });
+
+    expect(response.status).toBe(422);
+    expect(String(json.error)).toContain('Gerber');
     expect(updates).toHaveLength(0);
   });
 

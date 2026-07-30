@@ -30,7 +30,7 @@ import { runLocalPipeline } from '../app/api/agent/lib/local-pipeline';
 
 function makeSupabase(rpcError: { message: string } | null = null) {
   const updates: Array<Record<string, unknown>> = [];
-  const rpc = vi.fn().mockResolvedValue({ error: rpcError });
+  const rpc = vi.fn().mockResolvedValue({ data: true, error: rpcError });
   const client = {
     rpc,
     from: () => ({
@@ -70,9 +70,14 @@ async function runAndCollect(rpcError: { message: string } | null = null) {
     balanceStart: 10,
   });
 
+  const persistedStatuses = updates.map((u) => u['status']);
+  if (!rpcError && rpc.mock.calls.some((call) => call[0] === 'finalize_pipeline_success')) {
+    persistedStatuses.push('DRC_CLEAN');
+  }
+
   return {
-    statuses: updates.map((u) => u['status']),
-    lastStatus: updates[updates.length - 1]?.['status'],
+    statuses: persistedStatuses,
+    lastStatus: persistedStatuses[persistedStatuses.length - 1],
     sse: chunks.join(''),
     rpc,
   };
@@ -116,11 +121,12 @@ describe('pipeline nominal', () => {
   it('débite le coût complet via la RPC atomique avant done', async () => {
     const { rpc, sse } = await runAndCollect();
 
-    expect(rpc).toHaveBeenCalledWith('deduct_credits', {
+    expect(rpc).toHaveBeenCalledWith('finalize_pipeline_success', {
       p_user_id: 'u1',
-      p_amount: 8.5,
-      p_action: 'full_pcb_pipeline',
       p_project_id: 'p1',
+      p_iteration_count: 1,
+      p_pcb_state: expect.objectContaining({ status: 'DRC_CLEAN', iteration: 1 }),
+      p_agent_mode: 'orchestrator',
     });
     expect(sse).toContain('"type":"done"');
   });
@@ -145,10 +151,12 @@ describe('le handler fait foi — jamais de promotion non accordée', () => {
       },
     });
 
-    const { lastStatus } = await runAndCollect();
+    const { lastStatus, sse } = await runAndCollect();
 
     expect(lastStatus).not.toBe('DRC_CLEAN');
     expect(lastStatus).toBe('ROUTING_DONE');
+    expect(sse).toContain('remaining violations');
+    expect(sse).not.toContain('"type":"done"');
   });
 
   it('DRC en erreur → jamais DRC_CLEAN persisté', async () => {

@@ -9,7 +9,7 @@ const bodySchema = z.object({
   projectId: z.string().uuid(),
   qty: z.number().int().min(1).max(1000),
   confirmed: z.literal(true, {
-    errorMap: () => ({ message: 'OUI JE CONFIRME is required to place an order' }),
+    errorMap: () => ({ message: 'OUI JE CONFIRME is required to prepare a submission' }),
   }),
 });
 
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('id, status, agent_mode')
+    .select('id, status, agent_mode, pcb_state')
     .eq('id', projectId)
     .single();
 
@@ -69,19 +69,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const orderRef = `CIRQIX-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const pcbState = project.pcb_state as Record<string, unknown> | null;
+  if (!pcbState || typeof pcbState['gerberZipB64'] !== 'string'
+      || pcbState['gerberZipB64'].length === 0
+      || typeof pcbState['bomCsv'] !== 'string'
+      || pcbState['bomCsv'].length === 0) {
+    return NextResponse.json(
+      { success: false, error: 'Export Gerber and BOM files before preparing submission' },
+      { status: 422 },
+    );
+  }
 
-  await supabase
-    .from('projects')
-    .update({ status: 'PCB_LIVRÉ', updated_at: new Date().toISOString() })
-    .eq('id', projectId);
+  const requestRef = `CIRQIX-PREP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
   return NextResponse.json({
     success: true,
     data: {
-      orderRef,
+      requestRef,
       qty,
-      message: 'Order submitted to JLCPCB. Confirmation email incoming.',
+      submitted: false,
+      status: 'ready_for_manual_submission',
+      message: 'Manual submission preparation confirmed. No order was sent to JLCPCB.',
     },
   });
 }

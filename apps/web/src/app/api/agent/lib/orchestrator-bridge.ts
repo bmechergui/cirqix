@@ -4,7 +4,7 @@ import { runOrchestrator } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
-import { deductPipelineCost } from './credits';
+import { finalizePipelineSuccess } from './credits';
 
 const log = logger.child({ module: 'orchestrator-bridge' });
 
@@ -124,6 +124,9 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           lastStatus = status;
 
           const finalized = mergedState as PCBState;
+          if (status === 'DRC_CLEAN') {
+            break;
+          }
           controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: finalized })));
           controller.enqueue(encoder.encode(encodeSse({ type: 'status', status })));
 
@@ -133,7 +136,6 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
             .update({
               status,
               pcb_state: finalized,
-              iteration_count: finalized.iteration,
               // Provenance : pipeline réel → board commandable (gate JLCPCB).
               agent_mode: 'orchestrator',
               updated_at: new Date().toISOString(),
@@ -154,11 +156,19 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
 
         case 'done':
+          if (lastStatus !== 'DRC_CLEAN') {
+            throw new Error('Orchestrator completed without a DRC_CLEAN state');
+          }
+          await finalizePipelineSuccess(
+            supabase,
+            userId,
+            projectId,
+            mergedState as PCBState,
+            'orchestrator',
+          );
           controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-          // Atomic deduction via the secured deduct_credits RPC — row lock +
-          // audit row in credit_transactions. Replaces the previous direct
-          // UPDATE that bypassed the RPC (race condition + missing audit).
-          await deductPipelineCost(supabase, userId, projectId);
+          controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: mergedState as PCBState })));
+          controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
           controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
           break;
 

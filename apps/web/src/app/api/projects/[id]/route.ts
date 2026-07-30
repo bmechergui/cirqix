@@ -5,9 +5,8 @@ import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
 const updateSchema = z.object({
   name: z.string().min(1).max(100).trim().optional(),
   description: z.string().max(500).trim().optional(),
-  status: z
-    .enum(['INITIAL', 'SCHEMA_DONE', 'ERC_CLEAN', 'PLACEMENT_DONE', 'ROUTING_DONE', 'DRC_CLEAN', 'PCB_LIVRÉ'])
-    .optional(),
+}).strict().refine((value) => value.name !== undefined || value.description !== undefined, {
+  message: 'At least one editable field is required',
 });
 
 async function authedClient() {
@@ -63,7 +62,7 @@ export async function PATCH(
   }
 
   const { id } = await ctx.params;
-  const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = parsed.data;
 
   const { data, error } = await supabase
     .from('projects')
