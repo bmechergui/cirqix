@@ -1,14 +1,14 @@
 # Handoff — `project-integrity-hardening`
 
-- **Status:** `REVIEW`
+- **Status:** `DONE`
 - **Owner:** `Codex`
 - **Reviewer:** `Codex code review + Codex security review`
 - **Receiver:** `human`
 - **Branch:** `fix/project-integrity-hardening`
 - **Worktree:** `C:\\tmp\\cirqix-project-integrity-fix`
 - **Base commit:** `3c3ca8ec0e4e009a13fb8f2bcff93787941f5313`
-- **Content commit:** `uncommitted`
-- **Updated UTC:** `2026-07-30T20:09:01Z`
+- **Content commit:** `f21238e`
+- **Updated UTC:** `2026-07-30T20:12:00Z`
 
 ## Objectif
 
@@ -94,13 +94,13 @@ Fermer la mutation directe des états projet, rendre atomiques la facturation et
 ## Git
 
 - **État initial:** propre sur `3c3ca8e`.
-- **État actuel:** modifications uniquement dans les chemins revendiqués; aucun fichier RL.
-- **Commit:** `none`
-- **PR:** `none`
+- **État final:** propre après le commit de clôture du handoff; aucun fichier RL modifié.
+- **Content commit:** `f21238e` (`fix: enforce atomic project finalization`)
+- **PR:** `#83` — https://github.com/bmechergui/cirqix/pull/83
 
 ## Prochaine action atomique
 
-Créer le commit de la branche, pousser et ouvrir la PR après une dernière vérification du diff.
+Attendre les checks de la PR #83, puis fusionner si tous restent verts.
 
 ## Journal de transfert
 
@@ -109,3 +109,4 @@ Créer le commit de la branche, pousser et ouvrir la PR après une dernière vé
 | 2026-07-30T19:42:44Z | human | Codex | accepté | Correctif d'intégrité autorisé après audit NO-GO. |
 | 2026-07-30T20:09:01Z | Codex | reviewers | GO | Revues code et sécurité finales sans bloquant. |
 | 2026-07-30T20:09:01Z | Codex | human | REVIEW | Migration distante et validations terminées; commit/PR restent à créer. |
+| 2026-07-30T20:12:00Z | Codex | human | DONE | Content commit `f21238e` poussé et PR #83 ouverte. |
