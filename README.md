@@ -2,7 +2,7 @@
 
 > **From idea to manufacturable PCB, autonomously**
 
-Cirqix is a 100% cloud SaaS for PCB design powered by natural language. Describe your circuit, the AI agent generates a DRC-clean PCB, exports Gerbers, and orders from JLCPCB — fully autonomously.
+Cirqix is a cloud SaaS for PCB design powered by natural language. Describe your circuit, the AI agent generates a DRC-clean PCB and exports Gerbers/BOM for review and manual manufacturer submission.
 
 [![CI](https://github.com/bmechergui/cirqix/actions/workflows/ci.yml/badge.svg)](https://github.com/bmechergui/cirqix/actions/workflows/ci.yml)
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
@@ -14,13 +14,13 @@ Cirqix is a 100% cloud SaaS for PCB design powered by natural language. Describe
 ## What it does
 
 ```
-User prompt → 8 AI Agents → Schematic → ERC → Footprints → PCB → Placement → Routing → DRC → Gerbers → JLCPCB
+User prompt → 8 AI Agents → Schematic → ERC → Footprints → PCB → Placement → Routing → DRC → Gerbers/BOM
 ```
 
 1. **Describe** — type your circuit in natural language
 2. **Design** — 8 specialized AI agents create schematic, resolve footprints, place components, route traces, fix all DRC violations
 3. **Review** — visualize schematic + PCB in KiCanvas, inspect in 3D, run SPICE simulation
-4. **Order** — download Gerbers/BOM, or order directly from JLCPCB (confirmation required)
+4. **Manufacture** — download and review Gerbers/BOM, then submit them manually to JLCPCB
 
 ---
 
@@ -212,7 +212,7 @@ Target cost: **~0.12€ per complete PCB**.
 - [x] **Phase 3** — pcbnew placement + Freerouting routing + kicad-cli DRC + Gerbers/BOM export + footprint cascade (KiCad/pgvector/LCSC/SnapMagic/AI)
 - [x] **Phase 4.1** — 3D viewer (Three.js + STEP/occt-import-js, Pro+)
 - [x] **Phase 4.2** — SPICE simulation (ngspice batch + Recharts waveforms, Pro+)
-- [x] **Phase 4.3** — JLCPCB integration (Gerbers + BOM download, order with confirmation gate)
+- [x] **Phase 4.3** — fabrication preparation (Gerbers + BOM download, manual JLCPCB submission)
 - [ ] **Phase 4.4** — Lemon Squeezy payments (webhooks + billing page + top-ups)
 - [ ] **Phase 5** — Rate limiting + E2E tests + monitoring + launch
 

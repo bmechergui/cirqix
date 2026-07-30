@@ -153,21 +153,22 @@ function FileCard({ file, ready, onDownload }: FileCardProps) {
 type ExportTab = 'files' | '3d';
 
 export function ExportView({ state }: { state: PCBState }) {
-  const ready     = state.status === 'DRC_CLEAN' || state.status === 'PCB_LIVRÉ';
+  const drcClean = state.status === 'DRC_CLEAN' || state.status === 'PCB_LIVRÉ';
+  const ready = drcClean && Boolean(state.gerberZipB64 && state.bomCsv);
   const [tab, setTab] = useState<ExportTab>('files');
   const [qty, setQty] = useState<Qty>(5);
   const [showOrder, setShowOrder] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [ordered, setOrdered] = useState(false);
+  const [prepared, setPrepared] = useState(false);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
-  const [orderRef, setOrderRef] = useState<string | null>(null);
+  const [requestRef, setRequestRef] = useState<string | null>(null);
 
   const fallbackQuote = QUOTE_TABLE[qty];
   const pcbPrice = state.quoteUsd ?? fallbackQuote.pcb;
   const pcbaPrice = state.quoteUsd != null ? Math.round(state.quoteUsd * 5) : fallbackQuote.pcba;
   const leadTime = state.leadTimeDays != null ? `${state.leadTimeDays}` : fallbackQuote.days;
-  const quoteIsReal = state.quoteUsd != null;
+  const quoteFromExport = state.quoteUsd != null;
 
   function getDownloadHandler(fileId: string): (() => void) | undefined {
     switch (fileId) {
@@ -190,7 +191,7 @@ export function ExportView({ state }: { state: PCBState }) {
     }
   }
 
-  async function handleOrder() {
+  async function handlePreparation() {
     if (!confirmed) return;
     setOrderLoading(true);
     setOrderError(null);
@@ -200,14 +201,18 @@ export function ExportView({ state }: { state: PCBState }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: state.projectId, qty, confirmed: true }),
       });
-      const json = (await res.json()) as { success: boolean; data?: { orderRef: string }; error?: string };
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Order failed');
-      setOrderRef(json.data?.orderRef ?? null);
-      setOrdered(true);
+      const json = (await res.json()) as {
+        success: boolean;
+        data?: { requestRef: string; submitted: false };
+        error?: string;
+      };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Preparation failed');
+      setRequestRef(json.data?.requestRef ?? null);
+      setPrepared(true);
       setShowOrder(false);
       setConfirmed(false);
     } catch (err) {
-      setOrderError(err instanceof Error ? err.message : 'Order failed');
+      setOrderError(err instanceof Error ? err.message : 'Preparation failed');
     } finally {
       setOrderLoading(false);
     }
@@ -252,22 +257,22 @@ export function ExportView({ state }: { state: PCBState }) {
           <div className="flex items-start gap-2.5 rounded-xl border border-warning/20 bg-warning/5 px-4 py-3">
             <AlertCircle size={14} className="text-warning shrink-0 mt-0.5" />
             <p className="text-xs text-warning/90 leading-relaxed">
-              Complete the DRC step before exporting fabrication files.
+              Complete DRC and generate the Gerber/BOM export before preparing fabrication.
             </p>
           </div>
         )}
 
         {/* Order success banner */}
-        {ordered && (
+        {prepared && (
           <div className="flex items-start gap-2.5 rounded-xl border border-[#22C55E]/25 bg-[#22C55E]/05 px-4 py-3">
             <CheckCircle2 size={14} className="text-[#22C55E] shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-[#22C55E]">Order sent to JLCPCB</p>
-              {orderRef && (
-                <p className="text-[10px] font-mono text-[#22C55E]/70 mt-0.5">{orderRef}</p>
+              <p className="text-xs font-semibold text-[#22C55E]">Manual preparation confirmed</p>
+              {requestRef && (
+                <p className="text-[10px] font-mono text-[#22C55E]/70 mt-0.5">{requestRef}</p>
               )}
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                You will receive a confirmation email from JLCPCB within a few minutes.
+                No order was sent. Download the files and complete checkout on JLCPCB.
               </p>
             </div>
           </div>
@@ -299,9 +304,9 @@ export function ExportView({ state }: { state: PCBState }) {
             <div className="flex items-center gap-2">
               <Package size={12} className="text-[#00C2FF]" />
               <span className="text-xs font-semibold text-foreground/90">JLCPCB estimate</span>
-              {quoteIsReal && (
+              {quoteFromExport && (
                 <span className="text-[9px] font-mono px-1.5 py-px rounded bg-[#00C2FF]/10 text-[#00C2FF] border border-[#00C2FF]/20">
-                  live quote
+                  export estimate
                 </span>
               )}
             </div>
@@ -361,21 +366,21 @@ export function ExportView({ state }: { state: PCBState }) {
             </div>
 
             <p className="text-[9px] text-[#2a2a2a] font-mono">
-              {quoteIsReal
-                ? '* Quote from kicad-cli export service. Final price confirmed at JLCPCB checkout.'
+              {quoteFromExport
+                ? '* Estimate from the export service. Final price confirmed at JLCPCB checkout.'
                 : '* Estimates based on JLCPCB standard pricing. Final price confirmed at checkout.'}
             </p>
           </div>
         </section>
 
         {/* ── Order section ── */}
-        {!ordered && (
+        {!prepared && (
           <section className="rounded-xl border border-primary/20 bg-primary/[0.03] overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3">
               <div>
-                <p className="text-xs font-semibold text-foreground/90">Order on JLCPCB</p>
+                <p className="text-xs font-semibold text-foreground/90">Prepare a JLCPCB order</p>
                 <p className="text-[10px] text-[#3d3d3d] mt-0.5">
-                  Gerbers + BOM + CPL will be sent directly to JLCPCB.
+                  Prepare and verify the files before submitting them manually to JLCPCB.
                 </p>
               </div>
               {!showOrder && (
@@ -385,7 +390,7 @@ export function ExportView({ state }: { state: PCBState }) {
                   onClick={() => setShowOrder(true)}
                   className="gap-1.5 text-xs h-8 shrink-0"
                 >
-                  Configure order
+                  Prepare package
                   <ChevronRight size={11} />
                 </Button>
               )}
@@ -396,8 +401,8 @@ export function ExportView({ state }: { state: PCBState }) {
               <div className="border-t border-primary/10 mx-0 px-4 py-4 bg-[#040408] space-y-4">
                 <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5">
                   <p className="text-[11px] text-destructive/90 font-medium leading-snug">
-                    This action will initiate a real order on JLCPCB.
-                    Once confirmed, cancellation depends on JLCPCB policies.
+                    This action does not place an order or incur charges.
+                    You must review and submit the package manually on JLCPCB.
                   </p>
                 </div>
 
@@ -427,8 +432,8 @@ export function ExportView({ state }: { state: PCBState }) {
                   />
                   <span className="text-[11px] text-foreground/70 leading-relaxed group-hover:text-foreground/90 transition-colors">
                     <strong className="text-foreground font-mono">OUI JE CONFIRME</strong> — Je comprends
-                    que cette action envoie une commande réelle à JLCPCB et engage des frais.
-                    J&apos;ai vérifié le design, le DRC est propre, et je veux passer commande.
+                    que cette action prépare uniquement les fichiers, sans commande ni frais.
+                    J&apos;ai vérifié le design et le DRC avant de préparer le dossier.
                   </span>
                 </label>
 
@@ -440,12 +445,12 @@ export function ExportView({ state }: { state: PCBState }) {
                   <Button
                     size="sm"
                     disabled={!confirmed || orderLoading}
-                    onClick={handleOrder}
+                    onClick={handlePreparation}
                     className="gap-1.5 text-xs h-8"
                   >
                     {orderLoading
-                      ? <><Loader2 size={11} className="animate-spin" />Sending…</>
-                      : <><ShieldCheck size={11} />Confirm & send to JLCPCB</>}
+                      ? <><Loader2 size={11} className="animate-spin" />Preparing…</>
+                      : <><ShieldCheck size={11} />Prepare order package</>}
                   </Button>
                   <Button
                     size="sm"

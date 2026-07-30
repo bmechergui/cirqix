@@ -14,6 +14,7 @@ vi.mock('@cirqix/logger', () => ({
 import {
   CreditDeductionError,
   deductPipelineCost,
+  finalizePipelineSuccess,
   hasEnoughPipelineCredits,
   PIPELINE_COST,
   shouldFallbackToLocalPipeline,
@@ -22,13 +23,56 @@ import {
 function makeSupabase(rpcError: { message: string } | null = null) {
   const update = vi.fn();
   const from = vi.fn(() => ({ update }));
-  const rpc = vi.fn().mockResolvedValue({ error: rpcError });
+  const rpc = vi.fn().mockResolvedValue({ data: true, error: rpcError });
 
   return { client: { rpc, from }, rpc, from, update };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('finalizePipelineSuccess', () => {
+  it('facture et promeut le projet avec une seule RPC transactionnelle', async () => {
+    const { client, rpc, from } = makeSupabase();
+    const state = { projectId: 'project-1', iteration: 3, status: 'DRC_CLEAN' };
+
+    await finalizePipelineSuccess(client as never, 'user-1', 'project-1', state as never, 'orchestrator');
+
+    expect(rpc).toHaveBeenCalledWith('finalize_pipeline_success', {
+      p_user_id: 'user-1',
+      p_project_id: 'project-1',
+      p_iteration_count: 3,
+      p_pcb_state: state,
+      p_agent_mode: 'orchestrator',
+    });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('refuse de finaliser un état autre que DRC_CLEAN', async () => {
+    const { client, rpc } = makeSupabase();
+
+    await expect(finalizePipelineSuccess(
+      client as never,
+      'user-1',
+      'project-1',
+      { projectId: 'project-1', iteration: 3, status: 'ROUTING_DONE' } as never,
+      'orchestrator',
+    )).rejects.toBeInstanceOf(CreditDeductionError);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('refuse un retry obsolète lorsque la RPC signale une itération déjà finalisée', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
+
+    await expect(finalizePipelineSuccess(
+      { rpc } as never,
+      'user-1',
+      'project-1',
+      { projectId: 'project-1', iteration: 3, status: 'DRC_CLEAN' } as never,
+      'orchestrator',
+    )).rejects.toBeInstanceOf(CreditDeductionError);
+  });
 });
 
 describe('pipeline credit gate', () => {

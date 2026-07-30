@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { PCBState } from '@cirqix/types';
 import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'credits' });
@@ -48,5 +49,34 @@ export async function deductPipelineCost(
   if (error) {
     log.error({ err: error, userId }, 'deduct_credits RPC failed');
     throw new CreditDeductionError(error);
+  }
+}
+
+/** Charge one completed iteration and publish its final state atomically. */
+export async function finalizePipelineSuccess(
+  supabase: SupabaseClient,
+  userId: string,
+  projectId: string,
+  state: PCBState,
+  agentMode: 'orchestrator' | 'simulator',
+): Promise<void> {
+  if (state.status !== 'DRC_CLEAN' || !Number.isInteger(state.iteration) || state.iteration < 1) {
+    throw new CreditDeductionError('invalid final pipeline state');
+  }
+
+  const { data, error } = await supabase.rpc('finalize_pipeline_success', {
+    p_user_id: userId,
+    p_project_id: projectId,
+    p_iteration_count: state.iteration,
+    p_pcb_state: state,
+    p_agent_mode: agentMode,
+  });
+
+  if (error) {
+    log.error({ err: error, userId, projectId }, 'finalize_pipeline_success RPC failed');
+    throw new CreditDeductionError(error);
+  }
+  if (data !== true) {
+    throw new CreditDeductionError('pipeline iteration was already finalized');
   }
 }

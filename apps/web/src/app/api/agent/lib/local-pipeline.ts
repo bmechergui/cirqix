@@ -4,7 +4,7 @@ import { executeToolStub } from '@cirqix/agents';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
 import { logger } from '@cirqix/logger';
-import { deductPipelineCost } from './credits';
+import { finalizePipelineSuccess } from './credits';
 
 const log = logger.child({ module: 'local-pipeline' });
 
@@ -97,13 +97,15 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     if (kicad_pcb_url) (mergedState as PCBState).kicad_pcb_url = kicad_pcb_url;
 
     const finalized = mergedState as PCBState;
+    if (statusLabel === 'DRC_CLEAN') {
+      await finalizePipelineSuccess(supabase, userId, projectId, finalized, 'orchestrator');
+    }
     controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: finalized })));
     controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: statusLabel })));
 
-    await supabase.from('projects').update({
+    if (statusLabel !== 'DRC_CLEAN') await supabase.from('projects').update({
       status: statusLabel,
       pcb_state: finalized,
-      iteration_count: finalized.iteration,
       // Provenance : ce repli enchaîne les VRAIS handlers (seul l'orchestrateur
       // Sonnet est court-circuité) → board commandable.
       agent_mode: 'orchestrator',
@@ -137,8 +139,10 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
       await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
     }
 
-    await deductPipelineCost(supabase, userId, projectId);
     await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
+    if (mergedState.status !== 'DRC_CLEAN') {
+      throw new PipelineStepError('DRC completed with remaining violations');
+    }
     controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
     controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 
