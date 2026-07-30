@@ -6,6 +6,7 @@ import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
 import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
+import { hasEnoughPipelineCredits, shouldFallbackToLocalPipeline } from './lib/credits';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .single();
   const balance = creditRow?.balance ?? 0;
-  if (balance < 0.5) {
+  if (!hasEnoughPipelineCredits(balance)) {
     return NextResponse.json({ success: false, error: 'Insufficient credits' }, { status: 402 });
   }
 
@@ -76,8 +77,7 @@ export async function POST(req: NextRequest) {
               iterationStart: project.iteration_count ?? 0,
             });
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('credit') || msg.includes('402')) {
+            if (shouldFallbackToLocalPipeline(err)) {
               await runLocalPipeline({
                 controller,
                 encoder,

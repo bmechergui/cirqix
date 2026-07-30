@@ -6,19 +6,32 @@ const log = logger.child({ module: 'credits' });
 /** Fixed cost of a full PCB pipeline run (until per-step billing is wired). */
 export const PIPELINE_COST = 8.5;
 
+export class CreditDeductionError extends Error {
+  constructor(cause: unknown) {
+    super('Pipeline credit deduction failed', { cause });
+    this.name = 'CreditDeductionError';
+  }
+}
+
+export function hasEnoughPipelineCredits(balance: number): boolean {
+  return Number.isFinite(balance) && balance >= PIPELINE_COST;
+}
+
+export function shouldFallbackToLocalPipeline(error: unknown): boolean {
+  if (error instanceof CreditDeductionError) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('credit') || message.includes('402');
+}
+
 /**
  * Deduct the PCB-pipeline cost atomically through the secured
  * `deduct_credits` RPC, which takes a row lock, verifies the balance and
  * records an audit row in `credit_transactions`.
  *
- * Replaces the previous non-atomic direct UPDATE that bypassed the RPC
- * (race condition + missing audit trail).
- *
- * Edge case: the route only gates entry at `balance >= 0.5`, so a user
- * may legitimately reach the success path with fewer than `PIPELINE_COST`
- * credits. When the RPC raises `insufficient_credits`, the balance is
- * clamped to 0 (preserving prior behaviour) instead of failing the
- * already-succeeded response.
+ * Any RPC failure is propagated. This function never falls back to a direct
+ * table update: all balance changes must remain atomic and audited.
  */
 export async function deductPipelineCost(
   supabase: SupabaseClient,
@@ -32,18 +45,8 @@ export async function deductPipelineCost(
     p_project_id: projectId,
   });
 
-  if (!error) {
-    return;
+  if (error) {
+    log.error({ err: error, userId }, 'deduct_credits RPC failed');
+    throw new CreditDeductionError(error);
   }
-
-  if (error.message.includes('insufficient_credits')) {
-    log.warn({ userId }, 'insufficient_credits — clamping balance to 0');
-    await supabase
-      .from('credits')
-      .update({ balance: 0, updated_at: new Date().toISOString() })
-      .eq('user_id', userId);
-    return;
-  }
-
-  log.error({ err: error, userId }, 'deduct_credits RPC failed');
 }

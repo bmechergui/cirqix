@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PCBState, SchemaComponent, SchemaNet } from '@cirqix/types';
 import { encodeSse } from './sse';
+import { deductPipelineCost } from './credits';
 
 interface SimulatedSchema {
   components: SchemaComponent[];
@@ -116,7 +117,7 @@ interface SimulatorOptions {
 }
 
 export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart, balanceStart } = opts;
+  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart } = opts;
   const schema = deriveSchemaFromPrompt(prompt);
 
   await streamText(
@@ -190,6 +191,7 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
       + `CIRQIX_AGENT_MODE=orchestrator to run the real pipeline._`,
   );
   const drcState: PCBState = { ...routingState, status: 'DRC_CLEAN', drcViolations: [] };
+  await deductPipelineCost(supabase, userId, projectId);
   controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: drcState })));
   controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
   controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
@@ -197,15 +199,6 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
     .from('projects')
     .update({ status: 'DRC_CLEAN', pcb_state: drcState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
-
-  const totalCost = 8.5;
-  await supabase
-    .from('credits')
-    .update({
-      balance: Math.max(0, balanceStart - totalCost),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', userId);
 
   controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 }
