@@ -621,6 +621,14 @@ def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, mo
 
     monkeypatch.setattr(placement_module, "_refine_with_cmaes", fake_refine)
     monkeypatch.setattr(placement_module, "_resolve_remaining_conflicts", fake_resolve)
+    # La réparation « hors carte » (2026-07-31) s'exécute APRÈS le revert et
+    # déplacerait R1, masquant ce que ce test mesure. Neutralisée ici pour
+    # isoler le filet CMA-ES — et non parce qu'elle serait indésirable : sur ce
+    # fixture le GA parque réellement R1/R2/R3 hors de la carte 60×40 (mesuré
+    # ~147,95 en local), soit exactement le défaut qu'elle corrige.
+    # Couverture propre : tests/test_placement_inside_outline.py.
+    monkeypatch.setattr(placement_module, "_repair_off_board", lambda path, anchored: [])
+    monkeypatch.setattr(placement_module, "_outside_outline_refs", lambda path: 0)
 
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
