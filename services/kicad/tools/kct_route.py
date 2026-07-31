@@ -1147,7 +1147,8 @@ def _route_supports(flag: str) -> bool:
 
 def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
                      fine_pitch: bool = False,
-                     clearance_mm: str | None = None) -> list[str]:
+                     clearance_mm: str | None = None,
+                     min_completion: str | None = None) -> list[str]:
     """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
 
     Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
@@ -1163,7 +1164,7 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
         str(src), "-o", str(dst),
         "--strategy", "negotiated",
         "--auto-layers",
-        "--min-completion", _MIN_COMPLETION,
+        "--min-completion", min_completion or _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", clearance_mm or _CLEARANCE_FALLBACK_MM,
     ]
@@ -1190,8 +1191,25 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
     return cmd
 
 
+# Seuil permissif de la passe de secours : on ne cherche plus à atteindre une
+# cible, seulement à ce que `kct route` accepte d'ÉCRIRE son meilleur résultat.
+_MIN_COMPLETION_RESCUE: str = "0.0"
+
+# Le routeur n'a produit un résultat partiel que s'il l'annonce explicitement.
+# Sans cette marque, on ne tente aucune récupération : mieux vaut lever que
+# rendre un board dont on ne sait rien.
+_PARTIAL_RE = re.compile(r"PARTIAL:\s*Best result\s+\d+%|Nets routed:\s*\d+\s*/\s*\d+")
+
+
+def _has_partial_result(stdout: str | None) -> bool:
+    """Le routeur annonce-t-il un résultat partiel exploitable ?"""
+    return bool(_PARTIAL_RE.search(stdout or ""))
+
+
 def _run_kct_route(src: Path, dst: Path, timeout_s: int,
-                   fine_pitch: bool = False) -> subprocess.CompletedProcess[str]:
+                   fine_pitch: bool = False,
+                   min_completion: str | None = None,
+                   ) -> subprocess.CompletedProcess[str]:
     """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
     protections escape + départ 4 couches sur les boards à boîtier dense.
 
@@ -1204,7 +1222,8 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int,
     except OSError:
         pcb_text = ""  # le comptage de couches retombe sur son défaut (2)
     clearance = _profile_clearance_mm(fine_pitch, pcb_text)
-    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance)
+    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance,
+                           min_completion=min_completion)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
@@ -1334,6 +1353,34 @@ def _route_once(
         src.write_text(src_text, encoding="utf-8")
 
         result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch)
+
+        if not dst.exists() and _has_partial_result(result.stdout):
+            # `kct route` n'écrit AUCUN fichier quand aucun tier n'atteint
+            # `--min-completion` : l'escalade rend un code ≠ 0 et le meilleur
+            # board est perdu. Mesuré le 2026-07-31 sur un placement pourtant
+            # sain — 44 % de complétion, 4 nets sur 9, et rien en sortie.
+            #
+            # Conséquence : le reasoner (agent ⑥b), dont TOUT l'objet est de
+            # reprendre un routage incomplet, ne reçoit jamais le triplet
+            # (board, pourcentage, analyse) qu'il attend. Il est du code mort
+            # en production exactement dans le cas pour lequel il existe.
+            #
+            # On redemande donc explicitement le meilleur résultat, avec un
+            # seuil permissif. Le pourcentage rendu reste le RÉEL, lu dans le
+            # stdout de la passe d'origine.
+            logger.warning(
+                "kct route: aucun tier n'a atteint %s de complétion — "
+                "récupération du meilleur board partiel pour le reasoner",
+                _MIN_COMPLETION)
+            secours = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch,
+                                     min_completion=_MIN_COMPLETION_RESCUE)
+            if dst.exists():
+                pct_reel = parse_routed_pct(result.stdout)
+                logger.warning(
+                    "kct route: board partiel récupéré à %d%% (le routage "
+                    "complet a échoué) — transmis au sauvetage", pct_reel)
+                return dst.read_bytes(), pct_reel, extract_failure_analysis(
+                    result.stdout) or extract_failure_analysis(secours.stdout)
 
         if not dst.exists():
             raise RuntimeError(
