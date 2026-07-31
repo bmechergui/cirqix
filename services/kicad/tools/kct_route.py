@@ -899,6 +899,48 @@ def convert_corners_45_drc_aware(pcb_bytes: bytes, tier: str, layers: int) -> by
         return dst.read_bytes()
 
 
+_MASK_BRIDGES_RE = re.compile(r"\(allow_soldermask_bridges_in_footprints\s+(yes|no)\)")
+
+
+def allow_soldermask_bridges(pcb_text: str) -> tuple[str, bool]:
+    """Autorise les ponts de masque déclarés PAR LES FOOTPRINTS.
+
+    Un boîtier fine-pitch ne peut pas avoir d'ouvertures de masque séparées.
+    Au pas de 0,5 mm avec des pads de 0,3 mm, la bande de masque entre deux
+    ouvertures fait 0,2 mm — sous la largeur minimale de masque. KiCad fusionne
+    donc les ouvertures et signale un pont ; et comme il traite ``<no net>``
+    comme un net distinct, **chaque broche inutilisée crée un pont avec ses deux
+    voisines**.
+
+    Mesuré le 2026-08-01 sur le board STM32 (LQFP-48, 31 broches libres) :
+    84 ``solder_mask_bridge``, tous entre pads adjacents du MÊME boîtier, dont
+    aucun n'implique une piste. Exemple verbatim :
+
+        "Front solder mask aperture bridges items with different nets"
+          Pad 26 [<no net>] de U2 @ (125.776, 112.978)
+          Pad 25 [USER_LED] de U2 @ (125.276, 112.978)
+
+    La pratique industrielle est une ouverture de masque commune par rangée de
+    pads, déclarée par l'attribut ``allow_soldermask_bridges`` que portent déjà
+    les footprints officiels KiCad pour les boîtiers denses. Le réglage board
+    ``allow_soldermask_bridges_in_footprints no`` **annule** cet attribut : il
+    condamne d'avance tout fine-pitch, quelle que soit la qualité du routage.
+
+    Général : on n'autorise rien de nouveau, on cesse d'ignorer ce que les
+    footprints déclarent eux-mêmes. Un boîtier qui ne le déclare pas reste jugé
+    strictement.
+
+    Renvoie ``(texte, modifié)``.
+    """
+    if _MASK_BRIDGES_RE.search(pcb_text):
+        nouveau, n = _MASK_BRIDGES_RE.subn(
+            "(allow_soldermask_bridges_in_footprints yes)", pcb_text, count=1)
+        deja = "(allow_soldermask_bridges_in_footprints yes)" in pcb_text
+        return nouveau, bool(n) and not deja
+    # Pas de bloc setup exploitable : on ne fabrique rien.
+    return pcb_text, False
+
+
 def _has_partial_result(stdout: str | None) -> bool:
     """Le routeur annonce-t-il un résultat partiel exploitable ?"""
     return bool(_PARTIAL_RE.search(stdout or ""))
@@ -1145,6 +1187,11 @@ def _route_once(
         post = convert_corners_45_drc_aware(
             post.encode("utf-8"), tier_45.strip(), copper_layer_count(post),
         ).decode("utf-8", errors="replace")
+        post, mask_ok = allow_soldermask_bridges(post)
+        if mask_ok:
+            logger.info(
+                "kct route: ponts de masque déclarés par les footprints "
+                "désormais honorés (obligatoire en fine-pitch)")
         # Le remplissage vient EN DERNIER : toute réécriture de zone postérieure
         # (strip/regénération) invaliderait les polygones remplis.
         routed = _fill_zones(_solid_connect_zones(post).encode("utf-8"))
