@@ -402,18 +402,21 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
         logger.warning("réparation hors-carte: contour illisible — abandon")
         return []
 
-    min_x = bornes[0] + _OFF_BOARD_MARGIN_MM
-    max_x = bornes[1] - _OFF_BOARD_MARGIN_MM
-    min_y = bornes[2] + _OFF_BOARD_MARGIN_MM
-    max_y = bornes[3] - _OFF_BOARD_MARGIN_MM
-    if min_x >= max_x or min_y >= max_y:
-        return []
-
     occupes = [fp.position for fp in pcb.footprints if fp.reference not in fautifs]
     deplaces: list[str] = []
 
     for fp in pcb.footprints:
         if fp.reference not in fautifs:
+            continue
+        # Marge PROPRE au composant : ses pads doivent tenir dans le contour,
+        # pas seulement son centre (cf. _footprint_reach_mm).
+        marge = _footprint_reach_mm(fp) + _OFF_BOARD_MARGIN_MM
+        min_x, max_x = bornes[0] + marge, bornes[1] - marge
+        min_y, max_y = bornes[2] + marge, bornes[3] - marge
+        if min_x >= max_x or min_y >= max_y:
+            logger.warning(
+                "réparation hors-carte: %s (encombrement %.1f mm) ne tient pas "
+                "dans le contour", fp.reference, marge)
             continue
         x, y = fp.position
         cible = (min(max(x, min_x), max_x), min(max(y, min_y), max_y))
@@ -431,6 +434,27 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     if deplaces:
         pcb.save(str(pcb_path))
     return deplaces
+
+
+def _footprint_reach_mm(fp) -> float:
+    """Distance du centre au pad le plus éloigné, demi-taille de pad comprise.
+
+    ``kct route`` refuse un board en comptant les **pads** hors Edge.Cuts, pas
+    les centres : « ERROR: 2 footprint(s) / 4 pad(s) outside Edge.Cuts ». Une
+    marge fixe centre-à-bord ne suffit donc pas — un LQFP-48 fait 9 mm de large
+    et un header 1×06 en fait 15, leur centre peut être à 2 mm du bord avec
+    des pads dehors. C'est ce qui laissait 2 footprints hors carte après
+    réparation (mesuré 2026-07-31).
+
+    ``pad.position`` est relatif au centre du footprint ; on majore la rotation
+    en prenant le maximum sur les deux axes, ce qui est conservateur.
+    """
+    reach = 0.0
+    for pad in getattr(fp, "pads", ()) or ():
+        px, py = getattr(pad, "position", (0.0, 0.0))
+        sx, sy = getattr(pad, "size", (0.0, 0.0)) or (0.0, 0.0)
+        reach = max(reach, abs(px) + sx / 2, abs(py) + sy / 2)
+    return reach
 
 
 def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
