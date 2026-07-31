@@ -400,6 +400,33 @@ _OFF_BOARD_MARGIN_MM: float = 2.0
 _OFF_BOARD_SPACING_MM: float = 2.5
 
 
+def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
+    """Bornes du contour Edge.Cuts, dans le repère des positions de footprints.
+
+    ``fp.position`` est board-local alors que ``outline.vertices`` est en
+    coordonnées page : seule la soustraction de ``pcb.board_origin`` les
+    réconcilie. C'est précisément la confusion qui a fait échouer une tentative
+    de réparation via ``place_unplaced`` (2026-07-31).
+    """
+    from kicad_tools.optim.board_outline import extract_board_outline
+
+    outline = extract_board_outline(pcb)
+    if outline is None or not outline.vertices:
+        return None
+    ox, oy = pcb.board_origin
+    xs = [v.x - ox for v in outline.vertices]
+    ys = [v.y - oy for v in outline.vertices]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _refs_outside(pcb, bornes: tuple[float, float, float, float]) -> list[str]:
+    """Références dont le centre tombe hors du contour."""
+    min_x, max_x, min_y, max_y = bornes
+    return [fp.reference for fp in pcb.footprints
+            if not (min_x <= fp.position[0] <= max_x
+                    and min_y <= fp.position[1] <= max_y)]
+
+
 def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     """Ramène dans le contour les seuls footprints signalés ``OFF_BOARD``.
 
@@ -408,6 +435,12 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     conflit (zéro occurrence dans ``fixer.py``) : ``_resolve_remaining_conflicts``
     ne peut donc structurellement pas le résoudre, et tourne ses 10 passes pour
     rien. ``kct route`` refuse ensuite le board (« placement invalid »).
+
+    La détection est **géométrique et non déléguée à l'analyseur** : mesuré le
+    2026-07-31, ``ConflictType.OFF_BOARD`` n'existe pas dans la révision de
+    kicad-tools installée dans l'image Docker (5 types seulement), et y référer
+    lève une ``AttributeError`` qui tue le placement en cours de route. Le test
+    de contour ci-dessous fonctionne sur toute révision.
 
     Deux voies natives ont été essayées et rejetées PAR LA MESURE (2026-07-31,
     board ``examples/stm32-validation`` en Docker) :
@@ -432,33 +465,18 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
 
     Renvoie les refs déplacées ; liste vide si rien n'est hors carte.
     """
-    from kicad_tools.optim.board_outline import extract_board_outline
-    from kicad_tools.placement.analyzer import DesignRules, PlacementAnalyzer
-    from kicad_tools.placement.conflict import ConflictType
     from kicad_tools.schema.pcb import PCB
 
-    rules = DesignRules(courtyard_margin=_COURTYARD_MARGIN_MM)
-    conflicts = PlacementAnalyzer().find_conflicts(str(pcb_path), rules)
-    fautifs = {
-        ref
-        for c in conflicts if c.type == ConflictType.OFF_BOARD
-        for ref in (c.component1, getattr(c, "component2", None))
-        if ref
-    }
+    pcb = PCB.load(str(pcb_path))
+    bornes = _outline_bounds(pcb)
+    if bornes is None:
+        return []
+    fautifs = set(_refs_outside(pcb, bornes))
     if not fautifs:
         return []
 
-    pcb = PCB.load(str(pcb_path))
-    outline = extract_board_outline(pcb)
-    if outline is None or not outline.vertices:
-        logger.warning("réparation hors-carte: contour illisible — abandon")
-        return []
-
-    ox, oy = pcb.board_origin
-    xs = [v.x - ox for v in outline.vertices]
-    ys = [v.y - oy for v in outline.vertices]
-    min_x, max_x = min(xs) + _OFF_BOARD_MARGIN_MM, max(xs) - _OFF_BOARD_MARGIN_MM
-    min_y, max_y = min(ys) + _OFF_BOARD_MARGIN_MM, max(ys) - _OFF_BOARD_MARGIN_MM
+    min_x, max_x = bornes[0] + _OFF_BOARD_MARGIN_MM, bornes[1] - _OFF_BOARD_MARGIN_MM
+    min_y, max_y = bornes[2] + _OFF_BOARD_MARGIN_MM, bornes[3] - _OFF_BOARD_MARGIN_MM
     if min_x >= max_x or min_y >= max_y:
         return []
 
@@ -519,67 +537,30 @@ def _nearest_free_cell(cible: tuple[float, float],
 
 
 def _outside_outline_refs(pcb_path: Path) -> int:
-    """Replace dans le contour tout footprint que l'optimiseur a laissé dehors.
+    """Compte et journalise les footprints restés hors du contour.
 
-    ``_clamp_fixed_refs_to_outline`` ne protège que les connecteurs ancrés, et
-    seulement AVANT l'optimisation. Rien ne vérifiait le RÉSULTAT : mesuré le
-    2026-07-30 en rejouant la chaîne complète en Docker sur
-    ``examples/stm32-validation``, ``OptimizationWorkflow`` a livré **U1 à
-    X = 183,37 mm sur une carte allant de 100 à 160 mm** — 23 mm au-delà du bord
-    droit. Le net ``+5V`` (C1 ↔ U1) devenait inroutable et le board plafonnait à
-    64 % au lieu de 100 %.
-
-    Le pré-filtre en tête de ``auto_place`` ne couvre pas ce cas : il ne teste
-    que ``x < -100``/``y < -100``, la sentinelle « jamais placé », pas un
-    composant simplement posé au-delà du bord.
-
-    ⚠ **DÉTECTION SEULEMENT — la réparation reste à écrire.**
-
-    Une première version déléguait la réparation à ``place_unplaced``, qui
-    documente pourtant détecter les footprints « at the origin or outside the
-    board bounds ». Mesuré en Docker le 2026-07-31 sur ce même board : il a
-    signalé **15 composants sur 17**, en a reposé 8 sur une grille locale
-    (7,4 · 20,2 · 33,0 · 45,8) en laissant les autres en coordonnées page
-    (141,10 · 121,67), et a placé R2 à x = 61,1 mm sur une carte de 60 mm —
-    c'est-à-dire hors carte, le défaut même qu'il devait corriger. Il ne
-    travaille pas dans le repère des positions stockées ici.
-
-    Un clamp maison n'est pas la réponse non plus : il empile tous les fautifs
-    sur le même coin du contour, ce que ``test_placement.py`` a immédiatement
-    attrapé en signalant les conflits ERROR créés.
-
-    En attendant une réparation correcte (unifier le repère, puis replacer avec
-    espacement en préservant les clusters), on se contente de SIGNALER : un
-    avertissement en production vaut mieux qu'un board silencieusement dégradé,
-    et mieux qu'une réparation qui aggrave.
-
-    Renvoie le nombre de footprints hors contour ; ne modifie jamais le board.
+    Contrôle d'observabilité, exécuté APRÈS :func:`_repair_off_board` : s'il
+    reste quoi que ce soit, la réparation a échoué et le routage sera plafonné
+    — ``kct route`` refusera même le board (« placement invalid »). Ne modifie
+    jamais rien.
     """
-    from kicad_tools.optim.board_outline import extract_board_outline
     from kicad_tools.schema.pcb import PCB
 
     try:
         pcb = PCB.load(str(pcb_path))
-        outline = extract_board_outline(pcb)
-        if outline is None or not outline.vertices:
-            return 0
-        ox, oy = pcb.board_origin
-        xs = [v.x - ox for v in outline.vertices]
-        ys = [v.y - oy for v in outline.vertices]
-        min_x, max_x, min_y, max_y = min(xs), max(xs), min(ys), max(ys)
+        bornes = _outline_bounds(pcb)
     except Exception:
         logger.exception("auto_place: contrôle hors-contour impossible")
         return 0
+    if bornes is None:
+        return 0
 
-    hors = []
-    for fp in pcb.footprints:
-        x, y = fp.position
-        if not (min_x <= x <= max_x and min_y <= y <= max_y):
-            hors.append(fp.reference)
-            logger.warning(
-                "auto_place: %s hors contour (%.2f,%.2f) — contour %.1f..%.1f / "
-                "%.1f..%.1f ; ses nets seront INROUTABLES",
-                fp.reference, x, y, min_x, max_x, min_y, max_y)
+    hors = _refs_outside(pcb, bornes)
+    for ref in hors:
+        logger.warning(
+            "auto_place: %s hors contour — contour %.1f..%.1f / %.1f..%.1f ; "
+            "ses nets seront INROUTABLES",
+            ref, bornes[0], bornes[1], bornes[2], bornes[3])
     return len(hors)
 
 
