@@ -312,6 +312,16 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
     return clamped
 
 
+# Tirages de l'Architecte avant d'accepter le meilleur. Le GA est
+# stochastique : mesure du 2026-07-31, un tirage a sorti 16 composants sur
+# 17 du contour. Re-tirer coute ~100 s ; livrer un board inroutable coute
+# tout le pipeline.
+_ARCHITECT_MAX_DRAWS: int = 3
+# Fraction de composants mobiles hors contour au-dela de laquelle le tirage
+# est juge irrecuperable. En deca, la reparation ciblee suffit.
+_ARCHITECT_MAX_OFF_BOARD_RATIO: float = 0.25
+
+
 # Retrait du bord pour reposer un composant sorti du contour, et pas d'une
 # recherche de case libre. 2,5 mm ≈ demi-courtyard d'un 0805 + marge : assez
 # lâche pour que l'Inspecteur n'ait qu'un réglage fin à faire, assez serré pour
@@ -728,20 +738,52 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             generations=_WF_GENERATIONS,
             population=_WF_POPULATION,
         )
-        workflow = OptimizationWorkflow(pcb=pcb, config=cfg)
-        result = workflow.run()
-        # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
-        # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
-        # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
-        updated = workflow.write_to_pcb()
-        logger.info(
-            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés",
-            updated,
-            getattr(result, "wire_length_mm", 0.0) or getattr(result, "wire_length", 0.0),
-            len(conn),
-        )
+        # Le GA est stochastique et produit parfois un tirage à jeter : mesuré
+        # le 2026-07-31, un tirage a sorti 16 composants sur 17 du contour.
+        # Réparer un tel tirage ne le sauve pas — les fautifs venant tous du
+        # même côté, ils se retassent contre le même bord (mesuré : les 17
+        # composants dans le coin bas-droit d'une carte 60×40, board légal mais
+        # routé à 0 %). Au-delà du seuil, on RE-TIRE plutôt que de rafistoler ;
+        # en deçà, la réparation ciblée fait le travail. On garde le meilleur
+        # tirage vu, pour ne jamais rendre pire que ce qu'on avait.
+        meilleur: bytes | None = None
+        meilleur_hors = None
+        for tirage in range(_ARCHITECT_MAX_DRAWS):
+            pcb = PCB.load(str(src))
+            _clamp_fixed_refs_to_outline(pcb, conn)
+            workflow = OptimizationWorkflow(pcb=pcb, config=cfg)
+            result = workflow.run()
+            # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans
+            # le PCB. write_to_pcb() les applique dans `pcb` — sans cet appel,
+            # pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
+            updated = workflow.write_to_pcb()
+            pcb.save(str(out))
 
-        pcb.save(str(out))
+            n_hors = len(_off_board_refs(out))
+            mobiles = max(1, len(pcb.footprints) - len(conn))
+            logger.info(
+                "auto_place natif (hybrid+cluster) tirage %d/%d : %d composants "
+                "écrits, wirelength=%.1fmm, %d ancrés, %d hors contour",
+                tirage + 1, _ARCHITECT_MAX_DRAWS, updated,
+                getattr(result, "wire_length_mm", 0.0)
+                or getattr(result, "wire_length", 0.0),
+                len(conn), n_hors)
+
+            if meilleur_hors is None or n_hors < meilleur_hors:
+                meilleur, meilleur_hors = out.read_bytes(), n_hors
+            if n_hors <= _ARCHITECT_MAX_OFF_BOARD_RATIO * mobiles:
+                break
+            logger.warning(
+                "auto_place: tirage %d rejeté — %d/%d composants mobiles hors "
+                "contour ; le réparer les tasserait contre un bord",
+                tirage + 1, n_hors, mobiles)
+
+        if meilleur is not None:
+            out.write_bytes(meilleur)
+            if meilleur_hors:
+                logger.warning(
+                    "auto_place: meilleur tirage conservé avec %d composant(s) "
+                    "hors contour", meilleur_hors)
 
         # Architecte garanti 0 erreur AVANT le micro-raffinement — snapshot de
         # secours : le CLI CMA-ES n'a pas de verrouillage de position et peut
