@@ -459,69 +459,78 @@ def _outline_bounds_local(pcb) -> tuple[float, float, float, float] | None:
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def normalize_pad_angles(pcb_text: str) -> tuple[str, int]:
-    """Donne à chaque pad l'angle de son footprint. Corrige 204 erreurs DRC.
+def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
+    """Restaure l'angle des pads tel que la SOURCE le déclare. 204 erreurs → 0.
 
-    Dans le format ``.kicad_pcb``, l'angle d'un pad — troisième valeur de son
-    ``(at x y angle)`` — est **absolu en repère board** : il inclut déjà
-    l'orientation du footprint. Un pad sans token d'angle vaut donc 0° en repère
-    board, quelle que soit la rotation du boîtier.
+    Le writer du placement ajoute un angle aux pads que le board d'entrée ne
+    déclare pas. Mesuré le 2026-08-01 sur ``examples/stm32-validation`` :
 
-    Quand le placement pivote un composant, le writer met à jour la rotation du
-    footprint : les POSITIONS des pads tournent bien, mais leurs FORMES restent
-    à 0°. Sur un LQFP-48 pivoté de −90°, une rangée de pads longs de 1,475 mm se
-    retrouve alignée selon son grand axe au pas de 0,5 mm — les pads voisins se
-    recouvrent d'un millimètre.
+    - source ``gen0`` : ``(footprint ... (at x y))`` sans rotation, pads
+      ``(at 4.1625 2.75)`` sans angle — conforme au footprint officiel KiCad ;
+    - après placement : footprint toujours **non pivoté**, mais chaque pad
+      porte ``(at 4.1625 2.75 90)``.
 
-    Preuve arithmétique relevée dans le rapport DRC officiel : entre deux pads
-    distants de 3 pas, ``actual 0.0250 mm`` — soit exactement
-    ``1,5 − 1,475``. L'encombrement pris en compte est celui d'AVANT rotation.
+    Les pads 25-27 d'un LQFP-48 forment une colonne verticale au pas de 0,5 mm ;
+    un angle de 90° bascule leur grand axe (1,475 mm) le long de la colonne et
+    les fait se recouvrir d'un millimètre. Les positions, elles, ne bougent pas —
+    c'est bien l'angle seul qui est corrompu.
 
-    Chaîne mesurée le 2026-08-01, Docker, board STM32 :
+    Effet mesuré sur un board SANS UNE SEULE PISTE :
 
-    ===============================  =======  ============
-    Board                            pistes   erreurs DRC
-    ===============================  =======  ============
-    ``gen0`` (avant placement)             0            0
-    ``tirage1`` (après placement)          0          204
-    ===============================  =======  ============
+    =================================  ============
+    État                               erreurs DRC
+    =================================  ============
+    ``gen0`` (avant placement)                    0
+    après placement                             204
+    après restauration des angles            **0**
+    =================================  ============
 
-    Le placement introduit donc la TOTALITÉ des erreurs, sur un board sans une
-    seule piste — le routage en est innocent de bout en bout. Et après cette
-    normalisation : **204 → 0**, vérifié.
+    Le placement introduisait donc la totalité des erreurs, et le routage en
+    était innocent de bout en bout.
 
-    Générale : s'applique à tout footprint pivoté, sur n'importe quelle carte.
-    Un footprint non pivoté n'est pas touché, et un pad qui porte déjà un angle
-    est laissé tel quel — on ne réécrit que ce qui manque.
+    **Restaurer plutôt qu'imposer.** On recopie l'angle de la source, pad par
+    pad, apparié par référence de boîtier et numéro de pad. Un pad dont la
+    bibliothèque déclare légitimement une rotation propre la conserve donc — ce
+    qu'une règle du type « angle = rotation du footprint » aurait détruit.
 
-    N'altère ni le placement ni sa méthode : positions, rotations et stratégie
-    sont inchangées. C'est une réparation de sérialisation, au même titre que
+    N'altère ni le placement ni sa méthode : positions, rotations de boîtier et
+    stratégie sont inchangées. Réparation de sérialisation, comme
     :func:`_normalize_origin_after_write`.
 
-    Renvoie ``(texte, nombre de pads corrigés)``.
+    Renvoie ``(texte, nombre de pads restaurés)``.
     """
-    morceaux = re.split(r"(\(footprint )", pcb_text)
-    if len(morceaux) < 3:
-        return pcb_text, 0
+    source = _pad_angles(src_text)
+    if not source:
+        return out_text, 0
 
-    sorties = [morceaux[0]]
     corriges = 0
+    morceaux = re.split(r"(\(footprint )", out_text)
+    sorties = [morceaux[0]]
     i = 1
     while i + 1 < len(morceaux):
         sep, bloc = morceaux[i], morceaux[i + 1]
-        entete = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", bloc)
-        rot = float(entete.group(3)) if (entete and entete.group(3)) else 0.0
-        if rot:
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        if ref:
+            nom = ref.group(1)
             parts = re.split(r"(\(pad )", bloc)
             neuf = [parts[0]]
             j = 1
             while j + 1 < len(parts):
-                pbloc, n = re.subn(
-                    r"\(at ([-\d.]+) ([-\d.]+)\)",
-                    lambda m: "(at %s %s %g)" % (m.group(1), m.group(2), rot),
-                    parts[j + 1], count=1)
-                corriges += n
-                neuf.append(parts[j] + pbloc)
+                pb = parts[j + 1]
+                num = re.match(r'"([^"]+)"', pb)
+                cle = (nom, num.group(1)) if num else None
+                # `None` est une valeur LÉGITIME (pad sans angle dans la
+                # source) : on teste la présence de la clé, pas la valeur.
+                if cle in source:
+                    attendu = source[cle]
+                    def _fix(m, a=attendu):
+                        return ("(at %s %s)" % (m.group(1), m.group(2))) if a is None                             else ("(at %s %s %g)" % (m.group(1), m.group(2), a))
+                    pb2, n = re.subn(r"\(at ([-\d.]+) ([-\d.]+)(?: [-\d.]+)?\)",
+                                     _fix, pb, count=1)
+                    if pb2 != pb:
+                        corriges += 1
+                    pb = pb2
+                neuf.append(parts[j] + pb)
                 j += 2
             if j < len(parts):
                 neuf.append(parts[j])
@@ -531,6 +540,22 @@ def normalize_pad_angles(pcb_text: str) -> tuple[str, int]:
     if i < len(morceaux):
         sorties.append(morceaux[i])
     return "".join(sorties), corriges
+
+
+def _pad_angles(text: str) -> dict[tuple[str, str], float | None]:
+    """``{(ref_boitier, num_pad): angle}`` — ``None`` quand le pad n'en a pas."""
+    angles: dict[tuple[str, str], float | None] = {}
+    for bloc in re.split(r"\(footprint ", text)[1:]:
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        if not ref:
+            continue
+        for chunk in re.split(r"\(pad ", bloc)[1:]:
+            num = re.match(r'"([^"]+)"', chunk)
+            at = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", chunk)
+            if num and at:
+                angles[(ref.group(1), num.group(1))] = (
+                    float(at.group(3)) if at.group(3) else None)
+    return angles
 
 
 def _outside_outline_refs(pcb_path: Path) -> int:
@@ -848,17 +873,19 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # ── Observabilité seule : signale un composant laissé hors contour.
         # Ne modifie RIEN — le pipeline de placement validé (Architecte →
         # Inspecteur → Géomètre → Inspecteur + halo) n'est pas altéré.
-        # ── Angles de pads : un pad sans token d'angle vaut 0° en repère
-        # board, même sur un footprint pivoté. Sans cette normalisation, les
-        # formes des pads ne suivent pas la rotation et se recouvrent :
-        # 204 erreurs DRC mesurées sur un board sans une seule piste.
-        texte_final, n_pads = normalize_pad_angles(
+        # ── Angles de pads : le writer en ajoute un que la source ne déclare
+        # pas, ce qui fait basculer le grand axe des pads et les fait se
+        # recouvrir. 204 erreurs DRC mesurées sur un board sans une seule
+        # piste ; 0 après restauration (cf. restore_pad_angles).
+        texte_final, n_pads = restore_pad_angles(
+            src.read_text(encoding="utf-8", errors="replace"),
             out.read_text(encoding="utf-8", errors="replace"))
         if n_pads:
             out.write_text(texte_final, encoding="utf-8")
             logger.info(
-                "auto_place: %d pad(s) alignés sur la rotation de leur boîtier "
-                "— sans quoi leurs formes ne tournent pas", n_pads)
+                "auto_place: angle restauré sur %d pad(s) — le writer en ajoute "
+                "un que la source ne déclare pas, et les formes se recouvrent",
+                n_pads)
 
         n_hors = _outside_outline_refs(out)
         if n_hors:
