@@ -318,6 +318,10 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
 # ne pas gaspiller la surface d'une petite carte.
 _OFF_BOARD_MARGIN_MM: float = 2.0
 _OFF_BOARD_SPACING_MM: float = 2.5
+# Alternances réparation ↔ Inspecteur avant abandon. L'Inspecteur ignore le
+# contour et ressort ce qu'on vient de rentrer ; la dernière passe répare donc
+# sans le relancer. 3 suffit largement : mesuré, le point fixe tombe en 1 ou 2.
+_OFF_BOARD_MAX_PASSES: int = 3
 
 
 def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
@@ -775,13 +779,22 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # 2026-07-30, U1 à X=183,37 sur une carte 100..160 — ce qui rend ses
         # nets inroutables et plafonne le routage (64 % au lieu de 100 %).
         # La réparation reste à écrire : cf. _outside_outline_refs.
-        repares = _repair_off_board(out, conn)
-        if repares:
-            _resolve_remaining_conflicts(out, conn)
+        # Réparation et Inspecteur se contredisent : PlacementFixer écarte les
+        # composants sans aucune notion de contour et RESSORT ceux qu'on vient
+        # de rentrer (mesuré 2026-07-31 : 5 composants toujours dehors après une
+        # passe unique). On alterne donc les deux jusqu'à point fixe, borné.
+        for passe in range(_OFF_BOARD_MAX_PASSES):
+            repares = _repair_off_board(out, conn)
+            if not repares:
+                break
             logger.warning(
-                "auto_place: %d composant(s) hors carte réparé(s) (%s) — leurs "
-                "nets auraient été inroutables et kct route aurait refusé le "
-                "board", len(repares), ", ".join(repares))
+                "auto_place: passe %d — %d composant(s) hors carte réparé(s) "
+                "(%s) ; leurs nets auraient été inroutables et kct route aurait "
+                "refusé le board", passe + 1, len(repares), ", ".join(repares))
+            # Dernière passe : ne pas relancer l'Inspecteur, il les ressortirait
+            # sans qu'une réparation ne suive.
+            if passe < _OFF_BOARD_MAX_PASSES - 1:
+                _resolve_remaining_conflicts(out, conn)
         n_hors = _outside_outline_refs(out)
         if n_hors:
             logger.error(
