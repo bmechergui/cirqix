@@ -392,6 +392,71 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
     return clamped
 
 
+def _outside_outline_refs(pcb_path: Path) -> int:
+    """Replace dans le contour tout footprint que l'optimiseur a laissé dehors.
+
+    ``_clamp_fixed_refs_to_outline`` ne protège que les connecteurs ancrés, et
+    seulement AVANT l'optimisation. Rien ne vérifiait le RÉSULTAT : mesuré le
+    2026-07-30 en rejouant la chaîne complète en Docker sur
+    ``examples/stm32-validation``, ``OptimizationWorkflow`` a livré **U1 à
+    X = 183,37 mm sur une carte allant de 100 à 160 mm** — 23 mm au-delà du bord
+    droit. Le net ``+5V`` (C1 ↔ U1) devenait inroutable et le board plafonnait à
+    64 % au lieu de 100 %.
+
+    Le pré-filtre en tête de ``auto_place`` ne couvre pas ce cas : il ne teste
+    que ``x < -100``/``y < -100``, la sentinelle « jamais placé », pas un
+    composant simplement posé au-delà du bord.
+
+    ⚠ **DÉTECTION SEULEMENT — la réparation reste à écrire.**
+
+    Une première version déléguait la réparation à ``place_unplaced``, qui
+    documente pourtant détecter les footprints « at the origin or outside the
+    board bounds ». Mesuré en Docker le 2026-07-31 sur ce même board : il a
+    signalé **15 composants sur 17**, en a reposé 8 sur une grille locale
+    (7,4 · 20,2 · 33,0 · 45,8) en laissant les autres en coordonnées page
+    (141,10 · 121,67), et a placé R2 à x = 61,1 mm sur une carte de 60 mm —
+    c'est-à-dire hors carte, le défaut même qu'il devait corriger. Il ne
+    travaille pas dans le repère des positions stockées ici.
+
+    Un clamp maison n'est pas la réponse non plus : il empile tous les fautifs
+    sur le même coin du contour, ce que ``test_placement.py`` a immédiatement
+    attrapé en signalant les conflits ERROR créés.
+
+    En attendant une réparation correcte (unifier le repère, puis replacer avec
+    espacement en préservant les clusters), on se contente de SIGNALER : un
+    avertissement en production vaut mieux qu'un board silencieusement dégradé,
+    et mieux qu'une réparation qui aggrave.
+
+    Renvoie le nombre de footprints hors contour ; ne modifie jamais le board.
+    """
+    from kicad_tools.optim.board_outline import extract_board_outline
+    from kicad_tools.schema.pcb import PCB
+
+    try:
+        pcb = PCB.load(str(pcb_path))
+        outline = extract_board_outline(pcb)
+        if outline is None or not outline.vertices:
+            return 0
+        ox, oy = pcb.board_origin
+        xs = [v.x - ox for v in outline.vertices]
+        ys = [v.y - oy for v in outline.vertices]
+        min_x, max_x, min_y, max_y = min(xs), max(xs), min(ys), max(ys)
+    except Exception:
+        logger.exception("auto_place: contrôle hors-contour impossible")
+        return 0
+
+    hors = []
+    for fp in pcb.footprints:
+        x, y = fp.position
+        if not (min_x <= x <= max_x and min_y <= y <= max_y):
+            hors.append(fp.reference)
+            logger.warning(
+                "auto_place: %s hors contour (%.2f,%.2f) — contour %.1f..%.1f / "
+                "%.1f..%.1f ; ses nets seront INROUTABLES",
+                fp.reference, x, y, min_x, max_x, min_y, max_y)
+    return len(hors)
+
+
 # ---------------------------------------------------------------------------
 # Brique 1 — Halo d'escape autour des composants fine-pitch
 # ---------------------------------------------------------------------------
@@ -677,6 +742,23 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             logger.info(
                 "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
                 "des composants denses (fine-pitch)", n_halo)
+
+        # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
+        # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une
+        # carte 100..160), rendant ses nets inroutables — 64 % de routage au lieu
+        # de 100 %. Vient APRÈS le halo, qui écarte des voisins et peut lui-même
+        # pousser un composant vers l'extérieur. Les chevauchements éventuels
+        # sont réglés par l'Inspecteur juste après.
+        # ── Contrôle final : signale (sans corriger) tout composant hors
+        # contour. Le GA peut en parquer un au-delà du bord — mesuré le
+        # 2026-07-30, U1 à X=183,37 sur une carte 100..160 — ce qui rend ses
+        # nets inroutables et plafonne le routage (64 % au lieu de 100 %).
+        # La réparation reste à écrire : cf. _outside_outline_refs.
+        n_hors = _outside_outline_refs(out)
+        if n_hors:
+            logger.warning(
+                "auto_place: %d composant(s) LIVRÉ(S) HORS CONTOUR — routage "
+                "plafonné, réparation non implémentée", n_hors)
 
         footprints = PCB.load(str(out)).footprints
         return {

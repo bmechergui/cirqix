@@ -391,10 +391,19 @@ def test_run_kct_route_escalates_layers_until_100pct(monkeypatch):
 
 
 def test_run_kct_route_uses_pro_clearance(monkeypatch):
-    # Recette pro validée 2026-07-06 (board STM32 LQFP-48, DRC officiel juge) :
-    # --clearance 0.2 aligne le routeur sur les règles DRC par défaut de KiCad.
-    # Mesuré : 0.15 (défaut lib) → 6 courts + 112 copper_edge ; 0.2 → 0 court,
-    # 6 edge, même complétion (82%) ; 0.25 → propre mais complétion 64%.
+    # Recette 2026-07-06 : --clearance 0.2 alignait le routeur sur les règles
+    # DRC PAR DÉFAUT de KiCad, seul règlement que le juge connaissait alors.
+    # Mesuré à l'époque : 0.15 (défaut lib) → 6 courts + 112 copper_edge ;
+    # 0.2 → 0 court, 6 edge, complétion 82% ; 0.25 → propre mais 64%.
+    #
+    # ⚠ Périmé depuis le 2026-07-19 : `drc.write_mfr_project_sidecar` aligne
+    # désormais le juge sur le PROFIL FABRICANT (jlcpcb : 0,127 mm à 2 couches,
+    # 0,1016 mm à 4). Figer 0.2 ici faisait router 2× plus strict que ce que le
+    # juge accepte — perte sèche de complétion, aucun gain de fabricabilité (un
+    # court est un contact cuivre, insensible à la clearance). Le test vérifie
+    # maintenant la DÉRIVATION, pas la valeur.
+    #
+    # Détail du contrat : cf. tests/test_kct_route_clearance_profile.py.
     captured: dict[str, list[str]] = {}
 
     def fake_subprocess_run(cmd, **kwargs):
@@ -405,7 +414,10 @@ def test_run_kct_route_uses_pro_clearance(monkeypatch):
     kct_route._run_kct_route(Path("in.kicad_pcb"), Path("out.kicad_pcb"), 60)
     cmd = captured["cmd"]
     assert "--clearance" in cmd
-    assert cmd[cmd.index("--clearance") + 1] == kct_route._CLEARANCE_MM == "0.2"
+    attendu = kct_route._profile_clearance_mm(fine_pitch=False, pcb_text="")
+    assert cmd[cmd.index("--clearance") + 1] == attendu
+    # Le règlement du fabricant est plus permissif que le défaut KiCad figé.
+    assert float(attendu) < float(kct_route._CLEARANCE_FALLBACK_MM)
 
 
 def test_run_kct_route_uses_mfr_tier_escalation(monkeypatch):
