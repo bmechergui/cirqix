@@ -17,8 +17,8 @@ Rien ne vérifiait le RÉSULTAT. Le placement étant stochastique (GA sans seed)
 le défaut est intermittent — ce qui explique une part de la variance de routage
 45-89 % observée sur ce board depuis juillet.
 
-**Détection seulement.** Deux réparations ont été essayées et rejetées, toutes
-deux par la mesure :
+Deux réparations ont d'abord été essayées et rejetées, toutes deux par la
+mesure :
 
 1. un clamp maison sur le rectangle du contour empile tous les fautifs sur le
    même coin — ``test_placement.py`` l'a attrapé via les conflits ERROR créés ;
@@ -27,10 +27,19 @@ deux par la mesure :
    reposé 8 sur une grille locale en laissant les autres en coordonnées page, et
    a placé R2 à x = 61,1 mm sur une carte de 60 mm — le défaut même à corriger.
 
-Tant que la réparation n'est pas correcte, signaler vaut mieux que dégrader.
+La réparation retenue (``_repair_off_board``) est ciblée : seuls les refs
+réellement classées ``OFF_BOARD`` par ``PlacementAnalyzer`` bougent, chacune
+vers la case libre la plus proche de sa position clampée. Elle existe parce que
+``PlacementFixer`` n'a **aucun** traitement de ``OFF_BOARD`` (zéro occurrence
+dans ``fixer.py``) : l'Inspecteur ne pouvait structurellement pas le résoudre.
+
+Repère, source de l'échec de la voie 2 : ``fp.position`` est board-local,
+``outline.vertices`` est en coordonnées page ; seule la soustraction de
+``pcb.board_origin`` les réconcilie.
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -114,6 +123,38 @@ def test_ne_modifie_jamais_les_positions(carte_60x40):
     placement._outside_outline_refs(Path("b.kicad_pcb"))
 
     assert u1.position == (83.37, 13.83)
+
+
+def test_case_libre_evite_l_empilement():
+    """Le défaut de la 1re tentative : tout empiler sur le même coin.
+
+    ``_nearest_free_cell`` doit écarter un candidat trop proche d'un centre
+    déjà occupé, sinon la réparation recrée les conflits ERROR qu'elle
+    prétend éviter.
+    """
+    bornes = (2.0, 58.0, 2.0, 38.0)
+
+    place = placement._nearest_free_cell((58.0, 38.0), [(58.0, 38.0)], bornes)
+
+    assert place is not None
+    assert place != (58.0, 38.0)
+    assert 2.0 <= place[0] <= 58.0 and 2.0 <= place[1] <= 38.0
+    assert math.dist(place, (58.0, 38.0)) >= placement._OFF_BOARD_SPACING_MM
+
+
+def test_case_libre_conserve_la_cible_si_elle_est_deja_libre():
+    """Ne jamais déplacer plus que nécessaire."""
+    bornes = (2.0, 58.0, 2.0, 38.0)
+
+    assert placement._nearest_free_cell((30.0, 20.0), [(5.0, 5.0)], bornes) == (30.0, 20.0)
+
+
+def test_case_libre_rend_none_quand_tout_est_sature():
+    """Aucune case libre : on renonce plutôt que de superposer."""
+    bornes = (2.0, 6.0, 2.0, 6.0)
+    sature = [(x / 2, y / 2) for x in range(4, 13) for y in range(4, 13)]
+
+    assert placement._nearest_free_cell((4.0, 4.0), sature, bornes) is None
 
 
 def test_contour_illisible_ne_fait_pas_echouer_le_placement(monkeypatch):
