@@ -379,6 +379,85 @@ def _off_board_refs(pcb_path: Path) -> list[str]:
 
 
 
+def _normalize_origin_after_write(pcb, skip: list[str]) -> int:
+    """Retire le ``board_origin`` surnuméraire appliqué par ``write_to_pcb()``.
+
+    **Contradiction interne d'upstream, mesurée le 2026-07-31.**
+    ``PlacementOptimizer.from_pcb`` construit ses ``Component`` avec
+    ``x=fp.position[0]`` — du board-local — mais retranslate le polygone de la
+    carte en coordonnées PAGE (``placement.py:244``, « Translate the outline
+    back into the absolute board frame »), en affirmant en commentaire que
+    « the optimizer adds components at their raw *absolute* positions ». Les
+    deux ne peuvent pas être vrais en même temps. Conséquence : le GA déplace
+    des positions locales vers une région exprimée en page, puis
+    ``write_to_pcb()`` les passe à ``update_footprint_position``, dont la
+    docstring précise qu'elle attend du **relatif à l'origine** et applique
+    l'offset elle-même. L'origine est donc comptée deux fois.
+
+    Effet mesuré sur ``examples/stm32-validation``, 3 tirages sur 3 : 15 à 16
+    composants sur 17 hors carte, ``J1`` seul épargné parce qu'ancré et clampé
+    AVANT l'optimisation. Positions livrées à 216-250 mm sur un contour
+    100-160 mm, soit exactement ``+board_origin``. ``kct route`` refuse alors le
+    board (« placement invalid ») et tout le pipeline s'effondre.
+
+    **Auto-détectant, donc sûr dans la durée.** On ne soustrait que si le
+    composant est hors contour ET que la soustraction l'y ramène. Le jour où le
+    sous-module corrige sa contradiction, cette fonction devient un no-op
+    silencieux — aucune position ne bougera. Elle ne peut pas non plus déplacer
+    un composant déjà correct.
+
+    ``skip`` : les connecteurs ancrés, que l'optimiseur ne touche pas et dont
+    les coordonnées sont déjà justes.
+
+    Renvoie le nombre de footprints normalisés.
+    """
+    bornes = _outline_bounds_local(pcb)
+    if bornes is None:
+        return 0
+    min_x, max_x, min_y, max_y = bornes
+    ox, oy = pcb.board_origin
+    if not (ox or oy):
+        return 0
+
+    def dedans(x: float, y: float) -> bool:
+        return min_x <= x <= max_x and min_y <= y <= max_y
+
+    ignores = set(skip)
+    n = 0
+    for fp in pcb.footprints:
+        if fp.reference in ignores:
+            continue
+        x, y = fp.position
+        if dedans(x, y):
+            continue  # déjà correct — ne jamais toucher
+        if dedans(x - ox, y - oy):
+            fp.position = (x - ox, y - oy)
+            n += 1
+    if n:
+        logger.warning(
+            "auto_place: %d composant(s) normalisé(s) — write_to_pcb() avait "
+            "appliqué board_origin (%.1f, %.1f) en double", n, ox, oy)
+    return n
+
+
+def _outline_bounds_local(pcb) -> tuple[float, float, float, float] | None:
+    """Bornes du contour Edge.Cuts dans le repère de ``fp.position``.
+
+    ``outline.vertices`` est en coordonnées page ; ``fp.position`` est
+    board-local. Vérifié empiriquement sur cinq boards réels : l'écart vaut
+    exactement ``-board_origin`` pour chaque composant.
+    """
+    from kicad_tools.optim.board_outline import extract_board_outline
+
+    outline = extract_board_outline(pcb)
+    if outline is None or not outline.vertices:
+        return None
+    ox, oy = pcb.board_origin
+    xs = [v.x - ox for v in outline.vertices]
+    ys = [v.y - oy for v in outline.vertices]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def _outside_outline_refs(pcb_path: Path) -> int:
     """Compte et journalise les footprints restés hors du contour.
 
@@ -604,11 +683,17 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
         # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
         updated = workflow.write_to_pcb()
+        # Correctif B — normalisation du repère APRÈS write_to_pcb().
+        # Sans lui, l'Architecte livre 15-16 composants sur 17 hors carte
+        # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
+        # CMA-ES, halo — travaille sur un board déjà faux.
+        n_norm = _normalize_origin_after_write(pcb, skip=conn)
         logger.info(
-            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés",
+            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
             updated,
             getattr(result, "wire_length_mm", 0.0) or getattr(result, "wire_length", 0.0),
             len(conn),
+            f", {n_norm} repère(s) normalisé(s)" if n_norm else "",
         )
 
         pcb.save(str(out))
