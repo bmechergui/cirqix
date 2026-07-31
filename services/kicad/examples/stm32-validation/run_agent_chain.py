@@ -35,7 +35,12 @@ from tools.placement import auto_place                        # noqa: E402
 from tools.reasoning import rescue_with_placement_feedback    # noqa: E402
 
 _BOARD_W_MM, _BOARD_H_MM = 60.0, 40.0
-_ROUTE_TIMEOUT_S = 300
+# Budget de routage — celui de la PRODUCTION, pas une valeur locale.
+# Un 300 s codé ici faisait expirer le routage (subprocess coupé à 360 s) là où
+# la prod en accorde 600 : mesuré le 2026-07-31, un board routé à 100 % avait
+# pris 279 s, donc juste sous l'ancienne limite. Sur un placement plus dense
+# elle saute, et l'exemple rapportait un échec que la prod n'aurait pas eu.
+_ROUTE_TIMEOUT_S = kct_route._ROUTE_TIMEOUT_S
 
 
 def stages_1_to_3(gen_board: Path, out: Path) -> None:
