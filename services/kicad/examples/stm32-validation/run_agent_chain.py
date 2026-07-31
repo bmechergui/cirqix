@@ -63,7 +63,7 @@ def stages_1_to_3(gen_board: Path, out: Path) -> None:
     with open(stage1_dir / "placement.log", "w") as f:
         f.write(f"Composants optimises: {res['placed_count']}\n")
         for p in res["positions"]:
-            f.write(f"{p['ref']:5s} @ ({p['x']:7.2f},{p['y']:7.2f})\n")
+            f.write(f"{p['ref']:5s} @ ({p['x_mm']:7.2f},{p['y_mm']:7.2f})\n")
             
     print(f"[2/4] placement  : {res['placed_count']} composants optimisés")
 

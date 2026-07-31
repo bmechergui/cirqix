@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,70 @@ _MIN_COMPLETION: str = "1.0"
 # Prérequis : patches Cirqix #6/#8 de la lib (angles + signe rotation pads,
 # cf. DEPENDENCIES.md) — sans eux, courts fantômes quels que soient les flags.
 _CLEARANCE_MM: str = "0.2"
+
+# ⚠ 2026-07-30 — `_CLEARANCE_MM` n'est plus la valeur passée au routeur, mais
+# seulement le REPLI si le profil fabricant est indisponible.
+#
+# La recette 0.2 ci-dessus est datée : elle a été calibrée le 2026-07-06 quand
+# `kicad-cli pcb drc` jugeait avec les DÉFAUTS KiCad (0,2 mm), faute de sidecar
+# projet. Le chantier DRC-clean du 2026-07-19 a aligné le juge sur le profil
+# fabricant (`drc.write_mfr_project_sidecar` → `get_design_rules`) : jlcpcb vaut
+# 0,127 mm à 2 couches et 0,1016 mm à 4. La constante du routeur n'a pas suivi,
+# si bien que le routeur s'interdisait ~2× ce que le fabricant autorise ET ce
+# que le juge accepte — sans le moindre gain de fabricabilité, un court-circuit
+# étant un CONTACT cuivre, insensible à la clearance.
+#
+# Coût géométrique mesurable sur LQFP-48 (pas 0,5 mm, pads 0,3 mm → gap
+# inter-pads 0,2 mm) : la piste maximale passant entre deux pads vaut
+# `(0,5 - 2 × clearance)`, soit 0,1 mm à 0,2 mm de clearance — SOUS le minimum
+# fabricant, donc aucun échappement de surface n'est possible. À 0,1016 mm, une
+# piste de 0,127 mm passe. C'est la cause géométrique du plafond de routage
+# observé sur ce boîtier depuis juillet.
+_CLEARANCE_FALLBACK_MM: str = _CLEARANCE_MM
+
+# Marge ajoutée au plancher du profil avant transmission au routeur.
+#
+# Le plancher fabricant est une valeur EXACTE que le juge applique à la
+# décimale près, alors que le routeur arrondit à sa grille interne. Mesuré le
+# 2026-07-30 (board STM32 rerouté à 100 %) : en transmettant 0,1016 mm (4 mil)
+# tel quel, le routeur a posé une piste à 0,1000 mm et le juge a levé
+# « clearance (requise 0.1016 ; réelle 0.1000) » — une erreur DRC pour 1,6 µm.
+# 10 µm de marge absorbent la troncature sans coût mesurable de complétion.
+_CLEARANCE_SAFETY_MARGIN_MM: float = 0.01
+
+
+def _profile_clearance_mm(fine_pitch: bool, pcb_text: str) -> str:
+    """Clearance de routage dérivée du profil fabricant, jamais codée en dur.
+
+    Même source de vérité que le juge (`drc.write_mfr_project_sidecar` appelle
+    `get_profile(tier).get_design_rules(layers, 1.0)`) : routeur et DRC doivent
+    appliquer le MÊME règlement, sinon on recrée le motif « 100 % routé, jamais
+    fabricable » — le routeur travaillant sous des règles que le juge ignore.
+
+    Tier retenu = premier barreau de `_MFR_TIER_LADDER`. `--auto-mfr-tier` ne
+    peut qu'escalader vers plus permissif : partir du barreau de base est donc
+    le choix conservateur.
+
+    `fine_pitch` impose de raisonner à 4 couches, en cohérence avec le
+    `--starting-layers 4` que `_build_route_cmd` ajoute dans ce cas.
+
+    Repli sur `_CLEARANCE_FALLBACK_MM` si le profil est indisponible : une
+    dépendance manquante ne doit jamais faire échouer un routage.
+    """
+    try:
+        from kicad_tools.manufacturers import get_profile
+
+        from tools.drc import copper_layer_count
+
+        layers = 4 if fine_pitch else copper_layer_count(pcb_text)
+        tier = _MFR_TIER_LADDER.split(",")[0].strip()
+        rules = get_profile(tier).get_design_rules(layers, 1.0)
+        return f"{rules.min_clearance_mm + _CLEARANCE_SAFETY_MARGIN_MM:g}"
+    except Exception as exc:  # profil absent, API changée, import cassé…
+        logger.warning(
+            "route: profil fabricant indisponible (%s) — clearance de repli %s mm",
+            exc, _CLEARANCE_FALLBACK_MM)
+        return _CLEARANCE_FALLBACK_MM
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]  # services/kicad
 _KCT_SRC = _SERVICE_ROOT / "kicad-tools" / "src"
@@ -534,6 +599,48 @@ def _solid_connect_zones(text: str) -> str:
 _ZONE_BLOCK_RE = re.compile(r"\n\s*\(zone[\s\n]")
 
 
+def _fill_zones(pcb_bytes: bytes) -> bytes:
+    """Remplit les zones du board (``kct zones fill``) avant livraison.
+
+    ``ZoneGenerator.add_zone`` (cf. :func:`_ensure_gnd_both_planes`) déclare le
+    CONTOUR d'une zone mais ne la remplit pas : le board sortait avec
+    ``filled_polygon`` absent, c'est-à-dire des plans sans le moindre cuivre.
+
+    Deux conséquences mesurées le 2026-07-30 sur le board STM32 :
+
+    - **DRC** — 12 des 17 « connexions manquantes » GND étaient un pur artefact
+      du non-remplissage : passer ``kicad-cli pcb drc --refill-zones`` les fait
+      disparaître (17 → 5). Le juge remplissait pour lui-même ce que le board
+      livré ne contenait pas.
+    - **Fabrication** — bien plus grave : une zone non remplie ne produit AUCUN
+      cuivre à l'export Gerber. La carte livrée n'avait pas de plan de masse.
+
+    Le remplissage est donc persisté ici, dans le board rendu. Best-effort : un
+    échec laisse le board tel quel plutôt que de perdre le routage.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.kicad_pcb"
+        dst = Path(tmp) / "filled.kicad_pcb"
+        src.write_bytes(pcb_bytes)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "kicad_tools.cli", "zones", "fill",
+                 str(src), "-o", str(dst)],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=300, check=False, env=_kct_env(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("zones fill: échec (%s) — board livré non rempli", exc)
+            return pcb_bytes
+        if proc.returncode != 0 or not dst.exists():
+            logger.warning(
+                "zones fill: rc=%s — board livré NON REMPLI (plans sans cuivre "
+                "à l'export Gerber) : %s",
+                proc.returncode, (proc.stderr or proc.stdout or "")[-200:])
+            return pcb_bytes
+        return dst.read_bytes()
+
+
 def _strip_zone_blocks(text: str) -> str:
     """Retire tous les blocs top-level ``(zone …)`` d'un .kicad_pcb.
 
@@ -606,8 +713,34 @@ def _has_dense_footprint(text: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=8)
+def _route_supports(flag: str) -> bool:
+    """``kct route`` accepte-t-il ce flag dans la révision installée ?
+
+    L'image Docker installe kicad-tools depuis ``/opt/kicad-tools``, qui peut
+    être ANTÉRIEUR au gitlink du dépôt : mesuré le 2026-07-30, l'image
+    ``cirqix-kicad:latest`` ignorait ``--stitch-power-planes`` (rc=2, usage
+    error) alors que le sous-module épinglé le définit. Passer un flag inconnu
+    fait échouer tout le routage — on sonde donc plutôt que de supposer.
+
+    Sondage unique par flag (``lru_cache``) ; en cas d'échec du sondage on
+    répond False, le routage restant fonctionnel sans l'option.
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "kicad_tools.cli", "route", "--help"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, check=False, env=_kct_env(),
+        )
+        return flag in (proc.stdout or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("route: sondage du flag %s impossible (%s)", flag, exc)
+        return False
+
+
 def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
-                     fine_pitch: bool = False) -> list[str]:
+                     fine_pitch: bool = False,
+                     clearance_mm: str | None = None) -> list[str]:
     """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
 
     Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
@@ -625,7 +758,7 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
         "--auto-layers",
         "--min-completion", _MIN_COMPLETION,
         "--auto-fix",
-        "--clearance", _CLEARANCE_MM,
+        "--clearance", clearance_mm or _CLEARANCE_FALLBACK_MM,
     ]
     if fine_pitch:
         cmd += [
@@ -634,6 +767,13 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
             "--micro-via-in-pad-fallback",
             "--starting-layers", "4",
         ]
+    # Couture des plans : sans elle, la zone de masse n'est reliée à AUCUN pad.
+    # Mesuré le 2026-07-30 sur le board STM32 rerouté à 100 % — les 17 connexions
+    # manquantes restantes étaient TOUTES sur GND, la zone étant présente mais
+    # orpheline. Le flag pose les vias pad → plan. Conditionnel : absent des
+    # révisions kicad-tools antérieures, où il ferait échouer le routage (rc=2).
+    if _route_supports("--stitch-power-planes"):
+        cmd.append("--stitch-power-planes")
     cmd += [
         "--auto-mfr-tier",
         "--mfr-tier-ladder", _MFR_TIER_LADDER,
@@ -646,8 +786,18 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
 def _run_kct_route(src: Path, dst: Path, timeout_s: int,
                    fine_pitch: bool = False) -> subprocess.CompletedProcess[str]:
     """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
-    protections escape + départ 4 couches sur les boards à boîtier dense."""
-    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch)
+    protections escape + départ 4 couches sur les boards à boîtier dense.
+
+    La clearance vient du profil fabricant (`_profile_clearance_mm`), pas d'une
+    constante : c'est ce qui garantit que le routeur et le juge DRC appliquent
+    le même règlement.
+    """
+    try:
+        pcb_text = src.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pcb_text = ""  # le comptage de couches retombe sur son défaut (2)
+    clearance = _profile_clearance_mm(fine_pitch, pcb_text)
+    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
@@ -808,7 +958,9 @@ def _route_once(
                 "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
                 "courts + solder_mask_bridge sur pads NC", stub_n)
         post = strip_nc_nets(routed_text)
-        routed = _solid_connect_zones(post).encode("utf-8")
+        # Le remplissage vient EN DERNIER : toute réécriture de zone posérieure
+        # (strip/regénération) invaliderait les polygones remplis.
+        routed = _fill_zones(_solid_connect_zones(post).encode("utf-8"))
 
         # Piste 4 : estampille le tier retenu SI l'escalade a dépassé le
         # premier barreau — le router DRC alignera ses règles dessus. No-op
