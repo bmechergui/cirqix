@@ -1,6 +1,6 @@
 # Handoff — `2026-08-01-routage-fabricable-stm32`
 
-- **Status:** `IN_PROGRESS`
+- **Status:** `DONE` (objectif partiellement atteint — voir « Résultat »)
 - **Owner:** `Claude Code`
 - **Reviewer:** `aucun`
 - **Receiver:** `human`
@@ -12,98 +12,125 @@
 
 100 % routé **et** fabricable sur `examples/stm32-validation`, angles de routage
 professionnels (pas de coin à 90°), **sans toucher au placement ni à sa
-méthode**, en natif kct/kicad-tools, avec une solution générale valable sur tout
-type de carte.
+méthode**, en natif kct/kicad-tools, solution générale valable sur tout board.
+
+## Résultat
+
+| | Début | Fin |
+|---|---|---|
+| Erreurs DRC | 204 | **0** |
+| Courts-circuits | 13 | **0** |
+| Routé | 18 % | **82 %** |
+
+**Fabricabilité atteinte** (0 erreur, vérifiée sur 3 boards indépendants).
+**100 % routé non atteint** : plafond reproductible à 82 %, blocage géométrique.
 
 ## Méthode de mesure — non négociable
 
-**Toute mesure locale Windows est invalide.** Sans `kct build-native`, `kct route`
-retombe silencieusement sur l'A* Python et meurt sur deadline : **9 % en local
-contre 73 % en Docker** pour le même board. Conteneur `cirqix-measure`
-(image `cirqix-kicad:latest`, backend C++ 1.0.0 vérifié), juge =
+**Toute mesure locale Windows est invalide.** Sans `kct build-native`, le
+routeur retombe sur l'A* Python et meurt sur deadline : **9 % en local contre
+73 % en Docker**. Conteneur `cirqix-measure`, backend C++ 1.0.0 vérifié, juge =
 `kicad-cli pcb drc` avec sidecar fabricant et `--refill-zones`.
 
-⚠ L'image installe kicad-tools depuis `/opt`, **antérieur au gitlink du dépôt** :
-`--stitch-power-planes` et `ConflictType.OFF_BOARD` y sont absents. Un rebuild
-sur le gitlink courant est nécessaire pour une validation représentative.
+⚠ L'image installe kicad-tools depuis `/opt`, **antérieur au gitlink** :
+`--stitch-power-planes` et `ConflictType.OFF_BOARD` y sont absents.
 
-## Défauts trouvés et corrigés
+## Le défaut central — angles de pads
 
-| # | Défaut | Mesure |
-|---|---|---|
-| 1 | Routeur et juge DRC sur deux règlements différents | clearance bridée à 2× la capacité fabricant → échappement LQFP-48 géométriquement impossible |
-| 2 | Plancher fabricant transmis à la décimale exacte | une erreur DRC pour **1,6 µm** d'arrondi ; 4 → 2 erreurs |
-| 3 | Zones jamais remplies | 12 fausses connexions manquantes, et **aucun cuivre de masse à l'export Gerber** |
-| 4 | Flag supposé au lieu d'être sondé | un flag absent de l'image fait échouer tout le routage (rc=2) |
-| 5 | `board_origin` compté deux fois après `write_to_pcb()` | **15-16 composants sur 17 hors carte**, 3 tirages sur 3 |
-| 6 | Budget de routage de l'exemple à 300 s | contre 600 s en production — échecs fantômes |
-| 7 | Board partiel jeté quand `min-completion` n'est pas atteint | le **reasoner ⑥b ne pouvait jamais s'exécuter** |
-| 8 | **Patch Cirqix #7 documenté mais jamais appliqué** | `KCT_SAFE_OPTIMIZE` fixée nulle part → 204 erreurs DRC |
-| 9 | Ponts de masque interdits au niveau board | condamne d'avance tout fine-pitch |
+Le writer du placement se trompe **dans les deux sens**, selon le tirage GA :
 
-### Le point le plus important — #5
+| Tirage | rotation boîtier | angle des pads | verdict |
+|---|---|---|---|
+| 1 | 0° | 90° — **en trop** | 204 erreurs |
+| 2 | 270° | absent — **manque** | 204 erreurs |
 
-`PlacementOptimizer.from_pcb` construit ses `Component` avec `x=fp.position[0]`
-(board-local) mais retranslate le polygone de la carte en page, en affirmant en
-commentaire que « the optimizer adds components at their raw absolute
-positions ». `update_footprint_position`, elle, documente attendre du relatif et
-applique l'offset. **Les trois ne peuvent pas être vrais ensemble.**
+Les pads 25-27 d'un LQFP-48 forment une colonne verticale au pas de 0,5 mm et
+mesurent 1,475 × 0,3 mm. Dès que leur orientation ne suit pas celle du boîtier,
+leur grand axe bascule le long de la colonne et les voisins se recouvrent d'un
+millimètre. Preuve arithmétique dans le rapport DRC : `actual 0.0250 mm` entre
+pads distants de 3 pas, soit exactement `1,5 − 1,475`.
 
-Après correction : **0 conflit, 0 composant hors carte, 3 tirages sur 3**, en
-151-180 s contre 207-329 s.
+**Règle correcte** : `angle_absolu = rotation_boîtier + angle_relatif_source`
+(`restore_pad_angles`). Deux versions partielles ont échoué avant, chacune ne
+couvrant qu'un des deux cas.
 
-### Le point le plus subtil — #9
+### Le réflexe de diagnostic qui manquait
 
-204 erreurs DRC identiques sur 3 boards routés à 9 %, 18 % et 18 %. Sur un board
-à 9 % il y a une poignée de pistes : 107 violations de clearance ne peuvent pas
-en venir. Classées : **toutes « pad + pad », zéro piste, zéro via, zéro zone**,
-et toutes sur **U2 contre lui-même** — que `PlacementAnalyzer` ne peut pas voir,
-puisqu'il compare les composants entre eux.
+`gen0` avant placement : **0 erreur**. Après placement, **0 piste** et déjà
+**204 erreurs**. Le DRC sur le board **placé mais non routé** coûte 30 secondes
+et prouve immédiatement que le routage est hors de cause. Faute de ce test,
+l'essentiel de la session a été passé à traquer le défaut dans le routeur.
 
-Ce ne sont pas les cuivres qui se touchent (mesuré : 0 paire sous 0,1016 mm) mais
-les **ouvertures de masque**. Au pas de 0,5 mm avec des pads de 0,3 mm, la bande
-de masque fait 0,2 mm — sous la largeur minimale. KiCad fusionne, et comme il
-traite `<no net>` comme un net distinct, **chaque broche inutilisée crée un pont
-avec ses deux voisines** : 31 broches libres → 84 ponts.
+**Isoler l'étage avant de l'optimiser.**
 
-## Pistes fermées par la mesure
+## Les 10 défauts corrigés
 
-- **`--use-routing-fitness`** : timeout 1800 s sans terminer (jusqu'à 5 000
-  routages avec `generations=100`, `population=50`).
-- **`--routing-aware`** (`PlaceRouteOptimizer`) : timeout 1500 s.
+1. Routeur et juge DRC sur deux règlements différents
+2. Plancher fabricant transmis à la décimale exacte (1,6 µm → erreur DRC)
+3. Zones jamais remplies → **aucun cuivre de masse à l'export Gerber**
+4. Flag supposé au lieu d'être sondé (rc=2 sur toute la chaîne)
+5. `board_origin` compté deux fois → 15-16 composants sur 17 hors carte
+6. Budget de routage de l'exemple à 300 s contre 600 en production
+7. Board partiel jeté → le reasoner ⑥b ne pouvait jamais s'exécuter
+8. **Patch Cirqix #7 documenté mais jamais appliqué** → 204 erreurs
+9. Ponts de masque interdits au niveau board → fine-pitch condamné d'avance
+10. **Angles de pads corrompus** → la totalité des erreurs restantes
 
-Contre **165 s** pour la stratégie validée. Ces deux options étaient désignées
-par `output/README-experiences-2026-07-22.md` et le handoff du 2026-07-19 comme
-LA direction à suivre, jamais testée. **Elles ne tiennent pas le budget
-0,12 €/PCB.** Ne pas re-benchmarker.
+## Leviers fermés par la mesure — ne pas re-tester
 
-## Erreurs que j'ai commises
+| Levier | Résultat |
+|---|---|
+| `--routing-aware` | timeout 1500 s (contre 165 s pour `hybrid`) |
+| `--use-routing-fitness` | timeout 1800 s |
+| `--adaptive-rules` | 64 %, identique au nominal |
+| clearance 0,127 / 0,15 mm | **refus de grille**, aucun board produit |
+| pilotage LLM du reasoner | **dégrade** : 82 % → 73 % |
 
-- J'ai **modifié la stratégie de placement validée** sans le demander
-  (réparation hors-carte, marge par composant, re-tirage de l'Architecte). Le
-  routage est tombé à 0 % puis 36 %. Tout est reverté au commit `a9c9e6e`.
-- Trois réparations du hors-carte écrites puis retirées, chaque fois démenties
-  par la mesure — la vraie cause était #5, à un seul endroit.
-- Une suite pytest lancée **en même temps** qu'un run Docker a pris **5 h 18**
-  au lieu de 2 min. Ne jamais chronométrer les deux ensemble.
+**0,2 mm de clearance est un plancher STRUCTUREL**, pas un choix conservateur :
+le routeur refuse toute grille plus grossière que `clearance / 2`, et le budget
+`max_cells` (non réglable) ne permet pas plus fin. Les 18 % manquants ne peuvent
+donc pas être gagnés par la clearance.
+
+Le seul levier qui gagne des points est le **dé-routage complet suivi d'un
+re-routage** : 73 % → 82 %, point fixe confirmé sur deux passes.
+
+## Pourquoi 82 % et pas 100 %
+
+Blocage **géométrique et réparti** : `U2` et `J1` sont distants de 38 mm avec
+**11 composants** dans la bande. Pas de bloqueur unique à écarter. Le routeur
+diagnostique lui-même `Path blocked by component or trace`.
+
+**La seule voie restante est de changer le placement**, exclu par la contrainte.
+
+## Mes erreurs
+
+- **Modifié la stratégie de placement validée** sans le demander : routage tombé
+  à 0 % puis 36 %. Reverté (`a9c9e6e`).
+- **Trois réparations du hors-carte** écrites puis retirées, chacune démentie par
+  la mesure. Le défaut `OFF_BOARD` reste détecté mais non réparé.
+- **Trois versions du correctif d'angles**, chacune validée sur un seul tirage.
+- **Un harnais de mesure** rendant `rc=1`, un fichier et « 100 % »… avec
+  **0 segment**. Toujours compter les segments du board produit.
+- **Contention** : pytest lancé pendant un run Docker → 5 h 18 au lieu de 2 min.
 
 ## Validations
 
 | Commande | Résultat |
 |---|---|
-| `pytest services/kicad/tests` | **250 verts** |
-| Placement, 3 tirages Docker | 0 conflit, 0 hors carte, 151-180 s |
-| Routage, 3 tirages Docker | **en cours** au moment d'écrire |
+| `pytest services/kicad/tests` | **257 verts** |
+| Placement, Docker | 0 conflit, 0 hors carte, 0 erreur DRC |
+| Routage, Docker | 64-82 %, **0 erreur DRC** |
 
 ## Travail restant
 
-1. Terminer la validation routage avec les correctifs #8 et #9.
-2. Mesurer la distribution des angles (`0/45/90/135` vs arbitraires) — le board
-   de référence de juillet n'a que **62 %** de segments alignés.
-3. Rebuild de `cirqix-kicad` sur le gitlink courant.
-4. Piloter le reasoner ⑥b, désormais atteignable grâce à #7 — jamais fait.
+1. Réparer le défaut `OFF_BOARD` de `U2` (12-21 `copper_edge_clearance` sur
+   certains tirages) — trois tentatives échouées, cf. mémoire projet.
+2. Rebuild de `cirqix-kicad` sur le gitlink courant.
+3. Pour les 18 % : Phase 6 RL_PCB, ou autoriser le reasoner à réorganiser le
+   couloir `U2→J1`.
 
 ## Prochaine action atomique
 
-Lire `examples/stm32-validation/output/valid-final.log` et mesurer les angles du
-board produit avec `output/angles.py`.
+Décider si la contrainte « ne pas toucher au placement » est levée pour ce
+board. Sans cela, aucune optimisation de routage supplémentaire ne débloquera
+les 18 % restants.
