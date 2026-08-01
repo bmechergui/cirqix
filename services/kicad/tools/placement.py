@@ -89,6 +89,86 @@ def _connector_refs(pcb) -> list[str]:
             if fp.reference and fp.reference[0] in ("J", "P")]
 
 
+def _outline_extent_board_frame(pcb) -> Optional[tuple[float, float]]:
+    """Coin bas-droit du contour Edge.Cuts, ramené en repère board.
+
+    ``fp.position`` est board-relative (l'API PCB soustrait ``board_origin``),
+    les graphiques Edge.Cuts sont sheet-absolute — d'où la soustraction ici.
+    """
+    ox, oy = pcb.board_origin
+    xs: list[float] = []
+    ys: list[float] = []
+    for attr in ("graphic_items", "graphics", "lines"):
+        for item in getattr(pcb, attr, None) or []:
+            if getattr(item, "layer", None) != "Edge.Cuts":
+                continue
+            for point_attr in ("start", "end"):
+                pt = getattr(item, point_attr, None)
+                if pt is not None:
+                    xs.append(pt[0] - ox)
+                    ys.append(pt[1] - oy)
+    if not xs or not ys:
+        return None
+    return max(xs), max(ys)
+
+
+def _normalize_to_board_frame(pcb_path: Path) -> int:
+    """Ramène les positions en repère board si elles ont été écrites en absolu.
+
+    ``OptimizationWorkflow.write_to_pcb()`` a changé de convention entre
+    kicad-tools 0.13.0 et 0.18.0 (bump PR #69) : il écrit désormais les positions
+    en **sheet-absolute** dans un champ que l'API PCB relit en **board-relative**.
+    Sur la fixture led-blinker (``board_origin`` = 118.5, 82.5), les composants
+    ressortaient à x≈124-147 / y≈88-111 pour un contour de 60×45 mm — soit
+    exactement ``position + board_origin``. ``kct route`` refusait alors le
+    placement, le repli Freerouting rendait un board sans netlist, et le tout
+    était rapporté « routé à 100 % » (issue #72).
+
+    Correctif défensif plutôt que dépendant d'une version : on ne translate que
+    si le décalage de ``board_origin`` explique l'écart pour TOUS les composants
+    hors contour. Un débordement isolé (un composant réellement mal placé) n'est
+    pas un problème de repère et n'est pas touché — sinon on déplacerait sept
+    composants corrects pour « réparer » le huitième.
+
+    Retourne le nombre de footprints translatés (0 si rien à faire).
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    pcb = PCB.load(str(pcb_path))
+    extent = _outline_extent_board_frame(pcb)
+    if extent is None:
+        return 0
+    width, height = extent
+    ox, oy = pcb.board_origin
+    if ox == 0 and oy == 0:
+        return 0
+
+    def inside(x: float, y: float) -> bool:
+        return 0.0 <= x <= width and 0.0 <= y <= height
+
+    outside = [fp for fp in pcb.footprints if not inside(*fp.position[:2])]
+    if not outside:
+        return 0
+    # Le décalage doit expliquer TOUS les cas, sinon ce n'est pas le repère.
+    if not all(inside(fp.position[0] - ox, fp.position[1] - oy) for fp in outside):
+        logger.warning(
+            "_normalize_to_board_frame: %d composant(s) hors contour NON expliqués par "
+            "board_origin — placement réellement fautif, pas un décalage de repère",
+            len(outside),
+        )
+        return 0
+
+    for fp in outside:
+        fp.position = (fp.position[0] - ox, fp.position[1] - oy)
+    pcb.save(str(pcb_path))
+    logger.warning(
+        "_normalize_to_board_frame: %d position(s) réécrites en repère board "
+        "(décalage board_origin %.2f,%.2f appliqué par write_to_pcb — cf. issue #72)",
+        len(outside), ox, oy,
+    )
+    return len(outside)
+
+
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
 
@@ -313,14 +393,6 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
     return clamped
 
 
-# Tirages de l'Architecte avant d'accepter le meilleur. Le GA est
-# stochastique : mesure du 2026-07-31, un tirage a sorti 16 composants sur
-# 17 du contour. Re-tirer coute ~100 s ; livrer un board inroutable coute
-# tout le pipeline.
-# Fraction de composants mobiles hors contour au-dela de laquelle le tirage
-# est juge irrecuperable. En deca, la reparation ciblee suffit.
-
-
 # Retrait du bord pour reposer un composant sorti du contour, et pas d'une
 # recherche de case libre. 2,5 mm ≈ demi-courtyard d'un 0805 + marge : assez
 # lâche pour que l'Inspecteur n'ait qu'un réglage fin à faire, assez serré pour
@@ -375,78 +447,104 @@ def _off_board_refs(pcb_path: Path) -> list[str]:
 
 # Retrait du bord pour reposer un composant sorti du contour, et pas de la
 # recherche de case libre. 2,5 mm ~ demi-courtyard d'un 0805 + marge.
+_OFF_BOARD_MARGIN_MM: float = 2.0
+_OFF_BOARD_SPACING_MM: float = 2.5
 
 
+def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
+    """Ramène dans le contour les seuls footprints signalés hors carte.
 
+    Repère établi empiriquement le 2026-07-31 sur cinq boards réels, et
+    identique sur tous : ``board_origin`` vaut ``(100,100)``,
+    ``outline.vertices`` est en coordonnées PAGE, ``fp.position`` est
+    BOARD-LOCAL (écart constant de -100,-100). Les bornes utilisables sont donc
+    ``contour - board_origin``. Ce contrôle a été refait parce que trois
+    tentatives de réparation avaient conclu à tort à une ambiguïté de repère —
+    en réalité les comptes aberrants (14 ou 15 composants sur 17) venaient de
+    tirages GA réellement catastrophiques, pas d'un décalage.
 
+    Le point qui faisait échouer la boucle réparation ↔ Inspecteur :
+    ``PlacementFixer`` n'a aucune notion de contour et ressortait ce qu'on
+    venait de rentrer. On lui passe donc les refs réparées dans ``anchored``,
+    qu'il ne déplace jamais — il résout les chevauchements en bougeant les
+    AUTRES composants. C'est le mécanisme natif prévu pour ça.
 
-def _normalize_origin_after_write(pcb, skip: list[str]) -> int:
-    """Retire le ``board_origin`` surnuméraire appliqué par ``write_to_pcb()``.
-
-    **Contradiction interne d'upstream, mesurée le 2026-07-31.**
-    ``PlacementOptimizer.from_pcb`` construit ses ``Component`` avec
-    ``x=fp.position[0]`` — du board-local — mais retranslate le polygone de la
-    carte en coordonnées PAGE (``placement.py:244``, « Translate the outline
-    back into the absolute board frame »), en affirmant en commentaire que
-    « the optimizer adds components at their raw *absolute* positions ». Les
-    deux ne peuvent pas être vrais en même temps. Conséquence : le GA déplace
-    des positions locales vers une région exprimée en page, puis
-    ``write_to_pcb()`` les passe à ``update_footprint_position``, dont la
-    docstring précise qu'elle attend du **relatif à l'origine** et applique
-    l'offset elle-même. L'origine est donc comptée deux fois.
-
-    Effet mesuré sur ``examples/stm32-validation``, 3 tirages sur 3 : 15 à 16
-    composants sur 17 hors carte, ``J1`` seul épargné parce qu'ancré et clampé
-    AVANT l'optimisation. Positions livrées à 216-250 mm sur un contour
-    100-160 mm, soit exactement ``+board_origin``. ``kct route`` refuse alors le
-    board (« placement invalid ») et tout le pipeline s'effondre.
-
-    **Auto-détectant, donc sûr dans la durée.** On ne soustrait que si le
-    composant est hors contour ET que la soustraction l'y ramène. Le jour où le
-    sous-module corrige sa contradiction, cette fonction devient un no-op
-    silencieux — aucune position ne bougera. Elle ne peut pas non plus déplacer
-    un composant déjà correct.
-
-    ``skip`` : les connecteurs ancrés, que l'optimiseur ne touche pas et dont
-    les coordonnées sont déjà justes.
-
-    Renvoie le nombre de footprints normalisés.
+    Renvoie les refs déplacées ; liste vide si rien n'est hors carte.
     """
-    bornes = _outline_bounds_local(pcb)
+    from kicad_tools.schema.pcb import PCB
+
+    fautifs = set(_off_board_refs(pcb_path))
+    if not fautifs:
+        return []
+
+    pcb = PCB.load(str(pcb_path))
+    bornes = _outline_bounds(pcb)
     if bornes is None:
-        return 0
-    min_x, max_x, min_y, max_y = bornes
-    ox, oy = pcb.board_origin
-    if not (ox or oy):
-        return 0
+        logger.warning("réparation hors-carte: contour illisible — abandon")
+        return []
 
-    def dedans(x: float, y: float) -> bool:
-        return min_x <= x <= max_x and min_y <= y <= max_y
+    occupes = [fp.position for fp in pcb.footprints if fp.reference not in fautifs]
+    deplaces: list[str] = []
 
-    ignores = set(skip)
-    n = 0
     for fp in pcb.footprints:
-        if fp.reference in ignores:
+        if fp.reference not in fautifs:
+            continue
+        # Marge PROPRE au composant : ses pads doivent tenir dans le contour,
+        # pas seulement son centre (cf. _footprint_reach_mm).
+        marge = _footprint_reach_mm(fp) + _OFF_BOARD_MARGIN_MM
+        min_x, max_x = bornes[0] + marge, bornes[1] - marge
+        min_y, max_y = bornes[2] + marge, bornes[3] - marge
+        if min_x >= max_x or min_y >= max_y:
+            logger.warning(
+                "réparation hors-carte: %s (encombrement %.1f mm) ne tient pas "
+                "dans le contour", fp.reference, marge)
             continue
         x, y = fp.position
-        if dedans(x, y):
-            continue  # déjà correct — ne jamais toucher
-        if dedans(x - ox, y - oy):
-            fp.position = (x - ox, y - oy)
-            n += 1
-    if n:
-        logger.warning(
-            "auto_place: %d composant(s) normalisé(s) — write_to_pcb() avait "
-            "appliqué board_origin (%.1f, %.1f) en double", n, ox, oy)
-    return n
+        cible = (min(max(x, min_x), max_x), min(max(y, min_y), max_y))
+        place = _nearest_free_cell(cible, occupes, (min_x, max_x, min_y, max_y))
+        if place is None:
+            logger.warning("réparation hors-carte: aucune case libre pour %s",
+                           fp.reference)
+            continue
+        logger.warning("réparation hors-carte: %s (%.2f,%.2f) -> (%.2f,%.2f)",
+                       fp.reference, x, y, place[0], place[1])
+        fp.position = place
+        occupes.append(place)
+        deplaces.append(fp.reference)
+
+    if deplaces:
+        pcb.save(str(pcb_path))
+    return deplaces
 
 
-def _outline_bounds_local(pcb) -> tuple[float, float, float, float] | None:
-    """Bornes du contour Edge.Cuts dans le repère de ``fp.position``.
+def _footprint_reach_mm(fp) -> float:
+    """Distance du centre au pad le plus éloigné, demi-taille de pad comprise.
 
-    ``outline.vertices`` est en coordonnées page ; ``fp.position`` est
-    board-local. Vérifié empiriquement sur cinq boards réels : l'écart vaut
-    exactement ``-board_origin`` pour chaque composant.
+    ``kct route`` refuse un board en comptant les **pads** hors Edge.Cuts, pas
+    les centres : « ERROR: 2 footprint(s) / 4 pad(s) outside Edge.Cuts ». Une
+    marge fixe centre-à-bord ne suffit donc pas — un LQFP-48 fait 9 mm de large
+    et un header 1×06 en fait 15, leur centre peut être à 2 mm du bord avec
+    des pads dehors. C'est ce qui laissait 2 footprints hors carte après
+    réparation (mesuré 2026-07-31).
+
+    ``pad.position`` est relatif au centre du footprint ; on majore la rotation
+    en prenant le maximum sur les deux axes, ce qui est conservateur.
+    """
+    reach = 0.0
+    for pad in getattr(fp, "pads", ()) or ():
+        px, py = getattr(pad, "position", (0.0, 0.0))
+        sx, sy = getattr(pad, "size", (0.0, 0.0)) or (0.0, 0.0)
+        reach = max(reach, abs(px) + sx / 2, abs(py) + sy / 2)
+    return reach
+
+
+def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
+    """Bornes du contour dans le repère de ``fp.position`` (board-local).
+
+    ``outline.vertices`` est en coordonnées page ; la soustraction de
+    ``pcb.board_origin`` donne le repère board-local des positions de
+    footprints. Vérifié sur cinq boards réels : l'écart est exactement
+    ``-board_origin`` pour chaque composant.
     """
     from kicad_tools.optim.board_outline import extract_board_outline
 
@@ -457,6 +555,39 @@ def _outline_bounds_local(pcb) -> tuple[float, float, float, float] | None:
     xs = [v.x - ox for v in outline.vertices]
     ys = [v.y - oy for v in outline.vertices]
     return min(xs), max(xs), min(ys), max(ys)
+
+
+def _nearest_free_cell(cible: tuple[float, float],
+                       occupes: list[tuple[float, float]],
+                       bornes: tuple[float, float, float, float],
+                       ) -> tuple[float, float] | None:
+    """Case libre la plus proche de ``cible``, dans ``bornes``.
+
+    « Libre » = à plus de ``_OFF_BOARD_SPACING_MM`` de tout centre occupé — une
+    approximation par distance entre centres suffit, l'Inspecteur affinant
+    ensuite avec les vrais courtyards. Empiler tout sur le coin clampé était le
+    défaut de la première tentative, attrapé par ``test_placement.py``.
+    Recherche en anneaux carrés bornée : jamais de boucle non terminante.
+    """
+    min_x, max_x, min_y, max_y = bornes
+    pas = _OFF_BOARD_SPACING_MM
+
+    def libre(p: tuple[float, float]) -> bool:
+        return all(math.dist(p, q) >= pas for q in occupes)
+
+    if libre(cible):
+        return cible
+    rayon_max = int(max(max_x - min_x, max_y - min_y) / pas) + 1
+    for anneau in range(1, rayon_max + 1):
+        for dx in range(-anneau, anneau + 1):
+            dys = (-anneau, anneau) if abs(dx) != anneau else range(-anneau, anneau + 1)
+            for dy in dys:
+                cand = (cible[0] + dx * pas, cible[1] + dy * pas)
+                if not (min_x <= cand[0] <= max_x and min_y <= cand[1] <= max_y):
+                    continue
+                if libre(cand):
+                    return cand
+    return None
 
 
 def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
@@ -564,6 +695,7 @@ def _pad_angles(text: str) -> dict[tuple[str, str], float | None]:
                 angles[(ref.group(1), num.group(1))] = (
                     float(at.group(3)) if at.group(3) else None)
     return angles
+
 
 
 def _outside_outline_refs(pcb_path: Path) -> int:
@@ -791,20 +923,20 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
         # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
         updated = workflow.write_to_pcb()
-        # Correctif B — normalisation du repère APRÈS write_to_pcb().
-        # Sans lui, l'Architecte livre 15-16 composants sur 17 hors carte
-        # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
-        # CMA-ES, halo — travaille sur un board déjà faux.
-        n_norm = _normalize_origin_after_write(pcb, skip=conn)
         logger.info(
-            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
+            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés",
             updated,
             getattr(result, "wire_length_mm", 0.0) or getattr(result, "wire_length", 0.0),
             len(conn),
-            f", {n_norm} repère(s) normalisé(s)" if n_norm else "",
         )
 
         pcb.save(str(out))
+
+        # write_to_pcb() peut écrire en sheet-absolute selon la version de
+        # kicad-tools (régression 0.18.0, issue #72) : on ramène en repère board
+        # AVANT toute analyse de conflits, sinon l'Inspecteur travaille sur des
+        # positions fausses et le routeur refuse le placement.
+        _normalize_to_board_frame(out)
 
         # Architecte garanti 0 erreur AVANT le micro-raffinement — snapshot de
         # secours : le CLI CMA-ES n'a pas de verrouillage de position et peut
@@ -878,22 +1010,30 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # contour. Le GA peut en parquer un au-delà du bord — mesuré le
         # 2026-07-30, U1 à X=183,37 sur une carte 100..160 — ce qui rend ses
         # nets inroutables et plafonne le routage (64 % au lieu de 100 %).
-        # ── Observabilité seule : signale un composant laissé hors contour.
-        # Ne modifie RIEN — le pipeline de placement validé (Architecte →
-        # Inspecteur → Géomètre → Inspecteur + halo) n'est pas altéré.
+        # ── Filet hors-carte. Le GA peut parquer des composants au-delà du
+        # bord : leurs nets deviennent inroutables et `kct route` refuse le
+        # board (« placement invalid »). L'Inspecteur ne peut pas le résoudre —
+        # PlacementFixer n'a aucun traitement de OFF_BOARD. On répare, puis on
+        # le relance en ANCRANT les refs réparées, sinon il les ressort.
+        repares = _repair_off_board(out, conn)
+        if repares:
+            logger.warning(
+                "auto_place: %d composant(s) hors carte réparé(s) (%s)",
+                len(repares), ", ".join(repares))
+            _resolve_remaining_conflicts(out, conn + repares)
+
         # ── Angles de pads : le writer en ajoute un que la source ne déclare
-        # pas, ce qui fait basculer le grand axe des pads et les fait se
-        # recouvrir. 204 erreurs DRC mesurées sur un board sans une seule
-        # piste ; 0 après restauration (cf. restore_pad_angles).
+        # pas, ou en omet un sur un boîtier pivoté. Dans les deux cas les formes
+        # se recouvrent — 204 erreurs DRC mesurées sur un board sans une seule
+        # piste, 0 après restauration (cf. restore_pad_angles).
         texte_final, n_pads = restore_pad_angles(
             src.read_text(encoding="utf-8", errors="replace"),
             out.read_text(encoding="utf-8", errors="replace"))
         if n_pads:
             out.write_text(texte_final, encoding="utf-8")
             logger.info(
-                "auto_place: angle restauré sur %d pad(s) — le writer en ajoute "
-                "un que la source ne déclare pas, et les formes se recouvrent",
-                n_pads)
+                "auto_place: angle restauré sur %d pad(s) — sans quoi les formes "
+                "ne suivent pas la rotation du boîtier", n_pads)
 
         n_hors = _outside_outline_refs(out)
         if n_hors:
