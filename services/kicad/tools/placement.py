@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import math
+import re
 import subprocess
 import sys
 import tempfile
@@ -589,6 +590,114 @@ def _nearest_free_cell(cible: tuple[float, float],
     return None
 
 
+def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
+    """Restaure l'angle des pads tel que la SOURCE le déclare. 204 erreurs → 0.
+
+    Le writer du placement ajoute un angle aux pads que le board d'entrée ne
+    déclare pas. Mesuré le 2026-08-01 sur ``examples/stm32-validation`` :
+
+    - source ``gen0`` : ``(footprint ... (at x y))`` sans rotation, pads
+      ``(at 4.1625 2.75)`` sans angle — conforme au footprint officiel KiCad ;
+    - après placement : footprint toujours **non pivoté**, mais chaque pad
+      porte ``(at 4.1625 2.75 90)``.
+
+    Les pads 25-27 d'un LQFP-48 forment une colonne verticale au pas de 0,5 mm ;
+    un angle de 90° bascule leur grand axe (1,475 mm) le long de la colonne et
+    les fait se recouvrir d'un millimètre. Les positions, elles, ne bougent pas —
+    c'est bien l'angle seul qui est corrompu.
+
+    Effet mesuré sur un board SANS UNE SEULE PISTE :
+
+    =================================  ============
+    État                               erreurs DRC
+    =================================  ============
+    ``gen0`` (avant placement)                    0
+    après placement                             204
+    après restauration des angles            **0**
+    =================================  ============
+
+    Le placement introduisait donc la totalité des erreurs, et le routage en
+    était innocent de bout en bout.
+
+    **Restaurer plutôt qu'imposer.** On recopie l'angle de la source, pad par
+    pad, apparié par référence de boîtier et numéro de pad. Un pad dont la
+    bibliothèque déclare légitimement une rotation propre la conserve donc — ce
+    qu'une règle du type « angle = rotation du footprint » aurait détruit.
+
+    N'altère ni le placement ni sa méthode : positions, rotations de boîtier et
+    stratégie sont inchangées. Réparation de sérialisation, comme
+    :func:`_normalize_origin_after_write`.
+
+    Renvoie ``(texte, nombre de pads restaurés)``.
+    """
+    source = _pad_angles(src_text)
+    if not source:
+        return out_text, 0
+
+    corriges = 0
+    morceaux = re.split(r"(\(footprint )", out_text)
+    sorties = [morceaux[0]]
+    i = 1
+    while i + 1 < len(morceaux):
+        sep, bloc = morceaux[i], morceaux[i + 1]
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        entete = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", bloc)
+        rot_fp = float(entete.group(3)) if (entete and entete.group(3)) else 0.0
+        if ref:
+            nom = ref.group(1)
+            parts = re.split(r"(\(pad )", bloc)
+            neuf = [parts[0]]
+            j = 1
+            while j + 1 < len(parts):
+                pb = parts[j + 1]
+                num = re.match(r'"([^"]+)"', pb)
+                cle = (nom, num.group(1)) if num else None
+                if cle in source:
+                    # Angle ABSOLU = rotation du boîtier + angle RELATIF que la
+                    # source déclare (None = 0). C'est la règle qui unifie les
+                    # deux corruptions mesurées.
+                    relatif = source[cle] or 0.0
+                    absolu = (rot_fp + relatif) % 360.0
+
+                    def _fix(m, a=absolu):
+                        if a == 0.0:
+                            return "(at %s %s)" % (m.group(1), m.group(2))
+                        return "(at %s %s %g)" % (m.group(1), m.group(2), a)
+
+                    pb2, _ = re.subn(r"\(at ([-\d.]+) ([-\d.]+)(?: [-\d.]+)?\)",
+                                     _fix, pb, count=1)
+                    if pb2 != pb:
+                        corriges += 1
+                    pb = pb2
+                neuf.append(parts[j] + pb)
+                j += 2
+            if j < len(parts):
+                neuf.append(parts[j])
+            bloc = "".join(neuf)
+        sorties.append(sep + bloc)
+        i += 2
+    if i < len(morceaux):
+        sorties.append(morceaux[i])
+    return "".join(sorties), corriges
+
+
+def _pad_angles(text: str) -> dict[tuple[str, str], float | None]:
+    """``{(ref_boitier, num_pad): angle}`` — ``None`` quand le pad n'en a pas."""
+    angles: dict[tuple[str, str], float | None] = {}
+    for bloc in re.split(r"\(footprint ", text)[1:]:
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        if not ref:
+            continue
+        for chunk in re.split(r"\(pad ", bloc)[1:]:
+            num = re.match(r'"([^"]+)"', chunk)
+            at = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", chunk)
+            if num and at:
+                angles[(ref.group(1), num.group(1))] = (
+                    float(at.group(3)) if at.group(3) else None)
+    return angles
+
+
+
 def _outside_outline_refs(pcb_path: Path) -> int:
     """Compte et journalise les footprints restés hors du contour.
 
@@ -912,6 +1021,19 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 "auto_place: %d composant(s) hors carte réparé(s) (%s)",
                 len(repares), ", ".join(repares))
             _resolve_remaining_conflicts(out, conn + repares)
+
+        # ── Angles de pads : le writer en ajoute un que la source ne déclare
+        # pas, ou en omet un sur un boîtier pivoté. Dans les deux cas les formes
+        # se recouvrent — 204 erreurs DRC mesurées sur un board sans une seule
+        # piste, 0 après restauration (cf. restore_pad_angles).
+        texte_final, n_pads = restore_pad_angles(
+            src.read_text(encoding="utf-8", errors="replace"),
+            out.read_text(encoding="utf-8", errors="replace"))
+        if n_pads:
+            out.write_text(texte_final, encoding="utf-8")
+            logger.info(
+                "auto_place: angle restauré sur %d pad(s) — sans quoi les formes "
+                "ne suivent pas la rotation du boîtier", n_pads)
 
         n_hors = _outside_outline_refs(out)
         if n_hors:
