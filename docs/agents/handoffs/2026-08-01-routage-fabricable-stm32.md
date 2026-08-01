@@ -134,3 +134,38 @@ diagnostique lui-même `Path blocked by component or trace`.
 Décider si la contrainte « ne pas toucher au placement » est levée pour ce
 board. Sans cela, aucune optimisation de routage supplémentaire ne débloquera
 les 18 % restants.
+
+---
+
+## Addendum — leviers de routabilité, tous fermés (2026-08-01, fin de session)
+
+Comparatif des trois sorties, mesuré en Docker sur le même placement :
+
+| Sortie | Routé | Erreurs DRC | Durée |
+|---|---|---|---|
+| ① `kct route` seul | 64-82 % selon tirage | 0 | ~600 s |
+| ② ① + reasoner (dé-routage/re-routage) | **82 %** | **0** | ~1100 s |
+| ③ ② + `PlaceRouteOptimizer` 2 itér. | **82 %**, 202 segments identiques | 0 | +861 s |
+
+**② est le meilleur output** et le plafond du placement gelé.
+
+### Pourquoi ③ n'apporte rien
+
+`PlaceRouteOptimizer` optimise contre son propre `Autorouter` interne, qui n'a
+ni `negotiated`, ni `--auto-layers`, ni la clearance dérivée du profil, ni
+`--auto-mfr-tier`, ni les protections fine-pitch. Il résout des blocages que le
+routeur de production ne rencontre pas, et ignore les siens. `success=False`
+après 2 itérations, placement inchangé, 861 s perdues.
+
+Deux erreurs de raisonnement corrigées au passage : le CLI **expose** bien un
+plafond d'itérations (`--iterations`), et `--routing-aware` **remplace**
+l'Architecte en ligne de commande alors que son contenu n'est qu'un affineur.
+
+### Le blocage résiduel, mesuré
+
+`NRST` (U2 → J1) barré par `C16` @ (146.5, 123.6) et `C1` @ (137.4, 119.6),
+deux condensateurs de 1,5 mm posés sur la ligne directe. `P3V3` partiel 10/15.
+Aucune piste ne traverse du cuivre.
+
+**Dépasser 82 % exige un placement entraîné contre LE routeur de production.**
+C'est l'objet de la Phase 6 RL_PCB.
