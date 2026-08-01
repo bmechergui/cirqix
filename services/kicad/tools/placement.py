@@ -510,6 +510,8 @@ def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
     while i + 1 < len(morceaux):
         sep, bloc = morceaux[i], morceaux[i + 1]
         ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        entete = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", bloc)
+        rot_fp = float(entete.group(3)) if (entete and entete.group(3)) else 0.0
         if ref:
             nom = ref.group(1)
             parts = re.split(r"(\(pad )", bloc)
@@ -519,13 +521,19 @@ def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
                 pb = parts[j + 1]
                 num = re.match(r'"([^"]+)"', pb)
                 cle = (nom, num.group(1)) if num else None
-                # `None` est une valeur LÉGITIME (pad sans angle dans la
-                # source) : on teste la présence de la clé, pas la valeur.
                 if cle in source:
-                    attendu = source[cle]
-                    def _fix(m, a=attendu):
-                        return ("(at %s %s)" % (m.group(1), m.group(2))) if a is None                             else ("(at %s %s %g)" % (m.group(1), m.group(2), a))
-                    pb2, n = re.subn(r"\(at ([-\d.]+) ([-\d.]+)(?: [-\d.]+)?\)",
+                    # Angle ABSOLU = rotation du boîtier + angle RELATIF que la
+                    # source déclare (None = 0). C'est la règle qui unifie les
+                    # deux corruptions mesurées.
+                    relatif = source[cle] or 0.0
+                    absolu = (rot_fp + relatif) % 360.0
+
+                    def _fix(m, a=absolu):
+                        if a == 0.0:
+                            return "(at %s %s)" % (m.group(1), m.group(2))
+                        return "(at %s %s %g)" % (m.group(1), m.group(2), a)
+
+                    pb2, _ = re.subn(r"\(at ([-\d.]+) ([-\d.]+)(?: [-\d.]+)?\)",
                                      _fix, pb, count=1)
                     if pb2 != pb:
                         corriges += 1
