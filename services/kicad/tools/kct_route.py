@@ -353,7 +353,23 @@ def _kct_env() -> dict[str, str]:
     sur console Windows cp1252) + kicad-tools/src sur le PYTHONPATH seulement en
     local/CI (cf. ``_kct_src_needed`` — jamais en Docker, pour ne pas masquer le
     backend C++ pip-installé)."""
-    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    # Patch Cirqix #7 — mode « géométrie sûre » pour le SOUS-PROCESSUS kct.
+    # `DEPENDENCIES.md` le documente depuis le 2026-07-06, mais la variable
+    # n'était fixée NULLE PART dans le code : le patch était écrit, jamais
+    # appliqué. Les passes de l'optimiseur qui déplacent la géométrie tournaient
+    # donc à chaque routage de production, avec le dégât mesuré — 204 erreurs
+    # DRC sur un board routé le 2026-07-31 (107 clearance, 84 solder_mask_bridge,
+    # 13 courts), contre 3 courts avec l'optimiseur neutralisé.
+    #
+    # Les coins à 45° sont réintroduits APRÈS, par `convert_corners_45_drc_aware`,
+    # qui les annule net par net dès qu'une violation apparaît. On obtient ainsi
+    # des angles pro SANS payer les courts.
+    #
+    # La variable ne vise que le sous-processus : le nôtre garde un environnement
+    # propre, sinon `OptimizationConfig.__post_init__` désactiverait aussi la
+    # passe 45° de la post-conversion.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
+           "KCT_SAFE_OPTIMIZE": "1"}
     if _kct_src_needed():
         prev = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = str(_KCT_SRC) + (os.pathsep + prev if prev else "")
@@ -740,7 +756,8 @@ def _route_supports(flag: str) -> bool:
 
 def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
                      fine_pitch: bool = False,
-                     clearance_mm: str | None = None) -> list[str]:
+                     clearance_mm: str | None = None,
+                     min_completion: str | None = None) -> list[str]:
     """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
 
     Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
@@ -756,7 +773,7 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
         str(src), "-o", str(dst),
         "--strategy", "negotiated",
         "--auto-layers",
-        "--min-completion", _MIN_COMPLETION,
+        "--min-completion", min_completion or _MIN_COMPLETION,
         "--auto-fix",
         "--clearance", clearance_mm or _CLEARANCE_FALLBACK_MM,
     ]
@@ -783,8 +800,157 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
     return cmd
 
 
+# Seuil permissif de la passe de secours : on ne cherche plus à atteindre une
+# cible, seulement à ce que `kct route` accepte d'ÉCRIRE son meilleur résultat.
+_MIN_COMPLETION_RESCUE: str = "0.0"
+
+# Le routeur n'a produit un résultat partiel que s'il l'annonce explicitement.
+# Sans cette marque, on ne tente aucune récupération : mieux vaut lever que
+# rendre un board dont on ne sait rien.
+_PARTIAL_RE = re.compile(r"PARTIAL:\s*Best result\s+\d+%|Nets routed:\s*\d+\s*/\s*\d+")
+
+
+# Refus explicite du routeur : la grille autorisee par le budget memoire est
+# plus grossiere que clearance/2, donc router produirait des courts.
+_GRID_REFUS_RE = re.compile(
+    r"Auto-grid selected [\d.]+mm > clearance/2|"
+    r"router's own safety rule rejects this grid")
+
+
+def _grid_too_coarse_for_clearance(stderr: str | None) -> bool:
+    """Le routeur a-t-il refuse de router faute de grille assez fine ?"""
+    return bool(_GRID_REFUS_RE.search(stderr or ""))
+
+
+def convert_corners_45_drc_aware(pcb_bytes: bytes, tier: str, layers: int) -> bytes:
+    """Convertit les coins à 90° en 45°, en annulant net par net si le DRC empire.
+
+    Un routage professionnel n'a pas de coin droit : les pistes tournent à 45°.
+    kicad-tools sait le faire (``convert_45_corners``), mais **Patch Cirqix #7**
+    a dû neutraliser cette passe : en déplaçant la géométrie, elle taille des
+    diagonales dans le cuivre des pads voisins, et le collision checker par
+    cellules ne voit pas ces coupes continues (issue upstream #750). Mesuré :
+    27 ``shorting_items`` avec l'optimiseur actif contre 3 sans.
+
+    La réconciliation est native : ``OptimizationConfig(drc_aware=True)`` fait
+    tourner un DRC avant/après et **restaure les segments d'origine de tout net
+    dont l'optimisation augmente les violations** — avec une garde par catégorie
+    (issue #3138) qui refuse aussi l'échange d'une violation contre une autre à
+    total constant. Les nets où le 45° passe le gardent ; ceux où il couperait un
+    pad restent orthogonaux.
+
+    Générale par construction : la décision est prise **par net**, à partir du
+    DRC réel du profil fabricant. Aucun réglage propre à une carte, aucune
+    hypothèse sur la topologie. Le placement n'est jamais touché.
+
+    Cette voie passe par l'API Python de kicad-tools plutôt que par le CLI, car
+    ``kct route`` n'expose pas ``drc_aware`` — le mode existe, il n'est
+    simplement pas câblé côté ligne de commande.
+
+    Best-effort : tout échec rend le board d'entrée inchangé. Une amélioration
+    esthétique ne doit jamais faire perdre un routage.
+    """
+    try:
+        from kicad_tools.router import OptimizationConfig, TraceOptimizer
+        from kicad_tools.router.optimizer.pcb import optimize_pcb
+    except ImportError as exc:
+        logger.warning("45°: optimiseur kicad-tools indisponible (%s)", exc)
+        return pcb_bytes
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.kicad_pcb"
+        dst = Path(tmp) / "out.kicad_pcb"
+        src.write_bytes(pcb_bytes)
+        try:
+            config = OptimizationConfig(
+                # Seules les passes utiles aux angles : on ne réactive PAS
+                # compress_staircase / pull_tight / eliminate_zigzags, dont
+                # Patch #7 a mesuré qu'elles coupent aussi le cuivre.
+                merge_collinear=True,
+                convert_45_corners=True,
+                eliminate_zigzags=False,
+                compress_staircase=False,
+                pull_tight=False,
+                drc_aware=True,
+                drc_manufacturer=tier,
+                drc_layers=layers,
+            )
+            if not config.convert_45_corners:
+                # KCT_SAFE_OPTIMIZE fuite dans notre propre environnement :
+                # la post-conversion serait un no-op silencieux.
+                logger.warning(
+                    "45°: passe désactivée par KCT_SAFE_OPTIMIZE dans le "
+                    "processus courant — conversion ignorée")
+                return pcb_bytes
+            stats = optimize_pcb(str(src), str(dst),
+                                 TraceOptimizer(config).optimize_segments, config)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("45°: conversion impossible (%s) — board inchangé", exc)
+            return pcb_bytes
+
+        if not dst.exists():
+            return pcb_bytes
+        avant = getattr(stats, "drc_errors_before", None)
+        apres = getattr(stats, "drc_errors_after", None)
+        logger.info(
+            "45°: coins convertis (%s → %s coins), DRC %s → %s",
+            getattr(stats, "corners_before", "?"), getattr(stats, "corners_after", "?"),
+            avant, apres)
+        return dst.read_bytes()
+
+
+_MASK_BRIDGES_RE = re.compile(r"\(allow_soldermask_bridges_in_footprints\s+(yes|no)\)")
+
+
+def allow_soldermask_bridges(pcb_text: str) -> tuple[str, bool]:
+    """Autorise les ponts de masque déclarés PAR LES FOOTPRINTS.
+
+    Un boîtier fine-pitch ne peut pas avoir d'ouvertures de masque séparées.
+    Au pas de 0,5 mm avec des pads de 0,3 mm, la bande de masque entre deux
+    ouvertures fait 0,2 mm — sous la largeur minimale de masque. KiCad fusionne
+    donc les ouvertures et signale un pont ; et comme il traite ``<no net>``
+    comme un net distinct, **chaque broche inutilisée crée un pont avec ses deux
+    voisines**.
+
+    Mesuré le 2026-08-01 sur le board STM32 (LQFP-48, 31 broches libres) :
+    84 ``solder_mask_bridge``, tous entre pads adjacents du MÊME boîtier, dont
+    aucun n'implique une piste. Exemple verbatim :
+
+        "Front solder mask aperture bridges items with different nets"
+          Pad 26 [<no net>] de U2 @ (125.776, 112.978)
+          Pad 25 [USER_LED] de U2 @ (125.276, 112.978)
+
+    La pratique industrielle est une ouverture de masque commune par rangée de
+    pads, déclarée par l'attribut ``allow_soldermask_bridges`` que portent déjà
+    les footprints officiels KiCad pour les boîtiers denses. Le réglage board
+    ``allow_soldermask_bridges_in_footprints no`` **annule** cet attribut : il
+    condamne d'avance tout fine-pitch, quelle que soit la qualité du routage.
+
+    Général : on n'autorise rien de nouveau, on cesse d'ignorer ce que les
+    footprints déclarent eux-mêmes. Un boîtier qui ne le déclare pas reste jugé
+    strictement.
+
+    Renvoie ``(texte, modifié)``.
+    """
+    if _MASK_BRIDGES_RE.search(pcb_text):
+        nouveau, n = _MASK_BRIDGES_RE.subn(
+            "(allow_soldermask_bridges_in_footprints yes)", pcb_text, count=1)
+        deja = "(allow_soldermask_bridges_in_footprints yes)" in pcb_text
+        return nouveau, bool(n) and not deja
+    # Pas de bloc setup exploitable : on ne fabrique rien.
+    return pcb_text, False
+
+
+def _has_partial_result(stdout: str | None) -> bool:
+    """Le routeur annonce-t-il un résultat partiel exploitable ?"""
+    return bool(_PARTIAL_RE.search(stdout or ""))
+
+
 def _run_kct_route(src: Path, dst: Path, timeout_s: int,
-                   fine_pitch: bool = False) -> subprocess.CompletedProcess[str]:
+                   fine_pitch: bool = False,
+                   min_completion: str | None = None,
+                   clearance_mm: str | None = None,
+                   ) -> subprocess.CompletedProcess[str]:
     """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
     protections escape + départ 4 couches sur les boards à boîtier dense.
 
@@ -796,8 +962,9 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int,
         pcb_text = src.read_text(encoding="utf-8", errors="replace")
     except OSError:
         pcb_text = ""  # le comptage de couches retombe sur son défaut (2)
-    clearance = _profile_clearance_mm(fine_pitch, pcb_text)
-    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance)
+    clearance = clearance_mm or _profile_clearance_mm(fine_pitch, pcb_text)
+    cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance,
+                           min_completion=min_completion)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
@@ -928,6 +1095,58 @@ def _route_once(
 
         result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch)
 
+        if not dst.exists() and _grid_too_coarse_for_clearance(result.stderr):
+            # Le routeur REFUSE de router : la grille que le budget mémoire
+            # autorise (0,1 mm) est plus grossière que `clearance / 2`, et il
+            # préfère ne rien produire plutôt que des courts — « An unrouted net
+            # is strictly safer than a short ». Sa propre règle, qu'on partage.
+            #
+            # C'est l'effet de bord de la clearance dérivée du profil fabricant
+            # (0,1116 mm → grille requise 0,0558 mm) : elle débloque
+            # l'échappement des boîtiers fine-pitch, mais sur un board dense
+            # elle dépasse le budget de cellules. `max_cells` n'est réglable ni
+            # en CLI ni par variable d'environnement (paramètre interne de
+            # `router/io.py`), et `--force` est exclu par principe.
+            #
+            # On dégrade donc vers la clearance de repli — la valeur validée de
+            # juillet — plutôt que de ne rien rendre. La finesse reste acquise
+            # sur les boards où la grille la supporte.
+            logger.warning(
+                "kct route: grille trop grossière pour la clearance %s mm "
+                "(budget mémoire) — nouvelle tentative à %s mm",
+                _profile_clearance_mm(fine_pitch, src_text),
+                _CLEARANCE_FALLBACK_MM)
+            result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch,
+                                    clearance_mm=_CLEARANCE_FALLBACK_MM)
+
+        if not dst.exists() and _has_partial_result(result.stdout):
+            # `kct route` n'écrit AUCUN fichier quand aucun tier n'atteint
+            # `--min-completion` : l'escalade rend un code ≠ 0 et le meilleur
+            # board est perdu. Mesuré le 2026-07-31 sur un placement pourtant
+            # sain — 44 % de complétion, 4 nets sur 9, et rien en sortie.
+            #
+            # Conséquence : le reasoner (agent ⑥b), dont TOUT l'objet est de
+            # reprendre un routage incomplet, ne reçoit jamais le triplet
+            # (board, pourcentage, analyse) qu'il attend. Il est du code mort
+            # en production exactement dans le cas pour lequel il existe.
+            #
+            # On redemande donc explicitement le meilleur résultat, avec un
+            # seuil permissif. Le pourcentage rendu reste le RÉEL, lu dans le
+            # stdout de la passe d'origine.
+            logger.warning(
+                "kct route: aucun tier n'a atteint %s de complétion — "
+                "récupération du meilleur board partiel pour le reasoner",
+                _MIN_COMPLETION)
+            secours = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch,
+                                     min_completion=_MIN_COMPLETION_RESCUE)
+            if dst.exists():
+                pct_reel = parse_routed_pct(result.stdout)
+                logger.warning(
+                    "kct route: board partiel récupéré à %d%% (le routage "
+                    "complet a échoué) — transmis au sauvetage", pct_reel)
+                return dst.read_bytes(), pct_reel, extract_failure_analysis(
+                    result.stdout) or extract_failure_analysis(secours.stdout)
+
         if not dst.exists():
             raise RuntimeError(
                 f"kct route produced no output (rc={result.returncode}): "
@@ -958,7 +1177,22 @@ def _route_once(
                 "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
                 "courts + solder_mask_bridge sur pads NC", stub_n)
         post = strip_nc_nets(routed_text)
-        # Le remplissage vient EN DERNIER : toute réécriture de zone posérieure
+        # Angles pro : les coins droits deviennent des 45°, net par net, avec
+        # annulation dès qu'une violation apparaît (cf. la docstring de
+        # `convert_corners_45_drc_aware`). AVANT le remplissage des zones, dont
+        # les polygones seraient invalidés par toute réécriture de piste.
+        from tools.drc import copper_layer_count
+
+        tier_45 = parse_retained_tier(result.stdout) or _MFR_TIER_LADDER.split(",")[0]
+        post = convert_corners_45_drc_aware(
+            post.encode("utf-8"), tier_45.strip(), copper_layer_count(post),
+        ).decode("utf-8", errors="replace")
+        post, mask_ok = allow_soldermask_bridges(post)
+        if mask_ok:
+            logger.info(
+                "kct route: ponts de masque déclarés par les footprints "
+                "désormais honorés (obligatoire en fine-pitch)")
+        # Le remplissage vient EN DERNIER : toute réécriture de zone postérieure
         # (strip/regénération) invaliderait les polygones remplis.
         routed = _fill_zones(_solid_connect_zones(post).encode("utf-8"))
 
