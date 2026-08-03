@@ -86,11 +86,28 @@ manquantes, toutes de la forme décrite ci-dessus.
 | `--preserve-existing` chaîné 2 → 4 → 6 couches | 82 %, aucun gain, 3× le temps |
 | clearance 0,127 / 0,15 mm | refus de grille, aucun board produit |
 
-## Défaut connexe — remplissage des zones
+## Connexions `GND` manquantes — la piste du remplissage est écartée
 
-Le board sort avec **17 zones déclarées et 2 polygones remplis**. Les zones de
-masse restent donc majoritairement vides, ce qui explique les connexions `GND`
-manquantes sur les pads 8, 23, 35 et 47 de `U2`.
+Le board porte **2 zones réelles** (plans GND F.Cu et B.Cu), **toutes deux
+remplies** (`filled_polygon` présent sur chacune). `kct zones fill` relancé
+dessus ne change rien : le remplissage n'est pas en cause.
+
+> Piège de comptage : `grep -c '(zone'` rend 17 sur ce board, dont **15
+> `zone_connect`** appartenant aux footprints. Compter `\(zone[\s\n]`.
+
+Les connexions manquantes sont donc réelles :
+
+```
+Pad 8  [GND] of U2 on F.Cu | Zone [GND] on F.Cu, priority 0
+Pad 8  [GND] of U2 on F.Cu | Pad 47 [GND] of U2 on F.Cu
+Pad 23 [GND] of U2 on F.Cu | Pad 35 [GND] of U2 on F.Cu
+Pad 35 [GND] of U2 on F.Cu | Pad 47 [GND] of U2 on F.Cu
+```
+
+Les pads GND du LQFP-48 ne rejoignent ni le plan de masse ni leurs voisins.
+`kct stitch --net GND --mfr jlcpcb` répond « No unconnected pads found on
+target nets » et ne pose aucun via — son critère de connectivité diverge de
+celui du DRC KiCad.
 
 ## Note sur `--stitch-power-planes`
 
