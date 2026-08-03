@@ -28,6 +28,44 @@ Pad 6  [OSC_OUT] of U2 on F.Cu            | Track [OSC_OUT] on In2.Cu, length 0.
 Les tronçons de 0,55 mm et 0,7072 mm sont caractéristiques : ce sont des amorces
 de descente en couche interne, laissées orphelines.
 
+## Les vias manquants, localisés et quantifiés
+
+Détection : pour chaque net, chercher les points où des extrémités de pistes
+existent sur **au moins deux couches** sans via à moins de 0,05 mm. Board de
+référence : 202 segments, 36 vias, 6 couches, 82 % de complétion.
+
+**6 points trouvés :**
+
+```
++5V     (139.20, 112.20)  F.Cu, In1.Cu
++3.3V   (153.90, 107.10)  F.Cu, In2.Cu
++3.3V   (140.00, 126.60)  F.Cu, In2.Cu
++3.3V   (123.55, 124.35)  F.Cu, In4.Cu
++3.3V   (119.95, 114.45)  F.Cu, In1.Cu
++3.3V   (114.90, 118.60)  In1.Cu, In2.Cu
+```
+
+En insérant un via traversant à chacun :
+
+| | Connexions manquantes | Détail |
+|---|---|---|
+| avant | 13 | `+3.3V` 12, `GND` 8, `OSC_OUT` 4, `+5V` 2 |
+| après | **9** | `+3.3V` 6, `GND` 8, `OSC_OUT` 4 |
+
+`+5V` entièrement réparé, `+3.3V` de 12 à 6. **4 connexions récupérées par
+6 vias**, sans toucher au routage. Les vias sont posés sans respect des
+clearances (erreurs DRC 6 → 12) : c'est une preuve du diagnostic, pas un
+correctif.
+
+Les 9 connexions restantes ne sont pas des transitions superposées — ce sont
+des fragments de cuivre laissés à des endroits distincts. **Deux défauts
+distincts coexistent** dans la même sortie.
+
+> Piège de mesure : une première version de ce test avait rendu « 0 point ». Le
+> parseur ne reconnaissait aucun segment, KiCad 10.99 référençant les nets par
+> nom (`(net "+5V")`) et plaçant `(net …)` avant `(uuid …)`. Toujours vérifier
+> le nombre de segments effectivement lus avant de conclure.
+
 ## Comportement complémentaire — le routeur ne descend jamais de couche
 
 Test d'isolation : router `NRST` **seul**, tous les autres nets figés, 6 couches
