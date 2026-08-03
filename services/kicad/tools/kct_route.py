@@ -11,11 +11,13 @@ c'est l'entrée du LLM pour décider QUEL composant déplacer.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -641,6 +643,134 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
         return dst.read_bytes()
 
 
+_SEG_BLOC_RE = re.compile(r"\(segment\b(.*?)\n\t\)", re.S)
+_VIA_AT_RE = re.compile(r"\(via\b.*?\(at ([-\d.]+) ([-\d.]+)\)", re.S)
+_START_END_RE = re.compile(
+    r"\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)")
+_LAYER_RE = re.compile(r'\(layer "([^"]+)"\)')
+_NET_RE = re.compile(r'\(net (?:"([^"]*)"|(\d+))\)')
+
+# Via traversant standard JLCPCB : 0,5 mm de diamètre, perçage 0,2 mm.
+_REPAIR_VIA_SIZE_MM = 0.5
+_REPAIR_VIA_DRILL_MM = 0.2
+# Distance minimale entre le CENTRE du via et tout cuivre d'un autre net.
+_REPAIR_KEEPOUT_MM = _REPAIR_VIA_SIZE_MM / 2 + 0.2
+# Deux extrémités sont « au même point » en deçà de cette tolérance.
+_REPAIR_COINCIDENCE_MM = 0.05
+
+
+def _parse_segments(text: str) -> list[tuple[float, float, float, float, str, str]]:
+    """``(x1, y1, x2, y2, couche, net)`` — accepte les deux formats KiCad.
+
+    KiCad ≤ 10.0 référence les nets par CODE après l'``uuid`` ; KiCad 10.99 les
+    référence par NOM et place ``(net …)`` AVANT l'``uuid``. Une expression
+    régulière figée sur l'un des deux ordres ne reconnaît rien sur l'autre et
+    rend silencieusement zéro segment — piège vécu le 2026-08-03, qui avait
+    fait conclure « aucune transition orpheline » sur un board qui en comptait
+    six. On extrait donc les champs du bloc, sans présumer de leur ordre.
+    """
+    out = []
+    for bloc in _SEG_BLOC_RE.findall(text):
+        pos = _START_END_RE.search(bloc)
+        lay = _LAYER_RE.search(bloc)
+        net = _NET_RE.search(bloc)
+        if not (pos and lay and net):
+            continue
+        x1, y1, x2, y2 = (float(v) for v in pos.groups())
+        out.append((x1, y1, x2, y2, lay.group(1), net.group(1) or net.group(2)))
+    return out
+
+
+def _distance_point_segment(px: float, py: float,
+                            x1: float, y1: float, x2: float, y2: float) -> float:
+    """Distance du point au SEGMENT (pas à la droite qui le porte)."""
+    dx, dy = x2 - x1, y2 - y1
+    longueur2 = dx * dx + dy * dy
+    if longueur2 == 0.0:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / longueur2))
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def repair_layer_transitions(pcb_bytes: bytes) -> tuple[bytes, int]:
+    """Pose les vias que ``kct route`` a omis aux transitions de couche.
+
+    Défaut amont (fork kicad-tools, issue #7) : le routeur amène ses pistes
+    jusqu'au point où le net change de couche, puis **n'y pose pas de via**. Le
+    board affiche un pourcentage de complétion élevé alors que le net est
+    électriquement OUVERT — le DRC KiCad signale les deux tronçons comme non
+    connectés, et la carte fabriquée ne fonctionne pas.
+
+    Mesuré sur `examples/stm32-validation` (202 segments, 36 vias, 6 couches) :
+    six points concernés ; en y posant un via, les connexions manquantes
+    tombent de 13 à 9 et `+5V` est entièrement réparé.
+
+    **Un via n'est jamais posé au prix d'un court-circuit** : si du cuivre d'un
+    autre net passe à moins de ``_REPAIR_KEEPOUT_MM`` du centre, le point est
+    abandonné. Poser sans ce garde-fou faisait passer les erreurs DRC de 6
+    à 12 — on refuse alors la réparation, un net ouvert restant préférable à
+    un court (la règle du routeur amont, qu'on partage).
+
+    Ne traite QUE les transitions superposées. Les fragments de cuivre laissés
+    à des endroits distincts sont un second défaut, non couvert ici.
+
+    Returns:
+        Le board réparé et le nombre de vias posés.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    segments = _parse_segments(text)
+    if not segments:
+        return pcb_bytes, 0
+
+    vias = [(float(a), float(b)) for a, b in _VIA_AT_RE.findall(text)]
+
+    # Point → couches touchées, par net.
+    par_net: dict[str, dict[tuple[float, float], set[str]]] = defaultdict(
+        lambda: defaultdict(set))
+    for x1, y1, x2, y2, couche, net in segments:
+        for px, py in ((x1, y1), (x2, y2)):
+            par_net[net][(round(px, 3), round(py, 3))].add(couche)
+
+    numerique = bool(_NET_RE.search(text) and _NET_RE.search(text).group(2))
+    poses: list[str] = []
+    for net, points in par_net.items():
+        for (px, py), couches in points.items():
+            if len(couches) < 2:
+                continue
+            if any(math.hypot(px - vx, py - vy) < _REPAIR_COINCIDENCE_MM
+                   for vx, vy in vias):
+                continue
+            if any(net != autre
+                   and _distance_point_segment(px, py, x1, y1, x2, y2)
+                   < _REPAIR_KEEPOUT_MM
+                   for x1, y1, x2, y2, _, autre in segments):
+                logger.info(
+                    "kct route: transition (%s, %s) du net %s laissée ouverte "
+                    "— un via y mordrait un autre net", px, py, net)
+                continue
+            net_sexp = "(net %s)" % net if numerique else '(net "%s")' % net
+            poses.append(
+                '\n\t(via\n\t\t(at %s %s)\n\t\t(size %s)\n\t\t(drill %s)\n'
+                '\t\t(layers "F.Cu" "B.Cu")\n\t\t%s\n\t)'
+                % (_fmt(px), _fmt(py), _REPAIR_VIA_SIZE_MM,
+                   _REPAIR_VIA_DRILL_MM, net_sexp))
+            vias.append((px, py))
+
+    if not poses:
+        return pcb_bytes, 0
+
+    coupe = text.rstrip().rfind(")")
+    repare = text.rstrip()[:coupe] + "".join(poses) + "\n)\n"
+    logger.info("kct route: %d via(s) de transition reposé(s) — le routeur les "
+                "avait omis, les nets concernés étaient ouverts", len(poses))
+    return repare.encode("utf-8"), len(poses)
+
+
+def _fmt(valeur: float) -> str:
+    """Coordonnée KiCad : entier sans décimale superflue, sinon jusqu'à 4."""
+    return ("%.4f" % valeur).rstrip("0").rstrip(".")
+
+
 def _strip_zone_blocks(text: str) -> str:
     """Retire tous les blocs top-level ``(zone …)`` d'un .kicad_pcb.
 
@@ -958,6 +1088,15 @@ def _route_once(
                 "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
                 "courts + solder_mask_bridge sur pads NC", stub_n)
         post = strip_nc_nets(routed_text)
+        # Transitions de couche laissées sans via par kct route (issue fork #7) :
+        # le net paraît routé mais il est OUVERT. Réparé ici, AVANT la
+        # conversion 45° qui réécrirait les extrémités et masquerait la
+        # coïncidence sur laquelle repose la détection.
+        post, vias_reposes = repair_layer_transitions(post.encode("utf-8"))
+        post = post.decode("utf-8", errors="replace")
+        if vias_reposes:
+            logger.info("kct route: %d transition(s) de couche réparée(s)",
+                        vias_reposes)
         # Le remplissage vient EN DERNIER : toute réécriture de zone posérieure
         # (strip/regénération) invaliderait les polygones remplis.
         routed = _fill_zones(_solid_connect_zones(post).encode("utf-8"))
