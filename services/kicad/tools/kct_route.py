@@ -11,11 +11,13 @@ c'est l'entrée du LLM pour décider QUEL composant déplacer.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
@@ -641,6 +643,366 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
         return dst.read_bytes()
 
 
+_SEG_BLOC_RE = re.compile(r"\(segment\b(.*?)\n\t\)", re.S)
+_VIA_AT_RE = re.compile(r"\(via\b.*?\(at ([-\d.]+) ([-\d.]+)\)", re.S)
+_START_END_RE = re.compile(
+    r"\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)")
+_LAYER_RE = re.compile(r'\(layer "([^"]+)"\)')
+_NET_RE = re.compile(r'\(net (?:"([^"]*)"|(\d+))\)')
+
+# Via traversant standard JLCPCB : 0,5 mm de diamètre, perçage 0,2 mm.
+_REPAIR_VIA_SIZE_MM = 0.5
+_REPAIR_VIA_DRILL_MM = 0.2
+# Distance minimale entre le CENTRE du via et tout cuivre d'un autre net.
+_REPAIR_KEEPOUT_MM = _REPAIR_VIA_SIZE_MM / 2 + 0.2
+# Deux extrémités sont « au même point » en deçà de cette tolérance.
+_REPAIR_COINCIDENCE_MM = 0.05
+
+
+def _parse_segments(text: str) -> list[tuple[float, float, float, float, str, str]]:
+    """``(x1, y1, x2, y2, couche, net)`` — accepte les deux formats KiCad.
+
+    KiCad ≤ 10.0 référence les nets par CODE après l'``uuid`` ; KiCad 10.99 les
+    référence par NOM et place ``(net …)`` AVANT l'``uuid``. Une expression
+    régulière figée sur l'un des deux ordres ne reconnaît rien sur l'autre et
+    rend silencieusement zéro segment — piège vécu le 2026-08-03, qui avait
+    fait conclure « aucune transition orpheline » sur un board qui en comptait
+    six. On extrait donc les champs du bloc, sans présumer de leur ordre.
+    """
+    out = []
+    for bloc in _SEG_BLOC_RE.findall(text):
+        pos = _START_END_RE.search(bloc)
+        lay = _LAYER_RE.search(bloc)
+        net = _NET_RE.search(bloc)
+        if not (pos and lay and net):
+            continue
+        x1, y1, x2, y2 = (float(v) for v in pos.groups())
+        out.append((x1, y1, x2, y2, lay.group(1), net.group(1) or net.group(2)))
+    return out
+
+
+def _bloc_equilibre(text: str, debut: int) -> str:
+    """Extrait le bloc s-expression ouvrant à ``debut``, parenthèses équilibrées."""
+    niveau = 0
+    dans_chaine = False
+    i = debut
+    while i < len(text):
+        c = text[i]
+        if c == '"' and text[i - 1] != "\\":
+            dans_chaine = not dans_chaine
+        elif not dans_chaine:
+            if c == "(":
+                niveau += 1
+            elif c == ")":
+                niveau -= 1
+                if niveau == 0:
+                    return text[debut:i + 1]
+        i += 1
+    return text[debut:]
+
+
+_AT_RE = re.compile(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)")
+_SIZE_RE = re.compile(r"\(size ([-\d.]+) ([-\d.]+)\)")
+
+
+_PAD_NET_RE = re.compile(r'\(net (?:(\d+)(?: "([^"]*)")?|"([^"]*)")\)')
+
+
+def _parse_pads(text: str, par_nom: bool = True) -> list[tuple[float, float, float, str]]:
+    """``(x, y, rayon, net)`` en coordonnées board pour chaque pad.
+
+    Les pads sont du cuivre au même titre que les pistes. Les ignorer dans les
+    contrôles de dégagement a produit **3 courts-circuits réels** lors de la
+    première mesure de :func:`reconnect_net_fragments` — une reconnexion qui
+    traverse un pad étranger détruit la carte.
+
+    Le rayon est la demi-diagonale du pad : majorant volontaire, on préfère
+    renoncer à une réparation possible que risquer un court.
+    """
+    pads: list[tuple[float, float, float, str]] = []
+    for m in re.finditer(r"\(footprint\b", text):
+        bloc = _bloc_equilibre(text, m.start())
+        pose = _AT_RE.search(bloc)
+        if not pose:
+            continue
+        fx, fy = float(pose.group(1)), float(pose.group(2))
+        rot = math.radians(float(pose.group(3) or 0.0))
+        for p in re.finditer(r"\(pad\b", bloc):
+            pad = _bloc_equilibre(bloc, p.start())
+            pa = _AT_RE.search(pad)
+            ps = _SIZE_RE.search(pad)
+            pn = _PAD_NET_RE.search(pad)
+            if not (pa and ps):
+                continue
+            lx, ly = float(pa.group(1)), float(pa.group(2))
+            # Rotation du boîtier : KiCad tourne dans le sens horaire.
+            x = fx + lx * math.cos(rot) + ly * math.sin(rot)
+            y = fy - lx * math.sin(rot) + ly * math.cos(rot)
+            rayon = math.hypot(float(ps.group(1)), float(ps.group(2))) / 2
+            # Un pad s'écrit `(net 7 "+3.3V")` : code ET nom. Les segments, eux,
+            # n'en portent qu'un seul selon la version de KiCad — on aligne le
+            # pad sur la convention du board, sans quoi aucun pad ne serait
+            # reconnu comme appartenant au net qu'on répare.
+            code, nom_avec_code, nom_seul = pn.groups() if pn else (None, None, None)
+            nom = nom_avec_code or nom_seul
+            net = (nom if par_nom else code) or nom or code or ""
+            pads.append((x, y, rayon, net))
+    return pads
+
+
+def _distance_point_segment(px: float, py: float,
+                            x1: float, y1: float, x2: float, y2: float) -> float:
+    """Distance du point au SEGMENT (pas à la droite qui le porte)."""
+    dx, dy = x2 - x1, y2 - y1
+    longueur2 = dx * dx + dy * dy
+    if longueur2 == 0.0:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / longueur2))
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def repair_layer_transitions(pcb_bytes: bytes) -> tuple[bytes, int]:
+    """Pose les vias que ``kct route`` a omis aux transitions de couche.
+
+    Défaut amont (fork kicad-tools, issue #7) : le routeur amène ses pistes
+    jusqu'au point où le net change de couche, puis **n'y pose pas de via**. Le
+    board affiche un pourcentage de complétion élevé alors que le net est
+    électriquement OUVERT — le DRC KiCad signale les deux tronçons comme non
+    connectés, et la carte fabriquée ne fonctionne pas.
+
+    Mesuré sur `examples/stm32-validation` (202 segments, 36 vias, 6 couches) :
+    six points concernés ; en y posant un via, les connexions manquantes
+    tombent de 13 à 9 et `+5V` est entièrement réparé.
+
+    **Un via n'est jamais posé au prix d'un court-circuit** : si du cuivre d'un
+    autre net passe à moins de ``_REPAIR_KEEPOUT_MM`` du centre, le point est
+    abandonné. Poser sans ce garde-fou faisait passer les erreurs DRC de 6
+    à 12 — on refuse alors la réparation, un net ouvert restant préférable à
+    un court (la règle du routeur amont, qu'on partage).
+
+    Ne traite QUE les transitions superposées. Les fragments de cuivre laissés
+    à des endroits distincts sont un second défaut, non couvert ici.
+
+    Returns:
+        Le board réparé et le nombre de vias posés.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    segments = _parse_segments(text)
+    if not segments:
+        return pcb_bytes, 0
+
+    vias = [(float(a), float(b)) for a, b in _VIA_AT_RE.findall(text)]
+    numerique = bool(_NET_RE.search(text) and _NET_RE.search(text).group(2))
+    pads = _parse_pads(text, par_nom=not numerique)
+
+    # Point → couches touchées, par net.
+    par_net: dict[str, dict[tuple[float, float], set[str]]] = defaultdict(
+        lambda: defaultdict(set))
+    for x1, y1, x2, y2, couche, net in segments:
+        for px, py in ((x1, y1), (x2, y2)):
+            par_net[net][(round(px, 3), round(py, 3))].add(couche)
+
+    poses: list[str] = []
+    for net, points in par_net.items():
+        for (px, py), couches in points.items():
+            if len(couches) < 2:
+                continue
+            if any(math.hypot(px - vx, py - vy) < _REPAIR_COINCIDENCE_MM
+                   for vx, vy in vias):
+                continue
+            if any(net != autre
+                   and _distance_point_segment(px, py, x1, y1, x2, y2)
+                   < _REPAIR_KEEPOUT_MM
+                   for x1, y1, x2, y2, _, autre in segments) or any(
+                       net != autre
+                       and math.hypot(px - cx, py - cy) < rayon + _REPAIR_KEEPOUT_MM
+                       for cx, cy, rayon, autre in pads):
+                logger.info(
+                    "kct route: transition (%s, %s) du net %s laissée ouverte "
+                    "— un via y mordrait un autre net", px, py, net)
+                continue
+            net_sexp = "(net %s)" % net if numerique else '(net "%s")' % net
+            poses.append(
+                '\n\t(via\n\t\t(at %s %s)\n\t\t(size %s)\n\t\t(drill %s)\n'
+                '\t\t(layers "F.Cu" "B.Cu")\n\t\t%s\n\t)'
+                % (_fmt(px), _fmt(py), _REPAIR_VIA_SIZE_MM,
+                   _REPAIR_VIA_DRILL_MM, net_sexp))
+            vias.append((px, py))
+
+    if not poses:
+        return pcb_bytes, 0
+
+    coupe = text.rstrip().rfind(")")
+    repare = text.rstrip()[:coupe] + "".join(poses) + "\n)\n"
+    logger.info("kct route: %d via(s) de transition reposé(s) — le routeur les "
+                "avait omis, les nets concernés étaient ouverts", len(poses))
+    return repare.encode("utf-8"), len(poses)
+
+
+def _fmt(valeur: float) -> str:
+    """Coordonnée KiCad : entier sans décimale superflue, sinon jusqu'à 4."""
+    return ("%.4f" % valeur).rstrip("0").rstrip(".")
+
+
+# Une reconnexion n'a de sens que sur une courte distance : au-delà, ce n'est
+# plus un fragment oublié mais un net que le routeur n'a pas traité, et poser
+# une droite à travers le board créerait plus de problèmes qu'elle n'en résout.
+_FRAGMENT_PORTEE_MAX_MM = 12.0
+# Demi-largeur de piste (0,1) + clearance (0,2).
+_FRAGMENT_KEEPOUT_MM = 0.3
+_FRAGMENT_TRACE_WIDTH_MM = 0.2
+_FRAGMENT_MAX_AJOUTS = 40
+
+
+def _orientation(px, py, qx, qy, rx, ry) -> float:
+    return (qx - px) * (ry - py) - (qy - py) * (rx - px)
+
+
+def _distance_segments(a: tuple[float, float, float, float],
+                       b: tuple[float, float, float, float]) -> float:
+    """Distance EXACTE entre deux segments — 0 s'ils se croisent.
+
+    Une première version échantillonnait les extrémités et le milieu. Elle a
+    laissé passer un croisement en biais (1 ``tracks_crossing`` mesuré) : deux
+    segments peuvent se couper alors qu'aucun de leurs points remarquables
+    n'est proche de l'autre. Le test d'intersection est donc explicite.
+    """
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    d1 = _orientation(ax1, ay1, ax2, ay2, bx1, by1)
+    d2 = _orientation(ax1, ay1, ax2, ay2, bx2, by2)
+    d3 = _orientation(bx1, by1, bx2, by2, ax1, ay1)
+    d4 = _orientation(bx1, by1, bx2, by2, ax2, ay2)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)):
+        return 0.0
+    return min(
+        _distance_point_segment(ax1, ay1, bx1, by1, bx2, by2),
+        _distance_point_segment(ax2, ay2, bx1, by1, bx2, by2),
+        _distance_point_segment(bx1, by1, ax1, ay1, ax2, ay2),
+        _distance_point_segment(bx2, by2, ax1, ay1, ax2, ay2),
+    )
+
+
+def reconnect_net_fragments(pcb_bytes: bytes) -> tuple[bytes, int]:
+    """Relie les morceaux de cuivre qu'un même net a laissés séparés.
+
+    Second défaut de ``kct route`` (issue fork #7), distinct des transitions
+    sans via : le routeur abandonne des tronçons de piste à des endroits
+    différents, sans point commun. Le net affiche du cuivre mais reste
+    électriquement OUVERT.
+
+    On relie, couche par couche, les deux composantes connexes les plus proches
+    d'un même net par un segment droit — tant que :
+
+    - les deux fragments sont sur la MÊME couche (changer de couche demande un
+      via, c'est le périmètre de :func:`repair_layer_transitions`) ;
+    - la distance reste sous ``_FRAGMENT_PORTEE_MAX_MM`` — au-delà ce n'est pas
+      un fragment oublié mais un net non routé, et tirer une droite à travers
+      le board ferait plus de dégâts que de bien ;
+    - **la droite ne frôle aucun cuivre étranger.** Comme pour les vias, on
+      renonce plutôt que de créer un court : un net ouvert se voit au DRC, un
+      court détruit la carte.
+
+    Returns:
+        Le board complété et le nombre de segments ajoutés.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    segments = _parse_segments(text)
+    if not segments:
+        return pcb_bytes, 0
+
+    numerique = bool(_NET_RE.search(text) and _NET_RE.search(text).group(2))
+    pads = _parse_pads(text, par_nom=not numerique)
+    ajouts: list[str] = []
+    courant = list(segments)
+    for _ in range(_FRAGMENT_MAX_AJOUTS):
+        lien = _meilleur_lien(courant, pads)
+        if lien is None:
+            break
+        x1, y1, x2, y2, couche, net = lien
+        ajouts.append(
+            '\n\t(segment\n\t\t(start %s %s)\n\t\t(end %s %s)\n\t\t(width %s)\n'
+            '\t\t(layer "%s")\n\t\t(net "%s")\n\t\t(uuid "cirqix-frag-%d")\n\t)'
+            % (_fmt(x1), _fmt(y1), _fmt(x2), _fmt(y2),
+               _FRAGMENT_TRACE_WIDTH_MM, couche, net, len(ajouts)))
+        courant.append(lien)
+
+    if not ajouts:
+        return pcb_bytes, 0
+
+    coupe = text.rstrip().rfind(")")
+    complete = text.rstrip()[:coupe] + "".join(ajouts) + "\n)\n"
+    logger.info("kct route: %d fragment(s) de net reconnecté(s) — le routeur "
+                "les avait laissés séparés", len(ajouts))
+    return complete.encode("utf-8"), len(ajouts)
+
+
+def _composantes(segments: list) -> dict[int, int]:
+    """Union-find sur les segments : indice de segment → identifiant de groupe.
+
+    Deux segments d'un même net et d'une même couche appartiennent au même
+    groupe dès qu'ils partagent une extrémité (à ``_REPAIR_COINCIDENCE_MM``).
+    """
+    parent = list(range(len(segments)))
+
+    def racine(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    par_cle: dict[tuple, list[int]] = defaultdict(list)
+    for i, (x1, y1, x2, y2, couche, net) in enumerate(segments):
+        for px, py in ((x1, y1), (x2, y2)):
+            par_cle[(net, couche, round(px, 2), round(py, 2))].append(i)
+    for indices in par_cle.values():
+        for j in indices[1:]:
+            a, b = racine(indices[0]), racine(j)
+            if a != b:
+                parent[a] = b
+    return {i: racine(i) for i in range(len(segments))}
+
+
+def _meilleur_lien(segments: list, pads: list | None = None):
+    """Le lien le plus court entre deux composantes d'un même net, ou ``None``."""
+    pads = pads or []
+    groupes = _composantes(segments)
+    meilleur = None
+    meilleure_distance = _FRAGMENT_PORTEE_MAX_MM
+    for i, (ax1, ay1, ax2, ay2, couche_a, net_a) in enumerate(segments):
+        for j in range(i + 1, len(segments)):
+            bx1, by1, bx2, by2, couche_b, net_b = segments[j]
+            if net_a != net_b or couche_a != couche_b:
+                continue
+            if groupes[i] == groupes[j]:
+                continue
+            for px, py in ((ax1, ay1), (ax2, ay2)):
+                for qx, qy in ((bx1, by1), (bx2, by2)):
+                    d = math.hypot(qx - px, qy - py)
+                    if d >= meilleure_distance or d == 0:
+                        continue
+                    candidat = (px, py, qx, qy, couche_a, net_a)
+                    if _frole_un_autre_net(candidat, segments, pads):
+                        continue
+                    meilleur, meilleure_distance = candidat, d
+    return meilleur
+
+
+def _frole_un_autre_net(candidat, segments: list, pads: list | None = None) -> bool:
+    px, py, qx, qy, _, net = candidat
+    for x1, y1, x2, y2, _, autre in segments:
+        if autre == net:
+            continue
+        if _distance_segments((px, py, qx, qy), (x1, y1, x2, y2)) < _FRAGMENT_KEEPOUT_MM:
+            return True
+    for cx, cy, rayon, autre in (pads or []):
+        if autre == net:
+            continue
+        if _distance_point_segment(cx, cy, px, py, qx, qy) < rayon + _FRAGMENT_KEEPOUT_MM:
+            return True
+    return False
+
+
 def _strip_zone_blocks(text: str) -> str:
     """Retire tous les blocs top-level ``(zone …)`` d'un .kicad_pcb.
 
@@ -958,6 +1320,20 @@ def _route_once(
                 "kct route: %d stub(s) d'escape NC retiré(s) → élimine "
                 "courts + solder_mask_bridge sur pads NC", stub_n)
         post = strip_nc_nets(routed_text)
+        # Transitions de couche laissées sans via par kct route (issue fork #7) :
+        # le net paraît routé mais il est OUVERT. Réparé ici, AVANT la
+        # conversion 45° qui réécrirait les extrémités et masquerait la
+        # coïncidence sur laquelle repose la détection.
+        post, vias_reposes = repair_layer_transitions(post.encode("utf-8"))
+        # Second défaut du même routeur : des fragments du même net laissés à
+        # des endroits distincts. Après les vias, car reposer un via peut déjà
+        # rendre connexes deux morceaux et éviter une piste inutile.
+        post, fragments_relies = reconnect_net_fragments(post)
+        post = post.decode("utf-8", errors="replace")
+        if vias_reposes or fragments_relies:
+            logger.info(
+                "kct route: %d transition(s) de couche réparée(s), "
+                "%d fragment(s) reconnecté(s)", vias_reposes, fragments_relies)
         # Le remplissage vient EN DERNIER : toute réécriture de zone posérieure
         # (strip/regénération) invaliderait les polygones remplis.
         routed = _fill_zones(_solid_connect_zones(post).encode("utf-8"))
