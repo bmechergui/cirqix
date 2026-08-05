@@ -87,6 +87,24 @@ def test_accepte_le_format_numerique_des_nets():
     assert "(net 3)" in repare.decode("utf-8")
 
 
+def test_abandonne_le_via_trop_pres_d_un_via_etranger():
+    """Deux vias de 0,5 mm à 0,2 mm l'un de l'autre se recouvrent.
+
+    Le contrôle de coïncidence (0,05 mm) ne voit pas ce cas : il répond « pas
+    de via ici », et sans contrôle de dégagement contre les vias existants on
+    en posait un par-dessus celui d'un autre net — court-circuit réel.
+    """
+    board = _board(
+        _segment(10, 10, 20, 20, "F.Cu", "SWDIO")
+        + _segment(20, 20, 30, 30, "In1.Cu", "SWDIO")
+        + '\t(via\n\t\t(at 20.2 20)\n\t\t(size 0.5)\n\t\t(drill 0.2)\n'
+          '\t\t(layers "F.Cu" "B.Cu")\n\t\t(net "GND")\n\t)\n')
+
+    _, pose = repair_layer_transitions(board)
+
+    assert pose == 0
+
+
 def test_board_sans_segment_est_rendu_intact():
     board = _board("\t(zone\n\t\t(net 0)\n\t)")
 
