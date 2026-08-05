@@ -23,6 +23,20 @@ les quality gates ni les règles de sécurité de ce fichier.
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
 
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- Before the first codebase question in a session, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/graphify-refresh.ps1 -Mode Ensure`; it rebuilds only stale graphs and refreshes the aggregate when needed.
+- Use Graphify by default before source browsing. Select `graphify-out/graph.json` for Cirqix SaaS, `graphify-out/scopes/kicad-tools/graphify-out/graph.json` for `kicad-tools`, `graphify-out/scopes/circuit-synth/graphify-out/graph.json` for `circuit_synth`, and `graphify-out/full-graph.json` for a search spanning all three corpora. Pass non-default graphs with `--graph`.
+- Run `graphify query "<question>"` first. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run the refresh script with `-Mode Root`, `-Mode KicadTools`, `-Mode CircuitSynth`, or `-Mode All` according to the owned paths. It updates the affected graph and regenerates the aggregate.
+- `full-graph.json` is an aggregate of three disconnected components: it supports common search but does not invent cross-repository edges for `graphify path`.
+
 ---
 
 ## ⚠️ RÈGLES ABSOLUES — NE JAMAIS VIOLER
@@ -95,11 +109,12 @@ Claude mène le projet. L'utilisateur valide. Pas l'inverse.
 - `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
 - `PLAN.md` — plan d'implémentation complet par phases
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
-- `docs/graphify.md` — knowledge graph du monorepo (sous-modules inclus).
+- `docs/graphify.md` — graphes séparés Cirqix, `kicad-tools`, `circuit_synth` et agrégat multi-repo.
   Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
   (`graphify query|path|explain`, skill `graphify`) au lieu de grepper.
-  Le graphe (`graphify-out/`, gitignoré) est maintenu à jour automatiquement par
-  `graphify watch` (hook SessionStart) ; `graphify update .` pour forcer.
+  Le hook SessionStart appelle `scripts/graphify-refresh.ps1 -Mode Ensure`; le
+  watcher PID-géré utilise `-Mode Watcher`. Après modification, choisir `-Mode Root`,
+  `-Mode KicadTools`, `-Mode CircuitSynth` ou `-Mode All` selon les chemins touchés.
 
 **Mettre à jour `.claude/SKILLS.md` + `CLAUDE.md` après chaque installation ou création de skill**
 

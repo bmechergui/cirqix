@@ -45,6 +45,14 @@
 
 ---
 
+## Skills d'analyse du code
+
+| Skill | Source | Description | Invoquer quand |
+|-------|--------|-------------|----------------|
+| `graphify` | safishamsi/graphify | Knowledge graph AST, relations inter-fichiers, requêtes `query`, `path` et `explain` | Toute question sur le code, l'architecture ou les dépendances |
+
+---
+
 ## Skills everything-claude-code (globaux)
 
 | Skill | Description | Invoquer quand |
@@ -136,3 +144,4 @@ npx skills add owner/repo@skill -g -y
 | 2026-03-28 | `nextjs-supabase-auth` | sickn33 | Auth Next.js + Supabase |
 | 2026-03-28 | `turborepo` | vercel/turborepo | Monorepo Turborepo |
 | 2026-03-28 | `bullmq-specialist` | davila7 | BullMQ + Redis queues |
+| 2026-07-19 | `graphify` | safishamsi/graphify | Navigation du monorepo par knowledge graph |
