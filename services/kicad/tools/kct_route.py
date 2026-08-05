@@ -645,6 +645,7 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
 
 _SEG_BLOC_RE = re.compile(r"\(segment\b(.*?)\n\t\)", re.S)
 _VIA_AT_RE = re.compile(r"\(via\b.*?\(at ([-\d.]+) ([-\d.]+)\)", re.S)
+_VIA_BLOC_RE = re.compile(r"\(via\b(.*?)\n\t\)", re.S)
 _START_END_RE = re.compile(
     r"\(start ([-\d.]+) ([-\d.]+)\)\s+\(end ([-\d.]+) ([-\d.]+)\)")
 _LAYER_RE = re.compile(r'\(layer "([^"]+)"\)')
@@ -655,6 +656,8 @@ _REPAIR_VIA_SIZE_MM = 0.5
 _REPAIR_VIA_DRILL_MM = 0.2
 # Distance minimale entre le CENTRE du via et tout cuivre d'un autre net.
 _REPAIR_KEEPOUT_MM = _REPAIR_VIA_SIZE_MM / 2 + 0.2
+# Dégagement cuivre-à-cuivre entre deux vias de nets différents.
+_CLEARANCE_VIA_MM = 0.2
 # Deux extrémités sont « au même point » en deçà de cette tolérance.
 _REPAIR_COINCIDENCE_MM = 0.05
 
@@ -679,6 +682,35 @@ def _parse_segments(text: str) -> list[tuple[float, float, float, float, str, st
         x1, y1, x2, y2 = (float(v) for v in pos.groups())
         out.append((x1, y1, x2, y2, lay.group(1), net.group(1) or net.group(2)))
     return out
+
+
+def _parse_vias(text: str, par_nom: bool = True) -> list[tuple[float, float, float, str]]:
+    """``(x, y, rayon, net)`` pour chaque via — le net compris.
+
+    Un via est du cuivre au même titre qu'une piste ou un pad. Ne connaître que
+    sa POSITION suffit pour éviter d'en poser deux au même endroit, mais pas
+    pour éviter d'en poser un À CÔTÉ de celui d'un autre net : deux vias de
+    0,5 mm distants de 0,2 mm se recouvrent, et le contrôle de coïncidence
+    (0,05 mm) répond « pas de via ici ». D'où la nécessité du net et du rayon.
+    """
+    vias: list[tuple[float, float, float, str]] = []
+    for bloc in _VIA_BLOC_RE.findall(text):
+        pos = _AT_RE.search(bloc)
+        if not pos:
+            continue
+        taille = re.search(r"\(size ([-\d.]+)", bloc)
+        net = _PAD_NET_RE.search(bloc)
+        rayon = float(taille.group(1)) / 2 if taille else _REPAIR_VIA_SIZE_MM / 2
+        identite = ""
+        if net:
+            code, nom_avec_code, nom_seul = net.groups()
+            nom = nom_avec_code or nom_seul
+            # Même règle que pour les pads : on aligne le via sur la
+            # convention du board, sinon la comparaison de nets échoue et un
+            # via du MÊME net serait pris pour un obstacle étranger.
+            identite = (nom if par_nom else code) or nom or code or ""
+        vias.append((float(pos.group(1)), float(pos.group(2)), rayon, identite))
+    return vias
 
 
 def _bloc_equilibre(text: str, debut: int) -> str:
@@ -794,6 +826,7 @@ def repair_layer_transitions(pcb_bytes: bytes) -> tuple[bytes, int]:
     vias = [(float(a), float(b)) for a, b in _VIA_AT_RE.findall(text)]
     numerique = bool(_NET_RE.search(text) and _NET_RE.search(text).group(2))
     pads = _parse_pads(text, par_nom=not numerique)
+    vias_detailles = _parse_vias(text, par_nom=not numerique)
 
     # Point → couches touchées, par net.
     par_net: dict[str, dict[tuple[float, float], set[str]]] = defaultdict(
@@ -816,7 +849,11 @@ def repair_layer_transitions(pcb_bytes: bytes) -> tuple[bytes, int]:
                    for x1, y1, x2, y2, _, autre in segments) or any(
                        net != autre
                        and math.hypot(px - cx, py - cy) < rayon + _REPAIR_KEEPOUT_MM
-                       for cx, cy, rayon, autre in pads):
+                       for cx, cy, rayon, autre in pads) or any(
+                       net != autre
+                       and math.hypot(px - vx, py - vy)
+                       < rayon_via + _REPAIR_VIA_SIZE_MM / 2 + _CLEARANCE_VIA_MM
+                       for vx, vy, rayon_via, autre in vias_detailles):
                 logger.info(
                     "kct route: transition (%s, %s) du net %s laissée ouverte "
                     "— un via y mordrait un autre net", px, py, net)
@@ -913,18 +950,26 @@ def reconnect_net_fragments(pcb_bytes: bytes) -> tuple[bytes, int]:
 
     numerique = bool(_NET_RE.search(text) and _NET_RE.search(text).group(2))
     pads = _parse_pads(text, par_nom=not numerique)
+    # Les vias comptent comme obstacles au même titre que les pads : une
+    # reconnexion qui traverse le via d'un autre net court-circuite deux nets.
+    obstacles = pads + _parse_vias(text, par_nom=not numerique)
     ajouts: list[str] = []
     courant = list(segments)
     for _ in range(_FRAGMENT_MAX_AJOUTS):
-        lien = _meilleur_lien(courant, pads)
+        lien = _meilleur_lien(courant, obstacles)
         if lien is None:
             break
         x1, y1, x2, y2, couche, net = lien
+        # Le net doit être sérialisé au format du board. Écrire `(net "3")` sur
+        # un board qui référence ses nets par CODE crée une référence par NOM
+        # vers un net appelé littéralement « 3 » : le cuivre ajouté est
+        # orphelin et ne reconnecte rien, sans que rien ne le signale.
+        net_sexp = "(net %s)" % net if numerique else '(net "%s")' % net
         ajouts.append(
             '\n\t(segment\n\t\t(start %s %s)\n\t\t(end %s %s)\n\t\t(width %s)\n'
-            '\t\t(layer "%s")\n\t\t(net "%s")\n\t\t(uuid "cirqix-frag-%d")\n\t)'
+            '\t\t(layer "%s")\n\t\t%s\n\t\t(uuid "cirqix-frag-%d")\n\t)'
             % (_fmt(x1), _fmt(y1), _fmt(x2), _fmt(y2),
-               _FRAGMENT_TRACE_WIDTH_MM, couche, net, len(ajouts)))
+               _FRAGMENT_TRACE_WIDTH_MM, couche, net_sexp, len(ajouts)))
         courant.append(lien)
 
     if not ajouts:

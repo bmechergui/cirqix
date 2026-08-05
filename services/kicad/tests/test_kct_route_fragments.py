@@ -127,6 +127,56 @@ def test_renonce_a_un_croisement_en_biais():
     assert ajouts == 0
 
 
+def test_ecrit_le_net_au_format_du_board():
+    """Un board au format numérique doit recevoir `(net 3)`, pas `(net "3")`.
+
+    KiCad <= 10.0 référence les nets par CODE. Sérialiser `(net "3")` produit
+    une référence par NOM vers un net appelé littéralement « 3 », qui n'existe
+    dans aucune déclaration : le cuivre ajouté est orphelin et ne reconnecte
+    rien — en silence, car le DRC ne signale que la connexion toujours
+    manquante, jamais le segment inutile.
+    """
+    def seg_num(x1, y1, x2, y2, code):
+        return ('\t(segment\n\t\t(start %s %s)\n\t\t(end %s %s)\n\t\t(width 0.2)\n'
+                '\t\t(layer "F.Cu")\n\t\t(uuid "u%s")\n\t\t(net %d)\n\t)\n'
+                % (x1, y1, x2, y2, x1, code))
+
+    board = _board('\t(net 3 "+3.3V")\n'
+                   + seg_num(10, 10, 15, 10, 3) + seg_num(18, 10, 25, 10, 3))
+
+    repare, ajouts = reconnect_net_fragments(board)
+
+    assert ajouts == 1
+    texte = repare.decode("utf-8")
+    assert "(net 3)" in texte
+    assert '(net "3")' not in texte
+
+
+def test_renonce_si_un_via_etranger_barre_le_passage():
+    """Un via est du cuivre : le traverser court-circuite deux nets."""
+    board = _board(
+        _segment(10, 10, 15, 10, "F.Cu", "SWCLK")
+        + _segment(18, 10, 25, 10, "F.Cu", "SWCLK")
+        + '\t(via\n\t\t(at 16.5 10)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n'
+          '\t\t(layers "F.Cu" "B.Cu")\n\t\t(net "GND")\n\t)\n')
+
+    _, ajouts = reconnect_net_fragments(board)
+
+    assert ajouts == 0
+
+
+def test_un_via_du_meme_net_ne_bloque_pas():
+    board = _board(
+        _segment(10, 10, 15, 10, "F.Cu", "GND")
+        + _segment(18, 10, 25, 10, "F.Cu", "GND")
+        + '\t(via\n\t\t(at 16.5 10)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n'
+          '\t\t(layers "F.Cu" "B.Cu")\n\t\t(net "GND")\n\t)\n')
+
+    _, ajouts = reconnect_net_fragments(board)
+
+    assert ajouts == 1
+
+
 def test_board_sans_segment_est_rendu_intact():
     board = _board("\t(zone\n\t\t(net 0)\n\t)")
 
