@@ -1,14 +1,14 @@
 # Handoff — `graphify-multigraph`
 
-- **Status:** `REVIEW`
+- **Status:** `DONE`
 - **Owner:** `Codex`
 - **Reviewer:** `Codex code review`
 - **Receiver:** `human`
 - **Branch:** `chore/graphify-multigraph`
 - **Worktree:** `C:\\tmp\\cirqix-graphify-multigraph`
 - **Base commit:** `811f0aa6edcd9ab69b5798f4199e6263812b96da`
-- **Content commit:** `uncommitted`
-- **Updated UTC:** `2026-08-05T00:47:10Z`
+- **Content commit:** `96b1e5e0656038149ecb1ab251de524c9d02cdb1`
+- **Updated UTC:** `2026-08-05T00:58:40Z`
 
 ## Objectif
 
@@ -80,6 +80,9 @@ quatre graphes, le type-check, la revue, le commit, le push et la PR sont prouv�
 - Le test neuf a révélé puis permis de corriger la dépendance implicite à
   `.graphify_python`; le watcher direct a été testé, puis le graphe racine et
   l'agrégat ont été rafraîchis.
+- La revue indépendante a détecté la garde manquante des gitlinks non initialisés;
+  `Assert-RepositoryRoot` et ses deux tests négatifs ont été ajoutés, puis la
+  relecture finale n'a laissé aucun constat bloquant ou important.
 - État final mesuré : SaaS 2 980 nœuds/4 547 liens, aucun nœud source des deux
   sous-modules; agrégat 93 562 nœuds/197 844 arêtes; watcher PID 47048 actif.
 
@@ -115,6 +118,8 @@ quatre graphes, le type-check, la revue, le commit, le push et la PR sont prouv�
 | contrôle SHA normalisé et simulation CRLF | exit 0; `2146a932...3c50fce`, présent dans les deux hooks | 2026-08-05 |
 | invocation AST isolée de `Assert-RepositoryRoot` | exit 0; chemin absent rejeté et sous-dossier non racine rejeté avec messages guidés | 2026-08-05 |
 | `git diff --check` + statuts des deux sous-modules | exit 0; aucune erreur de whitespace; sous-modules propres; aucun cache interne | 2026-08-05 |
+| revue indépendante finale | aucun constat bloquant ou important restant | 2026-08-05 |
+| `corepack pnpm type-check` post-correctif | exit 0; 7/7 tâches réussies, cache Turbo rejoué | 2026-08-05 |
 
 ## Risques et blocages
 
@@ -126,22 +131,23 @@ quatre graphes, le type-check, la revue, le commit, le push et la PR sont prouv�
 
 ## Travail restant
 
-- Terminer la revue indépendante, appliquer ses éventuels constats, puis commit,
-  push et PR.
+- Aucun dans le périmètre de cette tâche; la PR attend la revue/merge distante.
 
 ## Prochaine action atomique
 
-Relire le diff complet et rendre les constats au propriétaire Codex.
+Relire puis merger la PR #91 si les checks distants restent verts.
 
 ## Git
 
 - **État initial du worktree:** propre sur `811f0aa`, branche suivant `origin/main`.
-- **État final du worktree:** en cours.
-- **Commit:** `none`
-- **PR:** `none`
+- **État final du worktree:** propre après les commits dédiés; graphes générés ignorés.
+- **Commit:** `96b1e5e0656038149ecb1ab251de524c9d02cdb1`
+- **PR:** `https://github.com/bmechergui/cirqix/pull/91`
 
 ## Journal de transfert
 
 | Date UTC | From | To | État | Note |
 |---|---|---|---|---|
 | 2026-08-04 | Codex | Codex reviewer | proposé | Installation multi-graphe revendiquée dans un worktree propre. |
+| 2026-08-05 | Codex reviewer | Codex | accepté | Garde sous-modules et SHA final relus; aucun constat bloquant ou important restant. |
+| 2026-08-05 | Codex | human | proposé | Commit poussé et PR #91 ouverte vers `main`. |
