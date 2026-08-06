@@ -182,7 +182,7 @@ uniquement) puis PR, ou relecture d'abord.
 - **État initial du worktree:** `feat/phase-5-1-security` sur `f62ff71`, propre.
 - **État final du worktree:** 5 fichiers modifiés + 5 nouveaux, tous possédés.
 - **Commit:** `b97ec04`
-- **PR:** `none`
+- **PR:** `https://github.com/bmechergui/cirqix/pull/93`
 
 ## Journal de transfert
 
