@@ -136,6 +136,12 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
             .update({
               status,
               pcb_state: finalized,
+              // Pas d'`iteration_count` ici : `iteration` vaut iterationStart + 1
+              // pendant tout le run, donc l'écrire dès une étape intermédiaire
+              // ferait échouer la garde `stale_iteration` de
+              // finalize_pipeline_success (qui exige p_iteration_count =
+              // iteration_count + 1). Le compteur n'appartient qu'à la RPC de
+              // finalisation. Garde : orchestrator-bridge.test.ts.
               // Provenance : pipeline réel → board commandable (gate JLCPCB).
               agent_mode: 'orchestrator',
               updated_at: new Date().toISOString(),
@@ -159,6 +165,7 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           if (lastStatus !== 'DRC_CLEAN') {
             throw new Error('Orchestrator completed without a DRC_CLEAN state');
           }
+          // Charge and publish DRC_CLEAN in one service-role transaction.
           await finalizePipelineSuccess(
             supabase,
             userId,
