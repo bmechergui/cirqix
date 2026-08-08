@@ -1,6 +1,6 @@
 # Handoff — `phase-5-1-security`
 
-- **Status:** `HANDOFF`
+- **Status:** `DONE` (mergé sur `main`)
 - **Owner:** `Kimi`
 - **Reviewer:** `aucun`
 - **Receiver:** `human`
@@ -181,7 +181,7 @@ uniquement) puis PR, ou relecture d'abord.
 
 - **État initial du worktree:** `feat/phase-5-1-security` sur `f62ff71`, propre.
 - **État final du worktree:** 5 fichiers modifiés + 5 nouveaux, tous possédés.
-- **Commit:** `b97ec04`
+- **Commit:** squash merge PR #93 sur `main`
 - **PR:** `https://github.com/bmechergui/cirqix/pull/93`
 
 ## Journal de transfert
@@ -190,3 +190,4 @@ uniquement) puis PR, ou relecture d'abord.
 |---|---|---|---|---|
 | 2026-08-06T12:43:45Z | Kimi | human | proposé | Revendication des chemins 5.1 disjoints de project-integrity. |
 | 2026-08-06T12:49:54Z | Kimi | human | proposé | Implémentation terminée, tests et type-check verts, audit RLS consigné. |
+| 2026-08-08T09:10:48Z | Kimi | human | accepté | Rebasé sur origin/main (PR #93), 59/59 tests, type-check 7/7, mergé en squash. |
