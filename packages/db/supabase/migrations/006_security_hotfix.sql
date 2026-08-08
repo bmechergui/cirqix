@@ -1,4 +1,19 @@
 -- ============================================================
+-- ⚠ PÉRIMÉE — NE PAS APPLIQUER. Constaté le 2026-08-06 : cette migration
+-- n'a jamais atteint la base, et il ne faut plus l'y envoyer.
+--   * Parties 1, 2 et 4 : `009_credits_rpc_lockdown` et
+--     `010_credits_integrity_hardening` sont déployées et redéfinissent
+--     `add_credits` / `deduct_credits` en versions STRICTEMENT plus dures
+--     (validation du montant, `search_path = ''`, vérification que le projet
+--     appartient bien à l'utilisateur, opérations client bornées). Rejouer 006
+--     écraserait ces gardes par les versions faibles ci-dessous : ce serait une
+--     régression de sécurité sur le chemin de facturation.
+--   * Partie 3 : la RLS de `waitlist` est déjà activée en base, avec sa policy
+--     d'INSERT — vérifié sur `pg_class.relrowsecurity` + `pg_policy`.
+-- Le fichier est conservé pour l'historique du raisonnement, pas pour être
+-- exécuté.
+-- ============================================================
+--
 -- Migration 006 — Security hotfix
 -- 1. add_credits     : service_role only (block user self-minting)
 -- 2. deduct_credits  : caller must own the credits OR be service_role
