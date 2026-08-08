@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PCBState, SchemaComponent, SchemaNet } from '@cirqix/types';
 import { encodeSse } from './sse';
-import { deductPipelineCost } from './credits';
+import { finalizePipelineSuccess } from './credits';
 
 interface SimulatedSchema {
   components: SchemaComponent[];
@@ -150,7 +150,6 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
     .update({
       status: 'SCHEMA_DONE',
       pcb_state: schemaState,
-      iteration_count: schemaState.iteration,
       // Provenance : états FABRIQUÉS pour la démo. Le gate JLCPCB refuse ce
       // marquage — le simulateur atteint DRC_CLEAN sans qu'aucun DRC ne tourne.
       agent_mode: 'simulator',
@@ -191,14 +190,9 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
       + `CIRQIX_AGENT_MODE=orchestrator to run the real pipeline._`,
   );
   const drcState: PCBState = { ...routingState, status: 'DRC_CLEAN', drcViolations: [] };
-  await deductPipelineCost(supabase, userId, projectId);
+  await finalizePipelineSuccess(supabase, userId, projectId, drcState, 'simulator');
   controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: drcState })));
   controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
   controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-  await supabase
-    .from('projects')
-    .update({ status: 'DRC_CLEAN', pcb_state: drcState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
-    .eq('id', projectId);
-
   controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
 }
