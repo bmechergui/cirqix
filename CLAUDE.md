@@ -19,6 +19,45 @@ Avant toute tâche partagée, parallèle ou reprise depuis un autre assistant :
 Le handoff transporte l’état du travail ; il ne remplace jamais Git, les tests,
 les quality gates ni les règles de sécurité de ce fichier.
 
+## Worktrees — la chaîne worktree → branche → commit
+
+Tout travail mené dans un worktree doit reposer sur une **branche nommée**, et
+tout ce qui compte doit finir en **commit**. Un worktree peut techniquement être
+en `detached HEAD` : c’est acceptable pour une inspection jetable — lire un vieil
+état, comparer deux révisions — jamais pour du travail destiné à durer.
+
+```
+worktree  →  branche nommée  →  commit  →  push
+```
+
+Un `detached HEAD` n’est référencé par rien : la sortie du worktree suffit à
+rendre les commits invisibles, et seul le reflog les retient, ~90 jours.
+Une branche nommée, elle, survit à la suppression du worktree.
+
+**Le worktree est un plan de travail, pas un lieu de stockage.** Ce qui n’est pas
+commité y est invisible pour tout le monde — y compris pour l’assistant qui
+reprendra le sujet, puisque `git log` et `git diff` ne montrent rien.
+
+Mesuré le 2026-08-09 en vidant 12 worktrees de `C:\tmp` :
+- **4 handoffs** n’existaient que là, absents de `main` (`git cat-file -e`) —
+  dont le compte rendu d’une PR fusionnée le jour même ;
+- **4 fichiers de test** dans le même état ;
+- **42 fichiers modifiés** dans un worktree dont le `git stash` échouait, sauvés
+  par un patch de 173 ko.
+
+Tout cela partait à la première suppression de dossier.
+
+**ALWAYS** créer la branche AVANT de commencer : `git worktree add <chemin> -b <branche>`.
+**ALWAYS** committer un handoff dans le dépôt, pas seulement dans le worktree qui l’a produit.
+**ALWAYS** vérifier `git status` d’un worktree avant de le supprimer — et sauvegarder ce qui n’est pas ailleurs.
+**NEVER** laisser du travail durable en `detached HEAD`.
+**NEVER** considérer qu’un worktree conserve quoi que ce soit : seul un commit poussé conserve.
+
+Rappel utile : `MERGED` ne veut pas dire « sur `main` » (une PR peut viser une
+autre branche), et `git merge-base --is-ancestor` renvoie faux pour une branche
+parfaitement intégrée, puisque les PR sont fusionnées en **squash**. Vérifier le
+**contenu**, pas la parenté.
+
 ## Projet
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
