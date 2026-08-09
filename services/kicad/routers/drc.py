@@ -16,10 +16,12 @@ Availability matrix (kicad-tools niveau 1 ne court-circuite JAMAIS le niveau 2) 
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -107,11 +109,6 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
     if vias_added:
         pcb_content = new_text.encode("utf-8")
 
-    try:
-        import pcbnew  # type: ignore[import-not-found]
-    except ImportError:
-        return pcb_content, vias_added
-
     fixable = [v for v in violations if v.get("type") in ("unfilled_zone", "zone_has_empty_net")]
     if not fixable:
         return pcb_content, vias_added
@@ -120,16 +117,48 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
         in_path = Path(tmp) / "in.kicad_pcb"
         out_path = Path(tmp) / "out.kicad_pcb"
         in_path.write_bytes(pcb_content)
-        board = pcbnew.LoadBoard(str(in_path))
-        for zone in board.Zones():
-            # KiCad 10 : ZONE.SetFilled n'existe plus (c'est SetIsFilled) ;
-            # sous KiCad 9 les deux existent. On force le flag « rempli » puis
-            # ZONE_FILLER.Fill calcule le remplissage réel juste après.
-            zone.SetIsFilled(True)
-        filler = pcbnew.ZONE_FILLER(board)
-        filler.Fill(board.Zones())
-        pcbnew.SaveBoard(str(out_path), board)
+        if not _refill_zones_isolated(in_path, out_path):
+            # pcbnew absent, ou refill échoué : on rend le contenu d'entrée.
+            # Le via-in-pad déjà posé reste acquis, mais les `fixable` ne sont
+            # PAS comptés comme corrigés — ils ne l'ont pas été.
+            return pcb_content, vias_added
         return out_path.read_bytes(), vias_added + len(fixable)
+
+
+# ``pcbnew`` garde un état C++ global et n'est PAS thread-safe, alors que
+# ``run_drc_auto`` est un handler FastAPI déclaré en ``def`` : uvicorn l'exécute
+# dans son threadpool, donc plusieurs requêtes peuvent l'atteindre en même temps
+# sur le même worker. L'appel sort donc dans un processus enfant borné — même
+# motif que ``tools/cmaes_runner.py``, qui existe déjà ici pour cette raison.
+_PCBNEW_RUNNER = Path(__file__).resolve().parent.parent / "tools" / "drc_pcbnew_runner.py"
+_PCBNEW_TIMEOUT_S: int = 120
+
+
+def _refill_zones_isolated(in_path: Path, out_path: Path) -> bool:
+    """Remplit les zones via ``pcbnew``, dans un processus enfant.
+
+    Retourne True seulement si l'enfant a réussi ET produit le fichier. Aucune
+    exception ne remonte : le refill est un correctif best-effort, son échec ne
+    doit pas faire échouer le DRC — mais il ne doit pas non plus être compté
+    comme une correction appliquée.
+    """
+    payload = json.dumps({"pcb": str(in_path), "output": str(out_path)})
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_PCBNEW_RUNNER), payload],
+            capture_output=True, text=True,
+            timeout=_PCBNEW_TIMEOUT_S, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("refill zones (pcbnew isolé) impossible : %s", exc)
+        return False
+    if proc.returncode != 0:
+        logger.warning(
+            "refill zones (pcbnew isolé) échoué (rc=%s): %s",
+            proc.returncode, (proc.stderr or "")[:300],
+        )
+        return False
+    return out_path.exists()
 
 
 # ----------------------------------------------------------------------------
