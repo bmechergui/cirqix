@@ -36,3 +36,8 @@ python-dotenv
 
 # Reasoner LLM (sauvetage routage agentique — tools/reasoning.py)
 anthropic>=0.40.0
+
+# RL placement Phase 6a (tools/rl/placement/) — optional for unit tests
+# (env works without SB3; train --algo ppo needs both)
+gymnasium>=0.29.0
+# stable-baselines3>=2.3.0  # install when training PPO smoke/full runs
