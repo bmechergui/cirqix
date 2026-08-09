@@ -72,7 +72,9 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
         + 'Docker KiCad tourne (KICAD_SERVICE_URL).',
     };
   }
-  pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+  // New board → any prior DRC outcome is stale (export must not PCB_LIVRÉ it).
+  const { drc_clean: _stale, ...rest } = cached;
+  pcbStateCache.set(projectId, { ...rest, kicad_pcb_content: finalPcb });
 
   // SCHEMA_DONE — générer un layout n'est pas un contrôle électrique.
   // ERC_CLEAN n'est émis que par handleErc.

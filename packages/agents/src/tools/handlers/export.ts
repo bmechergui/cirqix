@@ -15,6 +15,11 @@ import { runRealExport, ExportServiceUnavailableError } from '../../engines/expo
  *
  * Le BOM CSV est conservé : il dérive du schéma en cache, c'est une donnée
  * réelle et non une fabrication. Il ne s'accompagne d'aucune promotion de statut.
+ *
+ * Statut de validation (2026-08) : l'export ne CRÉE jamais DRC_CLEAN. Il ne
+ * promeut `PCB_LIVRÉ` que si le cache porte `drc_clean: true` (écrit par
+ * handleDrc après un DRC réellement propre). Sinon aucun `pcb_status` n'est
+ * émis — le bridge conserve lastStatus via `?? lastStatus`.
  */
 function exportFailure(cause: string, bomCsv: string): Record<string, unknown> {
   return {
@@ -63,13 +68,18 @@ export async function handleExport(projectId: string): Promise<Record<string, un
     // (jamais de 0 inventé — quoteIsReal = quoteUsd != null côté UI).
     const success: Record<string, unknown> = {
       status: 'success',
-      pcb_status: 'DRC_CLEAN',
       gerber_layers: result.files.length,
       files: result.files,
       zip_b64: result.zipB64,
       bom_csv: bomCsv,
       engine: 'kicad-cli',
     };
+    // Ne jamais inventer DRC_CLEAN. PCB_LIVRÉ seulement si le DRC a réellement
+    // validé ce board (drc_clean en cache). Sinon pas de pcb_status → bridge
+    // garde lastStatus (ROUTING_DONE reste ROUTING_DONE, gate JLCPCB fermé).
+    if (cached?.drc_clean === true) {
+      success['pcb_status'] = 'PCB_LIVRÉ';
+    }
     if (typeof result.quoteUsd === 'number') {
       success['quote_usd'] = result.quoteUsd;
     }

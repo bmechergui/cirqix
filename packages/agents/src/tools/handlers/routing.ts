@@ -77,9 +77,11 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     const routedPcb = service.kicadPcbContent ?? cleanPcbContent;
     const finalPcb = addGroundPlane(routedPcb, boardW, boardH);
 
-    // Persist routed .kicad_pcb in cache for downstream tools (DRC, export)
+    // Persist routed .kicad_pcb in cache for downstream tools (DRC, export).
+    // Clear drc_clean: a new board is not the one previously DRC-validated.
     if (cached) {
-      pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+      const { drc_clean: _stale, ...rest } = cached;
+      pcbStateCache.set(projectId, { ...rest, kicad_pcb_content: finalPcb });
     }
 
     // via_count / track_length_mm : omettre plutôt que fabriquer

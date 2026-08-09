@@ -18,8 +18,10 @@ export async function handleReason(projectId: string): Promise<Record<string, un
 
   const result = await runReasoner({ kicadPcbContent: pcbContent });
   const finalPcb = result.kicadPcbContent ?? pcbContent;
+  // Reasoner may move footprints / tracks → prior DRC validation is stale.
   if (cached) {
-    pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
+    const { drc_clean: _stale, ...rest } = cached;
+    pcbStateCache.set(projectId, { ...rest, kicad_pcb_content: finalPcb });
   }
   const brain = result.usedLlm ? 'LLM Claude' : 'heuristique';
   return {

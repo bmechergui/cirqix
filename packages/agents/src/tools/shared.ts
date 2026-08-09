@@ -25,6 +25,41 @@ export interface PcbStateCacheEntry {
   boardH: number;
   kicad_sch_content?: string;
   kicad_pcb_content?: string;
+  /**
+   * Outcome of the last real DRC execution for this project board.
+   * - `true`  → DRC ran and found 0 violations (pcb_status DRC_CLEAN)
+   * - `false` → DRC ran and found remaining violations (ROUTING_DONE)
+   * - absent  → DRC never ran successfully on the current board
+   *
+   * Written only by handleDrc. Read by handleExport so export never fabricates
+   * a validation status. Cleared when placement/routing/gen_pcb overwrite the
+   * board (validation would be stale).
+   */
+  drc_clean?: boolean;
 }
 
 export const pcbStateCache = new Map<string, PcbStateCacheEntry>();
+
+/**
+ * After keepBestDrc / keepBestRouting retains an earlier attempt, rewrite the
+ * cache so handleExport (and any later tool) sees the same board as `result`.
+ * No-op when the result has no board content or the project has no cache entry.
+ */
+export function syncPcbCacheFromResult(
+  projectId: string,
+  result: Record<string, unknown>,
+): void {
+  const content = result['kicad_pcb_content'];
+  if (typeof content !== 'string' || content.length === 0) return;
+  const cached = pcbStateCache.get(projectId);
+  if (!cached) return;
+
+  const next: PcbStateCacheEntry = {
+    ...cached,
+    kicad_pcb_content: content,
+  };
+  if (typeof result['drc_clean'] === 'boolean') {
+    next.drc_clean = result['drc_clean'];
+  }
+  pcbStateCache.set(projectId, next);
+}

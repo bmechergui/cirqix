@@ -6,6 +6,7 @@ type ToolUseBlock = Anthropic.ToolUseBlock;
 type TextBlock = Anthropic.TextBlock;
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './prompts';
 import { ACTIVE_PCB_TOOLS, executeToolStub } from './tools';
+import { syncPcbCacheFromResult } from './tools/shared';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
@@ -316,6 +317,9 @@ export async function* runOrchestrator(
           }
           result = keepBestRouting(result, retry);
         }
+        // keepBestRouting peut retenir un board antérieur alors que le cache
+        // porte le dernier essai (pire). handleExport lit le cache → resync.
+        syncPcbCacheFromResult(options.projectId, result);
       }
 
       // Retry placement piloté par le DRC — même philosophie que le retry
@@ -335,6 +339,8 @@ export async function* runOrchestrator(
           const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
           result = keepBestDrc(result, retry);
         }
+        // Même resync que pour le routage : le board exporté = board retenu.
+        syncPcbCacheFromResult(options.projectId, result);
       }
 
       yield {
