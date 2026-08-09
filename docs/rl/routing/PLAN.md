@@ -1,138 +1,133 @@
-# PLAN — RL routing (routeur direct)
+# PLAN — RL routing : manager (Dreamer/PPO) + opérateur KCT / FR
 
-Plan d'implémentation étape par étape. La spec (observation, reward, hors
-scope v1, critères de passage) reste dans [README.md](README.md) ; ce fichier
-décrit l'ordre des travaux.
+Aligné sur [docs/rl/README.md](../README.md).
 
-## Pipeline
+## Objectifs
+
+1. Hard gate (contrat global README) — **autorité uniquement où branchée**.
+2. **Étape 1** : comparer **PPO vs DreamerV3** + opérateur **KCT** → choisir le manager principal.
+3. **Étape 2** : comparer **PPO vs DreamerV3** + opérateur **FR** → choisir le fallback.
+4. PPO et Dreamer = **même env/actions/obs** *par* opérateur (env KCT, puis env FR).
+5. Best-of vs baseline kct full ; hard gate 100 % lab.
+
+## Rôles
+
+| Composant | Rôle |
+|-----------|------|
+| **PPO** | **Manager** candidat (transition) |
+| **DreamerV3** | **Manager** candidat (cible world model) |
+| **KCT** | **Opérateur principal** + géométrie (`kct_net` / batch) |
+| **FR** | **Opérateur fallback** + géométrie (étape 2 — reprise partielle) |
+| **kct_alt** | Interim secours KCT en attendant bras manager+FR |
+| Hard gate / DRC | **Physique** / juge GO |
+| Reasoner | Filet prod si % &lt; 100 |
+
+Vocabulaire canonique : [../README.md](../README.md#rôles--manager--opérateur--géométrie--physique).
+
+### Ordre de travail
 
 ```text
-PCB placé (fixture ou production)
-  → Contrôleur PPO : net actif, paire de pads, couche de départ
-  → Routeur local PPO : pas de grille (8 directions + switch_layer + place_via)
-      → validateur rapide en mémoire (clearance, keepouts, contour)
-  → finish_net / fin d'épisode
-  → exporter.py : segments/vias → .kicad_pcb temporaire
-  → pré-filtre : DRC natif kicad-tools (27 règles JLCPCB)
-  → juge final : kicad-cli pcb drc --format json
-  → candidat accepté seulement si 0 violation + 0 unconnected item
-  → sinon : fallback kct route sur les nets restants uniquement
-            (les nets RL validés sont conservés) + placement-feedback actuel
+1) PPO vs Dreamer  +  KCT   →  retenir Manager_KCT
+2) PPO vs Dreamer  +  FR    →  retenir Manager_FR  (après 1)
+Pipeline : Manager_KCT + KCT  →  (si besoin) Manager_FR + FR  →  hard gate
 ```
 
-Le RL produit des candidats, jamais un résultat livré sans gates. `kct route`
-reste la baseline et le fallback derrière un feature flag. Le surrogate est
-une enveloppe fine de `RoutingGrid` : mêmes règles de blockage/clearance
-qu'en production, pas de modèle parallèle.
+### Strategy
+
+> Taxonomie Cirqix **proposée** — **non implémentée** dans KCT,
+> **non** extraite fidèlement de l’article (100 actions publiques non documentées Java).
+
+Voir README global pour la table proposée (`shortest`, `low_vias`, …).
+
+## Prod vs lab (ne pas confondre)
+
+| | Production (`/route/auto`) | Lab RL cible |
+|--|----------------------------|--------------|
+| KCT | Sur boards simples ; accept **≥ 95 %** | Step manager ; hard gate vise **100 %** |
+| FR | Si besoin ; souvent depuis **PCB entrée** clean | Reprise **partielle** post-kct (cible) |
+| Reasoner | Si résultat &lt; 100 % | Filet après manager |
 
 ## Étapes
 
-### 0. Prérequis — fixture LED ✅ (disponible 2026-07-27)
+### R0 — Grille (fait, NO-GO)
 
-Le dossier `services/kicad/examples/led-blinker-full-pipeline/` **existe** :
+- [x] PPO grille 100k → 17 % vs kct
 
-- `input/schema.json` — 8 composants, **6 nets**
-  (`VCC`, `GND`, `TRIG_THR`, `DISCH`, `OUT`, `LED_A`), board 60×45 mm
-- `expected/led_blinker_final.kicad_pcb` — baseline 100 % routé, 0 violation
-  DRC kicad-cli
-- `output/5_placed.kicad_pcb` — PCB placé non routé (régénérable via
-  `run_pipeline.py` si absent du worktree ; outputs intermédiaires non
-  committés)
+### R1 — Sélecteur 3 actions (fait, **legacy**)
 
-Aucune étape « créer la fixture » ne reste. Ne pas réintroduire l'ancien
-mini-board 3 nets (`VCC` / `LED_ANODE` / `GND`) ni le chemin `circuit.json`.
+- [x] `KctRoutingEnv` / `FrRoutingEnv`
+- [x] Train mock/real smoke
+- [ ] Ne plus étendre comme cible Dreamer
 
-- Validation : `input/schema.json` présent ; PCB placé lisible ; baseline
-  `expected/` DRC-clean avant tout entraînement.
+### R1b — `route_net` (mock + **kct_net** par net)
 
-### 1. `board_grid.py` — grille 2 couches
+- [x] Spec + mock TDD — `tools/rl/routing/route_net_api.py`
+- [x] Backend `kct_full` proxy temporaire (full board) + **sync `MockRouterState`**
+- [x] Backend **`kct_net`** — `route_kct_net` / `kct route --nets NAME` (kicad-tools)
+- [x] Tests mock + `kct_full` + `kct_net` mockés
+- [x] `estimate_routed_percent_from_pcb` (utilitaire PCB ; bras secondaire = kct_alt)
+- [ ] Stratégies riches (layer / ripup géométrique) encore partielles
 
-Construire la grille depuis le PCB placé du LED
-(`output/5_placed.kicad_pcb` régénéré si besoin), pas fixé à 0,1 mm, en
-**enveloppant `RoutingGrid`** (`kicad_tools/router/grid.py`) : conversions
-monde↔grille, masques de clearance et congestion viennent de la primitive de
-production, pas d'un modèle parallèle. Rasteriser les 8 canaux d'observation
-(pads source/cible, cuivre du net, cuivre des autres nets,
-courtyards/keepouts, Edge.Cuts, congestion, curseur, distance cible) pour
-les **6 nets** du `schema.json`.
+### R1c — Env manager (minimal fait)
 
-- Validation : la rasterisation correspond au `.kicad_pcb` placé ; les masques
-  de blockage sont identiques à ceux que `RoutingGrid` produit pour le même
-  board.
+- [x] `ManagerRoutingEnv` — net_slot × strategy + stop
+- [x] Reward mock + tests `tests/test_rl_manager_env.py` (incl. `kct_full` progress)
+- [ ] Obs spatiale (canaux)
 
-### 2. `actions.py` — actions + validateur rapide
+### R2 — PPO-transition sur ManagerRoutingEnv
 
-8 déplacements (N/S/E/W + diagonales 45°), `switch_layer`, `place_via`,
-`finish_net`. Le validateur rapide confirme largeur, clearance, couche,
-contour avant toute écriture de cuivre.
+- [x] CLI `--env manager --kct-backend mock` (et `kct_full` proxy)
+- [x] Smoke test `tests/test_rl_train_manager.py` (skip si pas SB3)
+- [x] Train lab mock → `models/routing_ppo_manager_v1.zip` + **`routing_ppo_manager_mock_v2.zip` (8k steps)**
+- [x] Train smoke kct_net → `routing_ppo_manager_kct_net_v1.zip` (32 steps — policy faible)
+- [x] Baseline greedy kct_net LED → **67–83 %**, hard gate **NO-GO** (GND/VCC planes fragiles ; ERROR place **2** partagé)
+- [x] Best-of LED : **full `route_kct` 100 %** vs greedy `kct_net` 67 % → **winner full_kct** ; hard gate encore NO-GO (ERROR=2, DRC=6) — *historique pre-clean*
+- [x] Fix place ERROR (2) sur LED placed — `5_placed_clean` + `test_rl_led_place_fix` (0 ERROR)
+- [x] Eval lab 2026-08-06 : `eval_manager_kct_net` — place clean · greedy **83 %** · PPO v1 **0 %** · hard gate **NO-GO** (pas 100 % + pas kicad-cli DRC)
+- [ ] **Entraînement validé** hard gate GO (phase manager **non DONE** ; checkpoint kct_net v1 inutilisable)
+- [ ] PPO manager long **seulement** après place clean + plafond per-net viable + **kicad-cli** ; interim = full kct pour plafond route
 
-- Validation : une action invalide n'écrit aucun cuivre et reçoit sa pénalité
-  (tests unitaires).
+### R3 — Étape 1 : DreamerV3 + KCT (après PPO validé sur kct_net)
 
-### 3. `reward.py` + `env.py` — Gymnasium
+- [ ] Même env que PPO manager
+- [ ] Comparaison PPO vs Dreamer sous hard gate + opérateur KCT
+- [ ] Retenir **Manager_KCT**
 
-Reward selon le barème du README (+1000 cible atteinte, −2/pas, −20/via,
-−500 collision, −1000 abandon). `reset()` / `step()` surrogate.
+### R4 — Étape 2 : Manager + FR (fallback)
 
-- Validation : débit surrogate mesuré ≥ l'hypothèse 10–50 µs/pas (sinon
-  réviser les coûts).
+- [ ] Env manager branché sur opérateur FR (reprise partielle)
+- [ ] Comparaison **PPO vs Dreamer** + FR
+- [ ] Retenir **Manager_FR** ; pipeline KCT → FR
+- [ ] Interim : `kct_alt` jusqu’à R4 livré
 
-### 4. `exporter.py` + `validate.py` — sortie et juges
+### R5 — Intégration
 
-Exporter les segments gagnants vers un `.kicad_pcb` temporaire ; chaîner le
-pré-filtre DRC kicad-tools puis `kicad-cli pcb drc --format json`.
+- [x] `run_phase_pipeline.py` skeleton
+- [x] **Hard gate dans pipeline** (`evaluate_final_hard_gate`)
+- [x] Hard gate dans `eval_route_arms`
+- [x] FR % = connectivité PCB (pas 50 % hardcodé)
+- [ ] DRC mesurable en CI (kicad-cli) → Phase 5 peut sortir de PARTIAL
 
-- Validation : roundtrip export → DRC sur la fixture ; la cadence et le
-  plafond d'évaluations réelles sont consignés dans `summary.json`.
+## Hard gate (rappel honnête)
 
-### 5. Smoke run 100 k pas (go/no-go de coût)
+| Check | Défaut code |
+|-------|-------------|
+| error_conflicts | obligatoire |
+| routed_percent ≥ 100 | obligatoire |
+| unrouted_count | **optionnel** (`require_unrouted_count=False`) |
+| DRC / unconnected | obligatoire fail-closed si non mesuré |
 
-Mesurer le débit réel du surrogate et la durée réelle du DRC kicad-cli sur le
-LED. Mettre à jour « Coûts estimés » de [../README.md](../README.md) avec les
-valeurs mesurées.
+## Commandes legacy sélecteur
 
-- Validation : compatible avec le budget 12–48 h GPU annoncé ; sinon réviser
-  avant toute suite.
-
-### 6. Entraînement LED — curriculum
-
-1. Un épisode par net sans via, dans l'ordre suggéré :
-   `LED_A` → `OUT` → `DISCH` → `TRIG_THR` → `VCC` → `GND`.
-2. Les 6 nets dans un ordre choisi par le contrôleur (avec vias si besoin).
-3. Artefacts dans `output/rl-routing/` : `episode_metrics.jsonl`,
-   `candidate.kicad_pcb`, `kicad_drc.json`, `summary.json`. Trajectoires
-   complètes (`obs`, `action`, `reward`, `done`) loggées en npz/jsonl par
-   épisode — futur replay buffer d'un switch DreamerV3 (voir « Chemin de
-   migration » dans [../README.md](../README.md)).
-
-- Validation : `kct route` lancé comme baseline de comparaison sur le même
-  PCB placé (référence committée : `expected/led_blinker_final.kicad_pcb`).
-
-### 7. Gate de passage — quantifiée
-
-10 épisodes consécutifs réussis × 3 seeds (30/30) avec :
-
-```text
-routing_complete = true
-unrouted_count = 0
-KiCad 10 violations = 0
-KiCad 10 unconnected_items = 0
+```bash
+python -m tools.rl.routing.train_routing \
+  --pcb examples/led-blinker-full-pipeline/output/5_placed.kicad_pcb \
+  --env kct --kct-backend mock --algo ppo --steps 512 \
+  --out models/routing_ppo_kct_legacy_selector.zip
 ```
 
-- **Passage** : gate atteinte → étape 8.
-- **Plafond** : PPO plafonne → essayer RecurrentPPO (LSTM, sb3-contrib) une
-  fois. Toujours plafonné → abandon documenté, ou réplication DreamerV3+FR
-  (Chiang et al., 2026) si les conditions de réexamen sont remplies.
+## Règles
 
-### 8. Générateur procédural de boards
-
-Seulement après la gate LED : boards aléatoires 2–10 composants, densités
-variées, validés par `kicad-cli pcb drc` avant d'entrer au corpus.
-
-- Validation : chaque board généré passe le DRC officiel avant usage.
-
-## Rappel des invariants
-
-Le reward n'est pas une preuve de succès ; seul le DRC officiel compte. Hors
-scope v1 : paires différentielles, length matching, RF — ces nets restent sur
-`kct route` ou en manuel.
+- Pas de déploiement sur GO-B percent-only
+- Timeouts durs
+- Préférence kct full à égalité best-of

@@ -1,4 +1,4 @@
-"""Tests — observation + PlacementEnv invariants (anchors fixed)."""
+"""Tests — observation + PlacementEnv invariants (anchors fixed, obs/action align)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from kicad_tools.schema.pcb import PCB
 
 from tools.rl.placement.env import PlacementEnv
 from tools.rl.placement.observation import (
+    MAX_COMPONENTS,
     OBS_DIM,
+    _FEATS_PER_FP,
     build_observation,
     is_anchor_ref,
     movable_references,
@@ -85,8 +87,25 @@ def test_observation_shape_and_deterministic(board_path: Path) -> None:
     assert a.shape == (OBS_DIM,)
     assert a.dtype == np.float32
     assert np.allclose(a, b)
-    assert "R1" in movable_references(pcb)
-    assert "J1" not in movable_references(pcb)
+    mov = movable_references(pcb)
+    assert "R1" in mov and "R2" in mov
+    assert "J1" not in mov
+    # Slot 0 = first movable — present flag set
+    assert a[5] == 1.0  # present of first movable
+
+
+def test_obs_slots_align_with_action_movables(board_path: Path) -> None:
+    """Observation slots and action indices share movable_references order."""
+    pcb = PCB.load(str(board_path))
+    mov = movable_references(pcb)
+    obs = build_observation(pcb, board_width_mm=_BOARD_W, board_height_mm=_BOARD_H)
+    # Only movable slots have present=1 in the first len(mov) slots
+    for i in range(min(len(mov), MAX_COMPONENTS)):
+        present = obs[i * _FEATS_PER_FP + 5]
+        assert present == 1.0, f"slot {i} ({mov[i]}) should be present"
+    # Next slot empty
+    if len(mov) < MAX_COMPONENTS:
+        assert obs[len(mov) * _FEATS_PER_FP + 5] == 0.0
 
 
 def test_env_anchors_never_move(board_path: Path) -> None:
@@ -95,14 +114,13 @@ def test_env_anchors_never_move(board_path: Path) -> None:
         board_width_mm=_BOARD_W,
         board_height_mm=_BOARD_H,
         max_steps=8,
+        check_conflicts=False,  # faster unit test
     )
     obs, info = env.reset()
     assert obs.shape == (OBS_DIM,)
     j1_before = next(fp.position for fp in env.pcb.footprints if fp.reference == "J1")
 
-    # Slot 0 = first movable (R1). Try large steps repeatedly.
     for _ in range(5):
-        # dx_idx=0 → -2mm, dy_idx=6 → +2mm
         env.step(np.array([0, 0, 6], dtype=np.int64))
 
     j1_after = next(fp.position for fp in env.pcb.footprints if fp.reference == "J1")
@@ -115,13 +133,13 @@ def test_env_moves_movable_component(board_path: Path) -> None:
         board_width_mm=_BOARD_W,
         board_height_mm=_BOARD_H,
         max_steps=4,
+        check_conflicts=False,
     )
     env.reset()
     r1_before = next(fp.position for fp in env.pcb.footprints if fp.reference == "R1")
+    # dx_idx=0 → -2.0 mm, dy_idx=3 → 0.0
     obs, reward, term, trunc, info = env.step(np.array([0, 0, 3], dtype=np.int64))
     r1_after = next(fp.position for fp in env.pcb.footprints if fp.reference == "R1")
-    # dx=-2, dy=0 (idx 3 is 0.0)
-    assert r1_after[0] != r1_before[0] or info.get("applied") is False or True
-    # If applied, X should decrease by 2 mm (clamped)
-    if info.get("applied"):
-        assert abs((r1_before[0] - 2.0) - r1_after[0]) < 1e-6 or r1_after != r1_before
+    assert info.get("applied") is True
+    assert abs(r1_after[0] - (r1_before[0] - 2.0)) < 1e-6
+    assert abs(r1_after[1] - r1_before[1]) < 1e-6
