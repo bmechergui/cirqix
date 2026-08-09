@@ -36,78 +36,58 @@ function makeRequest(rawBody: string, signature: string) {
 
 interface MockState {
   rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
-  creditUpdates: Array<Record<string, unknown>>;
-  markersInserted: string[];
-  markersDeleted: string[];
+  processedEvents: Set<string>;
   balance: number;
+  plan: string;
 }
 
+// Stub de contrat route → RPC : il reproduit les résultats documentés de
+// credit_webhook_event pour tester le comportement HTTP. Il ne constitue pas
+// une preuve du rollback PostgreSQL réel, qui exige un test SQL d’intégration.
 function makeClient(opts: {
-  insertConflict?: boolean;
-  insertError?: { code: string; message: string };
-  rpcFails?: boolean;
-  initialBalance?: number;
-  creditsRowsAffected?: number;
-  markers?: Set<string>;
+  rpcError?: { message: string };
+  state?: MockState;
 } = {}) {
-  const state: MockState = {
+  const state = opts.state ?? {
     rpcCalls: [],
-    creditUpdates: [],
-    markersInserted: [],
-    markersDeleted: [],
-    balance: opts.initialBalance ?? 0,
+    processedEvents: new Set<string>(),
+    balance: 0,
+    plan: 'free',
   };
   const client = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       state.rpcCalls.push({ fn, args });
-      if (opts.rpcFails) {
-        return { error: { message: 'db down' } };
+      if (fn !== 'credit_webhook_event') {
+        throw new Error(`unexpected RPC ${fn}`);
       }
-      if (fn === 'add_credits') {
-        state.balance += Number(args.p_amount);
+      if (opts.rpcError) {
+        return { data: null, error: opts.rpcError };
       }
-      return { error: null };
+      const eventKey = String(args.p_event_key);
+      if (state.processedEvents.has(eventKey)) {
+        return { data: false, error: null };
+      }
+      state.processedEvents.add(eventKey);
+      state.balance += Number(args.p_amount);
+      if (typeof args.p_plan === 'string') {
+        state.plan = args.p_plan;
+      }
+      return { data: true, error: null };
     },
     from: (table: string) => {
-      if (table === 'processed_webhook_events') {
-        return {
-          insert: (row: { event_key: string }) => {
-            if (opts.insertConflict || opts.markers?.has(row.event_key)) {
-              return { error: { code: '23505', message: 'duplicate key' } };
-            }
-            if (opts.insertError) {
-              return { error: opts.insertError };
-            }
-            opts.markers?.add(row.event_key);
-            state.markersInserted.push(row.event_key);
-            return { error: null };
-          },
-          delete: () => ({
-            eq: async (_col: string, key: string) => {
-              opts.markers?.delete(key);
-              state.markersDeleted.push(key);
-              return { error: null };
-            },
-          }),
-        };
-      }
-      if (table === 'credits') {
-        return {
-          update: (payload: Record<string, unknown>) => {
-            state.creditUpdates.push(payload);
-            return {
-              eq: async () => ({
-                error: null,
-                count: opts.creditsRowsAffected ?? 1,
-              }),
-            };
-          },
-        };
-      }
-      throw new Error(`unexpected table ${table}`);
+      throw new Error(`unexpected table access ${table}`);
     },
   };
   return { client, state };
+}
+
+function newState(balance = 0): MockState {
+  return {
+    rpcCalls: [],
+    processedEvents: new Set<string>(),
+    balance,
+    plan: 'free',
+  };
 }
 
 function topupPayload(orderId = 'ord-1') {
@@ -170,6 +150,15 @@ describe('gardes existantes', () => {
     expect(state.rpcCalls).toHaveLength(0);
   });
 
+  it('refuse aussi un HMAC incorrect de longueur SHA-256 valide', async () => {
+    const body = topupPayload();
+    const wrongSignature = createHmac('sha256', 'wrong-secret').update(body).digest('hex');
+    const { response, state } = await post(body, {}, wrongSignature);
+
+    expect(response.status).toBe(401);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
   it('refuse un JSON invalide', async () => {
     const { response } = await post('not-json{{{');
 
@@ -195,12 +184,47 @@ describe('gardes existantes', () => {
 
     expect(response.status).toBe(200);
     expect(state.rpcCalls).toHaveLength(0);
-    expect(state.creditUpdates).toHaveLength(0);
+  });
+
+  it('acquitte un variant de top-up inconnu sans créditer', async () => {
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-unknown',
+        attributes: {
+          custom_data: { user_id: 'u1' },
+          first_order_item: { variant_id: 'var-unknown' },
+        },
+      },
+    });
+    const { response, json, state } = await post(body);
+
+    expect(response.status).toBe(200);
+    expect(json.received).toBe(true);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it('acquitte un produit d’abonnement inconnu sans créditer', async () => {
+    const body = JSON.stringify({
+      meta: { event_name: 'subscription_renewed' },
+      data: {
+        id: 'sub-unknown',
+        attributes: {
+          custom_data: { user_id: 'u1' },
+          product_id: 'prod-unknown',
+        },
+      },
+    });
+    const { response, json, state } = await post(body);
+
+    expect(response.status).toBe(200);
+    expect(json.received).toBe(true);
+    expect(state.rpcCalls).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Fail-closed — secret manquant ou marker impossible → 500, aucun crédit
+// Fail-closed — secret manquant ou transaction RPC impossible → 500
 // ---------------------------------------------------------------------------
 
 describe('fail-closed', () => {
@@ -210,21 +234,34 @@ describe('fail-closed', () => {
 
     expect(response.status).toBe(500);
     expect(state.rpcCalls).toHaveLength(0);
-    expect(state.creditUpdates).toHaveLength(0);
-    expect(state.markersInserted).toHaveLength(0);
   });
 
-  it('échoue (500) sans créditer si l’insert du marker échoue (code ≠ 23505)', async () => {
-    // Ex. table processed_webhook_events absente (migration 008 non appliquée)
-    // : traiter sans marker laisserait un retry LS créditer une seconde fois.
-    const { response, json, state } = await post(topupPayload('ord-77'), {
-      insertError: { code: '42P01', message: 'relation "processed_webhook_events" does not exist' },
+  it.each([
+    ['order_created', topupPayload('ord-rpc-error'), 20],
+    ['subscription_renewed', subscriptionPayload('subscription_renewed'), 100],
+  ])('une erreur RPC sur %s renvoie 500 sans prétendre avoir reçu l’événement', async (_name, body, amount) => {
+    const state = newState(40);
+
+    // L’ancien test vérifiait releaseEvent(). La RPC transactionnelle remplace
+    // cette mécanique. Ce test vérifie le contrat applicatif et le retry ; le
+    // rollback PostgreSQL lui-même relève d’un test SQL d’intégration.
+    const { response, json } = await post(body, {
+      rpcError: { message: 'transaction failed' },
+      state,
     });
 
     expect(response.status).toBe(500);
+    expect(json.received).toBeUndefined();
     expect(json.duplicate).toBeUndefined();
-    expect(state.rpcCalls).toHaveLength(0);
-    expect(state.markersInserted).toHaveLength(0);
+    expect(state.processedEvents.size).toBe(0);
+    expect(state.balance).toBe(40);
+    expect(state.rpcCalls).toHaveLength(1);
+
+    const retry = await post(body, { state });
+    expect(retry.response.status).toBe(200);
+    expect(retry.json.duplicate).toBeUndefined();
+    expect(state.processedEvents.size).toBe(1);
+    expect(state.balance).toBe(40 + Number(amount));
   });
 });
 
@@ -238,62 +275,60 @@ describe('crédit nominal', () => {
 
     expect(response.status).toBe(200);
     expect(state.rpcCalls).toEqual([
-      { fn: 'add_credits', args: { p_user_id: 'u1', p_amount: 20, p_action: 'topup' } },
+      {
+        fn: 'credit_webhook_event',
+        args: {
+          p_event_key: 'order_created:ord-1',
+          p_event_name: 'order_created',
+          p_user_id: 'u1',
+          p_amount: 20,
+          p_action: 'topup',
+        },
+      },
     ]);
+    expect(state.balance).toBe(20);
   });
 
   it('subscription_renewed conserve les recharges et ajoute l’allocation mensuelle', async () => {
-    const { response, state } = await post(
+    const state = newState(140);
+    const { response } = await post(
       subscriptionPayload('subscription_renewed'),
-      { initialBalance: 140 },
+      { state },
     );
 
     expect(response.status).toBe(200);
     expect(state.balance).toBe(240);
-    expect(state.rpcCalls).toEqual([
-      {
-        fn: 'add_credits',
-        args: {
-          p_user_id: 'u1',
-          p_amount: 100,
-          p_action: 'subscription_renewed',
-        },
-      },
-    ]);
-    expect(state.creditUpdates[0]).not.toHaveProperty('balance');
+    expect(state.plan).toBe('pro');
+    expect(state.rpcCalls[0]?.args).toMatchObject({
+      p_amount: 100,
+      p_action: 'subscription_renewed',
+      p_plan: 'pro',
+    });
   });
 
   it.each(['subscription_created', 'subscription_renewed'])(
-    '%s met à jour le plan',
+    '%s transmet le plan et l’allocation dans la même RPC',
     async (eventName) => {
       const { response, state } = await post(subscriptionPayload(eventName));
 
       expect(response.status).toBe(200);
-      expect(state.creditUpdates).toHaveLength(1);
-      expect(state.creditUpdates[0]).toMatchObject({ plan: 'pro' });
       expect(state.rpcCalls).toEqual([
         {
-          fn: 'add_credits',
+          fn: 'credit_webhook_event',
           args: {
+            p_event_key: expect.stringMatching(`^${eventName}:sub-1`),
+            p_event_name: eventName,
             p_user_id: 'u1',
             p_amount: 100,
             p_action: eventName,
+            p_plan: 'pro',
           },
         },
       ]);
+      expect(state.plan).toBe('pro');
+      expect(state.balance).toBe(100);
     },
   );
-
-  it('échoue et libère le marker si la ligne credits est absente', async () => {
-    const { response, state } = await post(
-      subscriptionPayload('subscription_renewed'),
-      { creditsRowsAffected: 0 },
-    );
-
-    expect(response.status).toBe(500);
-    expect(state.rpcCalls).toHaveLength(0);
-    expect(state.markersDeleted).toHaveLength(1);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -302,76 +337,60 @@ describe('crédit nominal', () => {
 
 describe('idempotence', () => {
   it('un order_created rejoué (même order id) ne crédite pas deux fois', async () => {
-    const markers = new Set<string>();
-    const first = await post(topupPayload('ord-42'), { markers });
-    expect(first.state.rpcCalls).toHaveLength(1);
+    const state = newState();
+    const first = await post(topupPayload('ord-42'), { state });
+    expect(first.response.status).toBe(200);
+    expect(state.balance).toBe(20);
 
-    // Même événement renvoyé par LS : la table contient déjà la clé → conflit PK
-    const second = await post(topupPayload('ord-42'), { markers });
+    const second = await post(topupPayload('ord-42'), { state });
 
     expect(second.response.status).toBe(200);
-    expect(second.state.rpcCalls).toHaveLength(0);
     expect(second.json.duplicate).toBe(true);
+    expect(state.rpcCalls).toHaveLength(2);
+    expect(state.balance).toBe(20);
+    expect(state.processedEvents.size).toBe(1);
   });
 
-  it('la clé marker insérée porte l’id de commande', async () => {
+  it('la clé d’idempotence transmise porte l’id de commande', async () => {
     const { state } = await post(topupPayload('ord-42'));
 
-    expect(state.markersInserted).toEqual(['order_created:ord-42']);
+    expect(state.rpcCalls[0]?.args.p_event_key).toBe('order_created:ord-42');
   });
 
   it('un subscription_renewed rejoué à l’identique est dédupliqué', async () => {
-    const markers = new Set<string>();
-    const first = await post(
+    const state = newState(40);
+    await post(
       subscriptionPayload('subscription_renewed', '2026-08-27'),
-      { initialBalance: 40, markers },
+      { state },
     );
-    expect(first.state.rpcCalls).toHaveLength(1);
-    expect(first.state.balance).toBe(140);
+    expect(state.balance).toBe(140);
 
     const second = await post(
       subscriptionPayload('subscription_renewed', '2026-08-27'),
-      { initialBalance: first.state.balance, markers },
+      { state },
     );
 
     expect(second.response.status).toBe(200);
-    expect(second.state.rpcCalls).toHaveLength(0);
-    expect(second.state.balance).toBe(140);
+    expect(second.json.duplicate).toBe(true);
+    expect(state.balance).toBe(140);
+    expect(state.processedEvents.size).toBe(1);
   });
 
   it('deux renouvellements DISTINCTS (corps différent) créditent tous les deux', async () => {
-    const markers = new Set<string>();
-    const aug = await post(
+    const state = newState();
+    await post(
       subscriptionPayload('subscription_renewed', '2026-08-27'),
-      { markers },
+      { state },
     );
-    const sep = await post(
+    await post(
       subscriptionPayload('subscription_renewed', '2026-09-27'),
-      { markers },
+      { state },
     );
 
-    expect(aug.state.rpcCalls).toHaveLength(1);
-    expect(sep.state.rpcCalls).toHaveLength(1);
-    expect(aug.state.markersInserted[0]).not.toBe(sep.state.markersInserted[0]);
-  });
-
-  it('libère le marker si add_credits échoue pour un abonnement', async () => {
-    const markers = new Set<string>();
-    const { response, state } = await post(
-      subscriptionPayload('subscription_renewed'),
-      { rpcFails: true, markers },
-    );
-
-    expect(response.status).toBe(500);
-    expect(state.markersDeleted).toHaveLength(1);
-    expect(markers.size).toBe(0);
-  });
-
-  it('si le crédit échoue, le marker est libéré pour que le retry LS aboutisse', async () => {
-    const { response, state } = await post(topupPayload('ord-99'), { rpcFails: true });
-
-    expect(response.status).toBe(500);
-    expect(state.markersInserted).toEqual(['order_created:ord-99']);
-    expect(state.markersDeleted).toEqual(['order_created:ord-99']);
+    const firstKey = state.rpcCalls[0]?.args.p_event_key;
+    const secondKey = state.rpcCalls[1]?.args.p_event_key;
+    expect(firstKey).not.toBe(secondKey);
+    expect(state.processedEvents.size).toBe(2);
+    expect(state.balance).toBe(200);
   });
 });
