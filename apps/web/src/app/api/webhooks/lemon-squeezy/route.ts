@@ -40,14 +40,15 @@ function verifySignature(rawBody: string, signature: string, secret: string): bo
 }
 
 // ---------------------------------------------------------------------------
-// Idempotence (PLAN.md §4.4 action 4 — migration 008)
+// Idempotence (PLAN.md §4.4 action 4 — migrations 008 puis 013)
 //
 // Lemon Squeezy retente un webhook tant qu'il n'a pas de 2xx : sans
 // déduplication, un order_created rejoué créditerait deux fois le même pack.
-// Le marker est inséré AVANT le crédit (conflit PK = doublon → 200 sans
-// traitement) et supprimé si le crédit échoue, pour que le retry aboutisse.
-// Toute autre erreur d'insert (table absente, DB down) fait échouer la
-// requête (fail-closed) : traiter sans marker = double crédit au retry.
+// Le marqueur et le crédit sont posés dans la MÊME transaction, par la RPC
+// `credit_webhook_event` (migration 013) : un conflit de clé renvoie `false`
+// (doublon → 200 sans traitement), et toute erreur annule les deux écritures
+// ensemble, si bien que le retry repart proprement. Le marqueur ne peut donc
+// plus survivre à un crédit manquant.
 // ---------------------------------------------------------------------------
 
 /**
