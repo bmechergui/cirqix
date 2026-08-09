@@ -2,7 +2,8 @@
 
 Two pure functions consumed by ``routers/drc.py``:
 
-- ``parse_drc_report(json_str)`` — tolerant parser for ``kicad-cli pcb drc --format json``
+- ``parse_drc_report(json_str)`` — parser for ``kicad-cli pcb drc --format json``
+  (raises ``InvalidReportError`` on invalid/truncated reports — fail-closed)
 - ``apply_drc_fixes(pcb_content, violations)`` — best-effort auto-fix for the
   subset of violations we can safely correct (refill_zones, widen narrow tracks).
 
@@ -22,6 +23,15 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidReportError(ValueError):
+    """Raised when an official kicad-cli DRC JSON report is invalid or truncated.
+
+    Callers must treat this as a control failure (fail-closed), never as
+    « zero violations ».
+    """
+
 
 # Couches cuivre d'un .kicad_pcb : entrées ``(N "X.Cu" signal|power|…)`` de la
 # section (layers …). Les couches non-cuivre (SilkS, Mask…) ne matchent pas.
@@ -173,24 +183,43 @@ def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli pcb drc --format json`` report.
 
     Returns a list of violation dicts matching the ``DRCViolation`` TypeScript
-    interface from ``@cirqix/types``. Tolerant — returns ``[]`` on any parsing
-    failure. Promotes ``unconnected_items`` and ``schematic_parity`` sections
-    to violations alongside the main ``violations`` array.
+    interface from ``@cirqix/types``. Promotes ``unconnected_items`` and
+    ``schematic_parity`` sections to violations alongside the main
+    ``violations`` array.
+
+    Raises ``InvalidReportError`` when the report is not valid JSON or lacks
+    the expected structure — never treat a truncated report as clean.
     """
     try:
         report = json.loads(report_json)
     except (ValueError, json.JSONDecodeError) as exc:
-        logger.warning("DRC report not valid JSON: %s", exc)
-        return []
+        raise InvalidReportError(f"DRC report not valid JSON: {exc}") from exc
 
     if not isinstance(report, dict):
-        return []
+        raise InvalidReportError(
+            f"DRC report must be a JSON object, got {type(report).__name__}"
+        )
 
+    # Structure attendue de kicad-cli : au moins une section liste reconnue.
+    # Un objet vide / tronqué sans ces clés n'est PAS « zéro violation ».
     sections: list[Any] = []
+    has_known_section = False
     for key in ("violations", "unconnected_items", "schematic_parity"):
-        section = report.get(key)
-        if isinstance(section, list):
-            sections.extend(section)
+        if key not in report:
+            continue
+        section = report[key]
+        if not isinstance(section, list):
+            raise InvalidReportError(
+                f"DRC report field {key!r} must be a list, got {type(section).__name__}"
+            )
+        has_known_section = True
+        sections.extend(section)
+
+    if not has_known_section:
+        raise InvalidReportError(
+            "DRC report missing expected list sections "
+            "(violations / unconnected_items / schematic_parity)"
+        )
 
     out: list[dict[str, Any]] = []
     for raw in sections:

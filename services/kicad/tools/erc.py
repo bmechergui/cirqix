@@ -2,7 +2,8 @@
 
 Two pure functions consumed by ``routers/erc.py``:
 
-- ``parse_erc_report(json_str)`` — tolerant parser for ``kicad-cli sch erc --format json``
+- ``parse_erc_report(json_str)`` — parser for ``kicad-cli sch erc --format json``
+  (raises ``InvalidReportError`` on invalid/truncated reports — fail-closed)
 - ``apply_no_connect_fixes(sch_content, violations)`` — append-only auto-fix for
   ``pin_not_connected`` violations (NEVER modifies connectivity).
 
@@ -18,6 +19,15 @@ import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidReportError(ValueError):
+    """Raised when an official kicad-cli ERC JSON report is invalid or truncated.
+
+    Callers must treat this as a control failure (fail-closed), never as
+    « zero violations ».
+    """
+
 
 # Matches "Symbol <ref> Pin <pin>" — KiCad item.description format
 _ITEM_RE = re.compile(r"Symbol\s+(?P<ref>\S+)\s+Pin\s+(?P<pin>\S+)", re.IGNORECASE)
@@ -38,20 +48,30 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
 
     Returns a list of violation dicts matching the ``ERCViolation`` TypeScript
     interface from ``@cirqix/types`` (id, severity, message, type, ref, pin,
-    x_mm, y_mm). Tolerant — returns ``[]`` on any parsing failure.
+    x_mm, y_mm).
+
+    Raises ``InvalidReportError`` when the report is not valid JSON or lacks
+    the expected structure — never treat a truncated report as clean.
     """
     try:
         report = json.loads(report_json)
     except (ValueError, json.JSONDecodeError) as exc:
-        logger.warning("ERC report not valid JSON: %s", exc)
-        return []
+        raise InvalidReportError(f"ERC report not valid JSON: {exc}") from exc
 
     if not isinstance(report, dict):
-        return []
+        raise InvalidReportError(
+            f"ERC report must be a JSON object, got {type(report).__name__}"
+        )
 
-    raw_violations = report.get("violations")
+    if "violations" not in report:
+        raise InvalidReportError("ERC report missing required 'violations' list")
+
+    raw_violations = report["violations"]
     if not isinstance(raw_violations, list):
-        return []
+        raise InvalidReportError(
+            f"ERC report field 'violations' must be a list, got "
+            f"{type(raw_violations).__name__}"
+        )
 
     out: list[dict[str, Any]] = []
     for raw in raw_violations:

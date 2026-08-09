@@ -111,22 +111,23 @@ def run_erc(req: ERCRequest) -> ERCResponse:
     # ── Step 2 : kicad-cli (si disponible) ────────────────────────────────────
     cli_path = _find_kicad_cli()
     if cli_path is None:
-        # kicad-cli absent → retourner résultat kicad-tools
-        # (TypeScript runErcFallback prend le relais si skipped=True)
-        blocking = [v for v in kt_violations if v.get("severity") == "error"]
-        erc_clean = len(blocking) == 0
+        # Fail-closed : sans kicad-cli, jamais erc_clean=True.
+        # skipped=True déclenche le vrai ERC de repli TypeScript (runErcFallback).
+        # Les violations / fixed_count du pré-filtre restent exposés en diagnostic.
         updated_b64 = (
             base64.b64encode(current_content.encode("utf-8")).decode("ascii")
             if kt_fixed > 0 else None
         )
-        skipped = not kt_violations and kt_fixed == 0  # rien fait → déléguer au TS
         return ERCResponse(
-            erc_clean=erc_clean,
+            erc_clean=False,
             violations=kt_violations,
             fixed_count=kt_fixed,
             kicad_sch_b64=updated_b64,
-            skipped=skipped,
-            warning="kicad-cli unavailable — kicad-tools basic validation only" if not skipped else "kicad-cli unavailable",
+            skipped=True,
+            warning=(
+                "kicad-cli unavailable — authority ERC not run; "
+                "pre-filter results are diagnostic only (TypeScript runErcFallback)"
+            ),
             engine="kicad-tools",
         )
 
