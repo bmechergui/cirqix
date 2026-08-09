@@ -90,6 +90,26 @@ describe('DRC réellement exécuté et propre', () => {
     expect(pcbStateCache.get(PROJECT)?.kicad_pcb_content).toBe(FIXED_PCB);
   });
 
+  it('enregistre drc_clean:true en cache quand le DRC est propre', async () => {
+    seedCache();
+
+    await handleDrc({}, PROJECT);
+
+    expect(pcbStateCache.get(PROJECT)?.drc_clean).toBe(true);
+  });
+
+  it('enregistre drc_clean:false en cache quand des violations restent', async () => {
+    seedCache();
+    drcMock.runRealDrc.mockResolvedValue(
+      drcResult({ drcClean: false, violations: [{ type: 'clearance' }] }),
+    );
+
+    await handleDrc({}, PROJECT);
+
+    expect(pcbStateCache.get(PROJECT)?.drc_clean).toBe(false);
+    expect(pcbStateCache.get(PROJECT)?.drc_clean).not.toBe(true);
+  });
+
   it('mentionne les auto-fix appliqués dans la note', async () => {
     seedCache();
     drcMock.runRealDrc.mockResolvedValue(drcResult({ fixedCount: 3 }));

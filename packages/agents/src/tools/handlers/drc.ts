@@ -42,16 +42,21 @@ export async function handleDrc(
       return drcFailure(result.warning ?? 'kicad-cli indisponible');
     }
 
-    // Persist updated .kicad_pcb in cache for downstream tools (export)
-    if (result.kicadPcbContent && cached) {
-      pcbStateCache.set(projectId, {
-        ...cached,
-        kicad_pcb_content: result.kicadPcbContent,
-      });
-    }
     // Only promote to DRC_CLEAN when the board is actually clean.
     // Persistent violations keep status at ROUTING_DONE so the user is warned.
     const newStatus: 'DRC_CLEAN' | 'ROUTING_DONE' = result.drcClean ? 'DRC_CLEAN' : 'ROUTING_DONE';
+    const finalPcb = result.kicadPcbContent ?? pcbContent;
+
+    // Persist board + DRC outcome for export: handleExport must not invent a
+    // validation status — it only reads `drc_clean` written here.
+    if (cached) {
+      pcbStateCache.set(projectId, {
+        ...cached,
+        kicad_pcb_content: finalPcb,
+        drc_clean: result.drcClean,
+      });
+    }
+
     return {
       status: 'success',
       pcb_status: newStatus,
@@ -59,7 +64,7 @@ export async function handleDrc(
       drc_clean: result.drcClean,
       drc_skipped: false,
       fixed_count: result.fixedCount,
-      kicad_pcb_content: result.kicadPcbContent ?? pcbContent,
+      kicad_pcb_content: finalPcb,
       engine: 'kicad-cli',
       warning: result.warning,
       note: result.drcClean

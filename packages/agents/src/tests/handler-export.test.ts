@@ -65,13 +65,15 @@ function seedCache(overrides: Record<string, unknown> = {}) {
 }
 
 describe('export réellement produit', () => {
-  it('conserve DRC_CLEAN avec les fichiers et l’estimation du service', async () => {
-    seedCache();
+  it('promeut PCB_LIVRÉ uniquement si un DRC propre a été enregistré en cache', async () => {
+    seedCache({ drc_clean: true });
 
     const result = await handleExport(PROJECT);
 
     expect(result['status']).toBe('success');
-    expect(result['pcb_status']).toBe('DRC_CLEAN');
+    expect(result['pcb_status']).toBe('PCB_LIVRÉ');
+    // L'export ne re-fabrique JAMAIS DRC_CLEAN — c'est le DRC qui l'accorde.
+    expect(result['pcb_status']).not.toBe('DRC_CLEAN');
     expect(result['gerber_layers']).toBe(3);
     expect(result['files']).toEqual(['top.gtl', 'bottom.gbl', 'outline.gko']);
     expect(result['zip_b64']).toBe('UEsDBBQ=');
@@ -80,7 +82,7 @@ describe('export réellement produit', () => {
   });
 
   it('génère le BOM CSV depuis le schéma en cache', async () => {
-    seedCache();
+    seedCache({ drc_clean: true });
 
     const result = await handleExport(PROJECT);
 
@@ -89,7 +91,7 @@ describe('export réellement produit', () => {
   });
 
   it('omet quote_usd et lead_time_days si le service ne les fournit pas', async () => {
-    seedCache();
+    seedCache({ drc_clean: true });
     const bare = exportResult();
     delete (bare as { quoteUsd?: number }).quoteUsd;
     delete (bare as { leadTimeDays?: number }).leadTimeDays;
@@ -103,6 +105,49 @@ describe('export réellement produit', () => {
     // Pas de $0 ni d'estimation inventée dans la note.
     expect(String(result['note'])).not.toMatch(/\$0\b/);
     expect(String(result['note'])).not.toContain('Estimation:');
+  });
+});
+
+/**
+ * Invariant (2026-08) : l'export ne crée jamais un statut de validation.
+ * Un board DRC sale ou jamais validé peut produire des Gerbers, mais ne doit
+ * ni repromouvoir DRC_CLEAN ni poser PCB_LIVRÉ — le bridge conserve lastStatus
+ * (?? lastStatus) et le gate JLCPCB reste fermé.
+ */
+describe('export ne fabrique aucun statut de validation', () => {
+  it('après un DRC non propre → succès avec fichiers, sans pcb_status', async () => {
+    seedCache({ drc_clean: false });
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('success');
+    expect(result['zip_b64']).toBe('UEsDBBQ=');
+    expect(result['gerber_layers']).toBe(3);
+    expect(result).not.toHaveProperty('pcb_status');
+    expect(result['pcb_status']).not.toBe('DRC_CLEAN');
+    expect(result['pcb_status']).not.toBe('PCB_LIVRÉ');
+  });
+
+  it('sans DRC préalable (cache sans drc_clean) → aucun statut de validation', async () => {
+    seedCache(); // pas de drc_clean
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('success');
+    expect(result['zip_b64']).toBe('UEsDBBQ=');
+    expect(result).not.toHaveProperty('pcb_status');
+    expect(result['pcb_status']).not.toBe('DRC_CLEAN');
+    expect(result['pcb_status']).not.toBe('PCB_LIVRÉ');
+  });
+
+  it('DRC propre → PCB_LIVRÉ (sémantique documentée), jamais DRC_CLEAN', async () => {
+    seedCache({ drc_clean: true });
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('success');
+    expect(result['pcb_status']).toBe('PCB_LIVRÉ');
+    expect(result['pcb_status']).not.toBe('DRC_CLEAN');
   });
 });
 
