@@ -2,6 +2,29 @@
 
 État relevé après la session d'audit et de correctifs. `origin/main` = `4408648`.
 
+## ✅ MÉNAGE EFFECTUÉ — état final : 9 branches sur 32
+
+**Conservées** — les quatre à PR ouverte (`chore/graphify-multigraph` #91,
+`docs/bug-kicad-tools-vias-manquants` #87, `docs/rapatrie-handoffs-orphelins` #82,
+`fix/drc-rls-gates` #66), les trois worktrees de délégation (`live/codex`,
+`live/grok`, `live/kimi`), `main` et `wip/post-correctifs`.
+
+**Supprimées — 23** : les 14 à PR fusionnée, les 2 à PR fermée avec contenu repris,
+`rebase98`, les 3 vrais ancêtres de `main`, et les 3 examinées ci-dessous.
+
+**Worktrees retirés — 12**, de `cirqix-analyse-*` à `cirqix-stm32-*`. Restent le
+principal, celui de la PR #91, et les trois `live/*`.
+
+**Récupéré au passage** : 4 handoffs qui n'existaient que dans des worktrees
+temporaires (committés), 4 fichiers de test jamais exécutés contre le `main`
+actuel (sauvegardés hors dépôt, pas committés pour ne pas casser la CI), et un
+patch de 173 ko des 42 modifications de `cirqix-reconcile`.
+
+**Pour restaurer une branche supprimée** — les commits ne sont pas détruits :
+`git branch <nom> <sha>`, reflog conservé ~90 jours. SHA notés :
+`wip/pr95-local` et `feat/placement-routing-backlog` = `f62ff71` ·
+`fix-rls-footprints-waitlist` = `32749d8` (aussi sur GitHub via #101).
+
 > ⚠️ **Le test « ancêtre de main » ment sur ce dépôt.** Les PR sont fusionnées en
 > **squash** : le sommet de la branche n'est jamais un ancêtre de `main`, même
 > quand tout son contenu y est. `git merge-base --is-ancestor` renvoie donc faux
