@@ -18,39 +18,37 @@ export function hasEnoughPipelineCredits(balance: number): boolean {
   return Number.isFinite(balance) && balance >= PIPELINE_COST;
 }
 
+/**
+ * Le repli local ne doit s'armer que pour UNE cause : le compte Anthropic n'a
+ * plus de quota. Il enchaîne un pipeline tronqué (5 étapes sur 8) qu'il persiste
+ * ensuite avec `agent_mode: 'orchestrator'` — la provenance qu'exige le gate
+ * JLCPCB. L'armer par erreur revient donc à rendre commandable un board qui n'a
+ * ni footprints résolus, ni PCB généré nativement, ni export.
+ *
+ * L'ancien test — `message.includes('credit') || message.includes('402')` — le
+ * déclenchait sur n'importe quelle erreur dont le message contient « credit » :
+ * une erreur Supabase mentionnant la table `credits` suffisait, alors qu'elle n'a
+ * aucun rapport avec un quota Anthropic. On exige désormais la signature réelle
+ * de l'erreur de quota : le statut HTTP 402 du SDK, ou le message exact renvoyé
+ * par l'API Anthropic.
+ */
 export function shouldFallbackToLocalPipeline(error: unknown): boolean {
   if (error instanceof CreditDeductionError) {
     return false;
   }
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('credit') || message.includes('402');
-}
-
-/**
- * Deduct the PCB-pipeline cost atomically through the secured
- * `deduct_credits` RPC, which takes a row lock, verifies the balance and
- * records an audit row in `credit_transactions`.
- *
- * Any RPC failure is propagated. This function never falls back to a direct
- * table update: all balance changes must remain atomic and audited.
- */
-export async function deductPipelineCost(
-  supabase: SupabaseClient,
-  userId: string,
-  projectId: string,
-): Promise<void> {
-  const { error } = await supabase.rpc('deduct_credits', {
-    p_user_id: userId,
-    p_amount: PIPELINE_COST,
-    p_action: 'full_pcb_pipeline',
-    p_project_id: projectId,
-  });
-
-  if (error) {
-    log.error({ err: error, userId }, 'deduct_credits RPC failed');
-    throw new CreditDeductionError(error);
+  if (typeof error === 'object' && error !== null && 'status' in error) {
+    if ((error as { status?: unknown }).status === 402) return true;
   }
+  const message = error instanceof Error ? error.message : String(error);
+  return /credit balance is too low/i.test(message);
 }
+
+// `deductPipelineCost` a été SUPPRIMÉE ici. Elle débitait PIPELINE_COST via
+// `deduct_credits`, n'était appelée par aucun code de production (uniquement par
+// ses propres tests), et faisait doublon avec `finalize_pipeline_success`, qui
+// débite déjà ce même montant en interne. Un futur appelant — son nom y invitait —
+// aurait facturé 17 crédits pour un seul pipeline. La facturation du pipeline
+// passe par `finalizePipelineSuccess` et par elle seule.
 
 /** Charge one completed iteration and publish its final state atomically. */
 export async function finalizePipelineSuccess(
