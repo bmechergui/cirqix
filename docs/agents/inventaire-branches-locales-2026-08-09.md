@@ -32,7 +32,14 @@ Les 9 branches locales comparées une à une à leur homologue distante.
 | `feat/rl-lab-hard-gate-v2` | #99 — CI en échec, 5 `ImportError` |
 | `fix/rls-footprints-waitlist` | #101 |
 
-**Supprimables sur GitHub — PR fusionnée ou fermée (17)**
+**✅ SUPPRIMÉES sur GitHub — 17**, chacune vérifiée juste avant (état de PR relu à
+l'instant de la suppression, jamais la parenté Git). Vérifié après coup : les PR
+fusionnées gardent leur commit de fusion (#98 → `2388363`, #106 → `f81214f`,
+#110 → `0fc9681`, #113 → `4408648`) et les PR ouvertes restent saines.
+
+État final : **9 branches locales, 9 distantes.**
+
+Liste des supprimées :
 
 Fusionnées : `fix/fail-closed-chaine-agents` #100 · `fix/fail-closed-service-kicad` #102 ·
 `fix/export-fail-closed` #103 · `fix/routing-mesure-reelle` #104 · `fix/ls-abonnement-credits` #106 ·
