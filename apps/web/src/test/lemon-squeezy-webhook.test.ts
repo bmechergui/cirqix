@@ -39,41 +39,52 @@ interface MockState {
   creditUpdates: Array<Record<string, unknown>>;
   markersInserted: string[];
   markersDeleted: string[];
+  balance: number;
 }
 
 function makeClient(opts: {
   insertConflict?: boolean;
   insertError?: { code: string; message: string };
   rpcFails?: boolean;
+  initialBalance?: number;
+  creditsRowsAffected?: number;
+  markers?: Set<string>;
 } = {}) {
   const state: MockState = {
     rpcCalls: [],
     creditUpdates: [],
     markersInserted: [],
     markersDeleted: [],
+    balance: opts.initialBalance ?? 0,
   };
   const client = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       state.rpcCalls.push({ fn, args });
-      return opts.rpcFails
-        ? { error: { message: 'db down' } }
-        : { error: null };
+      if (opts.rpcFails) {
+        return { error: { message: 'db down' } };
+      }
+      if (fn === 'add_credits') {
+        state.balance += Number(args.p_amount);
+      }
+      return { error: null };
     },
     from: (table: string) => {
       if (table === 'processed_webhook_events') {
         return {
           insert: (row: { event_key: string }) => {
-            if (opts.insertConflict) {
+            if (opts.insertConflict || opts.markers?.has(row.event_key)) {
               return { error: { code: '23505', message: 'duplicate key' } };
             }
             if (opts.insertError) {
               return { error: opts.insertError };
             }
+            opts.markers?.add(row.event_key);
             state.markersInserted.push(row.event_key);
             return { error: null };
           },
           delete: () => ({
             eq: async (_col: string, key: string) => {
+              opts.markers?.delete(key);
               state.markersDeleted.push(key);
               return { error: null };
             },
@@ -84,7 +95,12 @@ function makeClient(opts: {
         return {
           update: (payload: Record<string, unknown>) => {
             state.creditUpdates.push(payload);
-            return { eq: async () => ({ error: null }) };
+            return {
+              eq: async () => ({
+                error: null,
+                count: opts.creditsRowsAffected ?? 1,
+              }),
+            };
           },
         };
       }
@@ -226,11 +242,57 @@ describe('crédit nominal', () => {
     ]);
   });
 
-  it('subscription_created bascule le plan et le solde', async () => {
-    const { response, state } = await post(subscriptionPayload('subscription_created'));
+  it('subscription_renewed conserve les recharges et ajoute l’allocation mensuelle', async () => {
+    const { response, state } = await post(
+      subscriptionPayload('subscription_renewed'),
+      { initialBalance: 140 },
+    );
 
     expect(response.status).toBe(200);
-    expect(state.creditUpdates[0]).toMatchObject({ balance: 100, plan: 'pro' });
+    expect(state.balance).toBe(240);
+    expect(state.rpcCalls).toEqual([
+      {
+        fn: 'add_credits',
+        args: {
+          p_user_id: 'u1',
+          p_amount: 100,
+          p_action: 'subscription_renewed',
+        },
+      },
+    ]);
+    expect(state.creditUpdates[0]).not.toHaveProperty('balance');
+  });
+
+  it.each(['subscription_created', 'subscription_renewed'])(
+    '%s met à jour le plan',
+    async (eventName) => {
+      const { response, state } = await post(subscriptionPayload(eventName));
+
+      expect(response.status).toBe(200);
+      expect(state.creditUpdates).toHaveLength(1);
+      expect(state.creditUpdates[0]).toMatchObject({ plan: 'pro' });
+      expect(state.rpcCalls).toEqual([
+        {
+          fn: 'add_credits',
+          args: {
+            p_user_id: 'u1',
+            p_amount: 100,
+            p_action: eventName,
+          },
+        },
+      ]);
+    },
+  );
+
+  it('échoue et libère le marker si la ligne credits est absente', async () => {
+    const { response, state } = await post(
+      subscriptionPayload('subscription_renewed'),
+      { creditsRowsAffected: 0 },
+    );
+
+    expect(response.status).toBe(500);
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(state.markersDeleted).toHaveLength(1);
   });
 });
 
@@ -240,11 +302,12 @@ describe('crédit nominal', () => {
 
 describe('idempotence', () => {
   it('un order_created rejoué (même order id) ne crédite pas deux fois', async () => {
-    const first = await post(topupPayload('ord-42'));
+    const markers = new Set<string>();
+    const first = await post(topupPayload('ord-42'), { markers });
     expect(first.state.rpcCalls).toHaveLength(1);
 
-    // Même évident renvoyé par LS : la table contient déjà la clé → conflit PK
-    const second = await post(topupPayload('ord-42'), { insertConflict: true });
+    // Même événement renvoyé par LS : la table contient déjà la clé → conflit PK
+    const second = await post(topupPayload('ord-42'), { markers });
 
     expect(second.response.status).toBe(200);
     expect(second.state.rpcCalls).toHaveLength(0);
@@ -258,24 +321,50 @@ describe('idempotence', () => {
   });
 
   it('un subscription_renewed rejoué à l’identique est dédupliqué', async () => {
-    const first = await post(subscriptionPayload('subscription_renewed', '2026-08-27'));
-    expect(first.state.creditUpdates).toHaveLength(1);
+    const markers = new Set<string>();
+    const first = await post(
+      subscriptionPayload('subscription_renewed', '2026-08-27'),
+      { initialBalance: 40, markers },
+    );
+    expect(first.state.rpcCalls).toHaveLength(1);
+    expect(first.state.balance).toBe(140);
 
     const second = await post(
       subscriptionPayload('subscription_renewed', '2026-08-27'),
-      { insertConflict: true },
+      { initialBalance: first.state.balance, markers },
     );
 
     expect(second.response.status).toBe(200);
-    expect(second.state.creditUpdates).toHaveLength(0);
+    expect(second.state.rpcCalls).toHaveLength(0);
+    expect(second.state.balance).toBe(140);
   });
 
   it('deux renouvellements DISTINCTS (corps différent) créditent tous les deux', async () => {
-    const aug = await post(subscriptionPayload('subscription_renewed', '2026-08-27'));
-    const sep = await post(subscriptionPayload('subscription_renewed', '2026-09-27'));
+    const markers = new Set<string>();
+    const aug = await post(
+      subscriptionPayload('subscription_renewed', '2026-08-27'),
+      { markers },
+    );
+    const sep = await post(
+      subscriptionPayload('subscription_renewed', '2026-09-27'),
+      { markers },
+    );
 
-    expect(aug.state.creditUpdates).toHaveLength(1);
-    expect(sep.state.creditUpdates).toHaveLength(1);
+    expect(aug.state.rpcCalls).toHaveLength(1);
+    expect(sep.state.rpcCalls).toHaveLength(1);
+    expect(aug.state.markersInserted[0]).not.toBe(sep.state.markersInserted[0]);
+  });
+
+  it('libère le marker si add_credits échoue pour un abonnement', async () => {
+    const markers = new Set<string>();
+    const { response, state } = await post(
+      subscriptionPayload('subscription_renewed'),
+      { rpcFails: true, markers },
+    );
+
+    expect(response.status).toBe(500);
+    expect(state.markersDeleted).toHaveLength(1);
+    expect(markers.size).toBe(0);
   });
 
   it('si le crédit échoue, le marker est libéré pour que le retry LS aboutisse', async () => {

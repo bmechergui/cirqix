@@ -171,12 +171,28 @@ export async function POST(req: NextRequest) {
     if (claim === 'duplicate') {
       return NextResponse.json({ received: true, duplicate: true });
     }
-    const { error } = await supabase
+    const { error: planError, count } = await supabase
       .from('credits')
-      .update({ balance: sub.credits, plan: sub.plan, updated_at: new Date().toISOString() })
+      .update(
+        { plan: sub.plan, updated_at: new Date().toISOString() },
+        { count: 'exact' },
+      )
       .eq('user_id', userId);
-    if (error) {
-      console.error('[ls-webhook] credits update failed:', error.message);
+    if (planError || count !== 1) {
+      console.error(
+        '[ls-webhook] credits plan update failed:',
+        planError?.message ?? `expected 1 row, updated ${count ?? 0}`,
+      );
+      await releaseEvent(supabase, eventKey);
+      return NextResponse.json({ error: 'DB error' }, { status: 500 });
+    }
+    const { error: creditError } = await supabase.rpc('add_credits', {
+      p_user_id: userId,
+      p_amount: sub.credits,
+      p_action: eventName,
+    });
+    if (creditError) {
+      console.error('[ls-webhook] add_credits failed:', creditError.message);
       await releaseEvent(supabase, eventKey);
       return NextResponse.json({ error: 'DB error' }, { status: 500 });
     }
