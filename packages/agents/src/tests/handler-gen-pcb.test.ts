@@ -54,6 +54,18 @@ describe('génération réussie', () => {
     expect(String(result['kicad_pcb_content'])).toContain('(kicad_pcb');
     expect(pcbStateCache.get(PROJECT)?.kicad_pcb_content).toContain('(kicad_pcb');
   });
+
+  it('émet SCHEMA_DONE — générer un layout n’est pas un contrôle ERC', async () => {
+    seed();
+    engineMock.runCircuitSynthEngine.mockResolvedValue({ kicad_pcb_content: '(kicad_pcb (net 0 ""))' });
+
+    const result = await handleGenPcb(PROJECT);
+
+    // ERC_CLEAN n'est émis que par handleErc. Un layout généré ne prouve rien
+    // d'électrique — usurper ce statut masquait l'absence d'ERC en amont.
+    expect(result['pcb_status']).toBe('SCHEMA_DONE');
+    expect(result['pcb_status']).not.toBe('ERC_CLEAN');
+  });
 });
 
 describe('jamais de succès sur un board vide', () => {
