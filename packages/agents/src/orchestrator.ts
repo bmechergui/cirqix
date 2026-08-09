@@ -375,10 +375,13 @@ export async function* runOrchestrator(
       // Strip large KiCad file blobs before adding to Sonnet context.
       // The actual content is cached server-side (_pcbStateCache) and sent
       // to the frontend via pcb_state above — Sonnet only needs the metadata.
+      // zip_b64 = nom émis par handleExport (gerber_zip_b64 = alias historique).
+      // Sans les deux, le base64 complet part dans le contexte Sonnet.
       const LARGE_FIELDS = [
         'kicad_sch_content',
         'kicad_pcb_content',
         'gerber_zip_b64',
+        'zip_b64',
         'bom_csv',
         'simulation_output_raw',
       ] as const;
