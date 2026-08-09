@@ -52,13 +52,40 @@ Leur travail est dans `main` sous un autre SHA. Suppression locale sans risque.
 | `fix/drc-rls-gates` | #66 |
 | `feat/rl-lab-hard-gate-v2` | #99 — CI en échec, 5 `ImportError` dans le lab RL routing |
 
-## Branches à CONSERVER — sans PR, à examiner
+## Branches sans PR — EXAMEN TERMINÉ le 2026-08-09
 
-| Branche | Commits uniques | Remarque |
-|---|---|---|
-| `wip/pr95-local` | 22 | Ancienne branche de travail. Contenu moteur repris par #98 (vérifié par la présence de `convert_corners_45_drc_aware`, `allow_soldermask_bridges`, `_has_partial_result`, `_grid_too_coarse_for_clearance`, `restore_pad_angles`, `_normalize_origin_after_write`, `place_unplaced`, `_outline_bounds_local` sur `main`). Comparaison ligne à ligne **non faite** — filet à garder tant que ce n'est pas tranché. |
-| `feat/placement-routing-backlog` | 22 | Même lignée que `wip/pr95-local`. |
-| `fix-rls-footprints-waitlist` | 1 | Sans PR ; #101 porte le même sujet depuis `fix/rls-footprints-waitlist` (avec slash). Doublon probable — à vérifier avant suppression. |
+Les trois ont été comparées au contenu réel de `main`, pas à la parenté Git.
+
+### `wip/pr95-local` — superseded, supprimable
+
+Le diff `origin/main → wip/pr95-local` sur `services/kicad/tools/` donne
+**36 insertions pour 943 suppressions** : la branche est en RETARD, pas en avance.
+Les 36 « ajouts » sont les versions *antérieures* du code — notamment le parseur
+DRC/ERC tolérant qui renvoyait `[]` sur échec, précisément ce que #102 a remplacé
+par un fail-closed. Les remettre serait une régression.
+
+Vérification par symboles plutôt que par commentaires : les **28** fonctions et
+constantes définies dans son `placement.py` existent toutes sur `main`. Aucun
+symbole unique. Les seules chaînes absentes de `main` (« Tirages de l'Architecte »,
+« irrécupérable ») sont des commentaires — #98 décrit le même mécanisme avec ses
+propres mots.
+
+Les huit fonctions clés du moteur sont sur `main` : `convert_corners_45_drc_aware`,
+`allow_soldermask_bridges`, `_has_partial_result`, `_grid_too_coarse_for_clearance`,
+`restore_pad_angles`, `_normalize_origin_after_write`, `place_unplaced`,
+`_outline_bounds_local`.
+
+### `feat/placement-routing-backlog` — doublon exact, supprimable
+
+`git rev-list --count wip/pr95-local...feat/placement-routing-backlog` = **0**.
+Les deux branches sont identiques. Même verdict que ci-dessus.
+
+### `fix-rls-footprints-waitlist` — alias local, supprimable
+
+Pointe sur `32749d8`, **exactement le même commit** que
+`origin/fix/rls-footprints-waitlist`, la branche de la PR #101 ouverte. Simple
+doublon local (tiret au lieu de slash). Supprimer la version à tiret ne touche pas
+la PR.
 
 ## Branches de service — ne pas toucher
 
@@ -72,6 +99,24 @@ Leur travail est dans `main` sous un autre SHA. Suppression locale sans risque.
 
 `feat/led-full-pipeline-example`, `fix/stm32-industrial-routing`,
 `validate/stm32-routing-industrial` — 0 commit unique, supprimables.
+
+## Fichiers non suivis — TRIÉ le 2026-08-09
+
+25 entrées traînaient depuis des semaines, mélangeant outillage indispensable et
+cache local.
+
+**Exclus** (`.gitignore`) : `services/kicad/models/` — **3,1 Go**, 101 archives
+STEP/WRL re-téléchargeables ; `.cursor/` et `.gemini/`, adaptateurs locaux.
+
+**Committés** (86 fichiers) : les 11 skills `*-delegate` dont dépend toute la
+délégation ; `scripts/graphify-refresh.ps1`, que le hook `SessionStart` de
+`.claude/settings.json` référence avec vérification d'empreinte SHA256 — il
+pointait donc vers un fichier absent du dépôt ; `docs/agents/` (modèle de brief,
+deux handoffs orphelins, cet inventaire) ; `examples/rl-placement-dataset/` et
+`run_chaine_claire.py` ; `.graphifyignore`, `GEMINI.md`, `skills-lock.json`.
+
+**Laissé non suivi** : `docs/kicad-tools-bug-vias-manquants.md`, déjà porté par la
+PR #87 ouverte — le committer ici créerait un doublon à résoudre à la fusion.
 
 ## Travail mis de côté ce jour
 
