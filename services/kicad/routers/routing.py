@@ -14,6 +14,7 @@ Pipeline kicad-tools: ``.kicad_pcb`` → Python A* negotiated router → ``.kica
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -35,6 +36,8 @@ router = APIRouter(tags=["routing"])
 
 # 2-layer simple boards usually < 90s, 4-layer ~300s, 8-layer ~600s
 _DEFAULT_TIMEOUT_S: int = 300
+_PCBNEW_RUNNER_TIMEOUT_S: int = 60
+_PCBNEW_RUNNER = Path(__file__).resolve().parent.parent / "tools" / "routing_pcbnew_runner.py"
 
 
 # ----------------------------------------------------------------------------
@@ -212,29 +215,19 @@ def _run_freerouting(
 
 
 def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
-    """Apply a .ses session back onto a .kicad_pcb via pcbnew, return new bytes."""
-    try:
-        import pcbnew  # type: ignore[import-not-found]
-    except ImportError as exc:  # pragma: no cover — gated by router caller
-        raise RuntimeError("pcbnew unavailable for Specctra import") from exc
-
+    """Apply a SES in a bounded child process; never call pcbnew in FastAPI."""
     with tempfile.TemporaryDirectory() as tmp:
         in_pcb = Path(tmp) / "in.kicad_pcb"
         out_pcb = Path(tmp) / "out.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
-        board = pcbnew.LoadBoard(str(in_pcb))
-        # Remove stale tracks — Freerouting's SES output replaces them entirely.
-        # Without this, old tracks (from circuit-synth or a previous routing pass)
-        # survive in the final PCB alongside Freerouting's routes and cause
-        # "Track has unconnected end" DRC violations.
-        for track in list(board.GetTracks()):
-            board.Remove(track)
-        pcbnew.ImportSpecctraSES(board, str(ses_path))
-        for zone in board.Zones():
-            zone.SetFilled(True)
-        filler = pcbnew.ZONE_FILLER(board)
-        filler.Fill(board.Zones())
-        pcbnew.SaveBoard(str(out_pcb), board)
+        _run_pcbnew_operation({
+            "operation": "specctra_roundtrip",
+            "pcb": str(in_pcb),
+            "ses": str(ses_path),
+            "output": str(out_pcb),
+        })
+        if not out_pcb.is_file():
+            raise RuntimeError("pcbnew Specctra child produced no PCB output")
         return out_pcb.read_bytes()
 
 
@@ -275,30 +268,104 @@ def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
     return routed, routed_pct
 
 
+def _run_pcbnew_operation(payload: dict[str, str]) -> None:
+    """Run one pcbnew operation outside uvicorn's worker/thread process.
+
+    pcbnew owns non-thread-safe C++ global state.  A lock would only serialize
+    threads inside one uvicorn worker and would not isolate crashes; a bounded
+    child process contains both concurrency and native failures.
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_PCBNEW_RUNNER), json.dumps(payload)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_PCBNEW_RUNNER_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"pcbnew child timed out after {_PCBNEW_RUNNER_TIMEOUT_S}s"
+        ) from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:300]
+        raise RuntimeError(f"pcbnew child exit {proc.returncode}: {detail}")
+
+
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
-    """Export a .kicad_pcb byte blob to a Specctra DSN file via pcbnew.
+    """Export a PCB to Specctra DSN in a bounded pcbnew child process.
 
     All existing tracks are removed before export so Freerouting starts from
     scratch — without stale TS-generated traces that pointed to pre-placement
     component positions.
     """
-    try:
-        import pcbnew  # type: ignore[import-not-found]
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("pcbnew unavailable for Specctra export") from exc
+    with tempfile.TemporaryDirectory() as tmp:
+        in_pcb = Path(tmp) / "in.kicad_pcb"
+        in_pcb.write_bytes(pcb_bytes)
+        _run_pcbnew_operation({
+            "operation": "export_specctra",
+            "pcb": str(in_pcb),
+            "dsn": str(dsn_path),
+        })
+    if not dsn_path.is_file():
+        raise RuntimeError("pcbnew Specctra child produced no DSN output")
 
-    with tempfile.NamedTemporaryFile(suffix=".kicad_pcb", delete=False) as tmp_pcb:
-        tmp_pcb.write(pcb_bytes)
-        tmp_pcb_path = tmp_pcb.name
-    try:
-        board = pcbnew.LoadBoard(tmp_pcb_path)
-        # Remove all existing tracks so Freerouting routes from clean pads only.
-        for track in list(board.GetTracks()):
-            board.Remove(track)
-        # KiCad 8 uses ExportSpecctraDSN instead of ExportSpecctraSession
-        pcbnew.ExportSpecctraDSN(board, str(dsn_path))
-    finally:
-        Path(tmp_pcb_path).unlink(missing_ok=True)
+
+def _measure_routing(pcb_bytes: bytes) -> tuple[int, int]:
+    """Return ``(routable nets, unrouted nets)`` from real PCB connectivity.
+
+    The total deliberately reuses the repository's canonical S-expression rule
+    (one declaration plus at least two pad assignments).  pcbnew only determines
+    which of those nets still have pads in separate copper components.
+
+    Fail closed: if the child cannot prove connectivity, raising is safer than
+    turning a completed Freerouting job or a produced SES into a fabricated 100%.
+    """
+    total_nets = _count_routable_nets(pcb_bytes)
+    with tempfile.TemporaryDirectory() as tmp:
+        in_pcb = Path(tmp) / "in.kicad_pcb"
+        result_path = Path(tmp) / "connectivity.json"
+        in_pcb.write_bytes(pcb_bytes)
+        _run_pcbnew_operation({
+            "operation": "measure_connectivity",
+            "pcb": str(in_pcb),
+            "result": str(result_path),
+        })
+        if not result_path.is_file():
+            raise RuntimeError("pcbnew connectivity child produced no result")
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            unrouted_nets = result["unrouted_nets"]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise RuntimeError("invalid pcbnew connectivity result") from exc
+
+    if not isinstance(unrouted_nets, int) or isinstance(unrouted_nets, bool):
+        raise RuntimeError("invalid pcbnew unrouted-nets count")
+    if unrouted_nets < 0 or unrouted_nets > total_nets:
+        raise RuntimeError(
+            f"impossible pcbnew connectivity result: {unrouted_nets}/{total_nets}"
+        )
+    return total_nets, unrouted_nets
+
+
+def _measured_routed_percent(
+    pcb_bytes: bytes,
+    expected_routable_nets: int,
+) -> int:
+    total_nets, unrouted_nets = _measure_routing(pcb_bytes)
+    # A router must preserve the routing problem, not merely solve whatever
+    # subset survived its import/export.  Recomputing the denominator only from
+    # the output would let a board that lost N-1 nets claim 100% on the last one.
+    if total_nets != expected_routable_nets:
+        raise RuntimeError(
+            "routable net count changed during routing: "
+            f"{expected_routable_nets} in, {total_nets} out"
+        )
+    if total_nets == 0:
+        return 100
+    return ((total_nets - unrouted_nets) * 100) // total_nets
 
 
 # ----------------------------------------------------------------------------
@@ -410,11 +477,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     if api_url is not None:
         try:
             new_pcb = _route_with_freerouting_api(pcb_bytes, req.timeout_s)
-            logger.info("Freerouting API: 100%% routé")
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-api")
+            routed_pct = _measured_routed_percent(new_pcb, net_count)
+            logger.info("Freerouting API: %d%% routé (connectivité mesurée)", routed_pct)
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
-                routed_percent=100,
+                routed_percent=routed_pct,
                 layers=req.layers,
                 skipped=False,
             )
@@ -431,11 +499,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 _export_specctra(pcb_bytes, dsn)
                 _run_freerouting(paths, dsn, ses, req.timeout_s)
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
-            logger.info("Freerouting: 100%% routé")
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
+            routed_pct = _measured_routed_percent(new_pcb, net_count)
+            logger.info("Freerouting: %d%% routé (connectivité mesurée)", routed_pct)
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
-                routed_percent=100,
+                routed_percent=routed_pct,
                 layers=req.layers,
                 skipped=False,
             )
