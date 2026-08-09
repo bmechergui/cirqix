@@ -1,108 +1,95 @@
-# RL placement — candidat protégé par les gates actuelles
+# RL placement — PPO vs DreamerV3 · best-of vs CMA 1×
 
-> Plan d'implémentation étape par étape : [PLAN.md](PLAN.md).
+> Plan : [PLAN.md](PLAN.md) · Global : [../README.md](../README.md)
 
 ## But
 
-RL_PCB optimise les positions X/Y des footprints non ancrés. Il ne décide ni
-des règles DRC, ni des contraintes mécaniques, ni des pistes.
+Candidat d’amélioration **après** hybrid+Inspecteur, en **best-of** contre le
+raffinement CMA **fixe (1×)**.  
+**hybrid + CMA-ES restent toujours.** Flag prod **OFF**.
 
-Le LLM fournit une stratégie de haut niveau ; la politique RL optimise la
-géométrie ; `pcbnew` écrit le candidat ; les outils KiCad valident le résultat.
+Objectif scientifique / produit : **comparer PPO et DreamerV3** sur le **même**
+env de placement (encodeurs **GNN** + **Transformer** optionnel).
 
-```text
-LLM strategy
-→ Architecte kicad-tools (hybrid + clusters)
-→ Inspecteur initial
-→ candidat RL placement
-→ Inspecteur final
-→ sélection ou revert
-```
+## Rôles (place)
 
-## Entrée de stratégie LLM
+| Rôle | Qui |
+|------|-----|
+| **Manager** | **PPO** ou **DreamerV3** (cible placeur ; même env pour comparer) |
+| **Opérateur + géométrie** | **hybrid + CMA 1×** (prod) ; bras RL optionnel (flag) |
+| **Physique / juge** | ERROR place, dérive ≤ 20 mm, hard gate aval |
 
-Le LLM ne donne pas de coordonnées finales. Il produit des contraintes
-structurées, par exemple :
+- CMA 1× = opérateur **fixe**, pas piloté par le RL.
+- RL **n’est pas** le pilote short/long/stop de CMA (legacy seulement).
+- Vocabulaire global : [../README.md](../README.md#rôles--manager--opérateur--géométrie--physique).
 
-```json
-{
-  "groups": [["U1", "C1", "C2"], ["R1", "D1"]],
-  "anchors": ["J1"],
-  "sensitive_nets": ["USB_D+", "USB_D-"],
-  "preferred_side": {"U1": "F.Cu"}
-}
-```
+## Architecture (décision 2026-08-03)
 
-Les connecteurs `J*` et `P*` restent ancrés, comme dans le pipeline actuel.
-
-## État, action et reward
-
-L'observation contient les positions, tailles/courtyards, nets, groupes
-fonctionnels, contour de carte et composants ancrés. Une action déplace un seul
-composant non ancré de `dx_mm`, `dy_mm`.
-
-La récompense réutilise le FOM multi-objectif de `kicad-tools` au lieu de
-réinventer un score : compacité, wirelength, qualité des groupes, collisions
-et hors-carte. Toute collision ERROR reçoit une pénalité forte.
-
-## Point d'intégration proposé
-
-Le candidat RL remplace progressivement le micro-raffinement CMA-ES dans
-`tools/placement.py::auto_place`, sans supprimer le chemin actuel :
+### Prod safe (court terme)
 
 ```text
-snapshot Architecte + Inspecteur
-→ RL candidate
-→ PlacementAnalyzer + PlacementFixer
-→ ERROR restant ou dérive > 20 mm : restore snapshot
-→ sinon : comparer le FOM au candidat CMA-ES et conserver le meilleur propre
+hybrid + Inspecteur → S
+  ├─ CMA-ES 1× (S)          ← toujours (refine connu, budget fixe)
+  └─ RL(S) si flag          ← option best-of (PPO|Dreamer — cible)
+→ filtre dérive ≤ 20 mm
+→ best-of
+→ suite routage
 ```
 
-Trois précisions d'implémentation :
+- CMA = **un seul** raffinement prod (pas piloté par le RL).
+- RL **n’est pas** au-dessus de CMA (pas short/long/stop comme design cible).
 
-1. Le contrôle de dérive **réutilise** `_max_displacement_mm()` et
-   `_CMAES_MAX_DISPLACEMENT_MM = 20.0` de `tools/placement.py` (seuil déjà
-   justifié par le benchmark CMA-ES : 4–11,8 mm en fonctionnement normal) —
-   pas de constante dupliquée qui divergerait.
-2. La comparaison FOM RL vs CMA-ES n'a de sens qu'avec la **même
-   configuration de poids** `compute_fom()` des deux côtés — sinon on compare
-   deux métriques différentes.
-3. Le FOM reste un proxy : un meilleur FOM ne garantit pas une meilleure
-   routabilité. Le critère de décision Phase 6a doit inclure, sur un
-   échantillon des fixtures, le taux de routage effectivement obtenu en aval.
+### Cible RL (feuille de route)
 
-Le fallback est déjà défini : le placement hybride actuel est conservé si RL
-est indisponible, échoue ou dégrade le PCB.
+| | |
+|--|--|
+| Algorithmes | **PPO** (transition) vs **DreamerV3** (cible) — même env |
+| Encodeurs | **GNN** prioritaire ; **Transformer** optionnel ; CNN optionnel |
+| Sortie | Placement candidat sur `S` |
+| Sélection | Best-of vs CMA 1× + hard gate |
 
-## Implémentation Phase 6a
+### Lab historique (legacy — ne pas confondre)
 
-```text
-services/kicad/tools/rl/placement/
-├── env.py               # Gymnasium PlacementEnv
-├── observation.py       # PCB + contraintes → tenseur
-├── reward.py            # adaptateur compute_fom()
-├── train_placement.py   # smoke / train hors ligne (pas FastAPI)
-├── policy.py            # (à venir) PPO/MLP lecture seule
-└── candidate.py         # (à venir) applique candidat via PCB kicad-tools
-```
+| | |
+|--|--|
+| `KctPlacementEnv` | actions CMA short/long/stop = **méta-contrôleur** |
+| `placement_ppo_kct_v1.zip` | 400 steps lab only |
+| Statut | **Legacy** ; non GO ; non objectif PPO↔Dreamer |
 
-Implémenté (2026-07-28) : `reward.py`, `observation.py`, `env.py`,
-`train_placement.py` (+ tests). `policy.py` / `candidate.py` / flag
-`auto_place` restent après smoke 100k + gate FOM.
+## Autorité de jugement (contrat global)
 
+| Mécanisme | Autorité déploiement ? |
+|-----------|-------------------------|
+| **Hard gate** (`quality_gate.py`) | **Oui** (quand branchée + DRC/unconnected mesurés) |
+| Gate A FOM/ERROR majority | **Non** — **legacy** |
+| Gate B percent-only | **Non** — **legacy** |
 
-Le modèle est entraîné hors requête HTTP. En production, le service charge un
-modèle versionné et exécute seulement l'inférence avec un budget borné.
+**GO prod placement RL** = hard gate sur **toutes** les cartes de la suite officielle
++ best-of vs **CMA 1×** + aval route sous hard gate.  
+**Pas** « GO-A et GO-B » historiques. **Pas** « méta-CMA 400 steps ».
 
-## Critère d'abandon Phase 6a
+### Résultats historiques (legacy — non éligibles au GO)
 
-La Phase 6a est abandonnée si le candidat RL ne bat pas le FOM CMA-ES de plus
-de 5 % sur au moins 10 fixtures représentatives après l'expérience initiale,
-ou si le coût d'inférence dépasse le budget par requête. Le placement hybride
-actuel reste alors le chemin unique et le code RL est retiré ou archivé.
+| Mesure | Résultat |
+|--------|----------|
+| Gate A multi FOM | 5/6 (board 05 faible) — **legacy** |
+| Gate B % 100 | 6/6 tie — **legacy** (peut coexister avec ERROR place) |
+| Checkpoint méta-CMA | `placement_ppo_kct_v1.zip` **400** steps |
 
-## Passage à la Phase 6b
+## Encodeurs
 
-Un GNN/Transformer ne vient qu'après des résultats stables avec PPO/MLP. Il
-encode mieux le graphe composants/nets, mais ajoute PyTorch Geometric et un
-coût d'inférence supérieur.
+| Rôle | Archi |
+|------|--------|
+| Place | **GNN** prioritaire |
+| Glue | **Transformer** optionnel |
+| Local | CNN occupancy optionnel |
+| Policy / world model | PPO \| DreamerV3 |
+
+Détail : [../README.md](../README.md#réseaux-options-encodeur).
+
+## Ce qu’on ne fait pas
+
+- Supprimer hybrid / **1× CMA** prod
+- Faire du RL un **pilote** CMA (short/long/stop) comme architecture cible
+- Déployer sur GO-A/B legacy ou checkpoint 400 steps
+- Comparer PPO et Dreamer sur des envs différents
