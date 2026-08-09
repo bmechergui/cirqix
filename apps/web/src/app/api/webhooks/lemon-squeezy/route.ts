@@ -40,14 +40,15 @@ function verifySignature(rawBody: string, signature: string, secret: string): bo
 }
 
 // ---------------------------------------------------------------------------
-// Idempotence (PLAN.md §4.4 action 4 — migration 008)
+// Idempotence (PLAN.md §4.4 action 4 — migrations 008 puis 013)
 //
 // Lemon Squeezy retente un webhook tant qu'il n'a pas de 2xx : sans
 // déduplication, un order_created rejoué créditerait deux fois le même pack.
-// Le marker est inséré AVANT le crédit (conflit PK = doublon → 200 sans
-// traitement) et supprimé si le crédit échoue, pour que le retry aboutisse.
-// Toute autre erreur d'insert (table absente, DB down) fait échouer la
-// requête (fail-closed) : traiter sans marker = double crédit au retry.
+// Le marqueur et le crédit sont posés dans la MÊME transaction, par la RPC
+// `credit_webhook_event` (migration 013) : un conflit de clé renvoie `false`
+// (doublon → 200 sans traitement), et toute erreur annule les deux écritures
+// ensemble, si bien que le retry repart proprement. Le marqueur ne peut donc
+// plus survivre à un crédit manquant.
 // ---------------------------------------------------------------------------
 
 /**
@@ -67,30 +68,17 @@ function buildEventKey(eventName: string, dataId: string, rawBody: string): stri
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
-/**
- * 'duplicate' = événement déjà traité (conflit PK) ;
- * 'claimed' = marker posé, traiter ;
- * 'error' = insert impossible (table absente, DB down…) → la requête DOIT
- * échouer : traiter sans marker laisserait un retry créditer une seconde fois.
- */
-async function claimEvent(
-  supabase: AdminClient,
-  eventKey: string,
-  eventName: string,
-): Promise<'duplicate' | 'claimed' | 'error'> {
-  const { error } = await supabase.from('processed_webhook_events').insert({
-    event_key: eventKey,
-    event_name: eventName,
-  });
-  if (!error) return 'claimed';
-  // 23505 = violation de clé primaire → l'événement a déjà été crédité.
-  return error.code === '23505' ? 'duplicate' : 'error';
-}
-
-/** Libère le marker après un échec de crédit, pour laisser passer le retry. */
-async function releaseEvent(supabase: AdminClient, eventKey: string): Promise<void> {
-  await supabase.from('processed_webhook_events').delete().eq('event_key', eventKey);
-}
+// `claimEvent` / `releaseEvent` ont été SUPPRIMÉES : le marquage d'idempotence et
+// le crédit se font désormais dans une seule transaction, via la RPC
+// `credit_webhook_event` (migration 013).
+//
+// Le couple pose-marqueur-puis-crédite laissait une fenêtre : si le process
+// mourait entre les deux — coupure serverless, redéploiement, redémarrage de pod —
+// le marqueur survivait sans le crédit, et le réessai de Lemon Squeezy était
+// classé « duplicate ». Le paiement était encaissé, les crédits perdus
+// définitivement. `releaseEvent` ne couvrait que l'échec *retourné* par la RPC,
+// jamais la mort du process — et ignorait par-dessus le marché l'erreur de son
+// propre DELETE.
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -135,24 +123,23 @@ export async function POST(req: NextRequest) {
     if (!credits) {
       return NextResponse.json({ received: true });
     }
-    const claim = await claimEvent(supabase, eventKey, eventName);
-    if (claim === 'error') {
-      console.error('[ls-webhook] marker insert failed (table processed_webhook_events ?)');
-      return NextResponse.json({ error: 'DB error' }, { status: 500 });
-    }
-    if (claim === 'duplicate') {
-      return NextResponse.json({ received: true, duplicate: true });
-    }
-    const { error } = await supabase.rpc('add_credits', {
+    // Marqueur d'idempotence et crédit dans la MÊME transaction (migration 013).
+    // Auparavant le marqueur était posé d'abord : si le process mourait entre les
+    // deux, le paiement était encaissé, le marqueur en place, le crédit jamais
+    // pose — et le réessai de Lemon Squeezy classé « duplicate ».
+    const { data: credited, error } = await supabase.rpc('credit_webhook_event', {
+      p_event_key: eventKey,
+      p_event_name: eventName,
       p_user_id: userId,
       p_amount: credits,
       p_action: 'topup',
     });
     if (error) {
-      console.error('[ls-webhook] add_credits failed:', error.message);
-      // Ne pas marquer l'événement comme traité : LS retentera.
-      await releaseEvent(supabase, eventKey);
+      console.error('[ls-webhook] credit_webhook_event failed:', error.message);
       return NextResponse.json({ error: 'DB error' }, { status: 500 });
+    }
+    if (credited === false) {
+      return NextResponse.json({ received: true, duplicate: true });
     }
     return NextResponse.json({ received: true });
   }
@@ -163,38 +150,24 @@ export async function POST(req: NextRequest) {
     if (!sub) {
       return NextResponse.json({ received: true });
     }
-    const claim = await claimEvent(supabase, eventKey, eventName);
-    if (claim === 'error') {
-      console.error('[ls-webhook] marker insert failed (table processed_webhook_events ?)');
-      return NextResponse.json({ error: 'DB error' }, { status: 500 });
-    }
-    if (claim === 'duplicate') {
-      return NextResponse.json({ received: true, duplicate: true });
-    }
-    const { error: planError, count } = await supabase
-      .from('credits')
-      .update(
-        { plan: sub.plan, updated_at: new Date().toISOString() },
-        { count: 'exact' },
-      )
-      .eq('user_id', userId);
-    if (planError || count !== 1) {
-      console.error(
-        '[ls-webhook] credits plan update failed:',
-        planError?.message ?? `expected 1 row, updated ${count ?? 0}`,
-      );
-      await releaseEvent(supabase, eventKey);
-      return NextResponse.json({ error: 'DB error' }, { status: 500 });
-    }
-    const { error: creditError } = await supabase.rpc('add_credits', {
+    // Marqueur, plan et allocation dans la MÊME transaction (migration 013).
+    // La RPC échoue si aucune ligne `credits` ne correspond à l'utilisateur —
+    // un `update` silencieux sur zéro ligne faisait auparavant répondre
+    // « received » sans que rien n'ait été credité, marqueur déjà pose.
+    const { data: credited, error: creditError } = await supabase.rpc('credit_webhook_event', {
+      p_event_key: eventKey,
+      p_event_name: eventName,
       p_user_id: userId,
       p_amount: sub.credits,
       p_action: eventName,
+      p_plan: sub.plan,
     });
     if (creditError) {
-      console.error('[ls-webhook] add_credits failed:', creditError.message);
-      await releaseEvent(supabase, eventKey);
+      console.error('[ls-webhook] credit_webhook_event failed:', creditError.message);
       return NextResponse.json({ error: 'DB error' }, { status: 500 });
+    }
+    if (credited === false) {
+      return NextResponse.json({ received: true, duplicate: true });
     }
     return NextResponse.json({ received: true });
   }
