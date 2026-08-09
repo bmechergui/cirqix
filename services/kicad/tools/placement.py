@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 # Env partagé des sous-processus kicad-tools : UTF-8 forcé + PYTHONPATH vers
 # kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
