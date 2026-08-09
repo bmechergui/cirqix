@@ -46,10 +46,15 @@ export async function GET(
   }
 
   const { id } = await ctx.params;
+  // `.eq('user_id', …)` en plus de la RLS : la route construit ensuite des URLs
+  // signées sous `${user.id}/${projectId}/`. Sans ce filtre, la seule barrière
+  // entre deux comptes est la policy RLS — une défense unique là où le reste du
+  // projet en applique deux, et que les tests ne vérifient pas au runtime.
   const { data, error } = await supabase
     .from('projects')
     .select('pcb_state')
     .eq('id', id)
+    .eq('user_id', user.id)
     .single();
 
   if (error || !data) {
