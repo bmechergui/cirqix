@@ -13,13 +13,17 @@ import { stripTrackSegments, addGroundPlane } from '../pcb-helpers';
  * Un board sans piste n'est pas livrable — même contrat que handlePlacement :
  * fail fast, cache laissé intact pour ne pas écraser le board placé.
  */
-function routingFailure(cause: string): Record<string, unknown> {
+// Indice par défaut : la plupart des échecs de routage viennent du service
+// injoignable. Un schéma vide n'est PAS de ceux-là — envoyer l'utilisateur
+// inspecter Docker pour un board sans composant l'engage sur une fausse piste.
+const SERVICE_HINT =
+  'Vérifie que le conteneur Docker KiCad tourne (KICAD_SERVICE_URL).';
+
+function routingFailure(cause: string, hint: string = SERVICE_HINT): Record<string, unknown> {
   return {
     status: 'error',
     error: cause,
-    note:
-      'Routage impossible — aucune piste posée. Vérifie que le conteneur Docker ' +
-      'KiCad tourne (KICAD_SERVICE_URL).',
+    note: `Routage impossible — aucune piste posée. ${hint}`,
   };
 }
 
@@ -28,6 +32,16 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
   const schema = cached?.schema ?? { components: [], nets: [] };
   const boardW = cached?.boardW ?? 50;
   const boardH = cached?.boardH ?? 50;
+
+  // Schéma vide : rien à router n'est PAS un routage 100 %. Un
+  // `routed_percent: 100` inventé désarmerait shouldRescueRouting et
+  // shouldRetryPlacement — même contrat fail-closed que service down.
+  if (schema.components.length === 0) {
+    return routingFailure(
+      'schéma vide — aucun composant à router',
+      'Génère le schéma d\'abord (call_agent_schema) : il n\'y a rien à router.',
+    );
+  }
 
   // Layer count heuristic: kicad-tools A* handles ≤30 comps/nets on 2 layers.
   // Freerouting handles complex boards — 4 layers beyond that threshold.
@@ -39,20 +53,6 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
   const base = cached?.kicad_pcb_content
     ? { kicad_pcb_content: cached.kicad_pcb_content }
     : await runPCBEngine(schema, boardW, boardH, projectId);
-
-  if (schema.components.length === 0) {
-    return {
-      status: 'success',
-      pcb_status: 'ROUTING_DONE',
-      routed_percent: 100,
-      layers: decidedLayers,
-      via_count: 1,
-      track_length_mm: 45,
-      kicad_pcb_content: base.kicad_pcb_content,
-      engine: 'fallback-ts',
-      note: `Routage 100% complet — ${decidedLayers} couches, Circuit-Synth (schéma vide).`,
-    };
-  }
 
   // Strip TS-generated tracks before routing — they point to pre-placement
   // positions and cause "Track has unconnected end" DRC warnings regardless
@@ -82,13 +82,13 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
       pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
     }
 
-    return {
+    // via_count / track_length_mm : omettre plutôt que fabriquer
+    // (comps*0.5, nets*15) — une heuristique se lit comme une mesure réelle.
+    const success: Record<string, unknown> = {
       status: 'success',
       pcb_status: 'ROUTING_DONE',
       routed_percent: service.routedPercent, // vrai % — déclenche call_agent_reason si <100
       layers: service.layers as 2 | 4 | 8,
-      via_count: service.viaCount ?? Math.floor(schema.components.length * 0.5),
-      track_length_mm: service.trackLengthMm ?? +(schema.nets.length * 15).toFixed(1),
       kicad_pcb_content: finalPcb,
       engine: 'kicad-tools',
       note:
@@ -98,6 +98,13 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
           ? ' Nets bloqués → reasoner auto-déclenché par l\'orchestrateur.'
           : ''),
     };
+    if (typeof service.viaCount === 'number') {
+      success['via_count'] = service.viaCount;
+    }
+    if (typeof service.trackLengthMm === 'number') {
+      success['track_length_mm'] = service.trackLengthMm;
+    }
+    return success;
   } catch (err) {
     if (!(err instanceof RoutingServiceUnavailableError)) {
       log.warn({ err }, 'routing service threw unexpected error');

@@ -133,13 +133,16 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
     kicad_sch_content: 'SCH_BLOB',
     kicad_pcb_content: 'PCB_BLOB',
     gerber_zip_b64: 'ZIP_BLOB',
+    // Nom réel émis par handleExport — sans ce champ dans LARGE_FIELDS,
+    // le base64 complet partait dans le contexte Sonnet.
+    zip_b64: 'ZIP_B64_HANDLER_BLOB',
     bom_csv: 'BOM_BLOB',
     simulation_output_raw: 'RAW_BLOB',
     routed_percent: 100,
     note: 'export ok',
   };
 
-  it('tronque les 5 champs volumineux dans le tool_result envoyé à Sonnet', async () => {
+  it('tronque les champs volumineux (dont zip_b64) dans le tool_result envoyé à Sonnet', async () => {
     hoisted.streamQueue.push(toolStream('call_agent_export'), [...END_STREAM]);
     toolsMock.executeToolStub.mockResolvedValue({ ...FAT_RESULT });
 
@@ -152,12 +155,20 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
       kicad_sch_content: TRUNCATED,
       kicad_pcb_content: TRUNCATED,
       gerber_zip_b64: TRUNCATED,
+      zip_b64: TRUNCATED,
       bom_csv: TRUNCATED,
       simulation_output_raw: TRUNCATED,
     });
     // Aucun blob ne fuit nulle part ailleurs dans le contexte envoyé.
     const sentToSonnet = JSON.stringify(hoisted.createCalls[1]?.messages);
-    for (const blob of ['SCH_BLOB', 'PCB_BLOB', 'ZIP_BLOB', 'BOM_BLOB', 'RAW_BLOB']) {
+    for (const blob of [
+      'SCH_BLOB',
+      'PCB_BLOB',
+      'ZIP_BLOB',
+      'ZIP_B64_HANDLER_BLOB',
+      'BOM_BLOB',
+      'RAW_BLOB',
+    ]) {
       expect(sentToSonnet).not.toContain(blob);
     }
   });

@@ -57,9 +57,9 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
   // Un board vide n'est pas un succès. Le service court-circuite ses deux
   // niveaux Python quand aucun .kicad_sch n'est en cache et rend "" ; si le
   // générateur TS de repli rend lui aussi une chaîne vide, annoncer un succès
-  // (et promouvoir ERC_CLEAN) ne fait que déplacer l'échec sur le placement,
-  // qui échouera sans cause lisible. Le cache n'est pas écrasé : un board
-  // précédent, même imparfait, vaut mieux que rien.
+  // ne fait que déplacer l'échec sur le placement, qui échouera sans cause
+  // lisible. Le cache n'est pas écrasé : un board précédent, même imparfait,
+  // vaut mieux que rien.
   const finalPcb = kicadPcbContent ?? '';
   if (finalPcb.length === 0) {
     log.error({ projectId }, 'call_agent_gen_pcb: aucun .kicad_pcb produit');
@@ -74,9 +74,11 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
   }
   pcbStateCache.set(projectId, { ...cached, kicad_pcb_content: finalPcb });
 
+  // SCHEMA_DONE — générer un layout n'est pas un contrôle électrique.
+  // ERC_CLEAN n'est émis que par handleErc.
   return {
     status: 'success',
-    pcb_status: 'ERC_CLEAN',
+    pcb_status: 'SCHEMA_DONE',
     kicad_pcb_content: finalPcb,
     board_width_mm: boardW,
     board_height_mm: boardH,

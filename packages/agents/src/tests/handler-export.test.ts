@@ -87,6 +87,65 @@ describe('export réellement produit', () => {
     expect(String(result['bom_csv'])).toContain('R1,1k,C11702');
     expect(String(result['bom_csv'])).toContain('D1,LED,');
   });
+
+  it('omet quote_usd et lead_time_days si le service ne les fournit pas', async () => {
+    seedCache();
+    const bare = exportResult();
+    delete (bare as { quoteUsd?: number }).quoteUsd;
+    delete (bare as { leadTimeDays?: number }).leadTimeDays;
+    exportMock.runRealExport.mockResolvedValue(bare);
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('success');
+    expect(result).not.toHaveProperty('quote_usd');
+    expect(result).not.toHaveProperty('lead_time_days');
+    // Pas de $0 ni d'estimation inventée dans la note.
+    expect(String(result['note'])).not.toMatch(/\$0\b/);
+    expect(String(result['note'])).not.toContain('Estimation:');
+  });
+});
+
+describe('export sans livrable → échec', () => {
+  /**
+   * Un export avec files:[] ou sans zip_b64 n'a rien à livrer. Le handler
+   * réussissait auparavant et l'UI pouvait traiter quoteUsd=0 comme un devis réel.
+   */
+  it('files vide → erreur, aucun statut de livraison', async () => {
+    seedCache();
+    exportMock.runRealExport.mockResolvedValue(
+      exportResult({ files: [], zipB64: 'UEsDBBQ=' }),
+    );
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('error');
+    expect(result).not.toHaveProperty('zip_b64');
+    expect(result).not.toHaveProperty('quote_usd');
+    expect(result['pcb_status']).not.toBe('PCB_LIVRÉ');
+  });
+
+  it('zip_b64 absent → erreur, files seuls ne suffisent pas', async () => {
+    seedCache();
+    const bare = exportResult({ files: ['top.gtl'] });
+    delete (bare as { zipB64?: string }).zipB64;
+    exportMock.runRealExport.mockResolvedValue(bare);
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('error');
+    expect(String(result['error'])).toMatch(/zip_b64/i);
+    expect(result).not.toHaveProperty('zip_b64');
+  });
+
+  it('zip_b64 chaîne vide → erreur également', async () => {
+    seedCache();
+    exportMock.runRealExport.mockResolvedValue(exportResult({ zipB64: '' }));
+
+    const result = await handleExport(PROJECT);
+
+    expect(result['status']).toBe('error');
+  });
 });
 
 describe('jamais de PCB_LIVRÉ ni de devis sans export réel', () => {

@@ -918,6 +918,10 @@ def _generate_with_kicad_tools(
     return content if content else None
 
 
+# Bound for the circuit_synth primary path. Overridable in tests via monkeypatch.
+_CS_TIMEOUT_S: float = 20.0
+
+
 def generate_schematic(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -927,7 +931,7 @@ def generate_schematic(
     project_id: str = "",
 ) -> str:
     """
-    Primary    : circuit_synth pip (20s timeout)
+    Primary    : circuit_synth pip (_CS_TIMEOUT_S timeout)
     Fallback 1 : kicad-tools Schematic class
     Fallback 2 : empty string → TypeScript S-expr (schematic-engine.ts)
     Returns .kicad_sch content, or "" when all Python paths fail.
@@ -936,17 +940,38 @@ def generate_schematic(
     if _circuit_synth_available():
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    fut = pool.submit(
+                # Timeout must actually bound the HTTP request.
+                #
+                # Choice: ThreadPoolExecutor + shutdown(wait=False, cancel_futures=True)
+                # rather than a killable child process (cf. cmaes_runner).
+                #
+                # Why not a child process: _generate_with_cs_lib takes a live
+                # Pydantic component/net graph; serialising it for a runner would
+                # expand scope beyond the timeout fix. Why not the previous
+                # fut.cancel() + context-manager exit: cancel() is a no-op on a
+                # running future, and ThreadPoolExecutor.__exit__ always calls
+                # shutdown(wait=True) — so a blocked circuit_synth held the
+                # request thread forever despite the announced 20s timeout.
+                #
+                # wait=False unblocks the request. The orphan worker may linger
+                # until circuit_synth returns (or races TemporaryDirectory
+                # cleanup — benign). A subprocess kill would reclaim the worker
+                # fully; accepted trade-off for minimal change.
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    fut = executor.submit(
                         _generate_with_cs_lib,
                         components, connections, nets, board_w, board_h, project_id,
                         Path(tmp),
                     )
                     try:
-                        sch_content = fut.result(timeout=20)
+                        sch_content = fut.result(timeout=_CS_TIMEOUT_S)
                     except concurrent.futures.TimeoutError:
-                        fut.cancel()
-                        raise RuntimeError("circuit_synth timed out after 20s")
+                        raise RuntimeError(
+                            f"circuit_synth timed out after {_CS_TIMEOUT_S}s"
+                        )
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
                 if sch_content:
                     logger.info("generate_schematic: circuit_synth succeeded")
                     return sch_content
