@@ -1,6 +1,52 @@
-# Inventaire des branches locales — 2026-08-09
+# Inventaire des branches — local et distant — 2026-08-09
 
 État relevé après la session d'audit et de correctifs. `origin/main` = `4408648`.
+
+## Synchronisation local ↔ distant — VÉRIFIÉE
+
+Les 9 branches locales comparées une à une à leur homologue distante.
+
+| Branche locale | Local | Distant | État |
+|---|---|---|---|
+| `main` | `4408648` | `4408648` | ✅ synchronisée |
+| `wip/post-correctifs` | `a53ebbb` | `a53ebbb` | ✅ synchronisée |
+| `chore/graphify-multigraph` | `7958060` | `7958060` | ✅ synchronisée |
+| `docs/rapatrie-handoffs-orphelins` | `d12f1d2` | `d12f1d2` | ✅ synchronisée |
+| `fix/drc-rls-gates` | `9f6ca5e` | `9f6ca5e` | ✅ synchronisée |
+| `docs/bug-kicad-tools-vias-manquants` | `554b937` | `554b937` | ✅ **corrigée** — elle était 2 commits en retard (`a63603d`), remise à niveau par `git fetch origin <branche>:<branche>` |
+| `live/codex` · `live/grok` · `live/kimi` | — | **aucun distant** | ⚙️ voulu — branches de service des worktrees de délégation, elles n'ont pas à être poussées |
+
+`git fetch --prune` a par ailleurs supprimé 5 références distantes mortes :
+`feat/rl-lab-hard-gate`, `feat/rl-lab-placement-routing`, `fix/align-db-migrations`,
+`fix/iteration-count-stale-guard`, `fix/reparations-court-circuit`.
+
+**Aucun commit local non poussé. Aucun commit distant non tiré.**
+
+## Branches distantes sans équivalent local — 20
+
+**À conserver — PR ouverte (3)**
+
+| Branche distante | PR |
+|---|---|
+| `docs/chaine-validation-stm32` | #89 |
+| `feat/rl-lab-hard-gate-v2` | #99 — CI en échec, 5 `ImportError` |
+| `fix/rls-footprints-waitlist` | #101 |
+
+**Supprimables sur GitHub — PR fusionnée ou fermée (17)**
+
+Fusionnées : `fix/fail-closed-chaine-agents` #100 · `fix/fail-closed-service-kicad` #102 ·
+`fix/export-fail-closed` #103 · `fix/routing-mesure-reelle` #104 · `fix/ls-abonnement-credits` #106 ·
+`fix/facturation-simulateur` #107 · `fix/export-jamais-drc-clean` #108 · `fix/pcb-state-ownership` #109 ·
+`fix/drc-pcbnew-isole` #110 · `fix/webhook-idempotence-atomique` #111 ·
+`docs/corrige-thread-safety-pcbnew` #112 · `docs/handoff-stm32-01-08` #113 ·
+`feat/phase-5-1-security` #93 · `fix/project-integrity-hardening` #83 ·
+`feat/routage-fabricable-stm32-rebuilt` #98.
+
+Fermées, contenu repris ailleurs : `fix/pipeline-fabricable-stm32` #86 ·
+`feat/routage-fabricable-stm32-rl-scaffold` #95.
+
+Leur suppression côté GitHub n'efface rien : le contenu est dans `main`, et une PR
+fusionnée conserve son historique même après suppression de sa branche.
 
 ## ✅ MÉNAGE EFFECTUÉ — état final : 9 branches sur 32
 
