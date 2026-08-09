@@ -440,6 +440,26 @@ circuit_synth → ✅ thread-safe  (objets Circuit indépendants)
 Freerouting   → ✅ API server   (1 JVM persistante port 37864, RAM 400MB fixe)
 ```
 
+⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
+Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un
+worker : les onze routes du service sont déclarées `def` et non `async def`, donc
+FastAPI les exécute dans son pool de threads. Deux requêtes reçues par le même
+worker peuvent donc appeler `pcbnew` **simultanément, dans le même processus**.
+
+Preuve dans l'historique du projet : l'incident CMA-ES documenté plus haut
+(`ValueError: signal only works in main thread of the main interpreter`) ne peut
+se produire que si le handler s'exécute hors du thread principal — donc dans un
+thread du pool. Le raccourci « 4 workers = sûr » se lisait comme une garantie
+qu'il n'apportait pas.
+
+L'isolation réelle passe par un **processus enfant par opération** :
+`tools/cmaes_runner.py` (déjà en place), puis `drc_pcbnew_runner.py` et
+`placement_pcbnew_runner.py`. Toute nouvelle route appelant `pcbnew` doit suivre
+ce schéma.
+
+**NEVER** conclure qu'un appel `pcbnew` est isolé au seul motif que le service
+tourne avec plusieurs workers uvicorn.
+
 **Variables obligatoires dans Docker :**
 ```
 KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
