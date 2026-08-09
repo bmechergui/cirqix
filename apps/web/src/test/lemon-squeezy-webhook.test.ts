@@ -16,6 +16,7 @@ const supabaseMock = vi.hoisted(() => ({ createAdminClient: vi.fn() }));
 vi.mock('@/shared/lib/supabase-server', () => supabaseMock);
 
 import { POST } from '@/app/api/webhooks/lemon-squeezy/route';
+import { signCheckoutUserId } from '@/shared/lib/checkout-signature';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,7 +46,7 @@ interface MockState {
 // credit_webhook_event pour tester le comportement HTTP. Il ne constitue pas
 // une preuve du rollback PostgreSQL réel, qui exige un test SQL d’intégration.
 function makeClient(opts: {
-  rpcError?: { message: string };
+  rpcError?: { message: string; code?: string };
   state?: MockState;
 } = {}) {
   const state = opts.state ?? {
@@ -96,7 +97,7 @@ function topupPayload(orderId = 'ord-1') {
     data: {
       id: orderId,
       attributes: {
-        custom_data: { user_id: 'u1' },
+        custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
         first_order_item: { variant_id: 'var-20' },
       },
     },
@@ -109,7 +110,7 @@ function subscriptionPayload(eventName: string, renewsAt = '2026-08-27') {
     data: {
       id: 'sub-1',
       attributes: {
-        custom_data: { user_id: 'u1' },
+        custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
         product_id: 'prod-pro',
         renews_at: renewsAt,
       },
@@ -142,7 +143,66 @@ beforeEach(() => {
 // Gardes existantes (signature, parsing, custom_data)
 // ---------------------------------------------------------------------------
 
+describe('provenance du compte crédité', () => {
+  // Le HMAC du webhook prouve que le message vient de Lemon Squeezy, PAS que
+  // `user_id` est le compte qui a payé : ce champ voyage dans une URL de
+  // checkout que l'acheteur peut modifier avant de payer.
+  it('refuse un user_id substitué — signature d’un autre compte', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-vol',
+        attributes: {
+          // signature légitime de u2, mais on tente de créditer u1
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u2') },
+          first_order_item: { variant_id: 'var-20' },
+        },
+      },
+    });
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it('refuse un user_id sans signature du tout', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-nosig',
+        attributes: {
+          custom_data: { user_id: 'u1' },
+          first_order_item: { variant_id: 'var-20' },
+        },
+      },
+    });
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+});
+
 describe('gardes existantes', () => {
+  // `JSON.parse(...) as LsPayload` était un cast, pas une validation : un corps
+  // JSON valide mais sans `meta` faisait planter la route en TypeError.
+  it('refuse un payload JSON valide mais structurellement incomplet', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({});
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
   it('refuse une signature invalide sans toucher la base', async () => {
     const { response, state } = await post(topupPayload(), {}, 'deadbeef');
 
@@ -192,7 +252,7 @@ describe('gardes existantes', () => {
       data: {
         id: 'ord-unknown',
         attributes: {
-          custom_data: { user_id: 'u1' },
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
           first_order_item: { variant_id: 'var-unknown' },
         },
       },
@@ -210,7 +270,7 @@ describe('gardes existantes', () => {
       data: {
         id: 'sub-unknown',
         attributes: {
-          custom_data: { user_id: 'u1' },
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
           product_id: 'prod-unknown',
         },
       },
@@ -229,17 +289,24 @@ describe('gardes existantes', () => {
 
 describe('fail-closed', () => {
   it('refuse (500) si LEMON_SQUEEZY_WEBHOOK_SECRET est absent — HMAC à clé vide forgeable', async () => {
+    // Le corps est construit AVANT la suppression : signer le user_id exige le
+    // même secret, et l'objet du test est le comportement de la route, pas
+    // l'échec de fabrication du payload.
+    const body = topupPayload();
     delete process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-    const { response, state } = await post(topupPayload());
+    const { response, state } = await post(body);
 
     expect(response.status).toBe(500);
     expect(state.rpcCalls).toHaveLength(0);
   });
 
+  // Les payloads sont passés en FABRIQUES, pas en valeurs : `it.each` évalue ses
+  // arguments à la collecte, avant que `beforeEach` n'ait posé le secret.
   it.each([
-    ['order_created', topupPayload('ord-rpc-error'), 20],
-    ['subscription_renewed', subscriptionPayload('subscription_renewed'), 100],
-  ])('une erreur RPC sur %s renvoie 500 sans prétendre avoir reçu l’événement', async (_name, body, amount) => {
+    ['order_created', () => topupPayload('ord-rpc-error'), 20],
+    ['subscription_renewed', () => subscriptionPayload('subscription_renewed'), 100],
+  ])('une erreur RPC sur %s renvoie 500 sans prétendre avoir reçu l’événement', async (_name, makeBody, amount) => {
+    const body = makeBody();
     const state = newState(40);
 
     // L’ancien test vérifiait releaseEvent(). La RPC transactionnelle remplace
@@ -263,6 +330,24 @@ describe('fail-closed', () => {
     expect(state.processedEvents.size).toBe(1);
     expect(state.balance).toBe(40 + Number(amount));
   });
+
+  // `22023`/`42501` sont les codes que nos RPC lèvent pour un refus DÉFINITIF —
+  // montant invalide, utilisateur sans ligne `credits`. Y répondre 500 ferait
+  // retenter Lemon Squeezy indéfiniment sur une erreur qui ne se résout jamais.
+  it.each(['22023', '42501'])(
+    'un refus RPC permanent (code %s) renvoie 422, jamais 500',
+    async (code) => {
+      const state = newState();
+      const { response, json } = await post(topupPayload('ord-permanent'), {
+        rpcError: { message: 'unknown_user', code },
+        state,
+      });
+
+      expect(response.status).toBe(422);
+      expect(json.received).toBeUndefined();
+      expect(state.processedEvents.size).toBe(0);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
