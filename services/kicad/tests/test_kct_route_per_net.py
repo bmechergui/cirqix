@@ -40,6 +40,19 @@ class TestBuildRouteCmdOnlyNets:
         """Le routage complet ne doit surtout pas se restreindre à un net."""
         assert "--nets" not in _build_route_cmd(Path("i"), Path("o"), 60)
 
+    def test_active_preserve_existing(self) -> None:
+        """Indissociable du routage par net : sans lui, router le net B
+        repartirait d'un board vierge et effacerait le cuivre du net A."""
+        cmd = _build_route_cmd(Path("i"), Path("o"), 60, only_nets=["SIG"])
+
+        assert "--preserve-existing" in cmd
+
+    def test_preserve_existing_absent_en_routage_complet(self) -> None:
+        """Mesuré le 2026-08-06 : sur l'escalade incrémentale 2→4→6 couches,
+        `--preserve-existing` perd la moitié du cuivre reçu pour un résultat
+        final identique. Il reste donc cantonné au mode par net."""
+        assert "--preserve-existing" not in _build_route_cmd(Path("i"), Path("o"), 60)
+
     def test_liste_vide_traitee_comme_absente(self) -> None:
         """`--nets` avec une valeur vide serait une erreur côté kicad-tools."""
         assert "--nets" not in _build_route_cmd(Path("i"), Path("o"), 60, only_nets=[])

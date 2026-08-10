@@ -1210,6 +1210,18 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
     nets = [n.strip() for n in (only_nets or []) if n and n.strip()]
     if nets:
         cmd += ["--nets", ",".join(nets)]
+        # `--preserve-existing` (issue #3155) est INDISSOCIABLE du routage par
+        # net : sans lui, router le net B repartirait d'un board vierge et
+        # effacerait le cuivre du net A. Le routage net-par-net n'aurait aucun
+        # sens.
+        #
+        # Volontairement absent du routage complet. Mesuré le 2026-08-06 sur
+        # l'escalade incrémentale 2→4→6 couches : `--preserve-existing` y perd
+        # la moitié du cuivre reçu, pour un résultat final identique à
+        # l'escalade libre et trois fois plus lent. Ce défaut concerne la reprise
+        # d'un board déjà routé, pas l'ajout d'un net sur un board dont le reste
+        # est justement figé en obstacle.
+        cmd.append("--preserve-existing")
     cmd += [
         "--auto-mfr-tier",
         "--mfr-tier-ladder", _MFR_TIER_LADDER,
