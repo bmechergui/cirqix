@@ -29,6 +29,41 @@ $graphifyCommand = Get-Command graphify -ErrorAction Stop
 $graphify = $graphifyCommand.Source
 $graphifyVersion = (& $graphify --version).Trim()
 
+function Assert-RepositoryRoot {
+    param(
+        [string]$Repository,
+        [string]$InitializationCommand
+    )
+
+    if (-not (Test-Path -LiteralPath $Repository -PathType Container)) {
+        throw "Graphify repository is missing: $Repository. Run: $InitializationCommand"
+    }
+
+    $resolvedRepository = (Resolve-Path -LiteralPath $Repository).Path
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $reportedRoot = (@(& git -c "safe.directory=$resolvedRepository" -C $resolvedRepository rev-parse --show-toplevel 2>$null) -join "").Trim()
+        $rootExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    $resolvedReportedRoot = if ($rootExitCode -eq 0 -and $reportedRoot -and (Test-Path -LiteralPath $reportedRoot -PathType Container)) {
+        (Resolve-Path -LiteralPath $reportedRoot).Path
+    }
+    else {
+        $null
+    }
+    if ($null -eq $resolvedReportedRoot -or $resolvedReportedRoot -ne $resolvedRepository) {
+        throw "Graphify submodule is not initialized at $Repository. Run: $InitializationCommand"
+    }
+}
+
+Assert-RepositoryRoot -Repository $kicadRepo -InitializationCommand "git submodule update --init services/kicad/kicad-tools"
+Assert-RepositoryRoot -Repository $circuitRepo -InitializationCommand "git submodule update --init services/kicad/circuit_synth"
+
 function Invoke-Checked {
     param(
         [string[]]$Arguments,
@@ -316,16 +351,7 @@ function Start-RepositoryWatcher {
         return
     }
 
-    $pythonStatePath = Join-Path $outputRoot ".graphify_python"
-    if (-not (Test-Path -LiteralPath $pythonStatePath)) {
-        throw "Graphify interpreter state is missing: $pythonStatePath"
-    }
-    $watchPython = (Get-Content -LiteralPath $pythonStatePath -Raw).Trim()
-    if (-not (Test-Path -LiteralPath $watchPython -PathType Leaf)) {
-        throw "Graphify interpreter does not exist: $watchPython"
-    }
-
-    $process = Start-Process -WindowStyle Hidden -FilePath $watchPython -ArgumentList @("-m", "graphify.watch", $repoRoot, "--debounce", "3") -WorkingDirectory $repoRoot -PassThru
+    $process = Start-Process -WindowStyle Hidden -FilePath $graphify -ArgumentList @("watch", $repoRoot) -WorkingDirectory $repoRoot -PassThru
     $watcherState = [ordered]@{
         pid = $process.Id
         started_at_utc = $process.StartTime.ToUniversalTime().ToString("o")

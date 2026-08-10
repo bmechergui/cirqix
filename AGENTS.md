@@ -112,3 +112,19 @@ réalisé, fichiers modifiés, décisions, validations exactes, risques restants
 
 Après un commit ou une PR, terminer la réponse avec l’unique bloc
 `## Prochaine étape recommandée` exigé par `CLAUDE.md`.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- Before the first codebase question in a session, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/graphify-refresh.ps1 -Mode Ensure`; it rebuilds only stale graphs and refreshes the aggregate when needed.
+- Use Graphify by default before source browsing. Select `graphify-out/graph.json` for Cirqix SaaS, `graphify-out/scopes/kicad-tools/graphify-out/graph.json` for `kicad-tools`, `graphify-out/scopes/circuit-synth/graphify-out/graph.json` for `circuit_synth`, and `graphify-out/full-graph.json` for a search spanning all three corpora. Pass non-default graphs with `--graph`.
+- Run `graphify query "<question>"` first. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run the refresh script with `-Mode Root`, `-Mode KicadTools`, `-Mode CircuitSynth`, or `-Mode All` according to the owned paths. It updates the affected graph and regenerates the aggregate.
+- `full-graph.json` is an aggregate of three disconnected components: it supports common search but does not invent cross-repository edges for `graphify path`.
