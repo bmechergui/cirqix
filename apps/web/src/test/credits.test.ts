@@ -61,6 +61,22 @@ describe('finalizePipelineSuccess', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  // La branche `if (error) throw new CreditDeductionError(error)` — la moitié de
+  // la gestion d'erreur de la fonction — n'était couverte par aucun test :
+  // `makeSupabase` acceptait un paramètre d'erreur que personne n'utilisait.
+  it('propage une erreur RPC en CreditDeductionError', async () => {
+    const { client, rpc } = makeSupabase({ message: 'db down' });
+
+    await expect(finalizePipelineSuccess(
+      client as never,
+      'user-1',
+      'project-1',
+      { projectId: 'project-1', iteration: 3, status: 'DRC_CLEAN' } as never,
+      'orchestrator',
+    )).rejects.toBeInstanceOf(CreditDeductionError);
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
   it('refuse un retry obsolète lorsque la RPC signale une itération déjà finalisée', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
 
