@@ -71,6 +71,37 @@ describe('orchestrator finalization', () => {
     expect(chunks.join('')).not.toContain('"type":"done"');
   });
 
+  it('ne persiste pas iteration_count sur les étapes intermédiaires', async () => {
+    // `iteration` est figé à iterationStart + 1 pour tout le run
+    // (orchestrator-bridge.ts, `mergedState.iteration ?? iterationStart + 1`).
+    // Si une étape intermédiaire écrivait déjà cette valeur dans
+    // projects.iteration_count, la garde `stale_iteration` de
+    // finalize_pipeline_success — qui exige p_iteration_count = iteration_count
+    // + 1 — refuserait la finalisation, et le pipeline échouerait à sa toute
+    // dernière étape sans facturer ni promouvoir. Le compteur n'appartient
+    // qu'à la RPC.
+    const { client, updates } = makeClient();
+    const { controller } = makeController();
+    agentsMock.runOrchestrator.mockImplementation(() => (async function* () {
+      yield { type: 'pcb_state', state: { pcb_status: 'ROUTING_DONE', iteration: 1 } };
+      yield { type: 'pcb_state', state: { pcb_status: 'DRC_CLEAN', iteration: 1 } };
+      yield { type: 'done' };
+    })());
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).not.toHaveProperty('iteration_count');
+  });
+
   it('publie DRC_CLEAN et done après la transaction finale réussie', async () => {
     const { client, rpc } = makeClient();
     const { controller, chunks } = makeController();

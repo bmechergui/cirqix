@@ -31,8 +31,10 @@ export interface RealExportInput {
 export interface RealExportResult {
   files: string[];
   zipB64?: string;
-  quoteUsd: number;
-  leadTimeDays: number;
+  /** Absent si le service n'a pas renvoyé de devis — jamais de défaut à 0. */
+  quoteUsd?: number;
+  /** Absent si le service n'a pas renvoyé de délai — jamais de défaut à 0. */
+  leadTimeDays?: number;
   skipped: boolean;
   warning?: string;
 }
@@ -92,15 +94,19 @@ export async function runRealExport(input: RealExportInput): Promise<RealExportR
   const files = Array.isArray(parsed.files)
     ? parsed.files.filter((f): f is string => typeof f === 'string')
     : [];
-  const quoteUsd = typeof parsed.quote_usd === 'number' ? parsed.quote_usd : 0;
-  const leadTimeDays = typeof parsed.lead_time_days === 'number' ? parsed.lead_time_days : 0;
 
+  // quote / lead_time : omettre plutôt que fabriquer 0 — l'UI traite
+  // `quoteUsd != null` comme « devis réel » et afficherait sinon $0.
   const result: RealExportResult = {
     files,
-    quoteUsd,
-    leadTimeDays,
     skipped,
   };
+  if (typeof parsed.quote_usd === 'number') {
+    result.quoteUsd = parsed.quote_usd;
+  }
+  if (typeof parsed.lead_time_days === 'number') {
+    result.leadTimeDays = parsed.lead_time_days;
+  }
   if (typeof parsed.zip_b64 === 'string' && parsed.zip_b64.length > 0) {
     result.zipB64 = parsed.zip_b64;
   }

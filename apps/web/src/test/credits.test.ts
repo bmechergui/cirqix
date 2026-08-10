@@ -13,7 +13,6 @@ vi.mock('@cirqix/logger', () => ({
 
 import {
   CreditDeductionError,
-  deductPipelineCost,
   finalizePipelineSuccess,
   hasEnoughPipelineCredits,
   PIPELINE_COST,
@@ -62,6 +61,22 @@ describe('finalizePipelineSuccess', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  // La branche `if (error) throw new CreditDeductionError(error)` — la moitié de
+  // la gestion d'erreur de la fonction — n'était couverte par aucun test :
+  // `makeSupabase` acceptait un paramètre d'erreur que personne n'utilisait.
+  it('propage une erreur RPC en CreditDeductionError', async () => {
+    const { client, rpc } = makeSupabase({ message: 'db down' });
+
+    await expect(finalizePipelineSuccess(
+      client as never,
+      'user-1',
+      'project-1',
+      { projectId: 'project-1', iteration: 3, status: 'DRC_CLEAN' } as never,
+      'orchestrator',
+    )).rejects.toBeInstanceOf(CreditDeductionError);
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
   it('refuse un retry obsolète lorsque la RPC signale une itération déjà finalisée', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: false, error: null });
 
@@ -90,41 +105,47 @@ describe('orchestrator fallback', () => {
     expect(shouldFallbackToLocalPipeline(new CreditDeductionError('rpc failed'))).toBe(false);
   });
 
-  it('conserve le fallback pour une indisponibilité de crédits Anthropic', () => {
-    expect(shouldFallbackToLocalPipeline(new Error('Anthropic credit 402'))).toBe(true);
+  it('conserve le fallback sur le statut 402 du SDK Anthropic', () => {
+    expect(shouldFallbackToLocalPipeline(Object.assign(new Error('quota'), { status: 402 })))
+      .toBe(true);
+  });
+
+  it('conserve le fallback sur le message exact de quota Anthropic', () => {
+    expect(shouldFallbackToLocalPipeline(
+      new Error('Your credit balance is too low to access the Anthropic API'),
+    )).toBe(true);
+  });
+
+  // Le repli local persiste `agent_mode: 'orchestrator'` pour un pipeline
+  // tronqué (5 étapes sur 8) : l'armer à tort rend commandable un board sans
+  // footprints résolus ni export. Ces trois erreurs le déclenchaient avant le
+  // correctif, par simple présence de « credit » ou « 402 » dans le message.
+  it('ne bascule pas sur une erreur Supabase mentionnant la table credits', () => {
+    expect(shouldFallbackToLocalPipeline(
+      new Error('relation "credits" does not exist'),
+    )).toBe(false);
+  });
+
+  it('ne bascule pas sur une erreur applicative citant les crédits', () => {
+    expect(shouldFallbackToLocalPipeline(new Error('failed to read credit row'))).toBe(false);
+  });
+
+  it('ne bascule pas sur un 402 qui n’est pas un statut HTTP', () => {
+    expect(shouldFallbackToLocalPipeline(new Error('board width 402 mm invalid'))).toBe(false);
   });
 });
 
-describe('deductPipelineCost', () => {
-  it('débite uniquement via la RPC atomique', async () => {
-    const { client, rpc, from } = makeSupabase();
-
-    await deductPipelineCost(client as never, 'user-1', 'project-1');
-
-    expect(rpc).toHaveBeenCalledWith('deduct_credits', {
-      p_user_id: 'user-1',
-      p_amount: PIPELINE_COST,
-      p_action: 'full_pcb_pipeline',
-      p_project_id: 'project-1',
-    });
-    expect(from).not.toHaveBeenCalled();
+describe('facturation du pipeline — un seul chemin', () => {
+  // `deductPipelineCost` débitait PIPELINE_COST sans aucun appelant de
+  // production, alors que `finalize_pipeline_success` débite déjà ce montant en
+  // interne : la câbler aurait facturé 17 crédits pour un pipeline. Ce test
+  // empêche sa réintroduction silencieuse.
+  it('n’expose plus de débit du pipeline hors finalisation', async () => {
+    const mod = await import('../app/api/agent/lib/credits');
+    expect(mod).not.toHaveProperty('deductPipelineCost');
   });
 
-  it('propage insufficient_credits sans mutation directe de la table', async () => {
-    const { client, from } = makeSupabase({ message: 'insufficient_credits' });
-
-    await expect(
-      deductPipelineCost(client as never, 'user-1', 'project-1'),
-    ).rejects.toBeInstanceOf(CreditDeductionError);
-    expect(from).not.toHaveBeenCalled();
-  });
-
-  it('propage toute erreur RPC', async () => {
-    const { client, from } = makeSupabase({ message: 'database unavailable' });
-
-    await expect(
-      deductPipelineCost(client as never, 'user-1', 'project-1'),
-    ).rejects.toBeInstanceOf(CreditDeductionError);
-    expect(from).not.toHaveBeenCalled();
+  it('conserve le coût de référence du pipeline', () => {
+    expect(PIPELINE_COST).toBe(8.5);
   });
 });

@@ -136,6 +136,10 @@ describe('réutilisation du board placé', () => {
   });
 
   it('régénère depuis Circuit-Synth sur cache froid (routage appelé seul)', async () => {
+    // Schéma présent, board absent — le handler doit régénérer via Circuit-Synth.
+    // Sans schéma, fail-closed (schéma vide) avant toute régénération.
+    seedCache(); // pas de kicad_pcb_content
+
     await handleRouting(PROJECT);
 
     expect(engineMock.runPCBEngine).toHaveBeenCalledTimes(1);
@@ -242,13 +246,49 @@ describe('fail fast quand aucun routage n’a eu lieu', () => {
     expect(String(result['note'])).toContain('KICAD_SERVICE_URL');
   });
 
-  it('schéma vide → succès à 100%, rien à router n’est pas une erreur', async () => {
+  it('schéma vide → erreur, pas un 100% fantôme qui désarme le sauvetage', async () => {
     seedCache({ schema: schemaOf(0, 0) });
 
     const result = await handleRouting(PROJECT);
 
-    expect(result['status']).toBe('success');
-    expect(result['routed_percent']).toBe(100);
+    expect(result['status']).toBe('error');
+    expect(result).not.toHaveProperty('routed_percent');
+    expect(result).not.toHaveProperty('via_count');
+    expect(result).not.toHaveProperty('track_length_mm');
+    expect(String(result['error'])).toMatch(/schéma vide/i);
     expect(routingMock.runRealRouting).not.toHaveBeenCalled();
+  });
+});
+
+describe('métriques absentes — omettre plutôt que fabriquer', () => {
+  /**
+   * via_count / track_length_mm retombaient sur comps*0.5 et nets*15 quand le
+   * service ne les renvoyait pas. Une heuristique se lit comme une mesure réelle
+   * et fausse le diagnostic. Omettre le champ est le contrat correct.
+   */
+  it('omet via_count et track_length_mm si le service ne les fournit pas', async () => {
+    seedCache({ kicad_pcb_content: PCB_WITH_TRACK });
+    const bare = serviceResult();
+    delete (bare as { viaCount?: number }).viaCount;
+    delete (bare as { trackLengthMm?: number }).trackLengthMm;
+    routingMock.runRealRouting.mockResolvedValue(bare);
+
+    const result = await handleRouting(PROJECT);
+
+    expect(result['status']).toBe('success');
+    expect(result).not.toHaveProperty('via_count');
+    expect(result).not.toHaveProperty('track_length_mm');
+  });
+
+  it('propage les métriques réelles du service quand elles sont présentes', async () => {
+    seedCache({ kicad_pcb_content: PCB_WITH_TRACK });
+    routingMock.runRealRouting.mockResolvedValue(
+      serviceResult({ viaCount: 7, trackLengthMm: 88.5 }),
+    );
+
+    const result = await handleRouting(PROJECT);
+
+    expect(result['via_count']).toBe(7);
+    expect(result['track_length_mm']).toBe(88.5);
   });
 });

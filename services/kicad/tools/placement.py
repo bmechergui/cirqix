@@ -25,11 +25,13 @@ import base64
 import json
 import logging
 import math
+import re
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 # Env partagé des sous-processus kicad-tools : UTF-8 forcé + PYTHONPATH vers
 # kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
@@ -589,6 +591,192 @@ def _nearest_free_cell(cible: tuple[float, float],
     return None
 
 
+def _normalize_origin_after_write(pcb, skip: list[str]) -> int:
+    """Retire le ``board_origin`` surnuméraire appliqué par ``write_to_pcb()``.
+
+    **Contradiction interne d'upstream, mesurée le 2026-07-31.**
+    ``PlacementOptimizer.from_pcb`` construit ses ``Component`` avec
+    ``x=fp.position[0]`` — du board-local — mais retranslate le polygone de la
+    carte en coordonnées PAGE (``placement.py:244``, « Translate the outline
+    back into the absolute board frame »), en affirmant en commentaire que
+    « the optimizer adds components at their raw *absolute* positions ». Les
+    deux ne peuvent pas être vrais en même temps. Conséquence : le GA déplace
+    des positions locales vers une région exprimée en page, puis
+    ``write_to_pcb()`` les passe à ``update_footprint_position``, dont la
+    docstring précise qu'elle attend du **relatif à l'origine** et applique
+    l'offset elle-même. L'origine est donc comptée deux fois.
+
+    Effet mesuré sur ``examples/stm32-validation``, 3 tirages sur 3 : 15 à 16
+    composants sur 17 hors carte, ``J1`` seul épargné parce qu'ancré et clampé
+    AVANT l'optimisation. Positions livrées à 216-250 mm sur un contour
+    100-160 mm, soit exactement ``+board_origin``. ``kct route`` refuse alors le
+    board (« placement invalid ») et tout le pipeline s'effondre.
+
+    **Auto-détectant, donc sûr dans la durée.** On ne soustrait que si le
+    composant est hors contour ET que la soustraction l'y ramène. Le jour où le
+    sous-module corrige sa contradiction, cette fonction devient un no-op
+    silencieux — aucune position ne bougera. Elle ne peut pas non plus déplacer
+    un composant déjà correct.
+
+    ``skip`` : les connecteurs ancrés, que l'optimiseur ne touche pas et dont
+    les coordonnées sont déjà justes.
+
+    Renvoie le nombre de footprints normalisés.
+    """
+    bornes = _outline_bounds_local(pcb)
+    if bornes is None:
+        return 0
+    min_x, max_x, min_y, max_y = bornes
+    ox, oy = pcb.board_origin
+    if not (ox or oy):
+        return 0
+
+    def dedans(x: float, y: float) -> bool:
+        return min_x <= x <= max_x and min_y <= y <= max_y
+
+    ignores = set(skip)
+    n = 0
+    for fp in pcb.footprints:
+        if fp.reference in ignores:
+            continue
+        x, y = fp.position
+        if dedans(x, y):
+            continue  # déjà correct — ne jamais toucher
+        if dedans(x - ox, y - oy):
+            fp.position = (x - ox, y - oy)
+            n += 1
+    if n:
+        logger.warning(
+            "auto_place: %d composant(s) normalisé(s) — write_to_pcb() avait "
+            "appliqué board_origin (%.1f, %.1f) en double", n, ox, oy)
+    return n
+
+
+def _outline_bounds_local(pcb) -> tuple[float, float, float, float] | None:
+    """Bornes du contour Edge.Cuts dans le repère de ``fp.position``.
+
+    ``outline.vertices`` est en coordonnées page ; ``fp.position`` est
+    board-local. Vérifié empiriquement sur cinq boards réels : l'écart vaut
+    exactement ``-board_origin`` pour chaque composant.
+    """
+    from kicad_tools.optim.board_outline import extract_board_outline
+
+    outline = extract_board_outline(pcb)
+    if outline is None or not outline.vertices:
+        return None
+    ox, oy = pcb.board_origin
+    xs = [v.x - ox for v in outline.vertices]
+    ys = [v.y - oy for v in outline.vertices]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
+    """Restaure l'angle des pads tel que la SOURCE le déclare. 204 erreurs → 0.
+
+    Le writer du placement ajoute un angle aux pads que le board d'entrée ne
+    déclare pas. Mesuré le 2026-08-01 sur ``examples/stm32-validation`` :
+
+    - source ``gen0`` : ``(footprint ... (at x y))`` sans rotation, pads
+      ``(at 4.1625 2.75)`` sans angle — conforme au footprint officiel KiCad ;
+    - après placement : footprint toujours **non pivoté**, mais chaque pad
+      porte ``(at 4.1625 2.75 90)``.
+
+    Les pads 25-27 d'un LQFP-48 forment une colonne verticale au pas de 0,5 mm ;
+    un angle de 90° bascule leur grand axe (1,475 mm) le long de la colonne et
+    les fait se recouvrir d'un millimètre. Les positions, elles, ne bougent pas —
+    c'est bien l'angle seul qui est corrompu.
+
+    Effet mesuré sur un board SANS UNE SEULE PISTE :
+
+    =================================  ============
+    État                               erreurs DRC
+    =================================  ============
+    ``gen0`` (avant placement)                    0
+    après placement                             204
+    après restauration des angles            **0**
+    =================================  ============
+
+    Le placement introduisait donc la totalité des erreurs, et le routage en
+    était innocent de bout en bout.
+
+    **Restaurer plutôt qu'imposer.** On recopie l'angle de la source, pad par
+    pad, apparié par référence de boîtier et numéro de pad. Un pad dont la
+    bibliothèque déclare légitimement une rotation propre la conserve donc — ce
+    qu'une règle du type « angle = rotation du footprint » aurait détruit.
+
+    N'altère ni le placement ni sa méthode : positions, rotations de boîtier et
+    stratégie sont inchangées. Réparation de sérialisation, comme
+    :func:`_normalize_origin_after_write`.
+
+    Renvoie ``(texte, nombre de pads restaurés)``.
+    """
+    source = _pad_angles(src_text)
+    if not source:
+        return out_text, 0
+
+    corriges = 0
+    morceaux = re.split(r"(\(footprint )", out_text)
+    sorties = [morceaux[0]]
+    i = 1
+    while i + 1 < len(morceaux):
+        sep, bloc = morceaux[i], morceaux[i + 1]
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        entete = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", bloc)
+        rot_fp = float(entete.group(3)) if (entete and entete.group(3)) else 0.0
+        if ref:
+            nom = ref.group(1)
+            parts = re.split(r"(\(pad )", bloc)
+            neuf = [parts[0]]
+            j = 1
+            while j + 1 < len(parts):
+                pb = parts[j + 1]
+                num = re.match(r'"([^"]+)"', pb)
+                cle = (nom, num.group(1)) if num else None
+                if cle in source:
+                    # Angle ABSOLU = rotation du boîtier + angle RELATIF que la
+                    # source déclare (None = 0). C'est la règle qui unifie les
+                    # deux corruptions mesurées.
+                    relatif = source[cle] or 0.0
+                    absolu = (rot_fp + relatif) % 360.0
+
+                    def _fix(m, a=absolu):
+                        if a == 0.0:
+                            return "(at %s %s)" % (m.group(1), m.group(2))
+                        return "(at %s %s %g)" % (m.group(1), m.group(2), a)
+
+                    pb2, _ = re.subn(r"\(at ([-\d.]+) ([-\d.]+)(?: [-\d.]+)?\)",
+                                     _fix, pb, count=1)
+                    if pb2 != pb:
+                        corriges += 1
+                    pb = pb2
+                neuf.append(parts[j] + pb)
+                j += 2
+            if j < len(parts):
+                neuf.append(parts[j])
+            bloc = "".join(neuf)
+        sorties.append(sep + bloc)
+        i += 2
+    if i < len(morceaux):
+        sorties.append(morceaux[i])
+    return "".join(sorties), corriges
+
+
+def _pad_angles(text: str) -> dict[tuple[str, str], float | None]:
+    """``{(ref_boitier, num_pad): angle}`` — ``None`` quand le pad n'en a pas."""
+    angles: dict[tuple[str, str], float | None] = {}
+    for bloc in re.split(r"\(footprint ", text)[1:]:
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
+        if not ref:
+            continue
+        for chunk in re.split(r"\(pad ", bloc)[1:]:
+            num = re.match(r'"([^"]+)"', chunk)
+            at = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", chunk)
+            if num and at:
+                angles[(ref.group(1), num.group(1))] = (
+                    float(at.group(3)) if at.group(3) else None)
+    return angles
+
+
 def _outside_outline_refs(pcb_path: Path) -> int:
     """Compte et journalise les footprints restés hors du contour.
 
@@ -814,11 +1002,17 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
         # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
         updated = workflow.write_to_pcb()
+        # Correctif B — normalisation du repère APRÈS write_to_pcb().
+        # Sans lui, l'Architecte livre 15-16 composants sur 17 hors carte
+        # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
+        # CMA-ES, halo — travaille sur un board déjà faux.
+        n_norm = _normalize_origin_after_write(pcb, skip=conn)
         logger.info(
-            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés",
+            "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
             updated,
             getattr(result, "wire_length_mm", 0.0) or getattr(result, "wire_length", 0.0),
             len(conn),
+            f", {n_norm} repère(s) normalisé(s)" if n_norm else "",
         )
 
         pcb.save(str(out))
@@ -901,6 +1095,22 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # contour. Le GA peut en parquer un au-delà du bord — mesuré le
         # 2026-07-30, U1 à X=183,37 sur une carte 100..160 — ce qui rend ses
         # nets inroutables et plafonne le routage (64 % au lieu de 100 %).
+        # ── Angles de pads : le writer en ajoute un que la source ne déclare
+        # pas, ce qui fait basculer le grand axe des pads et les fait se
+        # recouvrir. 204 erreurs DRC mesurées sur un board sans une seule
+        # piste ; 0 après restauration (cf. restore_pad_angles).
+        # AVANT le filet hors-carte, dont la détection est géométrique : elle
+        # lirait sinon l'encombrement de boîtiers aux pads mal orientés.
+        texte_final, n_pads = restore_pad_angles(
+            src.read_text(encoding="utf-8", errors="replace"),
+            out.read_text(encoding="utf-8", errors="replace"))
+        if n_pads:
+            out.write_text(texte_final, encoding="utf-8")
+            logger.info(
+                "auto_place: angle restauré sur %d pad(s) — le writer en ajoute "
+                "un que la source ne déclare pas, et les formes se recouvrent",
+                n_pads)
+
         # ── Filet hors-carte. Le GA peut parquer des composants au-delà du
         # bord : leurs nets deviennent inroutables et `kct route` refuse le
         # board (« placement invalid »). L'Inspecteur ne peut pas le résoudre —

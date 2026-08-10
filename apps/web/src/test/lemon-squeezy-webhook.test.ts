@@ -16,6 +16,7 @@ const supabaseMock = vi.hoisted(() => ({ createAdminClient: vi.fn() }));
 vi.mock('@/shared/lib/supabase-server', () => supabaseMock);
 
 import { POST } from '@/app/api/webhooks/lemon-squeezy/route';
+import { signCheckoutUserId } from '@/shared/lib/checkout-signature';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,62 +37,58 @@ function makeRequest(rawBody: string, signature: string) {
 
 interface MockState {
   rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
-  creditUpdates: Array<Record<string, unknown>>;
-  markersInserted: string[];
-  markersDeleted: string[];
+  processedEvents: Set<string>;
+  balance: number;
+  plan: string;
 }
 
+// Stub de contrat route → RPC : il reproduit les résultats documentés de
+// credit_webhook_event pour tester le comportement HTTP. Il ne constitue pas
+// une preuve du rollback PostgreSQL réel, qui exige un test SQL d’intégration.
 function makeClient(opts: {
-  insertConflict?: boolean;
-  insertError?: { code: string; message: string };
-  rpcFails?: boolean;
+  rpcError?: { message: string; code?: string };
+  state?: MockState;
 } = {}) {
-  const state: MockState = {
+  const state = opts.state ?? {
     rpcCalls: [],
-    creditUpdates: [],
-    markersInserted: [],
-    markersDeleted: [],
+    processedEvents: new Set<string>(),
+    balance: 0,
+    plan: 'free',
   };
   const client = {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       state.rpcCalls.push({ fn, args });
-      return opts.rpcFails
-        ? { error: { message: 'db down' } }
-        : { error: null };
+      if (fn !== 'credit_webhook_event') {
+        throw new Error(`unexpected RPC ${fn}`);
+      }
+      if (opts.rpcError) {
+        return { data: null, error: opts.rpcError };
+      }
+      const eventKey = String(args.p_event_key);
+      if (state.processedEvents.has(eventKey)) {
+        return { data: false, error: null };
+      }
+      state.processedEvents.add(eventKey);
+      state.balance += Number(args.p_amount);
+      if (typeof args.p_plan === 'string') {
+        state.plan = args.p_plan;
+      }
+      return { data: true, error: null };
     },
     from: (table: string) => {
-      if (table === 'processed_webhook_events') {
-        return {
-          insert: (row: { event_key: string }) => {
-            if (opts.insertConflict) {
-              return { error: { code: '23505', message: 'duplicate key' } };
-            }
-            if (opts.insertError) {
-              return { error: opts.insertError };
-            }
-            state.markersInserted.push(row.event_key);
-            return { error: null };
-          },
-          delete: () => ({
-            eq: async (_col: string, key: string) => {
-              state.markersDeleted.push(key);
-              return { error: null };
-            },
-          }),
-        };
-      }
-      if (table === 'credits') {
-        return {
-          update: (payload: Record<string, unknown>) => {
-            state.creditUpdates.push(payload);
-            return { eq: async () => ({ error: null }) };
-          },
-        };
-      }
-      throw new Error(`unexpected table ${table}`);
+      throw new Error(`unexpected table access ${table}`);
     },
   };
   return { client, state };
+}
+
+function newState(balance = 0): MockState {
+  return {
+    rpcCalls: [],
+    processedEvents: new Set<string>(),
+    balance,
+    plan: 'free',
+  };
 }
 
 function topupPayload(orderId = 'ord-1') {
@@ -100,7 +97,7 @@ function topupPayload(orderId = 'ord-1') {
     data: {
       id: orderId,
       attributes: {
-        custom_data: { user_id: 'u1' },
+        custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
         first_order_item: { variant_id: 'var-20' },
       },
     },
@@ -113,7 +110,7 @@ function subscriptionPayload(eventName: string, renewsAt = '2026-08-27') {
     data: {
       id: 'sub-1',
       attributes: {
-        custom_data: { user_id: 'u1' },
+        custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
         product_id: 'prod-pro',
         renews_at: renewsAt,
       },
@@ -146,9 +143,77 @@ beforeEach(() => {
 // Gardes existantes (signature, parsing, custom_data)
 // ---------------------------------------------------------------------------
 
+describe('provenance du compte crédité', () => {
+  // Le HMAC du webhook prouve que le message vient de Lemon Squeezy, PAS que
+  // `user_id` est le compte qui a payé : ce champ voyage dans une URL de
+  // checkout que l'acheteur peut modifier avant de payer.
+  it('refuse un user_id substitué — signature d’un autre compte', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-vol',
+        attributes: {
+          // signature légitime de u2, mais on tente de créditer u1
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u2') },
+          first_order_item: { variant_id: 'var-20' },
+        },
+      },
+    });
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it('refuse un user_id sans signature du tout', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-nosig',
+        attributes: {
+          custom_data: { user_id: 'u1' },
+          first_order_item: { variant_id: 'var-20' },
+        },
+      },
+    });
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+});
+
 describe('gardes existantes', () => {
+  // `JSON.parse(...) as LsPayload` était un cast, pas une validation : un corps
+  // JSON valide mais sans `meta` faisait planter la route en TypeError.
+  it('refuse un payload JSON valide mais structurellement incomplet', async () => {
+    const { client, state } = makeClient();
+    supabaseMock.createAdminClient.mockReturnValue(client);
+    const body = JSON.stringify({});
+
+    const res = await POST(makeRequest(body, sign(body)));
+
+    expect(res.status).toBe(400);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
   it('refuse une signature invalide sans toucher la base', async () => {
     const { response, state } = await post(topupPayload(), {}, 'deadbeef');
+
+    expect(response.status).toBe(401);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it('refuse aussi un HMAC incorrect de longueur SHA-256 valide', async () => {
+    const body = topupPayload();
+    const wrongSignature = createHmac('sha256', 'wrong-secret').update(body).digest('hex');
+    const { response, state } = await post(body, {}, wrongSignature);
 
     expect(response.status).toBe(401);
     expect(state.rpcCalls).toHaveLength(0);
@@ -179,37 +244,110 @@ describe('gardes existantes', () => {
 
     expect(response.status).toBe(200);
     expect(state.rpcCalls).toHaveLength(0);
-    expect(state.creditUpdates).toHaveLength(0);
+  });
+
+  it('acquitte un variant de top-up inconnu sans créditer', async () => {
+    const body = JSON.stringify({
+      meta: { event_name: 'order_created' },
+      data: {
+        id: 'ord-unknown',
+        attributes: {
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
+          first_order_item: { variant_id: 'var-unknown' },
+        },
+      },
+    });
+    const { response, json, state } = await post(body);
+
+    expect(response.status).toBe(200);
+    expect(json.received).toBe(true);
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it('acquitte un produit d’abonnement inconnu sans créditer', async () => {
+    const body = JSON.stringify({
+      meta: { event_name: 'subscription_renewed' },
+      data: {
+        id: 'sub-unknown',
+        attributes: {
+          custom_data: { user_id: 'u1', user_sig: signCheckoutUserId('u1') },
+          product_id: 'prod-unknown',
+        },
+      },
+    });
+    const { response, json, state } = await post(body);
+
+    expect(response.status).toBe(200);
+    expect(json.received).toBe(true);
+    expect(state.rpcCalls).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Fail-closed — secret manquant ou marker impossible → 500, aucun crédit
+// Fail-closed — secret manquant ou transaction RPC impossible → 500
 // ---------------------------------------------------------------------------
 
 describe('fail-closed', () => {
   it('refuse (500) si LEMON_SQUEEZY_WEBHOOK_SECRET est absent — HMAC à clé vide forgeable', async () => {
+    // Le corps est construit AVANT la suppression : signer le user_id exige le
+    // même secret, et l'objet du test est le comportement de la route, pas
+    // l'échec de fabrication du payload.
+    const body = topupPayload();
     delete process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-    const { response, state } = await post(topupPayload());
+    const { response, state } = await post(body);
 
     expect(response.status).toBe(500);
     expect(state.rpcCalls).toHaveLength(0);
-    expect(state.creditUpdates).toHaveLength(0);
-    expect(state.markersInserted).toHaveLength(0);
   });
 
-  it('échoue (500) sans créditer si l’insert du marker échoue (code ≠ 23505)', async () => {
-    // Ex. table processed_webhook_events absente (migration 008 non appliquée)
-    // : traiter sans marker laisserait un retry LS créditer une seconde fois.
-    const { response, json, state } = await post(topupPayload('ord-77'), {
-      insertError: { code: '42P01', message: 'relation "processed_webhook_events" does not exist' },
+  // Les payloads sont passés en FABRIQUES, pas en valeurs : `it.each` évalue ses
+  // arguments à la collecte, avant que `beforeEach` n'ait posé le secret.
+  it.each([
+    ['order_created', () => topupPayload('ord-rpc-error'), 20],
+    ['subscription_renewed', () => subscriptionPayload('subscription_renewed'), 100],
+  ])('une erreur RPC sur %s renvoie 500 sans prétendre avoir reçu l’événement', async (_name, makeBody, amount) => {
+    const body = makeBody();
+    const state = newState(40);
+
+    // L’ancien test vérifiait releaseEvent(). La RPC transactionnelle remplace
+    // cette mécanique. Ce test vérifie le contrat applicatif et le retry ; le
+    // rollback PostgreSQL lui-même relève d’un test SQL d’intégration.
+    const { response, json } = await post(body, {
+      rpcError: { message: 'transaction failed' },
+      state,
     });
 
     expect(response.status).toBe(500);
+    expect(json.received).toBeUndefined();
     expect(json.duplicate).toBeUndefined();
-    expect(state.rpcCalls).toHaveLength(0);
-    expect(state.markersInserted).toHaveLength(0);
+    expect(state.processedEvents.size).toBe(0);
+    expect(state.balance).toBe(40);
+    expect(state.rpcCalls).toHaveLength(1);
+
+    const retry = await post(body, { state });
+    expect(retry.response.status).toBe(200);
+    expect(retry.json.duplicate).toBeUndefined();
+    expect(state.processedEvents.size).toBe(1);
+    expect(state.balance).toBe(40 + Number(amount));
   });
+
+  // `22023`/`42501` sont les codes que nos RPC lèvent pour un refus DÉFINITIF —
+  // montant invalide, utilisateur sans ligne `credits`. Y répondre 500 ferait
+  // retenter Lemon Squeezy indéfiniment sur une erreur qui ne se résout jamais.
+  it.each(['22023', '42501'])(
+    'un refus RPC permanent (code %s) renvoie 422, jamais 500',
+    async (code) => {
+      const state = newState();
+      const { response, json } = await post(topupPayload('ord-permanent'), {
+        rpcError: { message: 'unknown_user', code },
+        state,
+      });
+
+      expect(response.status).toBe(422);
+      expect(json.received).toBeUndefined();
+      expect(state.processedEvents.size).toBe(0);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -222,16 +360,60 @@ describe('crédit nominal', () => {
 
     expect(response.status).toBe(200);
     expect(state.rpcCalls).toEqual([
-      { fn: 'add_credits', args: { p_user_id: 'u1', p_amount: 20, p_action: 'topup' } },
+      {
+        fn: 'credit_webhook_event',
+        args: {
+          p_event_key: 'order_created:ord-1',
+          p_event_name: 'order_created',
+          p_user_id: 'u1',
+          p_amount: 20,
+          p_action: 'topup',
+        },
+      },
     ]);
+    expect(state.balance).toBe(20);
   });
 
-  it('subscription_created bascule le plan et le solde', async () => {
-    const { response, state } = await post(subscriptionPayload('subscription_created'));
+  it('subscription_renewed conserve les recharges et ajoute l’allocation mensuelle', async () => {
+    const state = newState(140);
+    const { response } = await post(
+      subscriptionPayload('subscription_renewed'),
+      { state },
+    );
 
     expect(response.status).toBe(200);
-    expect(state.creditUpdates[0]).toMatchObject({ balance: 100, plan: 'pro' });
+    expect(state.balance).toBe(240);
+    expect(state.plan).toBe('pro');
+    expect(state.rpcCalls[0]?.args).toMatchObject({
+      p_amount: 100,
+      p_action: 'subscription_renewed',
+      p_plan: 'pro',
+    });
   });
+
+  it.each(['subscription_created', 'subscription_renewed'])(
+    '%s transmet le plan et l’allocation dans la même RPC',
+    async (eventName) => {
+      const { response, state } = await post(subscriptionPayload(eventName));
+
+      expect(response.status).toBe(200);
+      expect(state.rpcCalls).toEqual([
+        {
+          fn: 'credit_webhook_event',
+          args: {
+            p_event_key: expect.stringMatching(`^${eventName}:sub-1`),
+            p_event_name: eventName,
+            p_user_id: 'u1',
+            p_amount: 100,
+            p_action: eventName,
+            p_plan: 'pro',
+          },
+        },
+      ]);
+      expect(state.plan).toBe('pro');
+      expect(state.balance).toBe(100);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -240,49 +422,60 @@ describe('crédit nominal', () => {
 
 describe('idempotence', () => {
   it('un order_created rejoué (même order id) ne crédite pas deux fois', async () => {
-    const first = await post(topupPayload('ord-42'));
-    expect(first.state.rpcCalls).toHaveLength(1);
+    const state = newState();
+    const first = await post(topupPayload('ord-42'), { state });
+    expect(first.response.status).toBe(200);
+    expect(state.balance).toBe(20);
 
-    // Même évident renvoyé par LS : la table contient déjà la clé → conflit PK
-    const second = await post(topupPayload('ord-42'), { insertConflict: true });
+    const second = await post(topupPayload('ord-42'), { state });
 
     expect(second.response.status).toBe(200);
-    expect(second.state.rpcCalls).toHaveLength(0);
     expect(second.json.duplicate).toBe(true);
+    expect(state.rpcCalls).toHaveLength(2);
+    expect(state.balance).toBe(20);
+    expect(state.processedEvents.size).toBe(1);
   });
 
-  it('la clé marker insérée porte l’id de commande', async () => {
+  it('la clé d’idempotence transmise porte l’id de commande', async () => {
     const { state } = await post(topupPayload('ord-42'));
 
-    expect(state.markersInserted).toEqual(['order_created:ord-42']);
+    expect(state.rpcCalls[0]?.args.p_event_key).toBe('order_created:ord-42');
   });
 
   it('un subscription_renewed rejoué à l’identique est dédupliqué', async () => {
-    const first = await post(subscriptionPayload('subscription_renewed', '2026-08-27'));
-    expect(first.state.creditUpdates).toHaveLength(1);
+    const state = newState(40);
+    await post(
+      subscriptionPayload('subscription_renewed', '2026-08-27'),
+      { state },
+    );
+    expect(state.balance).toBe(140);
 
     const second = await post(
       subscriptionPayload('subscription_renewed', '2026-08-27'),
-      { insertConflict: true },
+      { state },
     );
 
     expect(second.response.status).toBe(200);
-    expect(second.state.creditUpdates).toHaveLength(0);
+    expect(second.json.duplicate).toBe(true);
+    expect(state.balance).toBe(140);
+    expect(state.processedEvents.size).toBe(1);
   });
 
   it('deux renouvellements DISTINCTS (corps différent) créditent tous les deux', async () => {
-    const aug = await post(subscriptionPayload('subscription_renewed', '2026-08-27'));
-    const sep = await post(subscriptionPayload('subscription_renewed', '2026-09-27'));
+    const state = newState();
+    await post(
+      subscriptionPayload('subscription_renewed', '2026-08-27'),
+      { state },
+    );
+    await post(
+      subscriptionPayload('subscription_renewed', '2026-09-27'),
+      { state },
+    );
 
-    expect(aug.state.creditUpdates).toHaveLength(1);
-    expect(sep.state.creditUpdates).toHaveLength(1);
-  });
-
-  it('si le crédit échoue, le marker est libéré pour que le retry LS aboutisse', async () => {
-    const { response, state } = await post(topupPayload('ord-99'), { rpcFails: true });
-
-    expect(response.status).toBe(500);
-    expect(state.markersInserted).toEqual(['order_created:ord-99']);
-    expect(state.markersDeleted).toEqual(['order_created:ord-99']);
+    const firstKey = state.rpcCalls[0]?.args.p_event_key;
+    const secondKey = state.rpcCalls[1]?.args.p_event_key;
+    expect(firstKey).not.toBe(secondKey);
+    expect(state.processedEvents.size).toBe(2);
+    expect(state.balance).toBe(200);
   });
 });

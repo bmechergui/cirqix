@@ -6,9 +6,10 @@ JLCPCB) déclarait le board propre alors que kicad-cli officiel rapportait
 retournait drc_clean=True dès le niveau 1 SANS jamais exécuter kicad-cli —
 violation de la règle projet « NEVER accepter DRC violations comme OK ».
 
-Règle attendue : le niveau 1 ne court-circuite QUE si kicad-cli est
-indisponible (fallback dégradé). Si kicad-cli est présent, la validation
-officielle tourne toujours, même quand kicad-tools est propre.
+Règle attendue : le niveau 1 (pré-filtre) n'a jamais d'autorité de
+fabrication. Si kicad-cli est présent, la validation officielle tourne
+toujours, même quand kicad-tools est propre. Si kicad-cli est absent →
+fail-closed (drc_clean=False, skipped=True).
 """
 from __future__ import annotations
 
@@ -130,19 +131,18 @@ def test_level1_clean_and_cli_clean_reports_official_validation(monkeypatch):
     assert "kicad-cli officiel" in resp.warning
 
 
-def test_level1_clean_without_kicad_cli_keeps_fallback(monkeypatch):
-    """kicad-cli ABSENT → fallback dégradé conservé : drc_clean=True basé sur
-    kicad-tools seul, warning « kicad-cli indisponible »."""
+def test_level1_clean_without_kicad_cli_fail_closed(monkeypatch):
+    """kicad-cli ABSENT → fail-closed : drc_clean=False, skipped=True.
+    Le pré-filtre propre n'a aucune autorité de fabrication."""
     monkeypatch.setattr(drc_router, "_run_python_drc", lambda pcb_bytes: [])
     monkeypatch.setattr(drc_router, "_find_kicad_cli", lambda: None)
 
     resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=True))
 
-    assert resp.drc_clean is True
-    assert resp.skipped is False
+    assert resp.drc_clean is False
+    assert resp.skipped is True
     assert resp.warning is not None
-    assert "indisponible" in resp.warning
-    assert "kicad-tools" in resp.warning
+    assert "authority DRC not run" in resp.warning
 
 
 def test_nc_pad_clearance_is_warning_but_real_clearance_blocks(monkeypatch):
@@ -189,7 +189,7 @@ def test_only_nc_pad_clearances_is_drc_clean(monkeypatch):
 
 
 def test_both_validators_absent_returns_skipped(monkeypatch):
-    """kicad-tools crash + kicad-cli absent → skipped=True (pipeline non bloqué)."""
+    """kicad-tools crash + kicad-cli absent → skipped=True, drc_clean=False."""
     def _crash(pcb_bytes: bytes) -> list[dict]:
         raise RuntimeError("kicad-tools indisponible")
 
@@ -199,7 +199,7 @@ def test_both_validators_absent_returns_skipped(monkeypatch):
     resp = run_drc_auto(DRCAutoRequest(kicad_pcb_b64=_PCB_B64, auto_fix=True))
 
     assert resp.skipped is True
-    assert resp.drc_clean is True
+    assert resp.drc_clean is False
     assert resp.violations == []
 
 

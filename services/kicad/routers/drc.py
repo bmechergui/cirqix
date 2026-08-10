@@ -9,18 +9,19 @@ Availability matrix (kicad-tools niveau 1 ne court-circuite JAMAIS le niveau 2) 
 
 1. kicad-cli disponible             → kicad-cli fait foi : la validation
    officielle est TOUJOURS exécutée, même si kicad-tools déclare 0 erreur.
-2. kicad-cli absent, kicad-tools OK → fallback dégradé : résultat kicad-tools
-   seul (27 règles JLCPCB), ``skipped=false`` + warning explicite.
-3. kicad-cli ET kicad-tools absents → ``drc_clean=true, skipped=true`` pour
-   ne pas bloquer le pipeline agentique.
+2. kicad-cli absent (quel que soit le pré-filtre) → fail-closed :
+   ``drc_clean=false, skipped=true`` + warning. Les violations kicad-tools
+   restent exposées comme diagnostic, sans autorité de fabrication.
 """
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -108,11 +109,6 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
     if vias_added:
         pcb_content = new_text.encode("utf-8")
 
-    try:
-        import pcbnew  # type: ignore[import-not-found]
-    except ImportError:
-        return pcb_content, vias_added
-
     fixable = [v for v in violations if v.get("type") in ("unfilled_zone", "zone_has_empty_net")]
     if not fixable:
         return pcb_content, vias_added
@@ -121,27 +117,62 @@ def _apply_fixes(pcb_content: bytes, violations: list[dict[str, Any]]) -> tuple[
         in_path = Path(tmp) / "in.kicad_pcb"
         out_path = Path(tmp) / "out.kicad_pcb"
         in_path.write_bytes(pcb_content)
-        board = pcbnew.LoadBoard(str(in_path))
-        for zone in board.Zones():
-            # KiCad 10 : ZONE.SetFilled n'existe plus (c'est SetIsFilled) ;
-            # sous KiCad 9 les deux existent. On force le flag « rempli » puis
-            # ZONE_FILLER.Fill calcule le remplissage réel juste après.
-            zone.SetIsFilled(True)
-        filler = pcbnew.ZONE_FILLER(board)
-        filler.Fill(board.Zones())
-        pcbnew.SaveBoard(str(out_path), board)
+        if not _refill_zones_isolated(in_path, out_path):
+            # pcbnew absent, ou refill échoué : on rend le contenu d'entrée.
+            # Le via-in-pad déjà posé reste acquis, mais les `fixable` ne sont
+            # PAS comptés comme corrigés — ils ne l'ont pas été.
+            return pcb_content, vias_added
         return out_path.read_bytes(), vias_added + len(fixable)
+
+
+# ``pcbnew`` garde un état C++ global et n'est PAS thread-safe, alors que
+# ``run_drc_auto`` est un handler FastAPI déclaré en ``def`` : uvicorn l'exécute
+# dans son threadpool, donc plusieurs requêtes peuvent l'atteindre en même temps
+# sur le même worker. L'appel sort donc dans un processus enfant borné — même
+# motif que ``tools/cmaes_runner.py``, qui existe déjà ici pour cette raison.
+_PCBNEW_RUNNER = Path(__file__).resolve().parent.parent / "tools" / "drc_pcbnew_runner.py"
+_PCBNEW_TIMEOUT_S: int = 120
+
+
+def _refill_zones_isolated(in_path: Path, out_path: Path) -> bool:
+    """Remplit les zones via ``pcbnew``, dans un processus enfant.
+
+    Retourne True seulement si l'enfant a réussi ET produit le fichier. Aucune
+    exception ne remonte : le refill est un correctif best-effort, son échec ne
+    doit pas faire échouer le DRC — mais il ne doit pas non plus être compté
+    comme une correction appliquée.
+    """
+    payload = json.dumps({"pcb": str(in_path), "output": str(out_path)})
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_PCBNEW_RUNNER), payload],
+            capture_output=True, text=True,
+            timeout=_PCBNEW_TIMEOUT_S, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("refill zones (pcbnew isolé) impossible : %s", exc)
+        return False
+    if proc.returncode != 0:
+        logger.warning(
+            "refill zones (pcbnew isolé) échoué (rc=%s): %s",
+            proc.returncode, (proc.stderr or "")[:300],
+        )
+        return False
+    return out_path.exists()
 
 
 # ----------------------------------------------------------------------------
 # Endpoint
 # ----------------------------------------------------------------------------
 
-def _run_python_drc(pcb_bytes: bytes) -> list[dict]:
+def _run_python_drc(pcb_bytes: bytes) -> list[dict] | None:
     """
     Pure Python DRC via kicad-tools (27 JLCPCB rules, no kicad-cli needed).
-    Returns list of violation dicts compatible with DRCAutoResponse.violations.
-    Returns [] if kicad-tools not installed.
+
+    Returns a list of violation dicts only when the command completed and the
+    JSON was decoded successfully. Returns ``None`` on execution failure,
+    unexpected exit code, or decode error — never confuse « no result » with
+    « zero violations ».
     """
     try:
         import sys
@@ -154,19 +185,45 @@ def _run_python_drc(pcb_bytes: bytes) -> list[dict]:
                 [sys.executable, "-m", "kicad_tools.cli", "check", str(pcb_path), "--mfr", "jlcpcb", "--json"],
                 capture_output=True, text=True, timeout=30, check=False,
             )
+            # rc 0 = clean, rc 1 = violations found — both are successful runs.
+            # Any other rc is an execution failure (not « zero violations »).
             if result.returncode not in (0, 1):
-                return []
+                logger.warning(
+                    "kicad-tools Python DRC failed (rc=%s): %s",
+                    result.returncode,
+                    (result.stderr or result.stdout or "")[:500],
+                )
+                return None
             import json
-            data = json.loads(result.stdout or "{}")
+            try:
+                data = json.loads(result.stdout or "")
+            except (ValueError, json.JSONDecodeError) as exc:
+                logger.warning("kicad-tools Python DRC: invalid JSON: %s", exc)
+                return None
+            if not isinstance(data, dict):
+                logger.warning("kicad-tools Python DRC: report is not an object")
+                return None
             violations = []
-            for v in data.get("errors", []):
-                violations.append({"type": v.get("rule", "unknown"), "description": v.get("message", ""), "severity": "error"})
-            for v in data.get("warnings", []):
-                violations.append({"type": v.get("rule", "unknown"), "description": v.get("message", ""), "severity": "warning"})
+            for v in data.get("errors", []) or []:
+                if not isinstance(v, dict):
+                    continue
+                violations.append({
+                    "type": v.get("rule", "unknown"),
+                    "description": v.get("message", ""),
+                    "severity": "error",
+                })
+            for v in data.get("warnings", []) or []:
+                if not isinstance(v, dict):
+                    continue
+                violations.append({
+                    "type": v.get("rule", "unknown"),
+                    "description": v.get("message", ""),
+                    "severity": "warning",
+                })
             return violations
     except Exception as exc:
         logger.warning("kicad-tools Python DRC failed: %s", exc)
-        return []
+        return None
 
 
 @router.post("/drc/auto", response_model=DRCAutoResponse)
@@ -175,13 +232,11 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     Run DRC on the provided .kicad_pcb.
 
     Priority:
-      1. kicad-tools Python DRC — 27 règles JLCPCB, pur Python, toujours dispo.
-         Ne court-circuite JAMAIS la validation officielle quand kicad-cli est
-         présent (faux négatif mesuré 2026-07-04 : board déclaré propre par
-         kicad-tools mais 25 shorting_items + 21 clearance selon kicad-cli).
-      2. kicad-cli pcb drc     — officiel KiCad, auto-fix loop max 3×.
-         Exécuté systématiquement si disponible ; le résultat kicad-tools seul
-         ne fait foi que si kicad-cli est INDISPONIBLE (fallback dégradé).
+      1. kicad-tools Python DRC — 27 règles JLCPCB, pur Python, pré-filtre.
+         Ne court-circuite JAMAIS la validation officielle (faux négatif
+         mesuré 2026-07-04). N'a AUCUNE autorité de fabrication.
+      2. kicad-cli pcb drc — officiel KiCad, auto-fix loop max 3×, fait foi.
+         Absent ou rapport invalide → fail-closed (drc_clean=False, skipped=True).
     """
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
@@ -204,43 +259,51 @@ def run_drc_auto(req: DRCAutoRequest) -> DRCAutoResponse:
     # Le niveau 1 ne court-circuite PAS le niveau 2 : même propre, le board
     # doit être validé par kicad-cli officiel s'il est disponible (faux
     # négatif mesuré 2026-07-04 — kicad-tools propre, kicad-cli 200 violations).
+    # Pré-filtre uniquement : n'a AUCUNE autorité de fabrication.
     kt_violations: list[dict] = []
     kt_ok = False
     kt_clean = False
     try:
-        kt_violations = _run_python_drc(pcb_bytes)
-        kt_ok = True
-        kt_errors = [v for v in kt_violations if v.get("severity") == "error"]
-        kt_clean = not kt_errors
-        logger.info("kicad-tools DRC: %d violations (%d erreurs)", len(kt_violations), len(kt_errors))
-        if kt_clean:
-            logger.info("kicad-tools propre → validation kicad-cli officielle quand même")
+        kt_result = _run_python_drc(pcb_bytes)
+        if kt_result is not None:
+            kt_violations = kt_result
+            kt_ok = True
+            kt_errors = [v for v in kt_violations if v.get("severity") == "error"]
+            kt_clean = not kt_errors
+            logger.info(
+                "kicad-tools DRC: %d violations (%d erreurs)",
+                len(kt_violations), len(kt_errors),
+            )
+            if kt_clean:
+                logger.info("kicad-tools propre → validation kicad-cli officielle quand même")
+            else:
+                logger.info(
+                    "kicad-tools: %d erreur(s) → tentative auto-fix via kicad-cli",
+                    len(kt_errors),
+                )
         else:
-            logger.info("kicad-tools: %d erreur(s) → tentative auto-fix via kicad-cli", len(kt_errors))
+            logger.warning("kicad-tools DRC: exécution/décodage échoué — pré-filtre indisponible")
     except Exception as exc:
         logger.warning("kicad-tools DRC échoué (%s) — kicad-cli direct", exc)
 
     # ── Niveau 2 : kicad-cli (auto-fix loop + validation officielle) ─────────
     cli_path = _find_kicad_cli()
     if cli_path is None:
-        # kicad-cli absent → retourner résultat kicad-tools tel quel
-        if kt_ok:
-            return DRCAutoResponse(
-                drc_clean=kt_clean,
-                violations=kt_violations,
-                fixed_count=0,
-                kicad_pcb_b64=None,
-                skipped=False,
-                warning="kicad-cli indisponible — DRC kicad-tools 27 règles JLCPCB uniquement",
-            )
-        # kicad-tools ET kicad-cli indisponibles → skipped
+        # Fail-closed : sans rapport kicad-cli valide, jamais drc_clean=True.
+        # Les violations du pré-filtre restent exposées comme diagnostic.
+        warning = (
+            "kicad-cli unavailable — authority DRC not run; "
+            "pre-filter (kicad-tools) results are diagnostic only"
+            if kt_ok
+            else "kicad-cli and kicad-tools unavailable — authority DRC not run"
+        )
         return DRCAutoResponse(
-            drc_clean=True,
-            violations=[],
+            drc_clean=False,
+            violations=kt_violations,
             fixed_count=0,
             kicad_pcb_b64=None,
             skipped=True,
-            warning="kicad-tools et kicad-cli indisponibles — DRC sauté",
+            warning=warning,
         )
 
     from tools.drc import parse_drc_report
