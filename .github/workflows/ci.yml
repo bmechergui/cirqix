@@ -463,20 +463,44 @@ jobs:
               echo "::error::$path — aucun gitlink trouvé"
               fail=1; return
             fi
+
+            # La sortie ET le code de retour sont capturés séparément.
+            #
+            # Le premier jet écrivait `git ls-remote --tags "$url" 2>/dev/null`
+            # et concluait « aucun tag » sur une sortie vide. Une panne d'accès
+            # au fork — clé absente, révoquée, hôte injoignable — devenait donc
+            # indiscernable d'un tag manquant, et le job accusait à tort un SHA
+            # parfaitement tagué (vécu au premier run sur circuit_synth). Un
+            # garde-fou qui crie au loup à tort finit désarmé.
+            out=$(git ls-remote --tags "$url" 2>&1); rc=$?
+            if [ $rc -ne 0 ]; then
+              echo "::error::$path — impossible d'interroger $url (git ls-remote a rendu $rc)."
+              echo "::error::Ce n'est PAS un tag manquant : vérifier la deploy key et l'accès au fork."
+              echo "$out" | sed 's/^/    /' | tail -5
+              fail=1; return
+            fi
+
             # `--tags` liste les refs de tags ; un tag annoté ajoute une ligne
             # `^{}` portant le commit déréférencé. Les deux formes comptent.
-            if git ls-remote --tags "$url" 2>/dev/null | grep -q "^$sha"; then
-              tag=$(git ls-remote --tags "$url" 2>/dev/null | grep "^$sha" | head -1 | sed 's/.*refs\/tags\///; s/\^{}//')
+            match=$(printf '%s\n' "$out" | grep "^$sha" | head -1 || true)
+            if [ -n "$match" ]; then
+              tag=$(printf '%s' "$match" | sed 's/.*refs\/tags\///; s/\^{}//')
               echo "OK   $path  $sha  ($tag)"
             else
+              short=$(printf '%s' "$sha" | cut -c1-7)
               echo "::error::$path — le SHA épinglé $sha n'est couvert par AUCUN tag sur $url."
               echo "::error::Le prochain force-push du rebase hebdomadaire le rendra orphelin et cassera ce checkout."
-              echo "::error::Corriger : git tag cirqix-pin-$(echo "$sha" | cut -c1-7) $sha && git push origin cirqix-pin-$(echo "$sha" | cut -c1-7)"
+              echo "::error::Corriger : git tag cirqix-pin-$short $sha && git push origin cirqix-pin-$short"
               fail=1
             fi
           }
-          check services/kicad/kicad-tools   git@github.com:bmechergui/kicad-tools.git
-          check services/kicad/circuit_synth git@github.com-circuit-synth:bmechergui/circuit-synth.git
+          # URLs HTTPS + réécriture `insteadOf` : le chemin déjà éprouvé par le
+          # job kicad-docker. Passer l'alias SSH directement à ls-remote n'a pas
+          # le même comportement d'authentification.
+          git config --global url."git@github.com:bmechergui/kicad-tools.git".insteadOf "https://github.com/bmechergui/kicad-tools.git"
+          git config --global url."git@github.com-circuit-synth:bmechergui/circuit-synth.git".insteadOf "https://github.com/bmechergui/circuit-synth.git"
+          check services/kicad/kicad-tools   https://github.com/bmechergui/kicad-tools.git
+          check services/kicad/circuit_synth https://github.com/bmechergui/circuit-synth.git
           exit $fail
 
       - name: Retirer les identifiants
