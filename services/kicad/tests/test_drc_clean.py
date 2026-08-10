@@ -103,7 +103,7 @@ def test_strip_nc_nets_survives_renumbering():
 def test_route_once_routes_with_nc_obstacles_and_strips_after(monkeypatch):
     captured: dict[str, str] = {}
 
-    def fake_run(src, dst, timeout_s, fine_pitch=False):
+    def fake_run(src, dst, timeout_s, fine_pitch=False, **_kwargs):
         captured["src"] = Path(src).read_text(encoding="utf-8")
         Path(dst).write_text(captured["src"], encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 2/2 (100%)",
@@ -147,7 +147,7 @@ def test_solid_connect_zones_idempotent():
 def test_route_once_applies_solid_connect_to_final_board(monkeypatch):
     board = _NC_BOARD[:-2] + _ZONED + "\n)\n"  # zone injectée avant la ')' finale
 
-    def fake_run(src, dst, timeout_s, fine_pitch=False):
+    def fake_run(src, dst, timeout_s, fine_pitch=False, **_kwargs):
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="Nets routed: 2/2 (100%)",
                                stderr="")
@@ -353,14 +353,59 @@ def _install_fake_pcbnew_k10(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "pcbnew", mod)
 
 
-def test_apply_fixes_refills_zone_with_kicad10_api(monkeypatch):
-    # Régression : avec l'API KiCad 10 (SetFilled absent), la branche refill
-    # ne doit PAS lever AttributeError. Échoue contre l'ancien SetFilled(True).
-    _install_fake_pcbnew_k10(monkeypatch)
-    from routers.drc import _apply_fixes
+_UNFILLED = {"id": "z1", "severity": "error", "type": "unfilled_zone",
+             "message": "Zone non remplie"}
 
-    unfilled = {"id": "z1", "severity": "error", "type": "unfilled_zone",
-                "message": "Zone non remplie"}
-    new_content, fixed = _apply_fixes(_PLANE_BOARD.encode(), [unfilled])
+
+def test_refill_runner_uses_kicad10_api(monkeypatch, tmp_path):
+    """Régression KiCad 10 (SetFilled absent) — descendue dans le runner.
+
+    Ce contrôle vivait dans ``_apply_fixes`` tant que pcbnew y était appelé en
+    direct. Depuis que l'appel est isolé dans un processus enfant, c'est le
+    runner qui porte l'API : un faux module injecté dans le parent ne peut plus
+    l'atteindre. Le test suit donc le code au lieu de disparaître.
+    """
+    import json as _json
+
+    _install_fake_pcbnew_k10(monkeypatch)
+    from tools import drc_pcbnew_runner
+
+    src = tmp_path / "in.kicad_pcb"
+    out = tmp_path / "out.kicad_pcb"
+    src.write_text(_PLANE_BOARD, encoding="utf-8")
+
+    rc = drc_pcbnew_runner.main(
+        ["drc_pcbnew_runner.py", _json.dumps({"pcb": str(src), "output": str(out)})]
+    )
+
+    assert rc == 0
+    assert out.read_bytes() == b"(kicad_pcb (filled))\n"
+
+
+def test_apply_fixes_counts_refill_only_when_child_succeeds(monkeypatch):
+    """Refill réussi : compté, et le board rendu est celui produit par l'enfant."""
+    import routers.drc as drc_router
+
+    def _ok(in_path, out_path) -> bool:
+        out_path.write_bytes(b"(kicad_pcb (filled))\n")
+        return True
+
+    monkeypatch.setattr(drc_router, "_refill_zones_isolated", _ok)
+
+    new_content, fixed = drc_router._apply_fixes(_PLANE_BOARD.encode(), [_UNFILLED])
     assert fixed == 1
     assert new_content == b"(kicad_pcb (filled))\n"
+
+
+def test_apply_fixes_does_not_count_a_failed_refill(monkeypatch):
+    """pcbnew absent ou enfant en échec : le board d'entrée est rendu tel quel
+    et la violation n'est PAS comptée comme corrigée. Compter une correction
+    qui n'a pas eu lieu est exactement le défaut que ce dépôt traque."""
+    import routers.drc as drc_router
+
+    monkeypatch.setattr(drc_router, "_refill_zones_isolated", lambda i, o: False)
+
+    original = _PLANE_BOARD.encode()
+    new_content, fixed = drc_router._apply_fixes(original, [_UNFILLED])
+    assert fixed == 0
+    assert new_content == original

@@ -6,10 +6,25 @@
           {
             "type": "command",
             "shell": "powershell",
-            "command": "$g = Join-Path $env:USERPROFILE '.local\\bin\\graphify.exe'; if (Test-Path $g) { $running = Get-CimInstance Win32_Process -Filter \"Name = 'graphify.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '\\swatch\\s' }; if (-not $running) { New-Item -ItemType Directory -Force graphify-out | Out-Null; Start-Process -WindowStyle Hidden -FilePath $g -ArgumentList 'watch','.' -WorkingDirectory (Get-Location) } }",
+            "command": "$root = (& git rev-parse --show-toplevel 2>$null).Trim(); if ($LASTEXITCODE -eq 0) { $refresh = Join-Path $root 'scripts\\graphify-refresh.ps1'; $expected = '2146a932e00c8493f379a69de489df98d73de70c83d43ca7642d8f3703c50fce'; if (Test-Path -LiteralPath $refresh) { $text = [IO.File]::ReadAllText($refresh).Replace(\"`r`n\", \"`n\").Replace(\"`r\", \"`n\"); $sha = [Security.Cryptography.SHA256]::Create(); try { $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($text); $actual = ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '' } finally { $sha.Dispose() }; if ($actual -eq $expected) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $refresh -Mode Ensure } else { Write-Warning 'Graphify refresh script hash mismatch; hook skipped.' } } else { Write-Warning 'Graphify refresh script missing; hook skipped.' } }",
             "async": true,
-            "timeout": 60,
-            "statusMessage": "Démarrage du watcher Graphify (knowledge graph auto-update)"
+            "timeout": 2700,
+            "statusMessage": "Vérification des graphes puis démarrage du watcher Graphify"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$root = (& git rev-parse --show-toplevel 2>$null).Trim(); if ($LASTEXITCODE -eq 0) { $refresh = Join-Path $root 'scripts\\graphify-refresh.ps1'; $expected = '2146a932e00c8493f379a69de489df98d73de70c83d43ca7642d8f3703c50fce'; if (Test-Path -LiteralPath $refresh) { $text = [IO.File]::ReadAllText($refresh).Replace(\"`r`n\", \"`n\").Replace(\"`r\", \"`n\"); $sha = [Security.Cryptography.SHA256]::Create(); try { $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($text); $actual = ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join '' } finally { $sha.Dispose() }; if ($actual -eq $expected) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $refresh -Mode Watcher } else { Write-Warning 'Graphify refresh script hash mismatch; hook skipped.' } } else { Write-Warning 'Graphify refresh script missing; hook skipped.' } }",
+            "async": true,
+            "timeout": 120,
+            "statusMessage": "Vérification du watcher Graphify"
           }
         ]
       }

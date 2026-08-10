@@ -86,6 +86,64 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo test
 
+  rls-isolation:
+    name: RLS Isolation
+    runs-on: ubuntu-latest
+    # Le seul contrôle qui prouve l'isolation ENTRE UTILISATEURS. Les autres jobs
+    # compilent du TypeScript et construisent une image : aucun ne touche à une
+    # base Postgres, donc aucun ne verrait une policy RLS rouverte.
+    #
+    # `packages/db/tests/rls_isolation.sql` existait depuis les campagnes de
+    # durcissement des 28 et 30 juillet, mais n'était branché nulle part —
+    # constaté le 2026-08-10 en fusionnant #101, qui refermait une injection dans
+    # le cache de footprints partagé restée exploitable en production.
+    services:
+      postgres:
+        # pgvector : la migration 001 crée l'extension `vector` (embeddings
+        # footprints). Une image postgres nue échouerait dès la première.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cirqix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGURL: postgresql://postgres:postgres@localhost:5432/cirqix_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Échafaudage Supabase (rôles, schéma auth, privilèges par défaut)
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f packages/db/tests/ci-scaffold.sql
+
+      - name: Appliquer les migrations dans l'ordre
+        # 006 est PÉRIMÉE et ne doit jamais être appliquée : elle réécrirait
+        # `add_credits` / `deduct_credits` en versions plus faibles que 009 et
+        # 010, soit une régression de sécurité sur le chemin de facturation.
+        # Son en-tête le dit ; l'exclusion est ici pour que la CI ne la rejoue
+        # pas mécaniquement.
+        run: |
+          set -euo pipefail
+          for f in $(ls packages/db/supabase/migrations/*.sql | sort); do
+            case "$(basename "$f")" in
+              006_*) echo "SKIP  $(basename "$f")  (périmée — régression de sécurité)"; continue ;;
+            esac
+            echo "APPLY $(basename "$f")"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Test d'isolation RLS
+        # Le script s'exécute dans BEGIN … ROLLBACK et lève une exception dès
+        # qu'un invariant est violé ; ON_ERROR_STOP fait échouer le job.
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls_isolation.sql
+
   kicad-docker:
     name: KiCad Docker Build
     runs-on: ubuntu-latest

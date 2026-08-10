@@ -1,0 +1,4 @@
+# Vendored Git submodules overwhelm first-party Cirqix architecture queries.
+# Query each dependency from its own checkout when its internals are needed.
+/services/kicad/kicad-tools/
+/services/kicad/circuit_synth/

@@ -19,9 +19,62 @@ Avant toute tâche partagée, parallèle ou reprise depuis un autre assistant :
 Le handoff transporte l’état du travail ; il ne remplace jamais Git, les tests,
 les quality gates ni les règles de sécurité de ce fichier.
 
+## Worktrees — la chaîne worktree → branche → commit
+
+Tout travail mené dans un worktree doit reposer sur une **branche nommée**, et
+tout ce qui compte doit finir en **commit**. Un worktree peut techniquement être
+en `detached HEAD` : c’est acceptable pour une inspection jetable — lire un vieil
+état, comparer deux révisions — jamais pour du travail destiné à durer.
+
+```
+worktree  →  branche nommée  →  commit  →  push
+```
+
+Un `detached HEAD` n’est référencé par rien : la sortie du worktree suffit à
+rendre les commits invisibles, et seul le reflog les retient, ~90 jours.
+Une branche nommée, elle, survit à la suppression du worktree.
+
+**Le worktree est un plan de travail, pas un lieu de stockage.** Ce qui n’est pas
+commité y est invisible pour tout le monde — y compris pour l’assistant qui
+reprendra le sujet, puisque `git log` et `git diff` ne montrent rien.
+
+Mesuré le 2026-08-09 en vidant 12 worktrees de `C:\tmp` :
+- **4 handoffs** n’existaient que là, absents de `main` (`git cat-file -e`) —
+  dont le compte rendu d’une PR fusionnée le jour même ;
+- **4 fichiers de test** dans le même état ;
+- **42 fichiers modifiés** dans un worktree dont le `git stash` échouait, sauvés
+  par un patch de 173 ko.
+
+Tout cela partait à la première suppression de dossier.
+
+**ALWAYS** créer la branche AVANT de commencer : `git worktree add <chemin> -b <branche>`.
+**ALWAYS** committer un handoff dans le dépôt, pas seulement dans le worktree qui l’a produit.
+**ALWAYS** vérifier `git status` d’un worktree avant de le supprimer — et sauvegarder ce qui n’est pas ailleurs.
+**NEVER** laisser du travail durable en `detached HEAD`.
+**NEVER** considérer qu’un worktree conserve quoi que ce soit : seul un commit poussé conserve.
+
+Rappel utile : `MERGED` ne veut pas dire « sur `main` » (une PR peut viser une
+autre branche), et `git merge-base --is-ancestor` renvoie faux pour une branche
+parfaitement intégrée, puisque les PR sont fusionnées en **squash**. Vérifier le
+**contenu**, pas la parenté.
+
 ## Projet
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- Before the first codebase question in a session, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/graphify-refresh.ps1 -Mode Ensure`; it rebuilds only stale graphs and refreshes the aggregate when needed.
+- Use Graphify by default before source browsing. Select `graphify-out/graph.json` for Cirqix SaaS, `graphify-out/scopes/kicad-tools/graphify-out/graph.json` for `kicad-tools`, `graphify-out/scopes/circuit-synth/graphify-out/graph.json` for `circuit_synth`, and `graphify-out/full-graph.json` for a search spanning all three corpora. Pass non-default graphs with `--graph`.
+- Run `graphify query "<question>"` first. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run the refresh script with `-Mode Root`, `-Mode KicadTools`, `-Mode CircuitSynth`, or `-Mode All` according to the owned paths. It updates the affected graph and regenerates the aggregate.
+- `full-graph.json` is an aggregate of three disconnected components: it supports common search but does not invent cross-repository edges for `graphify path`.
 
 ---
 
@@ -95,11 +148,12 @@ Claude mène le projet. L'utilisateur valide. Pas l'inverse.
 - `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
 - `PLAN.md` — plan d'implémentation complet par phases
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
-- `docs/graphify.md` — knowledge graph du monorepo (sous-modules inclus).
+- `docs/graphify.md` — graphes séparés Cirqix, `kicad-tools`, `circuit_synth` et agrégat multi-repo.
   Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
   (`graphify query|path|explain`, skill `graphify`) au lieu de grepper.
-  Le graphe (`graphify-out/`, gitignoré) est maintenu à jour automatiquement par
-  `graphify watch` (hook SessionStart) ; `graphify update .` pour forcer.
+  Le hook SessionStart appelle `scripts/graphify-refresh.ps1 -Mode Ensure`; le
+  watcher PID-géré utilise `-Mode Watcher`. Après modification, choisir `-Mode Root`,
+  `-Mode KicadTools`, `-Mode CircuitSynth` ou `-Mode All` selon les chemins touchés.
 
 **Mettre à jour `.claude/SKILLS.md` + `CLAUDE.md` après chaque installation ou création de skill**
 
@@ -439,6 +493,26 @@ kicad-cli     → ✅ thread-safe  (subprocess isolé)
 circuit_synth → ✅ thread-safe  (objets Circuit indépendants)
 Freerouting   → ✅ API server   (1 JVM persistante port 37864, RAM 400MB fixe)
 ```
+
+⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
+Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un
+worker : les onze routes du service sont déclarées `def` et non `async def`, donc
+FastAPI les exécute dans son pool de threads. Deux requêtes reçues par le même
+worker peuvent donc appeler `pcbnew` **simultanément, dans le même processus**.
+
+Preuve dans l'historique du projet : l'incident CMA-ES documenté plus haut
+(`ValueError: signal only works in main thread of the main interpreter`) ne peut
+se produire que si le handler s'exécute hors du thread principal — donc dans un
+thread du pool. Le raccourci « 4 workers = sûr » se lisait comme une garantie
+qu'il n'apportait pas.
+
+L'isolation réelle passe par un **processus enfant par opération** :
+`tools/cmaes_runner.py` (déjà en place), puis `drc_pcbnew_runner.py` et
+`placement_pcbnew_runner.py`. Toute nouvelle route appelant `pcbnew` doit suivre
+ce schéma.
+
+**NEVER** conclure qu'un appel `pcbnew` est isolé au seul motif que le service
+tourne avec plusieurs workers uvicorn.
 
 **Variables obligatoires dans Docker :**
 ```

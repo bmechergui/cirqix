@@ -1,0 +1,97 @@
+{
+  "name": "rl-placement-dataset",
+  "version": 2,
+  "purpose": "Multi-board RL placement training (Phase 6a) \u2014 synthetic pre-CMA-ES layouts (overlap, scatter, dual-IC clustering, congestion) + optional real refs",
+  "train_board_ids": [
+    "01_two_resistor_overlap",
+    "02_rc_chain_scattered",
+    "03_dual_ic_misclustered",
+    "04_connectors_passives_far",
+    "05_dense_resistor_grid",
+    "06_asymmetric_power_load"
+  ],
+  "train_command": "python -m tools.rl.placement.train_placement --pcb-dir examples/rl-placement-dataset/boards --algo ppo --steps 200000 --max-episode-steps 48 --out models/placement_ppo_v2.zip --metrics-json tmp/rl_ppo_v2_metrics.json",
+  "eval_command": "python -m tools.rl.placement.eval_vs_cmaes --pcb-dir examples/rl-placement-dataset/boards --model models/placement_ppo_v2.zip --out-json tmp/rl_vs_cmaes_v2.json --artifact-dir tmp/rl_vs_cmaes_v2_art",
+  "boards": [
+    {
+      "id": "01_two_resistor_overlap",
+      "path": "examples/rl-placement-dataset/boards/01_two_resistor_overlap.kicad_pcb",
+      "width_mm": 50.0,
+      "height_mm": 40.0,
+      "n_footprints": 3,
+      "description": "Two resistors nearly overlapping + power connector (overlap/wirelength)",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "02_rc_chain_scattered",
+      "path": "examples/rl-placement-dataset/boards/02_rc_chain_scattered.kicad_pcb",
+      "width_mm": 55.0,
+      "height_mm": 40.0,
+      "n_footprints": 6,
+      "description": "RC chain with passives scattered (ordering / proximity)",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "03_dual_ic_misclustered",
+      "path": "examples/rl-placement-dataset/boards/03_dual_ic_misclustered.kicad_pcb",
+      "width_mm": 65.0,
+      "height_mm": 45.0,
+      "n_footprints": 6,
+      "description": "Dual SOIC with bypass caps mis-clustered on wrong IC",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "04_connectors_passives_far",
+      "path": "examples/rl-placement-dataset/boards/04_connectors_passives_far.kicad_pcb",
+      "width_mm": 60.0,
+      "height_mm": 45.0,
+      "n_footprints": 6,
+      "description": "Edge connectors with passives dumped in far corner",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "05_dense_resistor_grid",
+      "path": "examples/rl-placement-dataset/boards/05_dense_resistor_grid.kicad_pcb",
+      "width_mm": 50.0,
+      "height_mm": 40.0,
+      "n_footprints": 10,
+      "description": "3x3 resistor grid with too-tight pitch (congestion)",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "06_asymmetric_power_load",
+      "path": "examples/rl-placement-dataset/boards/06_asymmetric_power_load.kicad_pcb",
+      "width_mm": 70.0,
+      "height_mm": 50.0,
+      "n_footprints": 6,
+      "description": "Power entry opposite load IC; caps piled in center",
+      "role": "synthetic_pre_cmaes"
+    },
+    {
+      "id": "ref_led_gen",
+      "path": "examples/led-blinker-full-pipeline/output/4_gen.kicad_pcb",
+      "description": "Real LED board post-gen_pcb (grid start, pre-place/CMA-ES).",
+      "role": "reference_pre_cmaes",
+      "optional": true,
+      "available": true
+    },
+    {
+      "id": "ref_led_placed",
+      "path": "examples/led-blinker-full-pipeline/output/5_placed.kicad_pcb",
+      "description": "Real LED pipeline board (post full place). Eval only / hard case.",
+      "role": "reference_existing",
+      "optional": true,
+      "train_default": false,
+      "available": true
+    },
+    {
+      "id": "ref_stm32_final",
+      "path": "examples/stm32-validation/expected/stm32_final.kicad_pcb",
+      "description": "Real STM32 stress board. Optional dense fine-pitch case.",
+      "role": "reference_existing",
+      "optional": true,
+      "train_default": false,
+      "available": true
+    }
+  ]
+}

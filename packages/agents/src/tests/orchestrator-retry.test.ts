@@ -43,6 +43,7 @@ import {
   MAX_PLACEMENT_ATTEMPTS,
   type SSEEvent,
 } from '../orchestrator';
+import { pcbStateCache } from '../tools/shared';
 
 const ROUTING_TOOL_STREAM = [
   {
@@ -94,6 +95,7 @@ describe('orchestrator — retry placement déterministe', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     hoisted.streamQueue.length = 0;
     toolsMock.executeToolStub.mockReset();
+    pcbStateCache.clear();
   });
 
   it('re-place et re-route quand routing+reasoner restent <100%, puis s’arrête à 100%', async () => {
@@ -129,7 +131,15 @@ describe('orchestrator — retry placement déterministe', () => {
       if (name === 'call_agent_routing') {
         const pct = pcts[Math.min(routingCalls, pcts.length - 1)];
         routingCalls++;
-        return { status: 'success', routed_percent: pct, kicad_pcb_content: `PCB${routingCalls}`, note: `routing ${pct}%` };
+        const content = `PCB${routingCalls}`;
+        // Simule handleRouting : chaque tentative écrase le cache avec SON board.
+        pcbStateCache.set('p1', {
+          schema: { components: [], nets: [] },
+          boardW: 50,
+          boardH: 40,
+          kicad_pcb_content: content,
+        });
+        return { status: 'success', routed_percent: pct, kicad_pcb_content: content, note: `routing ${pct}%` };
       }
       if (name === 'call_agent_reason')
         return { status: 'success', routed_percent: 0, reasoning_steps: [], note: 'reasoner indisponible' };
@@ -153,6 +163,9 @@ describe('orchestrator — retry placement déterministe', () => {
     );
     const last = states[states.length - 1];
     expect(last?.state['routed_percent']).toBe(91);
+    // Correctif B (routage) : cache resynchronisé sur le board 91% (PCB1), pas le dernier (PCB3).
+    expect(last?.state['kicad_pcb_content']).toBe('PCB1');
+    expect(pcbStateCache.get('p1')?.kicad_pcb_content).toBe('PCB1');
   });
 
   it('ne re-place PAS quand le routage atteint 100% directement', async () => {

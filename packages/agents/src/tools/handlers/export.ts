@@ -15,6 +15,11 @@ import { runRealExport, ExportServiceUnavailableError } from '../../engines/expo
  *
  * Le BOM CSV est conservé : il dérive du schéma en cache, c'est une donnée
  * réelle et non une fabrication. Il ne s'accompagne d'aucune promotion de statut.
+ *
+ * Statut de validation (2026-08) : l'export ne CRÉE jamais DRC_CLEAN. Il ne
+ * promeut `PCB_LIVRÉ` que si le cache porte `drc_clean: true` (écrit par
+ * handleDrc après un DRC réellement propre). Sinon aucun `pcb_status` n'est
+ * émis — le bridge conserve lastStatus via `?? lastStatus`.
  */
 function exportFailure(cause: string, bomCsv: string): Record<string, unknown> {
   return {
@@ -51,18 +56,45 @@ export async function handleExport(projectId: string): Promise<Record<string, un
       log.error({ projectId, warning: result.warning }, 'export skipped — no gerbers produced');
       return exportFailure(result.warning ?? 'kicad-cli indisponible', bomCsv);
     }
-    return {
+    // Export sans livrable (files vides ou zip absent) n'est pas un export.
+    if (result.files.length === 0) {
+      return exportFailure('aucun fichier Gerber produit (files vide)', bomCsv);
+    }
+    if (typeof result.zipB64 !== 'string' || result.zipB64.length === 0) {
+      return exportFailure('zip_b64 absent — aucun livrable binaire', bomCsv);
+    }
+
+    // quote / lead_time : n'émettre que les valeurs réellement fournies
+    // (jamais de 0 inventé — quoteIsReal = quoteUsd != null côté UI).
+    const success: Record<string, unknown> = {
       status: 'success',
-      pcb_status: 'DRC_CLEAN',
       gerber_layers: result.files.length,
       files: result.files,
       zip_b64: result.zipB64,
       bom_csv: bomCsv,
-      quote_usd: result.quoteUsd,
-      lead_time_days: result.leadTimeDays,
       engine: 'kicad-cli',
-      note: `Export prêt — ${result.files.length} fichiers (${result.files.join(', ')}). Estimation: $${result.quoteUsd} (${result.leadTimeDays} jours). Aucun ordre n'a été envoyé.`,
     };
+    // Ne jamais inventer DRC_CLEAN. PCB_LIVRÉ seulement si le DRC a réellement
+    // validé ce board (drc_clean en cache). Sinon pas de pcb_status → bridge
+    // garde lastStatus (ROUTING_DONE reste ROUTING_DONE, gate JLCPCB fermé).
+    if (cached?.drc_clean === true) {
+      success['pcb_status'] = 'PCB_LIVRÉ';
+    }
+    if (typeof result.quoteUsd === 'number') {
+      success['quote_usd'] = result.quoteUsd;
+    }
+    if (typeof result.leadTimeDays === 'number') {
+      success['lead_time_days'] = result.leadTimeDays;
+    }
+    const estimate =
+      typeof result.quoteUsd === 'number' && typeof result.leadTimeDays === 'number'
+        ? ` Estimation: $${result.quoteUsd} (${result.leadTimeDays} jours).`
+        : '';
+    success['note'] =
+      `Export prêt — ${result.files.length} fichiers (${result.files.join(', ')}).` +
+      estimate +
+      ' Aucun ordre n\'a été envoyé.';
+    return success;
   } catch (err) {
     if (!(err instanceof ExportServiceUnavailableError)) {
       log.warn({ err }, 'export service threw unexpected error');

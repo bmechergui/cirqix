@@ -46,6 +46,7 @@ import {
   MAX_DRC_ATTEMPTS,
   type SSEEvent,
 } from '../orchestrator';
+import { pcbStateCache } from '../tools/shared';
 
 const DRC_TOOL_STREAM = [
   {
@@ -113,6 +114,7 @@ describe('orchestrateur — re-tirage piloté par le DRC', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     hoisted.streamQueue.length = 0;
     toolsMock.executeToolStub.mockReset();
+    pcbStateCache.clear();
   });
 
   it('re-place, re-route et re-DRC jusqu’à obtenir un board clean', async () => {
@@ -155,11 +157,20 @@ describe('orchestrateur — re-tirage piloté par le DRC', () => {
       if (name === 'call_agent_drc') {
         const n = counts[Math.min(drcCalls, counts.length - 1)] ?? 9;
         drcCalls++;
+        const content = `PCB${n}`;
+        // Simule handleDrc : chaque tentative écrase le cache avec SON board.
+        pcbStateCache.set('p1', {
+          schema: { components: [], nets: [] },
+          boardW: 50,
+          boardH: 40,
+          kicad_pcb_content: content,
+          drc_clean: false,
+        });
         return {
           status: 'success',
           drc_clean: false,
           drcViolations: Array.from({ length: n }, (_, i) => i),
-          kicad_pcb_content: `PCB${n}`,
+          kicad_pcb_content: content,
           note: `DRC ${n} violations`,
         };
       }
@@ -182,6 +193,9 @@ describe('orchestrateur — re-tirage piloté par le DRC', () => {
       (e): e is Extract<SSEEvent, { type: 'pcb_state' }> => e.type === 'pcb_state',
     );
     expect(states[states.length - 1]?.state['kicad_pcb_content']).toBe('PCB1');
+    // Correctif B : le cache (lu par handleExport) doit coller au board retenu,
+    // pas au dernier essai (PCB9, 9 violations).
+    expect(pcbStateCache.get('p1')?.kicad_pcb_content).toBe('PCB1');
   });
 
   it('ne re-place PAS quand le DRC est clean du premier coup', async () => {

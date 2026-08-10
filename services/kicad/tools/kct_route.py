@@ -1164,7 +1164,8 @@ def _route_supports(flag: str) -> bool:
 def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
                      fine_pitch: bool = False,
                      clearance_mm: str | None = None,
-                     min_completion: str | None = None) -> list[str]:
+                     min_completion: str | None = None,
+                     only_nets: list[str] | None = None) -> list[str]:
     """Construit la ligne de commande ``kct route`` (extrait pour testabilité).
 
     Base : ``negotiated`` + ``--auto-layers`` + ``--min-completion 1.0`` +
@@ -1198,6 +1199,29 @@ def _build_route_cmd(src: Path, dst: Path, timeout_s: int,
     # révisions kicad-tools antérieures, où il ferait échouer le routage (rc=2).
     if _route_supports("--stitch-power-planes"):
         cmd.append("--stitch-power-planes")
+    # Routage exclusif d'un sous-ensemble de nets (kicad-tools, issue #4322) :
+    # les nets listés sont routés, TOUS les autres deviennent des obstacles.
+    # C'est l'inverse de `--skip-nets`, et la primitive dont le lab RL a besoin
+    # pour mesurer la progression net par net.
+    #
+    # Une liste vide est traitée comme absente : `--nets ""` serait un « unknown
+    # net » côté kicad-tools, donc un échec de routage là où l'appelant voulait
+    # dire « aucune restriction ».
+    nets = [n.strip() for n in (only_nets or []) if n and n.strip()]
+    if nets:
+        cmd += ["--nets", ",".join(nets)]
+        # `--preserve-existing` (issue #3155) est INDISSOCIABLE du routage par
+        # net : sans lui, router le net B repartirait d'un board vierge et
+        # effacerait le cuivre du net A. Le routage net-par-net n'aurait aucun
+        # sens.
+        #
+        # Volontairement absent du routage complet. Mesuré le 2026-08-06 sur
+        # l'escalade incrémentale 2→4→6 couches : `--preserve-existing` y perd
+        # la moitié du cuivre reçu, pour un résultat final identique à
+        # l'escalade libre et trois fois plus lent. Ce défaut concerne la reprise
+        # d'un board déjà routé, pas l'ajout d'un net sur un board dont le reste
+        # est justement figé en obstacle.
+        cmd.append("--preserve-existing")
     cmd += [
         "--auto-mfr-tier",
         "--mfr-tier-ladder", _MFR_TIER_LADDER,
@@ -1357,6 +1381,7 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int,
                    fine_pitch: bool = False,
                    min_completion: str | None = None,
                    clearance_mm: str | None = None,
+                   only_nets: list[str] | None = None,
                    ) -> subprocess.CompletedProcess[str]:
     """Lance ``kct route`` (cf. ``_build_route_cmd``) ; ``fine_pitch`` active les
     protections escape + départ 4 couches sur les boards à boîtier dense.
@@ -1371,7 +1396,7 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int,
         pcb_text = ""  # le comptage de couches retombe sur son défaut (2)
     clearance = clearance_mm or _profile_clearance_mm(fine_pitch, pcb_text)
     cmd = _build_route_cmd(src, dst, timeout_s, fine_pitch, clearance_mm=clearance,
-                           min_completion=min_completion)
+                           min_completion=min_completion, only_nets=only_nets)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=timeout_s + 60, check=False, env=_kct_env(),
@@ -1460,10 +1485,40 @@ def route_kct(
     return routed, pct, analysis
 
 
+def route_kct_net(
+    pcb_bytes: bytes,
+    net_name: str,
+    timeout_s: int = _ROUTE_TIMEOUT_S,
+    vcc_as_traces: bool = True,
+) -> tuple[bytes, int, str]:
+    """Route UN SEUL net, tous les autres traités comme obstacles.
+
+    Repose sur ``kct route --nets`` (kicad-tools, issue #4322) : routage
+    exclusif des nets listés, l'inverse de ``--skip-nets``.
+
+    Primitive du lab RL (agent de routage par net) : elle permet de mesurer la
+    progression net par net, là où ``route_kct`` rend un board global dont on ne
+    sait pas quel net a progressé.
+
+    Différence volontaire avec ``route_kct`` : **pas de repli en plans power**.
+    Ce repli re-route le board entier quand seuls des rails power restent
+    partiels — pertinent pour livrer le meilleur board, absurde ici : l'appelant
+    demande CE net, et un second passage fausserait la mesure de progression
+    qu'il attend.
+
+    Returns (routed_pcb_bytes, routed_percent, failure_analysis).
+    """
+    if not net_name or not net_name.strip():
+        raise ValueError("route_kct_net: net_name vide — aucun net à router")
+    return _route_once(pcb_bytes, timeout_s, vcc_as_traces,
+                       only_nets=[net_name.strip()])
+
+
 def _route_once(
     pcb_bytes: bytes,
     timeout_s: int,
     vcc_as_traces: bool,
+    only_nets: list[str] | None = None,
 ) -> tuple[bytes, int, str]:
     """Une passe de routage kct complète (rename VCC, route, post-process).
 
@@ -1500,7 +1555,7 @@ def _route_once(
                         nc_count)
         src.write_text(src_text, encoding="utf-8")
 
-        result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch)
+        result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch, only_nets=only_nets)
 
         if not dst.exists() and _grid_too_coarse_for_clearance(result.stderr):
             # Le routeur REFUSE de router : la grille que le budget mémoire
@@ -1524,7 +1579,8 @@ def _route_once(
                 _profile_clearance_mm(fine_pitch, src_text),
                 _CLEARANCE_FALLBACK_MM)
             result = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch,
-                                    clearance_mm=_CLEARANCE_FALLBACK_MM)
+                                    clearance_mm=_CLEARANCE_FALLBACK_MM,
+                                    only_nets=only_nets)
 
         if not dst.exists() and _has_partial_result(result.stdout):
             # `kct route` n'écrit AUCUN fichier quand aucun tier n'atteint
@@ -1545,7 +1601,8 @@ def _route_once(
                 "récupération du meilleur board partiel pour le reasoner",
                 _MIN_COMPLETION)
             secours = _run_kct_route(src, dst, timeout_s, fine_pitch=fine_pitch,
-                                     min_completion=_MIN_COMPLETION_RESCUE)
+                                     min_completion=_MIN_COMPLETION_RESCUE,
+                                     only_nets=only_nets)
             if dst.exists():
                 pct_reel = parse_routed_pct(result.stdout)
                 logger.warning(
