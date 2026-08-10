@@ -19,6 +19,118 @@ export function hasEnoughPipelineCredits(balance: number): boolean {
 }
 
 /**
+ * Durée de vie d'une retenue, en secondes.
+ *
+ * `maxDuration = 300` côté route : un TTL plus court libérerait le crédit
+ * pendant que le pipeline tourne encore, ce qui rouvrirait exactement la
+ * fenêtre que la retenue ferme. La marge absorbe l'écart entre la fin du
+ * pipeline et la libération effective.
+ */
+export const PIPELINE_RESERVATION_TTL_S = 360;
+
+/** Le solde ne couvre pas un pipeline de plus — l'appelant doit répondre 402. */
+export class InsufficientCreditsError extends Error {
+  constructor() {
+    super('Insufficient credits');
+    this.name = 'InsufficientCreditsError';
+  }
+}
+
+/**
+ * Un pipeline tourne déjà sur ce projet — l'appelant doit répondre 409.
+ *
+ * Ce n'est ni un manque de crédits ni une panne : deux pipelines sur un même
+ * projet se disputeraient `iteration_count` et le second échouerait de toute
+ * façon. Le cas courant est un double-clic ou un réessai après timeout.
+ */
+export class PipelineAlreadyRunningError extends Error {
+  constructor() {
+    super('A pipeline is already running for this project');
+    this.name = 'PipelineAlreadyRunningError';
+  }
+}
+
+/** Toute autre défaillance de la réservation — l'appelant doit répondre 500. */
+export class CreditReservationError extends Error {
+  constructor(cause: unknown) {
+    super('Credit reservation failed', { cause });
+    this.name = 'CreditReservationError';
+  }
+}
+
+function isPostgresError(error: unknown): error is { code?: string; message?: string } {
+  return typeof error === 'object' && error !== null;
+}
+
+/**
+ * Engage `PIPELINE_COST` avant de lancer le pipeline et renvoie l'identifiant
+ * de la retenue.
+ *
+ * La garantie est en base : la RPC verrouille la ligne `credits` du porteur,
+ * de sorte que deux démarrages concurrents ne peuvent plus lire le même solde
+ * et se croire tous deux finançables.
+ */
+export async function reservePipelineCredits(
+  supabase: SupabaseClient,
+  userId: string,
+  projectId: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('reserve_pipeline_credits', {
+    p_user_id: userId,
+    p_project_id: projectId,
+    p_amount: PIPELINE_COST,
+    p_ttl_seconds: PIPELINE_RESERVATION_TTL_S,
+  });
+
+  if (error) {
+    // `insufficient_credits` et `invalid_project` portent le MÊME SQLSTATE
+    // (22023). Se fier au code seul répondrait « crédits insuffisants » à une
+    // tentative d'utiliser le projet d'autrui : un refus de sécurité déguisé en
+    // problème de facturation, invisible en supervision.
+    const message = isPostgresError(error) ? (error.message ?? '') : '';
+    if (/insufficient_credits/.test(message)) {
+      log.info({ userId, projectId }, 'pipeline refusé : solde insuffisant');
+      throw new InsufficientCreditsError();
+    }
+    if (/pipeline_already_running/.test(message)) {
+      log.info({ userId, projectId }, 'pipeline refusé : un run est déjà en cours');
+      throw new PipelineAlreadyRunningError();
+    }
+    log.error({ err: error, userId, projectId }, 'reserve_pipeline_credits RPC failed');
+    throw new CreditReservationError(error);
+  }
+
+  if (typeof data !== 'string' || data.length === 0) {
+    // Sans identifiant il n'y a rien à libérer : la retenue resterait posée
+    // jusqu'à expiration alors que le pipeline n'a jamais démarré.
+    throw new CreditReservationError('reserve_pipeline_credits returned no reservation id');
+  }
+
+  return data;
+}
+
+/**
+ * Lève la retenue. Appelée depuis un `finally` : elle ne jette jamais, sous
+ * peine de masquer l'erreur réelle du pipeline. Le TTL en base reste le filet
+ * — une retenue non libérée cesse de compter d'elle-même.
+ */
+export async function releasePipelineReservation(
+  supabase: SupabaseClient,
+  reservationId: string,
+): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('release_pipeline_reservation', {
+      p_reservation_id: reservationId,
+    });
+    if (error) {
+      log.error({ err: error, reservationId }, 'release_pipeline_reservation RPC failed');
+    }
+  } catch (err) {
+    log.error({ err, reservationId }, 'release_pipeline_reservation threw');
+  }
+}
+
+/**
  * Le repli local ne doit s'armer que pour UNE cause : le compte Anthropic n'a
  * plus de quota. Il enchaîne un pipeline tronqué (5 étapes sur 8) qu'il persiste
  * ensuite avec `agent_mode: 'orchestrator'` — la provenance qu'exige le gate

@@ -6,7 +6,14 @@ import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
 import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
-import { hasEnoughPipelineCredits, shouldFallbackToLocalPipeline } from './lib/credits';
+import {
+  hasEnoughPipelineCredits,
+  shouldFallbackToLocalPipeline,
+  reservePipelineCredits,
+  releasePipelineReservation,
+  InsufficientCreditsError,
+  PipelineAlreadyRunningError,
+} from './lib/credits';
 import { checkRateLimit } from '@/shared/lib/ratelimit';
 import { AGENT_RATE_LIMIT, AGENT_RATE_WINDOW_S, agentRateLimitKey } from './lib/rate-limit';
 
@@ -85,6 +92,37 @@ export async function POST(req: NextRequest) {
   const useOrchestrator = requestedMode === 'orchestrator' && isOrchestratorAvailable();
   const pipelineClient = createAdminClient();
 
+  // Le contrôle de solde ci-dessus ne réserve rien : entre lui et le débit,
+  // qui n'arrive qu'à la fin des 300 s, N requêtes simultanées lisaient le même
+  // solde et passaient toutes. On engage donc le crédit AVANT de démarrer —
+  // poser la retenue après reviendrait à ne rien garantir.
+  //
+  // Uniquement en mode orchestrateur : le simulateur ne facture pas
+  // (migration 012), et retenir des crédits pour une démonstration bloquerait
+  // un solde que personne ne débitera jamais.
+  let reservationId: string | null = null;
+  if (useOrchestrator) {
+    try {
+      reservationId = await reservePipelineCredits(pipelineClient, user.id, projectId);
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return NextResponse.json({ success: false, error: 'Insufficient credits' }, { status: 402 });
+      }
+      if (err instanceof PipelineAlreadyRunningError) {
+        return NextResponse.json(
+          { success: false, error: 'A pipeline is already running for this project' },
+          { status: 409 },
+        );
+      }
+      // Une panne de réservation n'est pas un manque de crédits : répondre 402
+      // enverrait l'utilisateur acheter ce qu'il possède déjà.
+      return NextResponse.json(
+        { success: false, error: 'Credit reservation unavailable' },
+        { status: 500 },
+      );
+    }
+  }
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -132,6 +170,14 @@ export async function POST(req: NextRequest) {
         const message = err instanceof Error ? err.message : 'Agent error';
         controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
       } finally {
+        // Quoi qu'il soit arrivé au pipeline. `finalize_pipeline_success` a
+        // déjà levé la retenue dans la transaction du débit ; cet appel est
+        // alors sans effet (l'UPDATE est conditionné à `released_at IS NULL`).
+        // Il couvre les runs qui n'ont jamais finalisé — erreur, abandon — et
+        // évite d'attendre le TTL pour relancer.
+        if (reservationId) {
+          await releasePipelineReservation(pipelineClient, reservationId);
+        }
         controller.close();
       }
     },
