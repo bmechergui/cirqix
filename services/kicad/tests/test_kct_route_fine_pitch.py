@@ -76,7 +76,7 @@ def test_build_route_cmd_no_escape_flags_when_not_fine_pitch():
 def test_route_once_enables_escape_on_dense_board(monkeypatch):
     captured = {}
 
-    def fake_run(src, dst, timeout_s, fine_pitch=False):
+    def fake_run(src, dst, timeout_s, fine_pitch=False, **_kwargs):
         captured["fine_pitch"] = fine_pitch
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         from types import SimpleNamespace
@@ -93,7 +93,7 @@ def test_route_once_enables_escape_on_dense_board(monkeypatch):
 def test_route_once_keeps_escape_off_on_simple_board(monkeypatch):
     captured = {}
 
-    def fake_run(src, dst, timeout_s, fine_pitch=False):
+    def fake_run(src, dst, timeout_s, fine_pitch=False, **_kwargs):
         captured["fine_pitch"] = fine_pitch
         Path(dst).write_text(Path(src).read_text(encoding="utf-8"), encoding="utf-8")
         from types import SimpleNamespace

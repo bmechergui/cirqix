@@ -77,7 +77,7 @@ def test_board_partiel_recupere_avec_le_pourcentage_REEL(monkeypatch, tmp_path):
     """Le cas mesuré : 44 % récupérés au lieu d'une RuntimeError."""
     appels: list[str | None] = []
 
-    def faux_run(src, dst, timeout_s, fine_pitch=False, min_completion=None):
+    def faux_run(src, dst, timeout_s, fine_pitch=False, min_completion=None, **_kwargs):
         appels.append(min_completion)
         if min_completion is not None:  # passe de secours : écrit enfin
             Path(dst).write_bytes(_BOARD)
@@ -95,7 +95,7 @@ def test_board_partiel_recupere_avec_le_pourcentage_REEL(monkeypatch, tmp_path):
 
 def test_sans_resultat_partiel_on_leve_toujours(monkeypatch):
     """Un échec muet reste un échec : ne jamais rendre un board inconnu."""
-    def faux_run(src, dst, timeout_s, fine_pitch=False, min_completion=None):
+    def faux_run(src, dst, timeout_s, fine_pitch=False, min_completion=None, **_kwargs):
         return SimpleNamespace(returncode=1, stdout="boom", stderr="crash")
 
     monkeypatch.setattr(kct_route, "_run_kct_route", faux_run)
