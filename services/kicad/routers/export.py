@@ -1,7 +1,7 @@
 """FastAPI router for PCB export — Gerbers + drill + pick-and-place.
 
 POST /export/all prend un .kicad_pcb base64 et retourne un ZIP de fichiers
-de fabrication + devis JLCPCB estimé.
+de fabrication.
 
 Pipeline :
   1. kicad-tools kct export --mfr jlcpcb
@@ -34,6 +34,15 @@ router = APIRouter(tags=["export"])
 
 _KICAD_CLI_TIMEOUT_S: int = 60
 
+# Extensions / names that count as mandatory manufacturing deliverables.
+# Gerbers: RS-274X (.gbr) + Protel-style JLCPCB names (GTL/GBL/GKO…).
+# Drill: Excellon (.drl) and common alternates.
+_GERBER_SUFFIXES: frozenset[str] = frozenset({
+    ".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo",
+    ".gko", ".gm1", ".gm3", ".gtp", ".gbp",
+})
+_DRILL_SUFFIXES: frozenset[str] = frozenset({".drl", ".xln", ".exc"})
+
 
 # ----------------------------------------------------------------------------
 # Pydantic models
@@ -52,8 +61,9 @@ class ExportAllRequest(BaseModel):
 class ExportAllResponse(BaseModel):
     files: list[str] = Field(default_factory=list)
     zip_b64: Optional[str] = None
-    quote_usd: float = 0.0
-    lead_time_days: int = 0
+    # A file count has no relationship to PCB pricing and is not a quote.
+    quote_usd: Optional[float] = None
+    lead_time_days: Optional[int] = None
     skipped: bool = False
     warning: Optional[str] = None
 
@@ -69,10 +79,55 @@ def _find_kicad_cli() -> Optional[str]:
     return shutil.which("kicad-cli")
 
 
+def _is_gerber_file(name: str) -> bool:
+    """True if *name* looks like a copper/mask/silkscreen/edge Gerber layer."""
+    lower = name.lower()
+    suffix = Path(lower).suffix
+    if suffix in _GERBER_SUFFIXES:
+        return True
+    # kicad-cli may emit e.g. board-F_Cu.gbr already covered; also bare protel stems
+    stem = Path(lower).stem
+    return stem.endswith((
+        "-f_cu", "-b_cu", "-f_mask", "-b_mask", "-f_silks", "-b_silks",
+        "-edge_cuts", "-f_paste", "-b_paste",
+    ))
+
+
+def _is_drill_file(name: str) -> bool:
+    """True if *name* looks like an Excellon / drill manufacturing file."""
+    lower = name.lower()
+    if Path(lower).suffix in _DRILL_SUFFIXES:
+        return True
+    # Some exporters use e.g. board-PTH.drl (suffix) or board.drl already covered.
+    return lower.endswith("-npth.txt") or lower.endswith("-pth.txt")
+
+
+def _require_manufacturing_deliverables(files: list[str]) -> None:
+    """Fail closed: a successful export must include Gerbers AND drill files.
+
+    An empty or partial ZIP must never be presented as a successful fabrication
+    package — it gates a real paid JLCPCB order.
+    """
+    has_gerber = any(_is_gerber_file(f) for f in files)
+    has_drill = any(_is_drill_file(f) for f in files)
+    if has_gerber and has_drill:
+        return
+    missing: list[str] = []
+    if not has_gerber:
+        missing.append("gerber layers")
+    if not has_drill:
+        missing.append("drill files")
+    raise RuntimeError(
+        "export incomplete — missing required manufacturing files: "
+        + ", ".join(missing)
+        + f" (got: {files or '[]'})"
+    )
+
+
 def _export_with_kicad_tools(pcb_path: Path, out_dir: Path) -> list[str]:
     """kicad-tools kct export --mfr jlcpcb.
     JLCPCB layer names, BOM LCSC, CPL rotation corrections.
-    Returns list of generated files. Raises on failure.
+    Returns list of generated files. Raises on failure or incomplete package.
     """
     import sys as _sys
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -92,37 +147,70 @@ def _export_with_kicad_tools(pcb_path: Path, out_dir: Path) -> list[str]:
         raise RuntimeError(
             f"kicad-tools export failed (rc={result.returncode}): {result.stderr[:300]}"
         )
-    return sorted(p.name for p in out_dir.rglob("*") if p.is_file())
+    files = sorted(p.name for p in out_dir.rglob("*") if p.is_file())
+    _require_manufacturing_deliverables(files)
+    return files
 
 
 def _kicad_export_all(cli_path: str, pcb_path: Path, out_dir: Path) -> list[str]:
-    """Run kicad-cli to produce Gerbers + drill + position files. Returns file list."""
+    """Run kicad-cli to produce Gerbers + drill + position files. Returns file list.
+
+    Gerbers and drill are mandatory: non-zero exit or missing output fails hard.
+    Pick-and-place (pos) is best-effort — bare-board orders do not require it.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    commands = [
-        # Gerbers (all enabled layers)
-        [cli_path, "pcb", "export", "gerbers", str(pcb_path), "--output", str(out_dir)],
-        # Drill files (Excellon)
-        [cli_path, "pcb", "export", "drill", str(pcb_path), "--output", str(out_dir)],
-        # Pick & place (CPL) for JLCPCB assembly
-        [
-            cli_path, "pcb", "export", "pos",
-            str(pcb_path),
-            "--output", str(out_dir / "pos.csv"),
-            "--format", "csv",
-            "--units", "mm",
-        ],
+    # ── Required: Gerbers ────────────────────────────────────────────────────
+    gerber_cmd = [
+        cli_path, "pcb", "export", "gerbers",
+        str(pcb_path), "--output", str(out_dir),
     ]
-    for cmd in commands:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+    gerber_result = subprocess.run(
+        gerber_cmd, capture_output=True, text=True,
+        timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+    )
+    if gerber_result.returncode != 0:
+        raise RuntimeError(
+            f"kicad-cli gerbers failed (rc={gerber_result.returncode}): "
+            f"{(gerber_result.stderr or '')[:300]}"
         )
-        if result.returncode != 0:
-            logger.warning("kicad-cli command failed: %s (rc=%d)", cmd[2:5], result.returncode)
-            # Continue — some sub-commands may fail (e.g. no assembly layer); the zip
-            # will still contain whatever the other commands produced.
 
-    return sorted(p.name for p in out_dir.iterdir() if p.is_file())
+    # ── Required: Drill (Excellon) ───────────────────────────────────────────
+    drill_cmd = [
+        cli_path, "pcb", "export", "drill",
+        str(pcb_path), "--output", str(out_dir),
+    ]
+    drill_result = subprocess.run(
+        drill_cmd, capture_output=True, text=True,
+        timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+    )
+    if drill_result.returncode != 0:
+        raise RuntimeError(
+            f"kicad-cli drill failed (rc={drill_result.returncode}): "
+            f"{(drill_result.stderr or '')[:300]}"
+        )
+
+    # ── Optional: Pick & place (CPL) — warn only ─────────────────────────────
+    pos_cmd = [
+        cli_path, "pcb", "export", "pos",
+        str(pcb_path),
+        "--output", str(out_dir / "pos.csv"),
+        "--format", "csv",
+        "--units", "mm",
+    ]
+    pos_result = subprocess.run(
+        pos_cmd, capture_output=True, text=True,
+        timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+    )
+    if pos_result.returncode != 0:
+        logger.warning(
+            "kicad-cli pos (CPL) failed (rc=%d) — continuing without pick-and-place",
+            pos_result.returncode,
+        )
+
+    files = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+    _require_manufacturing_deliverables(files)
+    return files
 
 
 def _make_zip(out_dir: Path, files: list[str]) -> bytes:
@@ -136,20 +224,15 @@ def _make_zip(out_dir: Path, files: list[str]) -> bytes:
     return buf.getvalue()
 
 
-def _estimate_quote(file_count: int) -> tuple[float, int]:
-    """Return a coarse (price_usd, lead_time_days) estimate. JLCPCB-style baseline."""
-    base_price = 5.0
-    per_file = 0.5
-    price = base_price + per_file * file_count
-    lead_time = 7
-    return round(price, 2), lead_time
-
-
 # ----------------------------------------------------------------------------
 # Endpoint
 # ----------------------------------------------------------------------------
 
-@router.post("/export/all", response_model=ExportAllResponse)
+@router.post(
+    "/export/all",
+    response_model=ExportAllResponse,
+    response_model_exclude_none=True,
+)
 def export_all(req: ExportAllRequest) -> ExportAllResponse:
     """Generate manufacturing files (Gerbers + drill + CPL) and return as zip.
 
@@ -167,7 +250,7 @@ def export_all(req: ExportAllRequest) -> ExportAllResponse:
     if cli_path is None:
         logger.info("kicad-cli absent — export ignoré")
         return ExportAllResponse(
-            files=[], zip_b64=None, quote_usd=0.0, lead_time_days=0,
+            files=[], zip_b64=None,
             skipped=True, warning="kicad-cli not available",
         )
 
@@ -194,13 +277,14 @@ def export_all(req: ExportAllRequest) -> ExportAllResponse:
                 files = _kicad_export_all(cli_path, pcb_path, out_dir)
                 logger.info("kicad-cli export: %d fichiers", len(files))
 
+            # Fail closed: never return skipped=False without Gerbers + drill.
+            # Both export paths already enforce this; re-check before success.
+            _require_manufacturing_deliverables(files)
+
             zip_bytes = _make_zip(out_dir, files)
-            quote_usd, lead_time_days = _estimate_quote(len(files))
             return ExportAllResponse(
                 files=files,
                 zip_b64=base64.b64encode(zip_bytes).decode("ascii"),
-                quote_usd=quote_usd,
-                lead_time_days=lead_time_days,
                 skipped=False,
                 warning=None if used_kicad_tools else "kicad-tools unavailable — kicad-cli export",
             )

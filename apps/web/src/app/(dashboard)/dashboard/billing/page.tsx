@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { Zap, Sparkles, Crown, Check } from 'lucide-react';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import { signCheckoutUserId } from '@/shared/lib/checkout-signature';
 import { TransactionHistory } from '@/features/settings/ui/TransactionHistory';
 
 // ---------------------------------------------------------------------------
@@ -61,9 +62,17 @@ const PLANS: PlanRow[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * L'URL de paiement porte `user_id` en clair, et l'acheteur peut la modifier
+ * avant de payer. On y joint donc une signature HMAC que le webhook revérifie :
+ * sans elle, substituer l'identifiant d'un autre compte suffit à y faire
+ * atterrir le crédit. Voir `shared/lib/checkout-signature.ts`.
+ */
 function buildCheckoutUrl(baseUrl: string | undefined, userId: string): string | null {
   if (!baseUrl) return null;
-  return `${baseUrl}?checkout[custom][user_id]=${encodeURIComponent(userId)}`;
+  const signature = signCheckoutUserId(userId);
+  return `${baseUrl}?checkout[custom][user_id]=${encodeURIComponent(userId)}`
+    + `&checkout[custom][user_sig]=${encodeURIComponent(signature)}`;
 }
 
 // ---------------------------------------------------------------------------

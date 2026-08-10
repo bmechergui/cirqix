@@ -1,4 +1,4 @@
--- Credits/RLS security regression tests through migration 011.
+-- Credits/RLS security regression tests through migration 012.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -24,6 +24,22 @@ VALUES (
   'Alice security test project'
 )
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO public.footprints (
+  id, user_id, is_community, name, part_number, source, validated
+)
+VALUES (
+  '44444444-4444-4444-4444-444444444444',
+  '11111111-1111-1111-1111-111111111111',
+  false,
+  'Alice private security test footprint',
+  'ALICE-PRIVATE-012',
+  'ai_generated',
+  false
+)
+ON CONFLICT (id) DO UPDATE SET
+  is_community = false,
+  validated = false;
 
 -- A. An authenticated role cannot call add_credits.
 DO $$
@@ -501,6 +517,94 @@ BEGIN
     RAISE EXCEPTION 'FAIL L: authenticated_blocked=%, service_id=%', blocked, footprint_id;
   END IF;
   RAISE NOTICE 'PASS L - community footprint upsert is service-only';
+END $$;
+
+-- M. Authenticated users cannot insert directly into the community cache.
+DO $$
+DECLARE
+  blocked boolean := false;
+BEGIN
+  PERFORM set_config(
+    'request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}',
+    true
+  );
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO public.footprints (
+      user_id, is_community, name, part_number, source, validated
+    ) VALUES (
+      '11111111-1111-1111-1111-111111111111',
+      true,
+      'forged community footprint',
+      'FORGED-DIRECT-012',
+      'ai_generated',
+      false
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    blocked := true;
+  END;
+  RESET ROLE;
+
+  IF NOT blocked THEN
+    RAISE EXCEPTION 'FAIL M: authenticated role inserted a community footprint';
+  END IF;
+  RAISE NOTICE 'PASS M - direct community footprint insert blocked';
+END $$;
+
+-- N. Authenticated owners cannot promote their private footprint.
+DO $$
+DECLARE
+  blocked boolean := false;
+BEGIN
+  PERFORM set_config(
+    'request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}',
+    true
+  );
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE public.footprints
+    SET is_community = true
+    WHERE id = '44444444-4444-4444-4444-444444444444';
+  EXCEPTION WHEN insufficient_privilege THEN
+    blocked := true;
+  END;
+  RESET ROLE;
+
+  IF NOT blocked THEN
+    RAISE EXCEPTION 'FAIL N: authenticated owner promoted a private footprint';
+  END IF;
+  RAISE NOTICE 'PASS N - private footprint promotion blocked';
+END $$;
+
+-- O. Authenticated users cannot read waitlist emails.
+DO $$
+DECLARE
+  select_blocked boolean := false;
+  leaked integer;
+BEGIN
+  INSERT INTO public.waitlist (email)
+  VALUES ('authenticated-reader-o@test.local')
+  ON CONFLICT (email) DO NOTHING;
+
+  PERFORM set_config(
+    'request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}',
+    true
+  );
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    SELECT count(*) INTO leaked FROM public.waitlist;
+  EXCEPTION WHEN insufficient_privilege THEN
+    select_blocked := true;
+  END;
+  RESET ROLE;
+
+  IF NOT select_blocked AND leaked <> 0 THEN
+    RAISE EXCEPTION 'FAIL O: authenticated waitlist select leaked % rows', leaked;
+  END IF;
+  RAISE NOTICE 'PASS O - authenticated waitlist select isolated';
 END $$;
 
 ROLLBACK;

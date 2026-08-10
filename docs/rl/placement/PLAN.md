@@ -22,38 +22,44 @@ juge final en bout de pipeline produit.
 
 ## Étapes
 
-### 1. `reward.py` — adaptateur FOM
+### 1. `reward.py` — adaptateur FOM ✅ (2026-07-28)
 
 Envelopper `compute_fom()` de `kicad-tools` tel quel (compacité, wirelength,
 groupes, collisions, hors-carte). Aucune réinvention du score.
 
 - Validation : sur 3 fixtures, `reward.py` reproduit exactement le FOM calculé
-  en appel direct.
+  en appel direct. → `tests/test_rl_placement_reward.py` (4 verts).
 
-### 2. `observation.py` — tenseur d'état
+### 2. `observation.py` — tenseur d'état ✅ (2026-07-28)
 
-PCB + contraintes LLM → tenseur : positions, tailles/courtyards, nets,
-groupes fonctionnels, contour de carte, composants ancrés.
+PCB + contraintes → tenseur fixe `OBS_DIM` : positions normalisées, pads,
+present/anchored, contour. Ancres `J*`/`P*` + extras optionnels.
 
-- Validation : shape/dtype fixes et déterministes pour une fixture donnée ;
-  deux appels sur le même PCB donnent le même tenseur.
+- Validation : shape/dtype fixes et déterministes → `test_rl_placement_env.py`.
 
-### 3. `env.py` — Gymnasium PlacementEnv
+### 3. `env.py` — Gymnasium PlacementEnv ✅ (2026-07-28)
 
-`reset()` / `step()`. Une action déplace un seul composant non ancré de
-`dx_mm, dy_mm`. Pénalité forte sur toute collision ERROR.
+`reset()` / `step()`. Action MultiDiscrete (slot, dx, dy). Reward = Δ FOM.
+kicad-tools `PCB` only. Ancres immobiles.
 
-- Validation : tests d'invariants — les ancres (`J*`, `P*`) ne bougent jamais,
-  les déplacements restent dans le contour de carte.
+- Validation : ancres fixes + déplacement mobile → `test_rl_placement_env.py`.
 
-### 4. Smoke run 100 k pas (go/no-go de coût)
+### 4. Smoke run 100 k pas (go/no-go de coût) — script prêt, run long à faire
 
-Entraîner PPO/MLP sur 100 k pas. Mesurer le débit réel (pas/s) et mettre à
-jour la section « Coûts estimés » de [../README.md](../README.md) avec les
-valeurs mesurées.
+Script : `tools/rl/placement/train_placement.py`
+(`--algo random` sans SB3 ; `--algo ppo` si `stable-baselines3` installé).
+
+```bash
+cd services/kicad
+python -m tools.rl.placement.train_placement \
+  --pcb examples/led-blinker-full-pipeline/output/5_placed.kicad_pcb \
+  --steps 100000 --algo random --board-width 60 --board-height 45
+```
 
 - Validation : débit mesuré compatible avec le budget 2–8 h GPU annoncé ;
-  sinon, réviser le chiffrage avant toute suite.
+  sinon, réviser le chiffrage avant toute suite. **Smoke 100k pas encore
+  non exécuté en CI** (coût) — lancer manuellement et mettre à jour
+  [../README.md](../README.md) « Coûts estimés ».
 
 ### 5. Entraînement 1–5 M pas
 
@@ -69,7 +75,8 @@ d'un éventuel switch DreamerV3 (voir « Chemin de migration » dans
 ### 6. `candidate.py` + `policy.py` — inférence
 
 `policy.py` charge le modèle en lecture seule ; `candidate.py` applique le
-candidat via `pcbnew` avec snapshot/revert.
+candidat via l'API **kicad-tools ``PCB``** (positions + save) avec
+snapshot/revert — **pas de pcbnew** dans la boucle RL (aligné Phase 6a v1).
 
 - Validation : inférence < 1 s par candidat ; le revert restaure le snapshot
   à l'identique.

@@ -6,6 +6,7 @@ type ToolUseBlock = Anthropic.ToolUseBlock;
 type TextBlock = Anthropic.TextBlock;
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './prompts';
 import { ACTIVE_PCB_TOOLS, executeToolStub } from './tools';
+import { syncPcbCacheFromResult } from './tools/shared';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
@@ -316,6 +317,9 @@ export async function* runOrchestrator(
           }
           result = keepBestRouting(result, retry);
         }
+        // keepBestRouting peut retenir un board antérieur alors que le cache
+        // porte le dernier essai (pire). handleExport lit le cache → resync.
+        syncPcbCacheFromResult(options.projectId, result);
       }
 
       // Retry placement piloté par le DRC — même philosophie que le retry
@@ -335,6 +339,8 @@ export async function* runOrchestrator(
           const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
           result = keepBestDrc(result, retry);
         }
+        // Même resync que pour le routage : le board exporté = board retenu.
+        syncPcbCacheFromResult(options.projectId, result);
       }
 
       yield {
@@ -375,10 +381,13 @@ export async function* runOrchestrator(
       // Strip large KiCad file blobs before adding to Sonnet context.
       // The actual content is cached server-side (_pcbStateCache) and sent
       // to the frontend via pcb_state above — Sonnet only needs the metadata.
+      // zip_b64 = nom émis par handleExport (gerber_zip_b64 = alias historique).
+      // Sans les deux, le base64 complet part dans le contexte Sonnet.
       const LARGE_FIELDS = [
         'kicad_sch_content',
         'kicad_pcb_content',
         'gerber_zip_b64',
+        'zip_b64',
         'bom_csv',
         'simulation_output_raw',
       ] as const;
