@@ -90,7 +90,14 @@ le bind-mount de développement.
 
 - **Fork privé :** https://github.com/bmechergui/kicad-tools (`cirqix`)
 - **Upstream :** https://github.com/rjwalters/kicad-tools
-- **SHA épinglé :** `c2482b8e582fcd8f76c9be414e4dfacd3d50847b`
+- **SHA épinglé :** `5c4c926cb56b57cd459d28a3f7956770365ff2a6`
+  (rebase du 2026-08-10 sur `upstream/main` @ `627f3e44`, 221 commits rattrapés ;
+  tags de protection `cirqix-pin-5c4c926` et `cirqix-pin-f2afb96`. Le SHA
+  précédent, `f2afb967`, n'avait AUCUN tag au moment du rebase — le force-push
+  l'aurait rendu orphelin et aurait cassé la CI de tout checkout de `main`
+  antérieur au bump, exactement l'incident décrit plus haut. Tag posé avant le
+  force-push ; à faire systématiquement, la règle ci-dessus n'est pas
+  décorative.)
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; le package Python reste `kicad_tools`).
 - **Import Python :** ajouter `kicad-tools/src` au sys.path → `import kicad_tools`.
 - **Install Docker :** déplacement vers `/opt/kicad-tools`, puis
@@ -184,22 +191,39 @@ le bind-mount de développement.
     verrouillage par position), `auto_place` restaure le board pré-CMA-ES — l'invariant
     « 0 ERROR » prime toujours sur le gain d'adjacence. Voir `CLAUDE.md` §placement et
     `docs/notefinal.md` (2026-06-18).
-    5 correctifs dans ce fichier (à ré-appliquer après chaque update upstream) :
-    1. **Writer 2-pass** `_write_placements_to_pcb` — KiCad 8/9 : `(at ...)` apparaît
-       AVANT `fp_text reference` dans le S-expr → writer single-pass ne met jamais à
-       jour les positions. Fix : Pass 1 collecte (at_line_idx, ref) par footprint bloc ;
-       Pass 2 patch ces lignes. Regex `_FP_RE_OLD` : supprimer `\s` final (absent
-       après `.strip()` sur KiCad 8/9 — sinon aucun footprint reconnu).
-    2. **Seed "current"** `_generate_seed` — ajoute `seed_method='current'` : encode
-       positions Phase 1 comme vecteur initial CMA-ES. `fp.position` est déjà
-       board-relative (PCB API soustrait board_origin) → NE PAS soustraire à nouveau.
-    3. **Clamping per-dimension** dans `_generate_seed` — CMAwM exige mean[i] ∈
-       [lower[i], upper[i]]. Clamp via `placement_bounds` passé depuis
-       `run_optimize_placement` (grands footprints J1/U2 ont des bornes > marge fixe).
-    4. **Signature étendue** `_generate_seed` — paramètres `pcb_path`, `board_origin`,
-       `placement_bounds` ajoutés (kwonly).
-    5. **Appel étendu** dans `run_optimize_placement` — passe `pcb_path`, `board_origin`,
-       `placement_bounds` à `_generate_seed` pour seed_method="current".
+    **Réduit à 1 correctif au rebase du 2026-08-10** — 4 des 5 sont passés en amont :
+    1. **Writer 2-pass** `_write_placements_to_pcb` — TOUJOURS À NOUS, et toujours
+       nécessaire. KiCad 8/9 : `(at ...)` apparaît AVANT `(property "Reference" ...)`
+       dans le S-expr → un writer single-pass ne connaît pas encore la référence
+       quand il rencontre le `(at ...)` du footprint : il ne le patche jamais, et
+       écrase à la place le premier `(at ...)` rencontré APRÈS la référence — celui
+       du texte de propriété. Fix : Pass 1 collecte (at_line_idx, ref) par bloc
+       footprint ; Pass 2 patche ces lignes. Inclut le repli de l'angle des pads
+       (backport #3902 — les angles de pad sont ABSOLUS dans le fichier).
+       ⚠️ **Upstream a corrigé la RECONNAISSANCE (ajout de la regex KiCad 9
+       `(property "Reference" ...)`) mais PAS l'ORDRE : son writer reste
+       single-pass.** Vérifié empiriquement le 2026-08-10 sur un bloc footprint
+       dans l'ordre réel des fichiers de `examples/*/expected/` :
+       - writer upstream → `(at)` du footprint inchangé, `(at)` du texte écrasé
+         par la position absolue (le symptôme « pads collapsés » de la PR #34) ;
+       - writer Cirqix → footprint déplacé, offset du texte préservé.
+       Ne jamais abandonner ce patch sur la seule foi du diff : le refaire.
+    2. ~~Seed "current"~~ → **UPSTREAM** (`_read_current_vector`), version plus
+       complète que la nôtre.
+    3. ~~Clamping per-dimension~~ → **UPSTREAM** (`CMAESStrategy.initialize`
+       valide la forme ET clampe aux bornes, via `config.extra["mean"]`).
+    4. ~~Signature étendue de `_generate_seed`~~ → sans objet, upstream n'y touche
+       plus (le seed « current » a son propre chemin).
+    5. ~~Appel étendu~~ → sans objet, même raison.
+    Le patch sur `placement/cmaes_strategy.py` est ABANDONNÉ en entier : upstream
+    implémente le warm-start avec un sigma proportionnel à la plage (`/20` en
+    warm-start) là où le nôtre codait `1.0` en dur.
+    ⚠️ Piège rencontré au rebase : le merge automatique avait conservé NOTRE
+    génération de seed *en plus* de celle d'upstream, laissant l'objet
+    `PlacementVector` dans `config.extra`. `CMAESStrategy.save_state` sérialise
+    `extra` en JSON → `TypeError` et checkpoint cassé
+    (`test_checkpoint_save_resume`). Un rebase « sans conflit apparent » n'est pas
+    un rebase correct : faire tourner les tests.
   - 🕓 **Patch #9 — PROPOSÉ, PAS ENCORE DANS LE FORK** (2026-07-27)
     `src/kicad_tools/sexp/parser.py::_format_atom` — une valeur `str` construite
     PROGRAMMATIQUEMENT et dont le texte ressemble à un nombre sort **non quotée**,
@@ -244,13 +268,17 @@ le bind-mount de développement.
     `tests/test_pcb_property_quoting.py`). Le garde deviendra un no-op une fois le
     patch #9 dans le fork — le conserver en défense en profondeur.
 
-  - 🕓 **Patch #10 — PROPOSÉ, optionnel** (2026-07-27)
-    `src/kicad_tools/cli/parser.py` — `--seed` n'accepte que
-    `force-directed|random`, alors que le patch #5 expose `seed_method="current"`
-    côté API Python. Le CLI ne peut donc pas servir de substitut à l'API pour le
-    micro-raffinement. Non bloquant : `tools/cmaes_runner.py` appelle l'API depuis
-    un processus enfant (cf. `CLAUDE.md` §Géomètre). Ajouter `"current"` aux
-    `choices` simplifierait ce détour.
+  - ✅ **Patch #10 — SANS OBJET depuis le 2026-08-10, livré par upstream**
+    `src/kicad_tools/cli/parser.py` — `--seed` accepte désormais
+    `force-directed|random|current` en amont, avec une aide décrivant le
+    warm-start. La proposition est donc close, et l'affirmation « le CLI ne peut
+    pas servir de substitut à l'API » n'est plus vraie.
+    ⚠️ `tools/cmaes_runner.py` continue néanmoins de passer par l'API Python
+    depuis un **processus enfant**, et ce détour reste OBLIGATOIRE : sa raison
+    n'a jamais été l'absence de `current` dans le CLI, mais
+    `signal.signal` qui échoue hors thread principal (uvicorn exécute
+    `auto_place` dans un thread de worker). Voir `CLAUDE.md` §Géomètre. Ne pas
+    « simplifier » ce détour en repassant au CLI.
 
   - **Limitation connue (non patchée, contournée)** : le routeur A* du reasoner
     rasterise les zones cuivre en obstacles durs → 0 chemin pour les autres nets.

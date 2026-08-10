@@ -426,10 +426,16 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
      sécurité conservait le board pré-CMA-ES et **le Géomètre ne tournait JAMAIS
      en production**, alors que ses tests passaient (pytest, thread principal).
      Mesuré en conteneur en validant `examples/led-blinker-full-pipeline/`.
-     Le CLI `kct optimize-placement` ne convient PAS comme substitut : son
-     parseur n'accepte que `--seed force-directed|random`, alors que
-     `seed_method="current"` (patch Cirqix, côté API Python uniquement) est ce
-     qui fait du CMA-ES un raffinement et non un replacement depuis zéro.
+     Le CLI `kct optimize-placement` ne convient PAS comme substitut — mais
+     ⚠️ **plus pour la raison longtemps écrite ici.** On lisait que son parseur
+     n'acceptait que `--seed force-directed|random` et que `seed_method="current"`
+     était un patch Cirqix réservé à l'API Python. **C'est faux depuis le rebase
+     du 2026-08-10** : upstream accepte `--seed force-directed|random|current` et
+     implémente le warm-start lui-même (`_read_current_vector` +
+     `config.extra["mean"]`, avec validation de forme et clamp aux bornes).
+     La vraie raison, la seule, est le `signal.signal` ci-dessus : le sous-
+     processus n'est pas un contournement du CLI, c'est un contournement du
+     thread. Ne pas « simplifier » `cmaes_runner.py` en repassant au CLI.
      Garde de régression : `test_refine_with_cmaes_works_off_the_main_thread`
      (exécute le raffinement dans un `threading.Thread`).
      (déplacement moyen 2-3mm, max <12mm sur le board STM32 réel) ; connecteurs
@@ -837,7 +843,8 @@ dans `DEPENDENCIES.md`.
 
 ### kicad-tools (fork privé complet — sous-module)
 - **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink
-  `c2482b8e582fcd8f76c9be414e4dfacd3d50847b` ; upstream
+  `5c4c926cb56b57cd459d28a3f7956770365ff2a6` (rebasé le 2026-08-10 sur
+  `upstream/main` @ `627f3e44`, 221 commits rattrapés) ; upstream
   github.com/rjwalters/kicad-tools.
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; package Python `kicad_tools`).
 - **Import :** `kicad-tools/src` sur le sys.path → `import kicad_tools`.
