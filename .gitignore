@@ -85,6 +85,17 @@ next-env.d.ts
 # Playwright MCP cache
 .playwright-mcp/
 
+# Modèles 3D téléchargés (STEP/WRL zippés par footprint)
+# 3,1 Go pour 101 archives au 2026-08-09 — cache local, re-téléchargeable.
+# Sans cette ligne, un `git add -A` distrait fait entrer 3 Go dans l'historique,
+# irréversible sans réécriture.
+services/kicad/models/
+
+# Configuration locale des autres assistants. CLAUDE.md est la source canonique ;
+# ces répertoires ne contiennent que des adaptateurs propres à une machine.
+.cursor/
+.gemini/
+
 # Test KiCad static files
 apps/web/public/test-*.kicad_sch
 apps/web/public/test-*.kicad_pcb
