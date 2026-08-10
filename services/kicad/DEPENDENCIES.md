@@ -21,7 +21,18 @@ le bind-mount de développement.
   SHA sur le fork AVANT de merger le bump ; les vieux tags peuvent être
   supprimés une fois le gitlink avancé.
 - **Base upstream :** v0.12.1, commit `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`
-- **SHA Cirqix épinglé :** `302e22db48fde0f9d128ff5d755f36096bb8c8ee`
+- **SHA Cirqix épinglé :** `08b9b0e4c75da5b8b8b55bc5353756ab60bf1892`
+  (tag de protection `cirqix-pin-08b9b0e`, posé le 2026-08-10.
+  ⚠️ Ce SHA était épinglé par `main` **sans aucun tag** : le prochain rebase
+  hebdomadaire l'aurait rendu orphelin et cassé la CI — exactement l'incident
+  décrit ci-dessus, qui avait déjà eu lieu sur `302e22d`. La règle du tag n'avait
+  donc pas été appliquée au bump qui a suivi. La vérifier à chaque bump :
+  `git tag --points-at <sha>` doit renvoyer quelque chose.
+  Le SHA `302e22db` qui figurait ici est ORPHELIN depuis ce bump — ne plus le
+  citer comme épinglé.)
+- **État vis-à-vis d'upstream (2026-08-10) :** à jour. `upstream/main`
+  (`circuit-synth/circuit-synth` @ `3aaff18`) est ancêtre de `cirqix` ; 0 commit
+  de retard, 2 patches devant. Rien à rebaser.
 - **PR des patches :** https://github.com/bmechergui/circuit-synth/pull/1
 - **Chemin :** `services/kicad/circuit_synth/`
 - **Install Docker :** `pip3 install --no-cache-dir ./circuit_synth`
@@ -90,9 +101,10 @@ le bind-mount de développement.
 
 - **Fork privé :** https://github.com/bmechergui/kicad-tools (`cirqix`)
 - **Upstream :** https://github.com/rjwalters/kicad-tools
-- **SHA épinglé :** `5c4c926cb56b57cd459d28a3f7956770365ff2a6`
+- **SHA épinglé :** `16aa43191fc86526013b6eaaaa63eb46de7d67b7`
   (rebase du 2026-08-10 sur `upstream/main` @ `627f3e44`, 221 commits rattrapés ;
-  tags de protection `cirqix-pin-5c4c926` et `cirqix-pin-f2afb96`. Le SHA
+  tags de protection `cirqix-pin-16aa431`, `cirqix-pin-5c4c926` et
+  `cirqix-pin-f2afb96`. Le SHA
   précédent, `f2afb967`, n'avait AUCUN tag au moment du rebase — le force-push
   l'aurait rendu orphelin et aurait cassé la CI de tout checkout de `main`
   antérieur au bump, exactement l'incident décrit plus haut. Tag posé avant le

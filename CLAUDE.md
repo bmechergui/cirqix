@@ -827,8 +827,10 @@ dans `DEPENDENCIES.md`.
 
 ### circuit_synth v0.12.1
 - **Fork privé :** github.com/bmechergui/circuit-synth, branche `cirqix`, sous-module
-  épinglé sur `302e22db48fde0f9d128ff5d755f36096bb8c8ee` (base upstream v0.12.1
-  `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`, PR fork #1). Privé depuis le
+  épinglé sur `08b9b0e4c75da5b8b8b55bc5353756ab60bf1892` (base upstream v0.12.1
+  `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`, PR fork #1 ; tag de protection
+  `cirqix-pin-08b9b0e`. Le SHA `302e22db` cité ici jusqu'au 2026-08-10 est
+  ORPHELIN — à jour vis-à-vis d'upstream, rien à rebaser). Privé depuis le
   2026-07-18 — accès CI via deploy key SSH `CIRCUIT_SYNTH_DEPLOY_KEY`
   (voir `services/kicad/DEPENDENCIES.md`)
 - **Runtime :** Ubuntu 24.04 Noble + Python 3.12 (`/opt/venv`)
@@ -843,7 +845,7 @@ dans `DEPENDENCIES.md`.
 
 ### kicad-tools (fork privé complet — sous-module)
 - **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink
-  `5c4c926cb56b57cd459d28a3f7956770365ff2a6` (rebasé le 2026-08-10 sur
+  `16aa43191fc86526013b6eaaaa63eb46de7d67b7` (rebasé le 2026-08-10 sur
   `upstream/main` @ `627f3e44`, 221 commits rattrapés) ; upstream
   github.com/rjwalters/kicad-tools.
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; package Python `kicad_tools`).
