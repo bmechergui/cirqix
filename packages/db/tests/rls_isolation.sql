@@ -1,4 +1,4 @@
--- Credits/RLS security regression tests through migration 012.
+-- Credits/RLS security regression tests through migration 015.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -22,6 +22,17 @@ VALUES (
   '33333333-3333-3333-3333-333333333333',
   '11111111-1111-1111-1111-111111111111',
   'Alice security test project'
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- Second projet d'Alice : sépare le refus « solde épuisé » (test Q) du refus
+-- « ce projet a déjà un run » (test T). Réserver deux fois sur le MÊME projet
+-- déclencherait la seconde garde et ferait passer Q sans rien prouver du solde.
+INSERT INTO public.projects (id, user_id, name)
+VALUES (
+  '55555555-5555-5555-5555-555555555555',
+  '11111111-1111-1111-1111-111111111111',
+  'Alice second project'
 )
 ON CONFLICT (id) DO NOTHING;
 
@@ -605,6 +616,255 @@ BEGIN
     RAISE EXCEPTION 'FAIL O: authenticated waitlist select leaked % rows', leaked;
   END IF;
   RAISE NOTICE 'PASS O - authenticated waitlist select isolated';
+END $$;
+
+-- P. Les réservations de crédits sont hors de portée du client (migration 015).
+DO $$
+DECLARE
+  reserve_blocked boolean := false;
+  release_blocked boolean := false;
+  insert_blocked boolean := false;
+  available_blocked boolean := false;
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    '{"role":"authenticated","sub":"11111111-1111-1111-1111-111111111111"}', true);
+  SET LOCAL ROLE authenticated;
+
+  BEGIN
+    PERFORM public.reserve_pipeline_credits(
+      '11111111-1111-1111-1111-111111111111',
+      '33333333-3333-3333-3333-333333333333',
+      8.5, 360);
+  EXCEPTION WHEN OTHERS THEN reserve_blocked := true;
+  END;
+
+  BEGIN
+    PERFORM public.release_pipeline_reservation(gen_random_uuid());
+  EXCEPTION WHEN OTHERS THEN release_blocked := true;
+  END;
+
+  BEGIN
+    PERFORM public.available_credits('22222222-2222-2222-2222-222222222222');
+  EXCEPTION WHEN OTHERS THEN available_blocked := true;
+  END;
+
+  -- Une écriture directe contournerait les RPC : pouvoir LIBÉRER une retenue à
+  -- la main rouvrirait exactement la fenêtre que 015 ferme.
+  BEGIN
+    INSERT INTO public.credit_reservations (user_id, project_id, amount, expires_at)
+    VALUES ('11111111-1111-1111-1111-111111111111',
+            '33333333-3333-3333-3333-333333333333',
+            8.5, now() + interval '1 hour');
+  EXCEPTION WHEN OTHERS THEN insert_blocked := true;
+  END;
+
+  RESET ROLE;
+
+  IF NOT (reserve_blocked AND release_blocked AND available_blocked AND insert_blocked) THEN
+    RAISE EXCEPTION
+      'FAIL P: reserve=%, release=%, available=%, insert=%',
+      reserve_blocked, release_blocked, available_blocked, insert_blocked;
+  END IF;
+  RAISE NOTICE 'PASS P - credit reservations are service-role only';
+END $$;
+
+-- Q. Une retenue engage le solde : un second pipeline ne peut plus le réengager.
+DO $$
+DECLARE
+  first_id uuid;
+  second_blocked boolean := false;
+  available_after numeric;
+  balance_after numeric;
+BEGIN
+  -- Solde ramené à 10 : de quoi financer UN pipeline (8,5), pas deux.
+  UPDATE public.credits SET balance = 10
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+
+  SELECT public.reserve_pipeline_credits(
+    '11111111-1111-1111-1111-111111111111',
+    '33333333-3333-3333-3333-333333333333',
+    8.5, 360) INTO first_id;
+
+  -- Le défaut d'origine : ce second appel lisait le même solde et passait.
+  -- Sur un AUTRE projet, pour que seul le solde puisse le refuser — la garde
+  -- « un run par projet » (test T) ne doit pas répondre à sa place.
+  BEGIN
+    PERFORM public.reserve_pipeline_credits(
+      '11111111-1111-1111-1111-111111111111',
+      '55555555-5555-5555-5555-555555555555',
+      8.5, 360);
+  EXCEPTION WHEN OTHERS THEN second_blocked := true;
+  END;
+
+  SELECT public.available_credits('11111111-1111-1111-1111-111111111111')
+  INTO available_after;
+  RESET ROLE;
+
+  SELECT balance INTO balance_after
+  FROM public.credits
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  -- La retenue n'est PAS un débit : le solde n'a pas bougé, seul le disponible.
+  IF first_id IS NULL
+     OR NOT second_blocked
+     OR available_after <> 1.5
+     OR balance_after <> 10 THEN
+    RAISE EXCEPTION
+      'FAIL Q: first=%, second_blocked=%, available=%, balance=%',
+      first_id, second_blocked, available_after, balance_after;
+  END IF;
+  RAISE NOTICE 'PASS Q - an active hold blocks a second concurrent pipeline';
+END $$;
+
+-- R. La finalisation consomme la retenue dans la transaction du débit.
+DO $$
+DECLARE
+  balance_before numeric;
+  balance_after numeric;
+  available_after numeric;
+  still_held numeric;
+  finalized boolean;
+BEGIN
+  UPDATE public.credits SET balance = 50
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+  UPDATE public.projects
+  SET status = 'ROUTING_DONE', iteration_count = 0, agent_mode = 'orchestrator'
+  WHERE id = '33333333-3333-3333-3333-333333333333';
+  -- Q a laissé une retenue active sur ce couple (utilisateur, projet).
+
+  SELECT balance INTO balance_before
+  FROM public.credits
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.finalize_pipeline_success(
+    '11111111-1111-1111-1111-111111111111',
+    '33333333-3333-3333-3333-333333333333',
+    1,
+    '{"projectId":"33333333-3333-3333-3333-333333333333","status":"DRC_CLEAN","iteration":1}'::jsonb,
+    'orchestrator'
+  ) INTO finalized;
+  SELECT public.available_credits('11111111-1111-1111-1111-111111111111')
+  INTO available_after;
+  RESET ROLE;
+
+  SELECT balance INTO balance_after
+  FROM public.credits
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  SELECT coalesce(sum(amount), 0) INTO still_held
+  FROM public.credit_reservations
+  WHERE user_id = '11111111-1111-1111-1111-111111111111'
+    AND released_at IS NULL
+    AND expires_at > now();
+
+  -- Le crédit ne doit être compté QU'UNE fois : si la retenue survivait au
+  -- débit, `available` vaudrait 8,5 de moins que le solde jusqu'à expiration.
+  IF finalized IS DISTINCT FROM true
+     OR balance_after <> balance_before - 8.5
+     OR still_held <> 0
+     OR available_after <> balance_after THEN
+    RAISE EXCEPTION
+      'FAIL R: finalized=%, balance=%/%, held=%, available=%',
+      finalized, balance_before, balance_after, still_held, available_after;
+  END IF;
+  RAISE NOTICE 'PASS R - finalization consumes the hold without double counting';
+END $$;
+
+-- S. Une retenue expirée cesse de bloquer — sinon un crash gèlerait le solde.
+DO $$
+DECLARE
+  reservation_id uuid;
+  available_with_expired numeric;
+  balance_now numeric;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.reserve_pipeline_credits(
+    '11111111-1111-1111-1111-111111111111',
+    '33333333-3333-3333-3333-333333333333',
+    8.5, 360) INTO reservation_id;
+  RESET ROLE;
+
+  -- Le processus qui devait libérer cette retenue est mort.
+  UPDATE public.credit_reservations
+  SET expires_at = now() - interval '1 second'
+  WHERE id = reservation_id;
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.available_credits('11111111-1111-1111-1111-111111111111')
+  INTO available_with_expired;
+  RESET ROLE;
+
+  SELECT balance INTO balance_now
+  FROM public.credits
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  IF available_with_expired <> balance_now THEN
+    RAISE EXCEPTION 'FAIL S: available=% but balance=%',
+      available_with_expired, balance_now;
+  END IF;
+  RAISE NOTICE 'PASS S - an expired hold stops blocking the balance';
+END $$;
+
+-- T. Un seul run par projet — sinon la finalisation du premier libère la
+--    retenue du second, encore en cours, et la course revient.
+DO $$
+DECLARE
+  first_id uuid;
+  second_blocked boolean := false;
+  refusal text := '';
+  active_holds integer;
+BEGIN
+  UPDATE public.credits SET balance = 100
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+  -- Solde largement suffisant : seul le doublon peut refuser ici.
+  UPDATE public.credit_reservations
+  SET released_at = now()
+  WHERE user_id = '11111111-1111-1111-1111-111111111111'
+    AND released_at IS NULL;
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+
+  SELECT public.reserve_pipeline_credits(
+    '11111111-1111-1111-1111-111111111111',
+    '33333333-3333-3333-3333-333333333333',
+    8.5, 360) INTO first_id;
+
+  BEGIN
+    PERFORM public.reserve_pipeline_credits(
+      '11111111-1111-1111-1111-111111111111',
+      '33333333-3333-3333-3333-333333333333',
+      8.5, 360);
+  EXCEPTION WHEN OTHERS THEN
+    second_blocked := true;
+    refusal := SQLERRM;
+  END;
+  RESET ROLE;
+
+  SELECT count(*) INTO active_holds
+  FROM public.credit_reservations
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND released_at IS NULL
+    AND expires_at > now();
+
+  -- Le motif compte autant que le refus : un rejet pour solde insuffisant
+  -- serait un faux positif, et masquerait l'absence de cette garde.
+  IF first_id IS NULL
+     OR NOT second_blocked
+     OR refusal NOT LIKE '%pipeline_already_running%'
+     OR active_holds <> 1 THEN
+    RAISE EXCEPTION
+      'FAIL T: first=%, blocked=%, refusal=%, active=%',
+      first_id, second_blocked, refusal, active_holds;
+  END IF;
+  RAISE NOTICE 'PASS T - a project cannot hold two concurrent pipelines';
 END $$;
 
 ROLLBACK;
