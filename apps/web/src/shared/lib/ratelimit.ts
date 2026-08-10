@@ -10,9 +10,17 @@ import { Redis } from '@upstash/redis';
 // qu'une fois par process. En prod, poser les deux variables active la
 // protection sans changement de code.
 //
-// Câblage actuel : /api/waitlist (endpoint public). Le câblage de
-// /api/agent/run (10 req/min, cible du PLAN) appartient au chantier
-// project-integrity — voir handoff 2026-08-06-phase-5-1-security.
+// Câblage actuel :
+//   · /api/waitlist — endpoint public, quota par IP, 10 req/min (défaut).
+//   · /api/agent    — quota par UTILISATEUR, 3 req/60 s (issue #117). Il borne
+//     la CADENCE d'allumage, pas la simultanéité : la fenêtre fixe se remet à
+//     zéro chaque minute, donc un compte peut tenir 15 pipelines en vol sur les
+//     300 s d'un run. Le calcul est dans app/api/agent/lib/rate-limit.ts
+//     (`worstCaseConcurrentPipelines`), verrouillé par un test.
+//
+// Le fail-open ci-dessous vaut aussi pour /api/agent : une panne Upstash y
+// rouvre la porte. C'est pourquoi ce quota ne clôt pas #117 — il borne le
+// débit d'allumage, il ne réserve pas de crédits.
 // ---------------------------------------------------------------------------
 
 export interface RateLimitResult {
