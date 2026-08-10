@@ -7,6 +7,8 @@ import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
 import { resolveAgentMode, isOrchestratorAvailable } from './lib/agent-mode';
 import { hasEnoughPipelineCredits, shouldFallbackToLocalPipeline } from './lib/credits';
+import { checkRateLimit } from '@/shared/lib/ratelimit';
+import { AGENT_RATE_LIMIT, AGENT_RATE_WINDOW_S, agentRateLimitKey } from './lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -22,6 +24,27 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Après l'authentification (le quota est nominatif) et avant toute requête
+  // Supabase : un compte qui pilonne la route ne doit pas non plus faire
+  // travailler la base. Voir ./lib/rate-limit.ts pour ce que ce quota borne —
+  // et ce qu'il ne remplace pas.
+  const quota = await checkRateLimit(
+    agentRateLimitKey(user.id),
+    AGENT_RATE_LIMIT,
+    AGENT_RATE_WINDOW_S,
+  );
+  if (!quota.success) {
+    // Retry-After = la fenêtre entière. Avec une fenêtre FIXE, la remise à zéro
+    // survient au plus tard dans AGENT_RATE_WINDOW_S : annoncer cette durée fait
+    // donc toujours attendre assez. C'est une borne haute — parfois plus longue
+    // que nécessaire, jamais trop courte, et un client qui l'honore ne se reprend
+    // pas un 429. Le vrai instant de reset n'est pas exposé par checkRateLimit.
+    return NextResponse.json(
+      { success: false, error: 'Too many pipeline runs, retry shortly' },
+      { status: 429, headers: { 'Retry-After': String(AGENT_RATE_WINDOW_S) } },
+    );
   }
 
   let payload: unknown;
