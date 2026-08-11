@@ -1,4 +1,5 @@
-import { pcbStateCache, log } from '../shared';
+import { pcbStateCache, log, getProjectPlan } from '../shared';
+import { entitlementsForPlan } from '@cirqix/types';
 import { runSimulation, SimulationServiceUnavailableError } from '../../engines/simulation-service';
 
 export async function handleSimulation(
@@ -6,6 +7,29 @@ export async function handleSimulation(
   projectId: string
 ): Promise<Record<string, unknown>> {
   const simType = (input['sim_type'] as 'transient' | 'dc' | 'ac' | undefined) ?? 'transient';
+
+  // Droit lié au plan — second point d'application serveur après le plafond de
+  // couches. `canSimulate` existait dans PLAN_ENTITLEMENTS sans que rien ne le
+  // lise : la table décrivait un droit que personne n'appliquait.
+  //
+  // Le contrôle est ICI et non dans le prompt de l'orchestrateur : un modèle à
+  // qui l'on demande de ne pas appeler un outil finit par l'appeler. Le refus
+  // doit être structurel.
+  //
+  // Placé AVANT tout le reste, et en particulier avant le repli qui fabrique
+  // des vecteurs synthétiques quand ngspice est absent : servir cette « démo »
+  // sur un refus de plan donnerait au compte gratuit exactement ce qu'il n'a
+  // pas payé. Un plan absent refuse aussi — une omission de plumbing ne doit
+  // jamais offrir une fonctionnalité payante.
+  if (!entitlementsForPlan(getProjectPlan(projectId)).canSimulate) {
+    return {
+      status: 'error',
+      note:
+        'La simulation SPICE est réservée aux plans Pro et supérieurs. ' +
+        'Le reste du pipeline PCB reste disponible.',
+    };
+  }
+
   const cached = pcbStateCache.get(projectId);
   const schContent = cached?.kicad_sch_content;
 
