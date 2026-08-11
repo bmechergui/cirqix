@@ -80,6 +80,27 @@ async function creditOnce(
   userSig: string | undefined,
   args: Record<string, unknown> & { p_user_id: string },
 ): Promise<NextResponse> {
+  return applyOnce(supabase, userSig, 'credit_webhook_event', args);
+}
+
+/**
+ * Le squelette commun à tout événement qui MUTE le compte : vérifier que
+ * l'identifiant est bien celui du payeur, appeler une RPC transactionnelle et
+ * idempotente, puis traduire son erreur en code HTTP que Lemon Squeezy sait
+ * interpréter.
+ *
+ * Extrait de `creditOnce` quand la fin d'abonnement est arrivée (§4.4) : elle
+ * partage ces trois besoins mais ne crédite rien, et dupliquer le squelette
+ * aurait garanti qu'un futur correctif ne soit appliqué qu'à l'une des deux
+ * familles — la raison même pour laquelle crédit et abonnement avaient déjà été
+ * factorisés.
+ */
+async function applyOnce(
+  supabase: AdminClient,
+  userSig: string | undefined,
+  rpcName: string,
+  args: Record<string, unknown> & { p_user_id: string },
+): Promise<NextResponse> {
   // Le HMAC de la requête prouve que le message vient de Lemon Squeezy, PAS que
   // `p_user_id` est le compte qui a payé : ce champ voyage dans une URL de
   // checkout que l'acheteur peut modifier. Sans cette vérification, substituer
@@ -97,24 +118,39 @@ async function creditOnce(
     return NextResponse.json({ error: 'Invalid checkout signature' }, { status: 400 });
   }
 
-  const { data: credited, error } = await supabase.rpc('credit_webhook_event', args);
+  const { data: applied, error } = await supabase.rpc(rpcName, args);
 
   if (error) {
     if (isPermanentRpcError(error)) {
       // 4xx : Lemon Squeezy ne retentera pas. Un refus définitif — montant
       // invalide, utilisateur sans ligne `credits` — ne se résout jamais par un
       // réessai, et répondre 500 ferait boucler le webhook indéfiniment.
-      log.error({ err: error, code: error.code, args }, 'credit refuse definitivement');
+      log.error({ err: error, code: error.code, rpcName, args }, 'evenement refuse definitivement');
       return NextResponse.json({ error: 'Rejected', reason: error.code }, { status: 422 });
     }
-    log.error({ err: error, code: error.code }, 'credit_webhook_event a echoue — retry attendu');
+    log.error({ err: error, code: error.code, rpcName }, 'RPC webhook a echoue — retry attendu');
     return NextResponse.json({ error: 'DB error' }, { status: 500 });
   }
 
-  if (credited === false) {
+  if (applied === false) {
     return NextResponse.json({ received: true, duplicate: true });
   }
   return NextResponse.json({ received: true });
+}
+
+/**
+ * Reste-t-il de l'accès payé après une résiliation ?
+ *
+ * `true` seulement si `ends_at` est une date FUTURE et exploitable. Une valeur
+ * absente, nulle ou illisible rend `false` : rien ne prouve alors qu'il reste
+ * de l'accès, et aucun événement ultérieur n'est garanti. Entre déclasser à
+ * tort — visible, signalé, réparable — et laisser un accès payant indéfiniment
+ * gratuit — invisible, jamais signalé — le second est le pire des deux.
+ */
+function hasAccessRemaining(endsAt: unknown): boolean {
+  if (typeof endsAt !== 'string' || endsAt.trim() === '') return false;
+  const ts = Date.parse(endsAt);
+  return Number.isFinite(ts) && ts > Date.now();
 }
 
 function verifySignature(rawBody: string, signature: string, secret: string): boolean {
@@ -235,6 +271,39 @@ export async function POST(req: NextRequest) {
       p_amount: sub.credits,
       p_action: eventName,
       p_plan: sub.plan,
+    });
+  }
+
+  // Fin d'abonnement — le plan redescend à `free` (migration 016).
+  //
+  // `subscription_expired` déclasse toujours : l'abonnement est terminé.
+  //
+  // `subscription_cancelled` dépend de `ends_at`. Il signifie normalement
+  // « ne pas renouveler », l'accès restant payé jusqu'à cette date : déclasser
+  // alors retirerait un droit acquis, et Lemon Squeezy émettra `expired` le
+  // moment venu. Mais une résiliation IMMÉDIATE peut être terminale — nous
+  // n'avons pas pu vérifier qu'un `expired` distinct suit dans ce cas, et si
+  // ce n'est pas le cas le compte resterait « Pro » indéfiniment, soit
+  // exactement le défaut que cette branche corrige. On tranche donc sur la
+  // donnée plutôt que sur l'hypothèse : `ends_at` dans le futur → on attend ;
+  // passé ou absent → l'accès est fini, on déclasse.
+  //
+  // La garde de signature est la même que pour le crédit, et pour une raison
+  // symétrique : sans elle, il suffirait de placer l'identifiant d'un tiers
+  // dans son propre checkout puis de résilier pour le faire déclasser.
+  if (eventName === 'subscription_cancelled' && !hasAccessRemaining(attrs.ends_at)) {
+    return applyOnce(supabase, custom?.user_sig, 'expire_subscription_plan', {
+      p_event_key: eventKey,
+      p_event_name: eventName,
+      p_user_id: userId,
+    });
+  }
+
+  if (eventName === 'subscription_expired') {
+    return applyOnce(supabase, custom?.user_sig, 'expire_subscription_plan', {
+      p_event_key: eventKey,
+      p_event_name: eventName,
+      p_user_id: userId,
     });
   }
 
