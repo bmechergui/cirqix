@@ -673,6 +673,17 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
 
 ### Phase 4 — Réalisations ✅
 - ✅ **4.1** Viewer 3D Three.js (composants colorisés par type, board FR4, OrbitControls, 1 crédit Pro+)
+  - ⚠️ **`canView3D` est appliqué CÔTÉ CLIENT seulement (2026-08-11)**, et c'est
+    assumé. `View3D` ne consomme AUCUN artefact serveur : il dessine à partir du
+    `PCBState` que le client possède déjà (reçu par SSE, nécessaire au reste du
+    viewer). Il n'y a donc rien à ne pas lui envoyer, et aucune route ne rendrait
+    ce droit exécutoire — un contrôle serveur ici serait du théâtre.
+    C'est un **différenciateur produit, pas une frontière de sécurité**.
+    Le rendre exécutoire supposerait d'en faire un vrai artefact serveur (export
+    STEP/GLB par le service KiCad) : décision produit, pas refactor.
+    Contraste utile : `maxLayers` (handleRouting) et `canSimulate`
+    (handleSimulation) sont, eux, appliqués côté serveur.
+    Garde : `apps/web/src/test/view3d-plan-gate.test.tsx`.
 - ✅ **4.2** Simulation ngspice : `POST /simulate/auto` + `call_agent_simulation` + `SimulationView` Recharts
   - kicad-cli SPICE export → ngspice batch → parsing tabular → vecteurs V/A
   - ⚠️ **FAIL FAST (2026-08-11, issue #129)** : ngspice indisponible → `status:'error'`,
