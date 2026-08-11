@@ -44,6 +44,7 @@ vi.mock('@/app/api/agent/lib/agent-mode', () => ({
 }));
 
 import { POST } from '@/app/api/agent/route';
+import { getProjectPlan } from '@cirqix/agents';
 import {
   InsufficientCreditsError,
   CreditReservationError,
@@ -159,6 +160,30 @@ describe('POST /api/agent — réservation de crédits', () => {
     expect(res.status).toBe(409);
     expect(runRealOrchestratorMock).not.toHaveBeenCalled();
     expect(releaseMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['solde insuffisant (402)', () => reserveMock.mockRejectedValue(new InsufficientCreditsError())],
+    ['run déjà en cours (409)', () => reserveMock.mockRejectedValue(new PipelineAlreadyRunningError())],
+    ['réservation en panne (500)', () => reserveMock.mockRejectedValue(new CreditReservationError('x'))],
+  ])('ne laisse aucun plan orphelin — %s', async (_label, arrange) => {
+    // Le plan est rangé dans une map module-singleton, libérée par le `finally`
+    // du flux SSE. Le semer AVANT les retours anticipés laissait une entrée
+    // orpheline à chaque échec : un compte gratuit sans crédit qui réessaie
+    // faisait grossir la map indéfiniment. Fuite non bornée, sur le chemin
+    // d'échec le plus courant.
+    arrange();
+
+    await POST(makeRequest());
+
+    expect(getProjectPlan(PROJECT_ID)).toBeUndefined();
+  });
+
+  it('libère le plan à la fin d\'un run nominal', async () => {
+    const res = await POST(makeRequest());
+    await drain(res);
+
+    expect(getProjectPlan(PROJECT_ID)).toBeUndefined();
   });
 
   it('ne réserve rien en mode simulateur', async () => {

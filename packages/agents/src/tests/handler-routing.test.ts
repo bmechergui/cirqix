@@ -25,7 +25,7 @@ const routingMock = vi.hoisted(() => {
 vi.mock('../engines/routing-service', () => routingMock);
 
 import { handleRouting } from '../tools/handlers/routing';
-import { pcbStateCache } from '../tools/shared';
+import { pcbStateCache, setProjectPlan, clearProjectPlan } from '../tools/shared';
 
 /** PCB minimal : un net GND (requis par addGroundPlane) + une piste TS à stripper. */
 const PCB_WITH_TRACK = [
@@ -60,6 +60,7 @@ const PROJECT = 'p1';
 
 beforeEach(() => {
   pcbStateCache.clear();
+  clearProjectPlan(PROJECT);
   engineMock.runPCBEngine.mockReset();
   engineMock.runPCBEngine.mockResolvedValue({ kicad_pcb_content: PCB_WITH_TRACK });
   routingMock.runRealRouting.mockReset();
@@ -116,6 +117,13 @@ describe('heuristique du nombre de couches', () => {
     [80, 80, 4],
   ])('%i composants / %i nets → %i couches', async (comps, nets, expected) => {
     seedCache({ schema: schemaOf(comps, nets), kicad_pcb_content: PCB_WITH_TRACK });
+    // Ces cas mesurent le BESOIN calculé par l'heuristique. Depuis que le plan
+    // plafonne les couches (Free 2 · Pro 4 · Pro Max 8), la valeur demandée au
+    // service est le minimum des deux : sans plan semé, tout retomberait sur
+    // `free` et les cas à 4 couches seraient rabotés à 2. On sème donc un plan
+    // qui laisse l'heuristique s'exprimer — le plafond lui-même est couvert par
+    // `routing-plan-cap.test.ts`.
+    setProjectPlan(PROJECT, 'pro');
 
     await handleRouting(PROJECT);
 

@@ -1,4 +1,5 @@
-import { pcbStateCache, log } from '../shared';
+import { pcbStateCache, log, getProjectPlan } from '../shared';
+import { maxLayersForPlan } from '@cirqix/types';
 import { runPCBEngine } from '../../engines/engine-router';
 import { runRealRouting, RoutingServiceUnavailableError } from '../../engines/routing-service';
 import { stripTrackSegments, addGroundPlane } from '../pcb-helpers';
@@ -45,8 +46,24 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
 
   // Layer count heuristic: kicad-tools A* handles ≤30 comps/nets on 2 layers.
   // Freerouting handles complex boards — 4 layers beyond that threshold.
-  const decidedLayers: 2 | 4 | 8 =
+  const neededLayers: 2 | 4 | 8 =
     schema.components.length <= 30 && schema.nets.length <= 30 ? 2 : 4;
+
+  // Le plan PLAFONNE ce besoin ; il ne le prescrit pas. Un petit board reste en
+  // 2 couches sur un plan Pro Max — `Math.min` ne peut qu'abaisser.
+  //
+  // Jusqu'ici l'heuristique décidait seule, si bien qu'un compte gratuit
+  // obtenait des boards 4 couches : sensiblement plus chers à fabriquer, et
+  // contraires à la grille annoncée. C'est le premier droit réellement adossé
+  // au plan, désormais fiable (le webhook le remet à `free` en fin
+  // d'abonnement, migration 016).
+  //
+  // Un plan absent du cache retombe sur `free` via `maxLayersForPlan` : une
+  // omission de plumbing ne doit pas ouvrir de droits.
+  const decidedLayers = Math.min(
+    neededLayers,
+    maxLayersForPlan(getProjectPlan(projectId)),
+  ) as 2 | 4 | 8;
 
   // Use the placed .kicad_pcb from cache when call_agent_placement ran first.
   // Regenerate from Circuit-Synth only on a cold cache (e.g. routing called standalone).
