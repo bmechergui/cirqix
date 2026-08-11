@@ -217,3 +217,51 @@ export const CREDIT_COSTS: Record<AgentAction, number> = {
   view3d: 1,
   simulation: 3,
 };
+
+/** Nombre de couches cuivre qu'accepte le service KiCad (`RouteAutoRequest`). */
+export type LayerCount = 2 | 4 | 8;
+
+export interface PlanEntitlements {
+  /**
+   * Plafond de couches cuivre. Il RESTREINT le besoin réel, il ne le prescrit
+   * pas : un petit board reste en 2 couches sur un plan Pro Max.
+   */
+  maxLayers: LayerCount;
+  canSimulate: boolean;
+  canView3D: boolean;
+}
+
+/**
+ * Droits attachés au plan — source de vérité UNIQUE.
+ *
+ * Le plan existait depuis l'origine mais ne gouvernait rien : les couches
+ * étaient choisies par une heuristique sur la taille du schéma, si bien qu'un
+ * compte gratuit obtenait des boards 4 couches, sensiblement plus chers à
+ * fabriquer. La grille ci-dessous est celle annoncée dans CLAUDE.md.
+ *
+ * Toute duplication de cette table ailleurs garantirait qu'un futur changement
+ * de grille tarifaire n'en corrige qu'une copie.
+ */
+export const PLAN_ENTITLEMENTS: Record<Plan, PlanEntitlements> = {
+  free:       { maxLayers: 2, canSimulate: false, canView3D: false },
+  pro:        { maxLayers: 4, canSimulate: true,  canView3D: true  },
+  pro_max:    { maxLayers: 8, canSimulate: true,  canView3D: true  },
+  enterprise: { maxLayers: 8, canSimulate: true,  canView3D: true  },
+};
+
+/**
+ * Droits d'un plan, avec repli sur le plan le plus restrictif.
+ *
+ * Un plan absent, nul, ou d'une valeur inattendue venue de la base ne doit
+ * JAMAIS ouvrir de droits : le défaut sûr est `free`. Un utilisateur lésé le
+ * signale ; un droit accordé à tort reste invisible.
+ */
+export function entitlementsForPlan(plan: Plan | null | undefined): PlanEntitlements {
+  if (typeof plan !== 'string') return PLAN_ENTITLEMENTS.free;
+  return PLAN_ENTITLEMENTS[plan] ?? PLAN_ENTITLEMENTS.free;
+}
+
+/** Plafond de couches du plan — voir `entitlementsForPlan` pour le repli. */
+export function maxLayersForPlan(plan: Plan | null | undefined): LayerCount {
+  return entitlementsForPlan(plan).maxLayers;
+}

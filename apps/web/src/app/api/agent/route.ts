@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient, createRouteHandlerClient } from '@/shared/lib/supabase-server';
+import { setProjectPlan, clearProjectPlan } from '@cirqix/agents';
 import { encodeSse, sseHeaders } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
@@ -123,6 +124,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Le plan gouverne des droits réels — aujourd'hui le plafond de couches
+  // appliqué par le handler de routage (Free 2 · Pro 4 · Pro Max 8). Il est
+  // lu depuis la base plus haut, mais semé ICI, juste avant le flux : c'est le
+  // `finally` de ce flux qui le libère, et TOUS les retours anticipés sont
+  // désormais derrière nous (402 solde, 402 réservation, 409 run en cours,
+  // 500 réservation indisponible).
+  //
+  // Semer plus tôt laissait une entrée orpheline sur chacun de ces quatre
+  // chemins : un compte gratuit sans crédit qui réessaie faisait grossir la map
+  // indéfiniment. Fuite mémoire non bornée, sur le chemin d'échec le plus
+  // courant qui soit.
+  setProjectPlan(projectId, creditRow?.plan ?? 'free');
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -178,6 +192,10 @@ export async function POST(req: NextRequest) {
         if (reservationId) {
           await releasePipelineReservation(pipelineClient, reservationId);
         }
+        // Contexte de run : le plan ne doit pas survivre au pipeline. Une
+        // entrée oubliée servirait au run suivant, éventuellement lancé par le
+        // même projet après un changement de plan.
+        clearProjectPlan(projectId);
         controller.close();
       }
     },

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import type { SchemaJson } from '../engines/engine-router';
+import type { Plan } from '@cirqix/types';
 
 // --- Module-level singletons (review fix HIGH-1: avoid recreating per call) ---
 
@@ -39,6 +40,42 @@ export interface PcbStateCacheEntry {
 }
 
 export const pcbStateCache = new Map<string, PcbStateCacheEntry>();
+
+/**
+ * Plan de l'utilisateur qui a lancé le pipeline, par projet.
+ *
+ * DÉLIBÉRÉMENT séparé de `pcbStateCache`. Le plan n'est pas un état de board :
+ * c'est du contexte de run, et il gouverne des droits réels — aujourd'hui le
+ * plafond de couches appliqué par `handleRouting`.
+ *
+ * Le mettre DANS `pcbStateCache` serait un piège : neuf handlers y écrivent, et
+ * plusieurs — `handleSchema` le premier, donc dès la première étape —
+ * réécrivent l'entrée EN ENTIER plutôt que de l'étendre. Le plan serait effacé
+ * en silence, chaque compte retomberait sur `free`, et les abonnés payants
+ * seraient plafonnés à 2 couches sans qu'aucun test de handler ne le voie.
+ *
+ * Une map séparée est immunisée contre ces réécritures.
+ */
+const projectPlanCache = new Map<string, Plan>();
+
+/** Sème le plan à l'entrée du pipeline. Appelé par la route agent. */
+export function setProjectPlan(projectId: string, plan: Plan): void {
+  projectPlanCache.set(projectId, plan);
+}
+
+/**
+ * Plan du projet, ou `undefined`. Les appelants DOIVENT passer par
+ * `entitlementsForPlan` / `maxLayersForPlan`, qui retombent sur `free` : une
+ * omission de plumbing ne doit jamais ouvrir de droits.
+ */
+export function getProjectPlan(projectId: string): Plan | undefined {
+  return projectPlanCache.get(projectId);
+}
+
+/** Libère le contexte de run — appelé en fin de pipeline. */
+export function clearProjectPlan(projectId: string): void {
+  projectPlanCache.delete(projectId);
+}
 
 /**
  * After keepBestDrc / keepBestRouting retains an earlier attempt, rewrite the
