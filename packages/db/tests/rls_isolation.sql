@@ -1,4 +1,4 @@
--- Credits/RLS security regression tests through migration 015.
+-- Credits/RLS security regression tests through migration 016.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -865,6 +865,89 @@ BEGIN
       first_id, second_blocked, refusal, active_holds;
   END IF;
   RAISE NOTICE 'PASS T - a project cannot hold two concurrent pipelines';
+END $$;
+
+-- U. La fin d'abonnement est hors de portée du client (migration 016).
+DO $$
+DECLARE blocked boolean := false;
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    '{"role":"authenticated","sub":"11111111-1111-1111-1111-111111111111"}', true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM public.expire_subscription_plan(
+      'rls-u', 'subscription_expired', '11111111-1111-1111-1111-111111111111');
+  EXCEPTION WHEN OTHERS THEN blocked := true;
+  END;
+  RESET ROLE;
+
+  IF NOT blocked THEN
+    RAISE EXCEPTION 'FAIL U: un role authentifie a pu declasser un abonnement';
+  END IF;
+  RAISE NOTICE 'PASS U - expire_subscription_plan is service-role only';
+END $$;
+
+-- V. Le déclassement ne confisque pas les crédits déjà achetés, et le rejeu
+--    d'un webhook Lemon Squeezy est absorbé.
+DO $$
+DECLARE
+  first_call boolean;
+  replay boolean;
+  plan_after text;
+  balance_before numeric;
+  balance_after numeric;
+BEGIN
+  UPDATE public.credits SET plan = 'pro'
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+  SELECT balance INTO balance_before
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.expire_subscription_plan(
+    'rls-v', 'subscription_expired', '11111111-1111-1111-1111-111111111111') INTO first_call;
+  SELECT public.expire_subscription_plan(
+    'rls-v', 'subscription_expired', '11111111-1111-1111-1111-111111111111') INTO replay;
+  RESET ROLE;
+
+  SELECT plan, balance INTO plan_after, balance_after
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  -- Un abonnement qui s'achève retire un DROIT, pas un solde : les crédits
+  -- achetés restent acquis.
+  IF first_call IS DISTINCT FROM true
+     OR replay IS DISTINCT FROM false
+     OR plan_after <> 'free'
+     OR balance_after <> balance_before THEN
+    RAISE EXCEPTION 'FAIL V: first=%, replay=%, plan=%, balance=%/%',
+      first_call, replay, plan_after, balance_before, balance_after;
+  END IF;
+  RAISE NOTICE 'PASS V - expiry downgrades once and never seizes credits';
+END $$;
+
+-- W. Utilisateur inconnu → refus DÉFINITIF (22023), et le marqueur n'est pas
+--    posé : sinon le rejeu serait classé « duplicate » et l'événement perdu.
+DO $$
+DECLARE
+  code text := '';
+  marker integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  BEGIN
+    PERFORM public.expire_subscription_plan(
+      'rls-w', 'subscription_expired', '99999999-9999-9999-9999-999999999999');
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  SELECT count(*) INTO marker
+  FROM public.processed_webhook_events WHERE event_key = 'rls-w';
+
+  IF code <> '22023' OR marker <> 0 THEN
+    RAISE EXCEPTION 'FAIL W: sqlstate=%, marqueur=%', code, marker;
+  END IF;
+  RAISE NOTICE 'PASS W - unknown user is a permanent refusal, marker rolled back';
 END $$;
 
 ROLLBACK;
