@@ -53,16 +53,43 @@ export async function handleSimulation(
     if (!(err instanceof SimulationServiceUnavailableError)) {
       log.warn({ err }, 'simulation service threw unexpected error');
     }
-    // Return synthetic demo data so the pipeline stays alive offline
-    const demoVectors = _demoVectors(simType);
+    const reason = err instanceof Error ? err.message : 'simulation service unavailable';
+
+    // Mode démonstration — OPT-IN EXPLICITE, jamais un repli sur erreur.
+    //
+    // Ce chemin fabriquait auparavant des vecteurs synthétiques et les
+    // renvoyait en `status: 'success'` dès que le service manquait. Une courbe
+    // RC plausible, jamais calculée à partir du circuit de l'utilisateur, sous
+    // les seuls indices `engine: 'demo'` et `warning` — précisément ceux qu'une
+    // interface graphique n'affiche pas. Un compte Pro pouvait donc décider sur
+    // une mesure inventée (issue #129).
+    //
+    // C'est la classe de défaut fondatrice de ce projet, déjà éliminée pour
+    // l'ERC, le DRC, le routage et l'export : un statut de succès ne peut venir
+    // que d'un contrôle réellement exécuté. La simulation en était le dernier
+    // porteur. L'utilité du mode démo en développement local est réelle — elle
+    // devient un choix affiché, pas un mensonge par défaut.
+    if (process.env['CIRQIX_SIMULATION_DEMO']) {
+      const demoVectors = _demoVectors(simType);
+      return {
+        status: 'success',
+        sim_type: simType,
+        simulation_data: { sim_type: simType, vectors: demoVectors },
+        vector_count: demoVectors.length,
+        engine: 'demo',
+        warning: reason,
+        note:
+          `Simulation DÉMO (CIRQIX_SIMULATION_DEMO actif) — ${demoVectors.length} vecteurs ` +
+          `SYNTHÉTIQUES, sans rapport avec ce circuit. Ne pas en tirer de conclusion.`,
+      };
+    }
+
     return {
-      status: 'success',
+      status: 'error',
       sim_type: simType,
-      simulation_data: { sim_type: simType, vectors: demoVectors },
-      vector_count: demoVectors.length,
-      engine: 'demo',
-      warning: err instanceof Error ? err.message : 'simulation service unavailable',
-      note: `Simulation démo — ${demoVectors.length} vecteurs synthétiques (ngspice indisponible).`,
+      note:
+        `Service de simulation indisponible — aucun résultat produit (${reason}). ` +
+        `Le circuit n'est pas en cause ; le reste du pipeline PCB reste disponible.`,
     };
   }
 }

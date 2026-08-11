@@ -675,7 +675,22 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
 - ✅ **4.1** Viewer 3D Three.js (composants colorisés par type, board FR4, OrbitControls, 1 crédit Pro+)
 - ✅ **4.2** Simulation ngspice : `POST /simulate/auto` + `call_agent_simulation` + `SimulationView` Recharts
   - kicad-cli SPICE export → ngspice batch → parsing tabular → vecteurs V/A
-  - Fallback : waveformes RC synthétiques si ngspice indisponible
+  - ⚠️ **FAIL FAST (2026-08-11, issue #129)** : ngspice indisponible → `status:'error'`,
+    AUCUNE donnée. Le handler renvoyait auparavant `status:'success'` avec des
+    waveformes RC **synthétiques** — plausibles, jamais calculées à partir du
+    circuit — sous les seuls indices `engine:'demo'` et `warning`, précisément
+    ceux qu'une interface graphique n'affiche pas. Un compte Pro pouvait donc
+    décider sur une mesure inventée. `handleSimulation` était le DERNIER handler
+    du pipeline à fabriquer un succès, après l'assainissement de l'ERC, du DRC,
+    du routage et de l'export. Le mode démo survit en **opt-in explicite**
+    (`CIRQIX_SIMULATION_DEMO=1`), utile en local, jamais un repli sur erreur.
+    Garde : `tests/simulation-fail-closed.test.ts`.
+  - ⚠️ **Droit lié au plan (2026-08-11)** : la simulation exige `canSimulate`
+    (`PLAN_ENTITLEMENTS`, plans payants). Le contrôle est dans le HANDLER, pas
+    dans le prompt — un modèle à qui l'on demande de ne pas appeler un outil
+    finit par l'appeler — et AVANT le repli démo, sinon un compte gratuit
+    refusé recevrait quand même une courbe. Un plan absent refuse aussi.
+    Garde : `tests/simulation-plan-gate.test.ts`.
   - Onglet "Simulate" dans Timeline (FlaskConical), 3 crédits, plan Pro+
 - ✅ **4.3** Export réel + JLCPCB :
   - `call_agent_export` dans `pcbStateTools` → SSE → frontend reçoit `gerberZipB64` + `bomCsv` + `quoteUsd`
