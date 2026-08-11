@@ -41,3 +41,8 @@ anthropic>=0.40.0
 # (env works without SB3; train --algo ppo needs both)
 gymnasium>=0.29.0
 # stable-baselines3>=2.3.0  # install when training PPO smoke/full runs
+
+# Observabilite — OPTIONNELLE. Sans SENTRY_DSN, observability.init_sentry()
+# ne l'importe meme pas : le service tourne sans. Voir observability.py pour
+# le filtre qui retire schemas/boards/Gerbers avant tout envoi.
+sentry-sdk[fastapi]>=2.0.0
