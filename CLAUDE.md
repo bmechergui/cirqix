@@ -830,7 +830,8 @@ dans `DEPENDENCIES.md`.
   épinglé sur `08b9b0e4c75da5b8b8b55bc5353756ab60bf1892` (base upstream v0.12.1
   `f52f491b57ff1b95d9acbcc48d3323f5be8ad96a`, PR fork #1 ; tag de protection
   `cirqix-pin-08b9b0e`. Le SHA `302e22db` cité ici jusqu'au 2026-08-10 est
-  ORPHELIN — à jour vis-à-vis d'upstream, rien à rebaser). Privé depuis le
+  périmé mais reste servable, son tag existe. À jour vis-à-vis d'upstream,
+  rien à rebaser). Privé depuis le
   2026-07-18 — accès CI via deploy key SSH `CIRCUIT_SYNTH_DEPLOY_KEY`
   (voir `services/kicad/DEPENDENCIES.md`)
 - **Runtime :** Ubuntu 24.04 Noble + Python 3.12 (`/opt/venv`)

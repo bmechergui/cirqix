@@ -26,10 +26,12 @@ le bind-mount de développement.
   ⚠️ Ce SHA était épinglé par `main` **sans aucun tag** : le prochain rebase
   hebdomadaire l'aurait rendu orphelin et cassé la CI — exactement l'incident
   décrit ci-dessus, qui avait déjà eu lieu sur `302e22d`. La règle du tag n'avait
-  donc pas été appliquée au bump qui a suivi. La vérifier à chaque bump :
-  `git tag --points-at <sha>` doit renvoyer quelque chose.
-  Le SHA `302e22db` qui figurait ici est ORPHELIN depuis ce bump — ne plus le
-  citer comme épinglé.)
+  donc pas été appliquée au bump qui a suivi. Elle est désormais **exécutoire** :
+  le job CI `submodule-pin-tags` refuse un gitlink dont le SHA n'est couvert par
+  aucun tag sur son fork.
+  Le SHA `302e22db` qui figurait ici est **périmé mais toujours servable** — son
+  tag `cirqix-pin-302e22d` existe, la règle avait bien joué pour lui. C'est au
+  bump SUIVANT qu'elle a été oubliée. Ne plus le citer comme épinglé.)
 - **État vis-à-vis d'upstream (2026-08-10) :** à jour. `upstream/main`
   (`circuit-synth/circuit-synth` @ `3aaff18`) est ancêtre de `cirqix` ; 0 commit
   de retard, 2 patches devant. Rien à rebaser.

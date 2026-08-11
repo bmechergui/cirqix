@@ -415,3 +415,94 @@ jobs:
       - name: Nettoyer le conteneur de mesure
         if: always()
         run: docker rm -f kicad-fixture >/dev/null 2>&1 || true
+
+  submodule-pin-tags:
+    name: Tags de pin des submodules
+    runs-on: ubuntu-latest
+    # Un gitlink pointe un COMMIT, pas une branche. Or les deux forks sont
+    # rebasés puis force-poussés chaque lundi : un SHA épinglé qui n'est plus
+    # atteignable depuis une ref devient orphelin, et GitHub REFUSE de le servir
+    # (`upload-pack: not our ref`). Le checkout du submodule échoue alors pour
+    # tout le monde, sur une CI qui était verte la veille — déjà vécu sur
+    # `302e22d` (voir services/kicad/DEPENDENCIES.md).
+    #
+    # La parade est écrite depuis le 2026-07-18 : tagger chaque SHA épinglé sur
+    # son fork. Elle n'a été appliquée NI au bump de kicad-tools NI à celui de
+    # circuit_synth — le 2026-08-10, les DEUX SHA épinglés en production étaient
+    # nus, à un force-push de casser la CI. Une règle que deux bumps consécutifs
+    # oublient n'est pas une règle : ce job la rend exécutoire.
+    steps:
+      - name: Configurer les deploy keys SSH (forks privés)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SUBMODULE_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.CIRCUIT_SYNTH_DEPLOY_KEY }}" > ~/.ssh/id_circuit_synth
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/id_circuit_synth
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          {
+            echo "Host github.com-circuit-synth"
+            echo "  HostName github.com"
+            echo "  User git"
+            echo "  IdentityFile ~/.ssh/id_circuit_synth"
+            echo "  IdentitiesOnly yes"
+          } >> ~/.ssh/config
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Chaque SHA épinglé doit être couvert par un tag sur son fork
+        run: |
+          set -uo pipefail
+          fail=0
+          check() {
+            path="$1"; url="$2"
+            sha=$(git ls-tree HEAD "$path" | awk '{print $3}')
+            if [ -z "$sha" ]; then
+              echo "::error::$path — aucun gitlink trouvé"
+              fail=1; return
+            fi
+
+            # La sortie ET le code de retour sont capturés séparément.
+            #
+            # Le premier jet écrivait `git ls-remote --tags "$url" 2>/dev/null`
+            # et concluait « aucun tag » sur une sortie vide. Une panne d'accès
+            # au fork — clé absente, révoquée, hôte injoignable — devenait donc
+            # indiscernable d'un tag manquant, et le job accusait à tort un SHA
+            # parfaitement tagué (vécu au premier run sur circuit_synth). Un
+            # garde-fou qui crie au loup à tort finit désarmé.
+            out=$(git ls-remote --tags "$url" 2>&1); rc=$?
+            if [ $rc -ne 0 ]; then
+              echo "::error::$path — impossible d'interroger $url (git ls-remote a rendu $rc)."
+              echo "::error::Ce n'est PAS un tag manquant : vérifier la deploy key et l'accès au fork."
+              echo "$out" | sed 's/^/    /' | tail -5
+              fail=1; return
+            fi
+
+            # `--tags` liste les refs de tags ; un tag annoté ajoute une ligne
+            # `^{}` portant le commit déréférencé. Les deux formes comptent.
+            match=$(printf '%s\n' "$out" | grep "^$sha" | head -1 || true)
+            if [ -n "$match" ]; then
+              tag=$(printf '%s' "$match" | sed 's/.*refs\/tags\///; s/\^{}//')
+              echo "OK   $path  $sha  ($tag)"
+            else
+              short=$(printf '%s' "$sha" | cut -c1-7)
+              echo "::error::$path — le SHA épinglé $sha n'est couvert par AUCUN tag sur $url."
+              echo "::error::Le prochain force-push du rebase hebdomadaire le rendra orphelin et cassera ce checkout."
+              echo "::error::Corriger : git tag cirqix-pin-$short $sha && git push origin cirqix-pin-$short"
+              fail=1
+            fi
+          }
+          # URLs HTTPS + réécriture `insteadOf` : le chemin déjà éprouvé par le
+          # job kicad-docker. Passer l'alias SSH directement à ls-remote n'a pas
+          # le même comportement d'authentification.
+          git config --global url."git@github.com:bmechergui/kicad-tools.git".insteadOf "https://github.com/bmechergui/kicad-tools.git"
+          git config --global url."git@github.com-circuit-synth:bmechergui/circuit-synth.git".insteadOf "https://github.com/bmechergui/circuit-synth.git"
+          check services/kicad/kicad-tools   https://github.com/bmechergui/kicad-tools.git
+          check services/kicad/circuit_synth https://github.com/bmechergui/circuit-synth.git
+          exit $fail
+
+      - name: Retirer les identifiants
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519 ~/.ssh/id_circuit_synth
