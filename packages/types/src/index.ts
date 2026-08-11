@@ -228,6 +228,19 @@ export interface PlanEntitlements {
    */
   maxLayers: LayerCount;
   canSimulate: boolean;
+  /**
+   * ⚠️ Appliqué CÔTÉ CLIENT seulement (`ExportView`), et c'est assumé.
+   *
+   * `View3D` ne consomme aucun artefact serveur : il dessine à partir du
+   * `PCBState` que le client possède déjà. Il n'y a donc rien à ne pas lui
+   * envoyer, et aucune route ne rendrait ce droit exécutoire. C'est un
+   * différenciateur produit, pas une frontière de sécurité — le dire ici évite
+   * qu'on le prenne un jour pour l'autre.
+   *
+   * Le rendre exécutoire supposerait d'en faire un vrai artefact serveur
+   * (export STEP/GLB produit par le service KiCad) : décision produit, pas
+   * refactor. `maxLayers` et `canSimulate`, eux, sont appliqués côté serveur.
+   */
   canView3D: boolean;
 }
 

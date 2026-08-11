@@ -9,6 +9,8 @@ import {
 import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
 import type { PCBState } from '@cirqix/types';
+import { entitlementsForPlan } from '@cirqix/types';
+import { useAppStore } from '@/shared/store/app-store';
 
 const View3D = dynamic(() => import('./View3D').then((m) => ({ default: m.View3D })), {
   ssr: false,
@@ -156,6 +158,27 @@ export function ExportView({ state }: { state: PCBState }) {
   const drcClean = state.status === 'DRC_CLEAN' || state.status === 'PCB_LIVRÉ';
   const ready = drcClean && Boolean(state.gerberZipB64 && state.bomCsv);
   const [tab, setTab] = useState<ExportTab>('files');
+
+  // Vue 3D réservée aux plans payants.
+  //
+  // ⚠️ C'est un DIFFÉRENCIATEUR PRODUIT, PAS une frontière de sécurité, et il
+  // faut le dire plutôt que le laisser croire. `View3D` ne consomme AUCUN
+  // artefact serveur : il dessine des boîtes à partir du `PCBState` que le
+  // client possède déjà (reçu par SSE, nécessaire au reste du viewer). Un
+  // utilisateur déterminé peut donc reconstituer ce rendu — aucune route ne
+  // peut l'en empêcher, puisqu'il n'y a rien à ne pas lui envoyer.
+  //
+  // Le rendre « exécutoire » demanderait d'en faire un vrai artefact serveur
+  // (export STEP/GLB produit par le service KiCad), ce qui est une décision
+  // produit, pas un refactor. Tant que ce n'est pas le cas, `canView3D` est
+  // appliqué ici, et seulement ici.
+  //
+  // Les deux autres droits du plan, eux, sont appliqués côté serveur : le
+  // plafond de couches dans `handleRouting`, la simulation dans
+  // `handleSimulation`.
+  const plan = useAppStore((s) => s.credits?.plan);
+  const canView3D = entitlementsForPlan(plan).canView3D;
+  const activeTab: ExportTab = tab === '3d' && !canView3D ? 'files' : tab;
   const [qty, setQty] = useState<Qty>(5);
   const [showOrder, setShowOrder] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -230,27 +253,34 @@ export function ExportView({ state }: { state: PCBState }) {
         meta={metaBadge}
         actions={
           <div className="flex items-center gap-0.5 bg-[#111] rounded-lg p-0.5 border border-[#1e1e1e]">
-            {([['files', <Download key="d" size={10} />, 'Files'] , ['3d', <Box key="b" size={10} />, '3D']] as const).map(([id, icon, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-150 ${
-                  tab === id
-                    ? 'bg-[#1a1a1a] text-foreground border border-[#2e2e2e]'
-                    : 'text-[#3d3d3d] hover:text-[#666]'
-                }`}
-              >
-                {icon}{label}
-              </button>
-            ))}
+            {([['files', <Download key="d" size={10} />, 'Files'] , ['3d', <Box key="b" size={10} />, '3D']] as const).map(([id, icon, label]) => {
+              const locked = id === '3d' && !canView3D;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={locked}
+                  title={locked ? 'Vue 3D — plans Pro et supérieurs' : undefined}
+                  onClick={() => { if (!locked) setTab(id); }}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-150 ${
+                    locked
+                      ? 'text-[#2a2a2a] cursor-not-allowed'
+                      : activeTab === id
+                        ? 'bg-[#1a1a1a] text-foreground border border-[#2e2e2e]'
+                        : 'text-[#3d3d3d] hover:text-[#666]'
+                  }`}
+                >
+                  {icon}{label}
+                </button>
+              );
+            })}
           </div>
         }
       />
 
-      {tab === '3d' && <View3D state={state} />}
+      {activeTab === '3d' && <View3D state={state} />}
 
-      {tab === 'files' && <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      {activeTab === 'files' && <div className="flex-1 overflow-y-auto p-4 space-y-6">
 
         {/* Not ready warning */}
         {!ready && (
