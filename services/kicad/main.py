@@ -94,6 +94,16 @@ except ImportError:
     PCBNEW_AVAILABLE = False
     logging.warning("pcbnew non disponible — mode simulation activé")
 
+# Observabilite — AVANT la creation de l'app, pour que l'instrumentation
+# capture aussi les erreurs de demarrage. Desactivee sans SENTRY_DSN : aucun
+# reseau, aucune donnee qui sort. Le filtre d'expurgation (observability.py)
+# retire schemas, boards et Gerbers avant tout envoi — ce service manipule la
+# propriete intellectuelle du client a chaque requete.
+from observability import init_sentry  # noqa: E402
+
+if init_sentry():
+    logging.info("Sentry actif (evenements expurges avant envoi)")
+
 app = FastAPI(
     title="Cirqix KiCad Service",
     version="1.0.0",

@@ -25,6 +25,7 @@
     "@radix-ui/react-tooltip": "^1.1.0",
     "@react-three/drei": "9",
     "@react-three/fiber": "8",
+    "@sentry/nextjs": "^10.70.0",
     "@supabase/ssr": "^0.4.0",
     "@supabase/supabase-js": "^2.43.0",
     "@upstash/ratelimit": "^2.0.8",
