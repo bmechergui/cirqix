@@ -76,11 +76,23 @@ export async function handleGenPcb(projectId: string): Promise<Record<string, un
   const { drc_clean: _stale, ...rest } = cached;
   pcbStateCache.set(projectId, { ...rest, kicad_pcb_content: finalPcb });
 
-  // SCHEMA_DONE — générer un layout n'est pas un contrôle électrique.
-  // ERC_CLEAN n'est émis que par handleErc.
+  // AUCUN `pcb_status` — générer un layout n'est pas un contrôle électrique.
+  //
+  // L'intention était juste, l'implémentation la trahissait : émettre
+  // `SCHEMA_DONE` RÉTROGRADAIT le projet quand l'ERC venait de le porter à
+  // `ERC_CLEAN`. Le pont persiste le statut reçu, donc la base et l'interface
+  // affichaient un recul — et si le run mourait ici, le contrôle électrique
+  // déjà passé était oublié. Un statut qui ment sur ce qui a été vérifié, la
+  // même famille de défaut que les succès fabriqués.
+  //
+  // Ne rien émettre est la traduction exacte de « je ne change pas l'état de
+  // validation » : le pont retombe sur `lastStatus` (`raw.pcb_status ??
+  // lastStatus`), donc `SCHEMA_DONE` reste `SCHEMA_DONE` et `ERC_CLEAN` reste
+  // `ERC_CLEAN`.
+  //
+  // Trouvé le 2026-08-12 par un audit externe (Grok).
   return {
     status: 'success',
-    pcb_status: 'SCHEMA_DONE',
     kicad_pcb_content: finalPcb,
     board_width_mm: boardW,
     board_height_mm: boardH,

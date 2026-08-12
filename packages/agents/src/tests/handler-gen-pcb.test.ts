@@ -55,16 +55,25 @@ describe('génération réussie', () => {
     expect(pcbStateCache.get(PROJECT)?.kicad_pcb_content).toContain('(kicad_pcb');
   });
 
-  it('émet SCHEMA_DONE — générer un layout n’est pas un contrôle ERC', async () => {
+  it("n'émet AUCUN pcb_status — générer un layout ne change pas l'état de validation", async () => {
     seed();
     engineMock.runCircuitSynthEngine.mockResolvedValue({ kicad_pcb_content: '(kicad_pcb (net 0 ""))' });
 
     const result = await handleGenPcb(PROJECT);
 
-    // ERC_CLEAN n'est émis que par handleErc. Un layout généré ne prouve rien
-    // d'électrique — usurper ce statut masquait l'absence d'ERC en amont.
-    expect(result['pcb_status']).toBe('SCHEMA_DONE');
-    expect(result['pcb_status']).not.toBe('ERC_CLEAN');
+    // Le handler émettait `SCHEMA_DONE` inconditionnellement. Or le pipeline le
+    // place APRÈS l'ERC : un projet porté à `ERC_CLEAN` RÉTROGRADAIT donc à
+    // `SCHEMA_DONE`, et le pont persistait ce recul. Si le run mourait là,
+    // l'état affiché oubliait un contrôle électrique réellement passé.
+    //
+    // L'intention était pourtant écrite — « un layout ne prouve rien
+    // d'électrique ». Ne RIEN émettre en est la traduction fidèle : le pont
+    // fait `raw.pcb_status ?? lastStatus`, donc SCHEMA_DONE reste SCHEMA_DONE
+    // et ERC_CLEAN reste ERC_CLEAN.
+    //
+    // Trouvé le 2026-08-12 par un audit externe (Grok).
+    expect(result['pcb_status']).toBeUndefined();
+    expect(result['status']).toBe('success');
   });
 });
 
@@ -96,3 +105,4 @@ describe('jamais de succès sur un board vide', () => {
     expect(result['status']).toBe('error');
   });
 });
+
