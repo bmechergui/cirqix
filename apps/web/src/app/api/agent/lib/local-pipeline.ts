@@ -98,7 +98,13 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
 
     const finalized = mergedState as PCBState;
     if (statusLabel === 'DRC_CLEAN') {
-      await finalizePipelineSuccess(supabase, userId, projectId, finalized, 'orchestrator');
+      // PROVENANCE HONNÊTE : ce repli enchaîne les VRAIS handlers, mais saute
+      // la résolution des footprints, la génération native du PCB et l'export.
+      // Il n'est ni le pipeline complet ni le simulateur — d'où sa propre
+      // valeur (migration 018). Le gate JLCPCB n'accepte que `orchestrator`,
+      // donc ce board n'est pas commandable, et la RPC ne débite que pour
+      // `orchestrator`, donc ce run ne facture rien.
+      await finalizePipelineSuccess(supabase, userId, projectId, finalized, 'local_fallback');
     }
     controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: finalized })));
     controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: statusLabel })));
@@ -106,9 +112,9 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     if (statusLabel !== 'DRC_CLEAN') await supabase.from('projects').update({
       status: statusLabel,
       pcb_state: finalized,
-      // Provenance : ce repli enchaîne les VRAIS handlers (seul l'orchestrateur
-      // Sonnet est court-circuité) → board commandable.
-      agent_mode: 'orchestrator',
+      // Provenance : vrais handlers, mais footprint/gen_pcb/export sautés.
+      // Ni orchestrateur complet, ni simulateur → board NON commandable.
+      agent_mode: 'local_fallback',
       updated_at: new Date().toISOString(),
     }).eq('id', projectId);
   }

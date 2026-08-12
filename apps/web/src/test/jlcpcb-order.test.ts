@@ -140,6 +140,21 @@ describe('provenance du board — le gate ne doit pas être dupable par le simul
     expect(updates).toHaveLength(0);
   });
 
+  it('REFUSE un board produit par le repli local', async () => {
+    // `runLocalPipeline` enchaîne CINQ étapes sur huit — footprint, gen_pcb et
+    // export sont sautés — donc son board n'a ni footprints résolus ni PCB
+    // généré nativement. Il se déclarait pourtant `orchestrator` et passait ce
+    // gate. Sa provenance porte désormais son propre nom (migration 018), et
+    // le fail-closed existant la refuse SANS qu'une ligne d'ici ait changé.
+    const { response, json, updates } = await order(VALID_BODY, {
+      project: { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'local_fallback' },
+    });
+
+    expect(response.status).toBe(422);
+    expect(String(json.error).toLowerCase()).toMatch(/pipeline|provenance|simul/);
+    expect(updates).toHaveLength(0);
+  });
+
   it('refuse la préparation sans Gerber et BOM exportés', async () => {
     const { response, json, updates } = await order(VALID_BODY, {
       project: { id: 'p1', status: 'DRC_CLEAN', agent_mode: 'orchestrator' },
