@@ -497,8 +497,31 @@ function resolvePinIndex(pinVal: number | string | undefined, libId?: string): n
     if (s === 'A' || s === 'ANODE' || s === '+') return 0;
     if (s === 'K' || s === 'CATHODE' || s === '-') return 1;
   }
-  return 0; // Fallback to 1st pin
+
+  // NON RÉSOLU — on ne fabrique pas une broche.
+  //
+  // Le repli était `return 0`. Or `footprintToLibId` envoie TOUS les boîtiers
+  // DIP/SOIC/TSSOP sur `Device:IC`, un libId absent des tables ci-dessus :
+  // toute broche nommée d'un CI générique atterrissait donc sur le pad 1.
+  //
+  // Mesuré sur un LM358 câblé VCC / GND / OUT : un SEUL pad porteur de net —
+  // le pad 1, avec « OUT ». Chaque attribution écrasait la précédente, si bien
+  // que VCC et GND étaient silencieusement perdus et qu'OUT se retrouvait sur
+  // la mauvaise broche. Trois erreurs électriques simultanées, sans signal.
+  //
+  // -1 signifie « je ne sais pas ». Les appelants ignorent la broche plutôt que
+  // d'en inventer une : le net perd ses pads, devient non routable, et la garde
+  // d'entrée de `route_auto` refuse le board avec un message clair.
+  //
+  // Une connexion MANQUANTE se voit. Une connexion FAUSSE ne se voit pas : elle
+  // produit un PCB fabricable et erroné. Entre les deux, le choix est fait.
+  //
+  // Trouvé le 2026-08-12 par un audit externe (Codex), puis mesuré.
+  return -1;
 }
+
+/** Une broche que `resolvePinIndex` n'a pas su traduire. */
+const PIN_UNRESOLVED = -1;
 
 // ============================================================
 // .kicad_sch generator (KiCad 7 S-expression format)
@@ -761,6 +784,11 @@ function generatePCB(
       if (!targetComp) return;
       const libId = footprintToLibId(pin.ref, targetComp.footprint, targetComp.value);
       const padIdx = resolvePinIndex(pin.pin, libId);
+      // Broche non traduisible : on n'invente pas de pad. Le net perd cette
+      // borne et devient visiblement incomplet — jusqu'à être refusé par la
+      // garde d'entrée de `route_auto` — au lieu d'entasser plusieurs nets sur
+      // le pad 1 et de livrer un board faux mais fabricable.
+      if (padIdx === PIN_UNRESOLVED) return;
       padNet.set(`${pin.ref}#${padIdx}`, { idx: ni, name: conn.name });
     });
   });
