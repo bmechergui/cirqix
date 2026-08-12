@@ -247,3 +247,40 @@ describe('pipeline complet — DRC puis export', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Le pont ne doit pas laisser un outil RÉTROGRADER l'état de validation.
+ *
+ * `gen_pcb` émettait `SCHEMA_DONE` inconditionnellement alors qu'il s'exécute
+ * APRÈS l'ERC : un projet porté à `ERC_CLEAN` redescendait, et ce recul était
+ * persisté. Ce test verrouille le comportement complémentaire du pont — un
+ * outil qui n'émet PAS de `pcb_status` laisse l'état inchangé.
+ */
+describe("préservation de l'état de validation", () => {
+  it("conserve ERC_CLEAN quand un outil ultérieur n'émet pas de statut", async () => {
+    agentsMock.runOrchestrator.mockImplementation(() =>
+      (async function* () {
+        yield { type: 'pcb_state', state: { pcb_status: 'ERC_CLEAN', iteration: 1 } };
+        // gen_pcb : produit un board, ne prononce rien sur la validation.
+        yield { type: 'pcb_state', state: { kicad_pcb_content: '(kicad_pcb)', iteration: 1 } };
+        yield { type: 'done' };
+      })(),
+    );
+    const { client, updates } = makeClient();
+    const { controller } = makeController();
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    }).catch(() => undefined);
+
+    // Aucune persistance ne doit rabaisser le statut sous ERC_CLEAN.
+    const regressions = updates.filter((u) => u['status'] === 'SCHEMA_DONE');
+    expect(regressions).toHaveLength(0);
+  });
+});
