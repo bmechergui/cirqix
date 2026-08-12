@@ -686,6 +686,20 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
     Garde : `apps/web/src/test/view3d-plan-gate.test.tsx`.
 - ✅ **4.2** Simulation ngspice : `POST /simulate/auto` + `call_agent_simulation` + `SimulationView` Recharts
   - kicad-cli SPICE export → ngspice batch → parsing tabular → vecteurs V/A
+  - ⚠️ **FAIL FAST côté SERVICE PYTHON (2026-08-12)** — le correctif du 11/08
+    ci-dessous ne couvrait que la couche TypeScript. `tools/simulation.py`
+    renvoyait `status: "ok"` sur ses QUATRE chemins dégradés : kicad-cli absent
+    (netlist **stub** — un circuit RC sans rapport avec le schéma reçu),
+    ngspice absent, ngspice en échec, sortie non parsable. Le client TS
+    n'échouant que si `status != 'ok'`, les mesures inventées traversaient toute
+    la chaîne et s'affichaient comme réelles.
+    Le cas du stub est le pire : avec ngspice fonctionnel, le service simulait
+    **correctement un autre circuit** — sortie authentique, chiffres plausibles,
+    aucun rapport avec le produit du client.
+    Pourquoi c'était invisible : **aucun test ne touchait `simulation.py`**, et
+    le test TypeScript mockait entièrement `runSimulation` — la fabrication
+    vivait sous le mock. `_stub_netlist` supprimé (code mort après correction).
+    Garde : `services/kicad/tests/test_simulation_fail_closed.py`.
   - ⚠️ **FAIL FAST (2026-08-11, issue #129)** : ngspice indisponible → `status:'error'`,
     AUCUNE donnée. Le handler renvoyait auparavant `status:'success'` avec des
     waveformes RC **synthétiques** — plausibles, jamais calculées à partir du

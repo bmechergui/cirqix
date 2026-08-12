@@ -18,6 +18,41 @@ log = logging.getLogger(__name__)
 # Public API
 # ---------------------------------------------------------------------------
 
+def _simulation_failure(sim_type: str, reason: str) -> dict[str, Any]:
+    """Echec de simulation — AUCUNE donnee fabriquee.
+
+    Le service renvoyait `status: "ok"` sur chacun de ses quatre chemins
+    degrades (kicad-cli absent, ngspice absent, ngspice en echec, sortie non
+    parsable). Le client TS n'echoue que si `status != 'ok'` : les mesures
+    inventees traversaient donc toute la chaine et s'affichaient comme reelles.
+
+    Le message distingue « notre service est indisponible » de « votre circuit
+    ne se simule pas » : les deux appellent des actions opposees, et les
+    confondre envoie l'utilisateur deboguer un circuit sain.
+
+    MODE DEMONSTRATION — opt-in EXPLICITE, jamais un repli sur erreur. Son
+    utilite en developpement local est reelle ; c'est le silence qui ne l'etait
+    pas. Symetrique de `CIRQIX_SIMULATION_DEMO` cote TypeScript.
+    """
+    if os.environ.get("CIRQIX_SIMULATION_DEMO"):
+        log.warning("CIRQIX_SIMULATION_DEMO actif — vecteurs SYNTHETIQUES : %s", reason)
+        return {
+            "status": "ok",
+            "sim_type": sim_type,
+            "vectors": _demo_vectors(sim_type),
+            "engine": "demo",
+            "warning": reason,
+        }
+
+    log.error("simulation impossible, aucune donnee produite : %s", reason)
+    return {
+        "status": "error",
+        "sim_type": sim_type,
+        "vectors": [],
+        "reason": reason,
+    }
+
+
 def run_simulation_from_content(
     sch_content: str,
     sim_type: str = "transient",
@@ -52,8 +87,17 @@ def run_simulation_from_content(
             with open(net_path, encoding="utf-8") as f:
                 netlist = f.read()
         except Exception as exc:
-            log.warning("kicad-cli unavailable, using stub netlist: %s", exc)
-            netlist = _stub_netlist(sch_content)
+            # FAIL CLOSED (2026-08-12). On substituait ici `_stub_netlist` : un
+            # circuit RC de DEMONSTRATION, sans aucun rapport avec le schema
+            # recu. Avec un ngspice fonctionnel, le service simulait donc
+            # CORRECTEMENT UN AUTRE CIRCUIT et renvoyait `status: "ok"` : sortie
+            # authentique, chiffres plausibles, aucun rapport avec le produit du
+            # client. Une decision de conception prise la-dessus est prise sur
+            # une mesure inventee.
+            return _simulation_failure(
+                sim_type,
+                f"export du netlist SPICE impossible (kicad-cli) : {exc}",
+            )
 
         # --- Filter out digital ICs that have no SPICE models ---
         netlist, excluded_refs = _filter_analog_netlist(netlist)
@@ -81,12 +125,16 @@ def run_simulation_from_content(
                 raise RuntimeError(f"ngspice exit {result.returncode}: {result.stderr[:300]}")
 
             vectors = _parse_ngspice_output(raw_output, sim_type)
+            if not vectors:
+                # Une sortie sans tableau ne prouve AUCUNE mesure. Le parseur
+                # renvoyait les vecteurs de demonstration dans ce cas.
+                return _simulation_failure(
+                    sim_type, "ngspice n'a produit aucune donnee exploitable"
+                )
         except FileNotFoundError:
-            log.warning("ngspice not found — returning synthetic demo waveforms")
-            vectors = _demo_vectors(sim_type)
+            return _simulation_failure(sim_type, "ngspice absent du conteneur")
         except Exception as exc:
-            log.warning("ngspice failed — returning synthetic demo waveforms: %s", exc)
-            vectors = _demo_vectors(sim_type)
+            return _simulation_failure(sim_type, f"ngspice a echoue : {exc}")
 
         return {
             "status": "ok",
@@ -119,8 +167,12 @@ def run_simulation(netlist_path: str, sim_type: str, output_dir: str) -> dict[st
             with open(log_path, encoding="utf-8", errors="replace") as f:
                 raw_output += f.read()
         vectors = _parse_ngspice_output(raw_output, sim_type)
+        if not vectors:
+            return _simulation_failure(
+                sim_type, "ngspice n'a produit aucune donnee exploitable"
+            )
     except FileNotFoundError:
-        vectors = _demo_vectors(sim_type)
+        return _simulation_failure(sim_type, "ngspice absent du conteneur")
 
     return {"status": "ok", "sim_type": sim_type, "vectors": vectors}
 
@@ -211,28 +263,6 @@ def _build_sp(netlist: str, sim_type: str) -> str:
     return f"{cleaned}\n{directive}\n.end\n"
 
 
-def _stub_netlist(sch_content: str) -> str:
-    """Minimal SPICE netlist when kicad-cli is unavailable.
-
-    Parses component values from the .kicad_sch text to build a realistic
-    RC circuit for demo purposes.
-    """
-    r_val = "1k"
-    c_val = "100n"
-    # Try to extract first resistor/capacitor values from schematic text
-    for m in re.finditer(r'"(\d+(?:\.\d+)?[kKmMuUnNpP]?(?:R|Ω|F|ohm)?)"', sch_content):
-        v = m.group(1).upper()
-        if v.endswith(("K", "R", "OHM", "Ω")):
-            r_val = v.replace("Ω", "").replace("OHM", "").replace("R", "") + "K" if "K" in v else "1k"
-            break
-    return (
-        "* Cirqix stub netlist\n"
-        f"R1 VIN VMID {r_val}\n"
-        f"C1 VMID 0 {c_val}\n"
-        "V1 VIN 0 DC 5 AC 1 PULSE(0 5 0 1n 1n 0.5m 1m)\n"
-    )
-
-
 def _parse_ngspice_output(raw: str, sim_type: str) -> list[dict[str, Any]]:
     """Extract named vectors from ngspice tabular stdout.
 
@@ -251,8 +281,10 @@ def _parse_ngspice_output(raw: str, sim_type: str) -> list[dict[str, Any]]:
             break
 
     if header_idx == -1:
-        # No tabular data → return demo
-        return _demo_vectors(sim_type)
+        # Aucun tableau : on ne fabrique rien. L'appelant traduit une liste vide
+        # en `status: "error"` (fail closed, 2026-08-12). On renvoyait ici
+        # `_demo_vectors`, des courbes synthetiques presentees comme mesurees.
+        return []
 
     headers = lines[header_idx].split()
     # Build per-column accumulators
@@ -269,7 +301,8 @@ def _parse_ngspice_output(raw: str, sim_type: str) -> list[dict[str, Any]]:
             continue
 
     if not cols[0]:
-        return _demo_vectors(sim_type)
+        # Tableau vide : aucune mesure. L'appelant traduit en status error.
+        return []
 
     # First column is Index, second is time (transient) or frequency (ac)
     time_col = cols[1] if len(cols) > 1 else cols[0]
@@ -285,7 +318,9 @@ def _parse_ngspice_output(raw: str, sim_type: str) -> list[dict[str, Any]]:
             "values": cols[j],
         })
 
-    return vectors if vectors else _demo_vectors(sim_type)
+    # Jamais de repli fabrique ici : une liste vide remonte telle quelle et
+    # l'appelant la traduit en `status: "error"` (fail closed, 2026-08-12).
+    return vectors
 
 
 def _infer_unit(name: str) -> str:
