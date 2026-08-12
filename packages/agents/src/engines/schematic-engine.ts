@@ -738,6 +738,33 @@ function generatePCB(
   const compPositions = new Map<string, { x: number; y: number }>();
   const compDims      = new Map<string, PadDimensions>();
 
+  // Attribution des nets AUX PADS — sans elle, le board n'a aucune connexion.
+  //
+  // Les nets étaient déclarés en tête de fichier et les pistes dessinées, mais
+  // les pads sortaient SANS `(net …)`. Or c'est l'attribution des pads qui fait
+  // la netlist : un net avec moins de deux pads n'est pas un problème de
+  // routage. Le service comptait donc ZÉRO net routable et traitait ce
+  // dénominateur nul comme 100 % — un board sans la moindre connexion annoncé
+  // parfaitement routé, ce qui désarme `shouldRescueRouting` et
+  // `shouldRetryPlacement`, puis laisse passer DRC (aucune règle à violer sans
+  // netlist) et export : un board vide, commandable.
+  //
+  // La correspondance existait déjà, employée plus bas pour tracer les pistes.
+  // Elle n'était simplement jamais écrite sur les pads.
+  //
+  // Trouvé le 2026-08-12 par un audit externe (Codex).
+  const padNet = new Map<string, { idx: number; name: string }>();
+  connections.forEach((conn, i) => {
+    const ni = i + 1;
+    conn.pins.forEach((pin) => {
+      const targetComp = components.find((c) => c.ref === pin.ref);
+      if (!targetComp) return;
+      const libId = footprintToLibId(pin.ref, targetComp.footprint, targetComp.value);
+      const padIdx = resolvePinIndex(pin.pin, libId);
+      padNet.set(`${pin.ref}#${padIdx}`, { idx: ni, name: conn.name });
+    });
+  });
+
   components.forEach((comp) => {
     const pos  = placed.find(p => p.ref === comp.ref) ?? { x: boardW / 2, y: boardH / 2 };
     const dims = getFootprintDims(comp.footprint);
@@ -755,8 +782,12 @@ function generatePCB(
 
     for (let p = 0; p < pads; p++) {
       const pad = dims.pads[p]!;
+      const net = padNet.get(`${comp.ref}#${p}`);
+      // Un pad sans net reste sans `(net …)` : c'est l'état correct pour une
+      // broche non connectée, et l'inventer créerait de fausses connexions.
+      const netAttr = net ? ` (net ${net.idx} "${net.name.replace(/"/g, '\\"')}")` : '';
       lines.push(
-        `    (pad "${p + 1}" smd rect (at ${pad.dx.toFixed(3)} ${pad.dy.toFixed(3)}) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))`
+        `    (pad "${p + 1}" smd rect (at ${pad.dx.toFixed(3)} ${pad.dy.toFixed(3)}) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask")${netAttr})`
       );
     }
     lines.push('  )');

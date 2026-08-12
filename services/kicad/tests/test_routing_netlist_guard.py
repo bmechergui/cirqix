@@ -30,10 +30,38 @@ from routers import routing as routing_router  # noqa: E402
 
 
 def _board(nets: int, segments: int = 0) -> bytes:
-    """Board minimal portant ``nets`` déclarations et ``segments`` pistes."""
+    """Board minimal portant ``nets`` déclarations et ``segments`` pistes.
+
+    Sans pads : sert aux tests unitaires de COMPTAGE de déclarations. Pour un
+    parcours bout-en-bout de ``route_auto``, utiliser ``_board_with_pads`` — un
+    board sans pad attribué n'a aucun net routable et est désormais refusé à
+    l'entrée (fail closed, 2026-08-12).
+    """
     lines = ["(kicad_pcb", '\t(version 20260206)', '\t(generator "test")']
     for i in range(nets):
         lines.append(f'\t(net {i} "NET{i}")')
+    for _ in range(segments):
+        lines.append('\t(segment (start 1 1) (end 2 2) (width 0.25) (layer "F.Cu") (net 1))')
+    lines.append(")")
+    return "\n".join(lines).encode("utf-8")
+
+
+def _board_with_pads(nets: int, segments: int = 0) -> bytes:
+    """Board RÉALISTE : chaque net est porté par deux pads, donc routable.
+
+    C'est ce qui distingue un vrai board d'un board vide. ``_board`` ci-dessus
+    ne produisait que des déclarations, si bien que ``_count_routable_nets``
+    valait 0 — la forme exacte du défaut corrigé le 2026-08-12, où un tel board
+    était annoncé « routé à 100 % ».
+    """
+    lines = ["(kicad_pcb", '\t(version 20260206)', '\t(generator "test")']
+    for i in range(nets):
+        lines.append(f'\t(net {i} "NET{i}")')
+    for i in range(nets):
+        lines.append(f'\t(footprint "R_0402" (layer "F.Cu") (at {10 + i} 10)')
+        lines.append(f'\t\t(pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (net {i} "NET{i}"))')
+        lines.append(f'\t\t(pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (net {i} "NET{i}"))')
+        lines.append('\t)')
     for _ in range(segments):
         lines.append('\t(segment (start 1 1) (end 2 2) (width 0.25) (layer "F.Cu") (net 1))')
     lines.append(")")
@@ -90,7 +118,7 @@ class TestRouteAutoEndToEnd:
         surtout pas un `routed_percent=100` mensonger. Le repli `skipped=True`
         est ensuite traité en fail-fast par `handleRouting` côté TS.
         """
-        entree = _board(nets=30, segments=0)
+        entree = _board_with_pads(nets=30, segments=0)
         sortie_vide = _board(nets=0, segments=0)
 
         monkeypatch.setattr(
@@ -111,8 +139,8 @@ class TestRouteAutoEndToEnd:
         assert res.kicad_pcb_b64 is None, "aucun board ne doit être livré"
 
     def test_route_auto_reussit_quand_la_netlist_survit(self, monkeypatch):
-        entree = _board(nets=30)
-        sortie = _board(nets=30, segments=12)
+        entree = _board_with_pads(nets=30)
+        sortie = _board_with_pads(nets=30, segments=12)
 
         monkeypatch.setattr(
             routing_router, "_route_with_kicad_tools",
