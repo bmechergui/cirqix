@@ -364,7 +364,13 @@ def _measured_routed_percent(
             f"{expected_routable_nets} in, {total_nets} out"
         )
     if total_nets == 0:
-        return 100
+        # Un denominateur nul n'est pas une victoire. On renvoyait 100 ici : un
+        # board sans le moindre net routable etait annonce parfaitement route.
+        # La garde d'entree de `route_auto` refuse deja ces boards ; celle-ci
+        # reste en defense en profondeur, pour tout appelant futur.
+        raise RuntimeError(
+            "cannot measure routing: board has no routable net (0 nets with >=2 pads)"
+        )
     return ((total_nets - unrouted_nets) * 100) // total_nets
 
 
@@ -446,6 +452,47 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         "route_auto: %d routable nets, %d composants — simple=%s",
         net_count, comp_count, is_simple,
     )
+
+    # FAIL CLOSED : zéro net routable n'est pas un routage réussi.
+    #
+    # `_measured_routed_percent` renvoyait 100 quand `total_nets == 0` — un
+    # dénominateur nul traité comme une victoire. Or un board dont AUCUN pad ne
+    # porte d'attribution `(net …)` produit exactement ce compte : les nets sont
+    # déclarés en tête de fichier, mais rien ne les référence, donc aucun n'a
+    # les ≥2 pads qui en feraient un problème de routage.
+    #
+    # Le générateur TypeScript de repli (`schematic-engine.ts`) fabrique
+    # précisément ce board : il déclare les nets, dessine les pistes, et émet
+    # les pads SANS `(net …)`. Un board sans la moindre connexion électrique
+    # était donc annoncé « routé à 100 % », ce qui désarme d'un coup
+    # `shouldRescueRouting` ET `shouldRetryPlacement`, laisse Sonnet enchaîner
+    # sur le DRC — propre, puisqu'il n'y a aucune règle à violer sans netlist —
+    # puis sur l'export, et rend commandable un board vide.
+    #
+    # La garde `_guard_netlist_preserved` ne pouvait pas le voir : elle compte
+    # les DÉCLARATIONS de net, qui sont bien présentes. Deux mesures
+    # différentes, d'où l'angle mort.
+    #
+    # Refus À L'ENTRÉE plutôt qu'après trois tentatives de routage : le message
+    # désigne la cause réelle, en amont, au lieu d'un « tous les routeurs ont
+    # échoué » qui enverrait chercher au mauvais endroit.
+    #
+    # Trouvé le 2026-08-12 par un audit externe (Codex).
+    if net_count == 0:
+        logger.error(
+            "route_auto: aucun net routable (%d déclarations, %d composants) — "
+            "les pads ne portent aucune attribution (net …) ; refus de livrer",
+            input_nets, comp_count,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "board has no routable net: "
+                f"{input_nets} net declarations, {comp_count} footprints, but no pad "
+                "carries a (net ...) assignment. Nothing to route — this is an "
+                "upstream PCB generation defect, not a routing failure."
+            ),
+        )
 
     # Best kicad-tools partial result so far (reused at Niveau 4 if Freerouting absent)
     kt_partial: Optional[tuple[bytes, int]] = None
