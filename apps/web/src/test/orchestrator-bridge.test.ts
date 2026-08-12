@@ -124,3 +124,126 @@ describe('orchestrator finalization', () => {
     expect(chunks.join('')).toContain('"type":"done"');
   });
 });
+
+/**
+ * Le chemin que le PROMPT IMPOSE — et que rien ne parcourait.
+ *
+ * `prompts.ts` fait enchaîner l'export après le DRC. Un pipeline qui réussit
+ * complètement passe donc par DRC_CLEAN *puis* PCB_LIVRÉ. Or les tests
+ * ci-dessus s'arrêtent tous à `DRC_CLEAN → done`.
+ *
+ * Conséquence mesurée le 2026-08-12 : `lastStatus` valait `PCB_LIVRÉ` au `done`,
+ * la garde `lastStatus !== 'DRC_CLEAN'` levait, `finalizePipelineSuccess`
+ * n'était JAMAIS appelé — donc AUCUN débit — alors que le board, ses Gerbers et
+ * `agent_mode: 'orchestrator'` venaient d'être persistés. Le gate JLCPCB accepte
+ * `PCB_LIVRÉ` : le board était commandable, fabricable, et gratuit.
+ *
+ * C'est le miroir des défauts corrigés cette semaine. Toutes les gardes
+ * existantes vérifient qu'un statut n'est pas accordé SANS contrôle ; aucune ne
+ * vérifiait qu'un contrôle réussi aboutit bien à un DÉBIT.
+ *
+ * Trouvé par deux audits externes indépendants (Grok, Codex), le même jour.
+ */
+describe('pipeline complet — DRC puis export', () => {
+  function pipelineComplet() {
+    return (async function* () {
+      yield { type: 'pcb_state', state: { pcb_status: 'DRC_CLEAN', iteration: 1 } };
+      yield {
+        type: 'pcb_state',
+        state: { pcb_status: 'PCB_LIVRÉ', iteration: 1, zip_b64: 'UEsDBA==', bom_csv: 'ref,lcsc' },
+      };
+      yield { type: 'done' };
+    })();
+  }
+
+  it('facture le pipeline quand il va jusqu\'à l\'export', async () => {
+    agentsMock.runOrchestrator.mockImplementation(pipelineComplet);
+    const { client, rpc } = makeClient();
+    const { controller } = makeController();
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    });
+
+    expect(rpc).toHaveBeenCalledWith(
+      'finalize_pipeline_success',
+      expect.objectContaining({ p_project_id: 'p1', p_iteration_count: 1 }),
+    );
+  });
+
+  it('n\'émet aucune erreur SSE sur un run réussi', async () => {
+    // Le `throw` interne est avalé par le catch de fin (il ne contient ni
+    // « credit » ni « 402 »), donc l'appel se terminait NORMALEMENT tout en
+    // envoyant « Orchestrator completed without a DRC_CLEAN state » à
+    // l'utilisateur — une erreur affichée sur un pipeline parfaitement réussi.
+    agentsMock.runOrchestrator.mockImplementation(pipelineComplet);
+    const { client } = makeClient();
+    const { controller, chunks } = makeController();
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    });
+
+    expect(chunks.join('')).not.toContain('without a DRC_CLEAN state');
+    expect(chunks.join('')).toContain('"type":"done"');
+  });
+
+  it('finalise avec le statut RÉELLEMENT atteint, pas un DRC_CLEAN forcé', async () => {
+    // L'export livré est un état strictement plus avancé que le DRC seul.
+    // Rétrograder l'état persisté effacerait les Gerbers du statut et
+    // ferait « reculer » le projet aux yeux de l'utilisateur.
+    agentsMock.runOrchestrator.mockImplementation(pipelineComplet);
+    const { client, rpc } = makeClient();
+    const { controller } = makeController();
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    });
+
+    const args = rpc.mock.calls[0]?.[1] as { p_pcb_state: { status: string } };
+    expect(args.p_pcb_state.status).toBe('PCB_LIVRÉ');
+  });
+
+  it('refuse toujours de finaliser un run qui n\'a jamais atteint le DRC', async () => {
+    // La garde d'origine protégeait contre ça, et doit continuer de le faire :
+    // un run interrompu à ROUTING_DONE ne se facture pas.
+    agentsMock.runOrchestrator.mockImplementation(() =>
+      (async function* () {
+        yield { type: 'pcb_state', state: { pcb_status: 'ROUTING_DONE', iteration: 1 } };
+        yield { type: 'done' };
+      })(),
+    );
+    const { client, rpc } = makeClient();
+    const { controller } = makeController();
+
+    await runRealOrchestrator({
+      controller: controller as never,
+      encoder: new TextEncoder(),
+      supabase: client as never,
+      userId: 'u1',
+      projectId: 'p1',
+      prompt: 'board',
+      iterationStart: 0,
+    });
+
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
