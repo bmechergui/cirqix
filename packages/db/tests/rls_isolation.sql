@@ -1,4 +1,4 @@
--- Credits/RLS security regression tests through migration 017.
+-- Credits/RLS security regression tests through migration 018.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -1060,6 +1060,82 @@ BEGIN
     RAISE EXCEPTION 'FAIL Z: un etat non terminal a ete facture (sqlstate=%)', code;
   END IF;
   RAISE NOTICE 'PASS Z - a non-terminal state is still refused';
+END $$;
+
+-- AA. Le repli local finalise SANS facturer (migration 018).
+--
+--     `runLocalPipeline` enchaîne 5 étapes sur 8 — footprint, gen_pcb et export
+--     sont sautés — mais se déclarait `orchestrator` : il facturait donc le
+--     prix du pipeline COMPLET et rendait le board commandable. Sa provenance
+--     porte désormais son propre nom.
+DO $$
+DECLARE
+  balance_before numeric;
+  balance_after numeric;
+  finalized boolean;
+  saved_mode text;
+BEGIN
+  UPDATE public.credits SET balance = 50
+  WHERE user_id = '22222222-2222-2222-2222-222222222222';
+  INSERT INTO public.projects (id, user_id, name)
+  VALUES ('66666666-6666-6666-6666-666666666666',
+          '22222222-2222-2222-2222-222222222222', 'Bob local fallback')
+  ON CONFLICT (id) DO NOTHING;
+  UPDATE public.projects SET status = 'ROUTING_DONE', iteration_count = 0
+  WHERE id = '66666666-6666-6666-6666-666666666666';
+
+  SELECT balance INTO balance_before
+  FROM public.credits WHERE user_id = '22222222-2222-2222-2222-222222222222';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.finalize_pipeline_success(
+    '22222222-2222-2222-2222-222222222222',
+    '66666666-6666-6666-6666-666666666666',
+    1,
+    '{"projectId":"66666666-6666-6666-6666-666666666666","status":"DRC_CLEAN","iteration":1}'::jsonb,
+    'local_fallback'
+  ) INTO finalized;
+  RESET ROLE;
+
+  SELECT balance INTO balance_after
+  FROM public.credits WHERE user_id = '22222222-2222-2222-2222-222222222222';
+  SELECT agent_mode INTO saved_mode
+  FROM public.projects WHERE id = '66666666-6666-6666-6666-666666666666';
+
+  -- Finalise (l'état est publié) mais ne débite RIEN, et garde sa provenance —
+  -- c'est elle qui fera refuser la commande par le gate JLCPCB.
+  IF finalized IS DISTINCT FROM true
+     OR balance_after <> balance_before
+     OR saved_mode <> 'local_fallback' THEN
+    RAISE EXCEPTION 'FAIL AA: finalized=%, balance=%/%, mode=%',
+      finalized, balance_before, balance_after, saved_mode;
+  END IF;
+  RAISE NOTICE 'PASS AA - local fallback finalizes without charging';
+END $$;
+
+-- AB. Une provenance inconnue reste refusée — la garde d'origine tient.
+DO $$
+DECLARE code text := '';
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  BEGIN
+    PERFORM public.finalize_pipeline_success(
+      '22222222-2222-2222-2222-222222222222',
+      '66666666-6666-6666-6666-666666666666',
+      2,
+      '{"projectId":"66666666-6666-6666-6666-666666666666","status":"DRC_CLEAN","iteration":2}'::jsonb,
+      'chatgpt_maison'
+    );
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code <> '22023' THEN
+    RAISE EXCEPTION 'FAIL AB: provenance inconnue acceptee (sqlstate=%)', code;
+  END IF;
+  RAISE NOTICE 'PASS AB - an unknown provenance is still refused';
 END $$;
 
 ROLLBACK;

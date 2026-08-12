@@ -118,7 +118,23 @@ describe('pipeline nominal', () => {
     expect(lastStatus).toBe('DRC_CLEAN');
   });
 
-  it('débite le coût complet via la RPC atomique avant done', async () => {
+  it("finalise avec sa propre provenance — et ne facture donc rien", async () => {
+    // Ce repli enchaîne CINQ étapes sur huit : footprint, gen_pcb et export
+    // sont sautés. Il se déclarait pourtant `orchestrator`, la provenance qui
+    // ouvre le gate JLCPCB, et facturait 8,5 crédits — le prix du pipeline
+    // COMPLET. Un board sans footprints résolus ni PCB généré nativement
+    // devenait commandable au prix fort.
+    //
+    // `simulator` serait faux aussi : ce repli exécute les VRAIS handlers
+    // contre le vrai service KiCad. C'est une troisième provenance, et la
+    // nommer est la seule façon de ne pas mentir (migration 018).
+    //
+    // Conséquences, toutes deux portées par la RPC : le débit ne vise que
+    // `orchestrator`, donc ce run ne facture rien ; et le gate JLCPCB
+    // n'accepte que `orchestrator`, donc ce board n'est pas commandable —
+    // sans qu'une ligne de la route de commande ait changé.
+    //
+    // Signalé indépendamment par les deux audits externes du 2026-08-12.
     const { rpc, sse } = await runAndCollect();
 
     expect(rpc).toHaveBeenCalledWith('finalize_pipeline_success', {
@@ -126,7 +142,7 @@ describe('pipeline nominal', () => {
       p_project_id: 'p1',
       p_iteration_count: 1,
       p_pcb_state: expect.objectContaining({ status: 'DRC_CLEAN', iteration: 1 }),
-      p_agent_mode: 'orchestrator',
+      p_agent_mode: 'local_fallback',
     });
     expect(sse).toContain('"type":"done"');
   });

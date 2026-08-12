@@ -168,7 +168,12 @@ export async function finalizePipelineSuccess(
   userId: string,
   projectId: string,
   state: PCBState,
-  agentMode: 'orchestrator' | 'simulator',
+  // Trois provenances distinctes (migration 018) :
+  //   orchestrator   — pipeline complet, SEUL facturé et SEUL commandable ;
+  //   local_fallback — vrais handlers, mais footprint/gen_pcb/export sautés ;
+  //   simulator      — états fabriqués.
+  // Seul `orchestrator` déclenche le débit, côté RPC.
+  agentMode: 'orchestrator' | 'simulator' | 'local_fallback',
 ): Promise<void> {
   // Deux états terminaux facturables. `PCB_LIVRÉ` est strictement plus avancé
   // que `DRC_CLEAN` : `handleExport` ne l'émet QUE si `drc_clean` est vrai en
