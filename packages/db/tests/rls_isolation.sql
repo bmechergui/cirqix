@@ -1,4 +1,4 @@
--- Credits/RLS security regression tests through migration 016.
+-- Credits/RLS security regression tests through migration 017.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -948,6 +948,118 @@ BEGIN
     RAISE EXCEPTION 'FAIL W: sqlstate=%, marqueur=%', code, marker;
   END IF;
   RAISE NOTICE 'PASS W - unknown user is a permanent refusal, marker rolled back';
+END $$;
+
+-- X. Un pipeline allé jusqu'à l'export SE FACTURE (migration 017).
+--
+--    `prompts.ts` fait enchaîner l'export après le DRC : le chemin NOMINAL se
+--    termine en `PCB_LIVRÉ`. La RPC n'acceptait que `DRC_CLEAN` et refusait
+--    donc de facturer les pipelines les plus complets — pendant que le board,
+--    ses Gerbers et sa provenance `orchestrator` étaient déjà persistés et que
+--    le gate JLCPCB accepte `PCB_LIVRÉ`. PCB fabricable, commandable, gratuit.
+--
+--    Miroir des invariants précédents : ils vérifient tous qu'un succès n'est
+--    pas accordé SANS contrôle ; celui-ci vérifie qu'un contrôle réussi
+--    aboutit bien à un DÉBIT.
+DO $$
+DECLARE
+  balance_before numeric;
+  balance_after numeric;
+  finalized boolean;
+  saved_status text;
+BEGIN
+  UPDATE public.credits SET balance = 50
+  WHERE user_id = '11111111-1111-1111-1111-111111111111';
+  UPDATE public.projects
+  SET status = 'ROUTING_DONE', iteration_count = 0, agent_mode = 'orchestrator'
+  WHERE id = '55555555-5555-5555-5555-555555555555';
+
+  SELECT balance INTO balance_before
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.finalize_pipeline_success(
+    '11111111-1111-1111-1111-111111111111',
+    '55555555-5555-5555-5555-555555555555',
+    1,
+    '{"projectId":"55555555-5555-5555-5555-555555555555","status":"PCB_LIVRÉ","iteration":1}'::jsonb,
+    'orchestrator'
+  ) INTO finalized;
+  RESET ROLE;
+
+  SELECT balance INTO balance_after
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+  SELECT status INTO saved_status
+  FROM public.projects WHERE id = '55555555-5555-5555-5555-555555555555';
+
+  -- Le statut ECRIT doit être celui atteint : forcer `DRC_CLEAN` ferait
+  -- reculer un projet qui a produit ses Gerbers.
+  IF finalized IS DISTINCT FROM true
+     OR balance_after <> balance_before - 8.5
+     OR saved_status <> 'PCB_LIVRÉ' THEN
+    RAISE EXCEPTION 'FAIL X: finalized=%, balance=%/%, status=%',
+      finalized, balance_before, balance_after, saved_status;
+  END IF;
+  RAISE NOTICE 'PASS X - a delivered pipeline is billed and keeps its status';
+END $$;
+
+-- Y. Le rejeu d'un `PCB_LIVRÉ` déjà finalisé ne facture pas deux fois.
+DO $$
+DECLARE
+  replay boolean;
+  balance_before numeric;
+  balance_after numeric;
+BEGIN
+  SELECT balance INTO balance_before
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT public.finalize_pipeline_success(
+    '11111111-1111-1111-1111-111111111111',
+    '55555555-5555-5555-5555-555555555555',
+    1,
+    '{"projectId":"55555555-5555-5555-5555-555555555555","status":"PCB_LIVRÉ","iteration":1}'::jsonb,
+    'orchestrator'
+  ) INTO replay;
+  RESET ROLE;
+
+  SELECT balance INTO balance_after
+  FROM public.credits WHERE user_id = '11111111-1111-1111-1111-111111111111';
+
+  IF replay IS DISTINCT FROM false OR balance_after <> balance_before THEN
+    RAISE EXCEPTION 'FAIL Y: replay=%, balance=%/%', replay, balance_before, balance_after;
+  END IF;
+  RAISE NOTICE 'PASS Y - replaying a delivered pipeline never double-charges';
+END $$;
+
+-- Z. Un état NON terminal reste refusé — la garde d'origine tient toujours.
+DO $$
+DECLARE code text := '';
+BEGIN
+  UPDATE public.projects
+  SET status = 'ROUTING_DONE', iteration_count = 0
+  WHERE id = '33333333-3333-3333-3333-333333333333';
+
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  BEGIN
+    PERFORM public.finalize_pipeline_success(
+      '11111111-1111-1111-1111-111111111111',
+      '33333333-3333-3333-3333-333333333333',
+      1,
+      '{"projectId":"33333333-3333-3333-3333-333333333333","status":"ROUTING_DONE","iteration":1}'::jsonb,
+      'orchestrator'
+    );
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code <> '22023' THEN
+    RAISE EXCEPTION 'FAIL Z: un etat non terminal a ete facture (sqlstate=%)', code;
+  END IF;
+  RAISE NOTICE 'PASS Z - a non-terminal state is still refused';
 END $$;
 
 ROLLBACK;

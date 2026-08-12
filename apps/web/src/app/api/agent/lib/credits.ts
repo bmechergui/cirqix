@@ -170,7 +170,17 @@ export async function finalizePipelineSuccess(
   state: PCBState,
   agentMode: 'orchestrator' | 'simulator',
 ): Promise<void> {
-  if (state.status !== 'DRC_CLEAN' || !Number.isInteger(state.iteration) || state.iteration < 1) {
+  // Deux états terminaux facturables. `PCB_LIVRÉ` est strictement plus avancé
+  // que `DRC_CLEAN` : `handleExport` ne l'émet QUE si `drc_clean` est vrai en
+  // cache, donc après un DRC réellement exécuté et propre. N'accepter que
+  // `DRC_CLEAN` refusait de facturer les pipelines les plus complets — ceux qui
+  // vont jusqu'aux Gerbers (issue trouvée le 2026-08-12).
+  const BILLABLE_FINAL_STATUSES = ['DRC_CLEAN', 'PCB_LIVRÉ'] as const;
+  if (
+    !BILLABLE_FINAL_STATUSES.includes(state.status as (typeof BILLABLE_FINAL_STATUSES)[number]) ||
+    !Number.isInteger(state.iteration) ||
+    state.iteration < 1
+  ) {
     throw new CreditDeductionError('invalid final pipeline state');
   }
 

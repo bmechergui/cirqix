@@ -162,10 +162,32 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           break;
 
         case 'done':
-          if (lastStatus !== 'DRC_CLEAN') {
-            throw new Error('Orchestrator completed without a DRC_CLEAN state');
+          // Deux états terminaux facturables, pas un seul.
+          //
+          // `prompts.ts` fait enchaîner l'export APRÈS le DRC : un pipeline qui
+          // réussit complètement finit donc en `PCB_LIVRÉ`, pas en `DRC_CLEAN`.
+          // La garde n'acceptait que `DRC_CLEAN` et levait sur le chemin
+          // nominal ; le `catch` de fin avalait l'exception (elle ne contient
+          // ni « credit » ni « 402 »), si bien que le run se terminait
+          // « normalement » en affichant une erreur — et surtout sans jamais
+          // appeler `finalizePipelineSuccess`. Aucun débit, alors que le board,
+          // ses Gerbers et `agent_mode: 'orchestrator'` venaient d'être
+          // persistés et que le gate JLCPCB accepte `PCB_LIVRÉ` : un PCB
+          // fabricable, commandable et gratuit.
+          //
+          // `PCB_LIVRÉ` n'affaiblit pas la garde, il la renforce :
+          // `handleExport` ne l'émet QUE si `drc_clean` est vrai en cache,
+          // c'est-à-dire après un DRC réellement exécuté et réellement propre.
+          // C'est un état strictement plus avancé que `DRC_CLEAN`.
+          //
+          // Trouvé le 2026-08-12 par deux audits externes indépendants.
+          if (lastStatus !== 'DRC_CLEAN' && lastStatus !== 'PCB_LIVRÉ') {
+            throw new Error(`Orchestrator completed in a non-billable state: ${lastStatus}`);
           }
-          // Charge and publish DRC_CLEAN in one service-role transaction.
+          // Débit et publication de l'état atteint, en une transaction
+          // service-role. On publie `lastStatus` et non un `DRC_CLEAN` codé en
+          // dur : rétrograder un run allé jusqu'à l'export ferait « reculer »
+          // le projet aux yeux de l'utilisateur, alors qu'il est plus avancé.
           await finalizePipelineSuccess(
             supabase,
             userId,
@@ -175,7 +197,7 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           );
           controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
           controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: mergedState as PCBState })));
-          controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
+          controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: lastStatus })));
           controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
           break;
 
