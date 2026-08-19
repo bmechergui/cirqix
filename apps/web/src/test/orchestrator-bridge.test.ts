@@ -1,7 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const agentsMock = vi.hoisted(() => ({ runOrchestrator: vi.fn() }));
-vi.mock('@cirqix/agents', () => agentsMock);
+
+/**
+ * Le pipeline vit desormais dans `packages/agents/src/pipeline/run-orchestrator`
+ * et c'est LUI qu'on veut exercer REELLEMENT : ces tests gardent les invariants
+ * de facturation, ils ne verifient pas un mock.
+ *
+ * On remplace donc uniquement la boucle `runOrchestrator` (qui appellerait le
+ * SDK Anthropic), et on laisse le pipeline authentique tourner par-dessus. Le
+ * mock est pose sur le chemin INTERNE du paquet, celui que le pipeline importe
+ * (`../orchestrator`) — mocker `@cirqix/agents` ne l'atteindrait pas.
+ */
+vi.mock('../../../../packages/agents/src/orchestrator', () => agentsMock);
+vi.mock('@cirqix/agents', async () => {
+  const pipeline = await vi.importActual<
+    typeof import('../../../../packages/agents/src/pipeline/run-orchestrator')
+  >('../../../../packages/agents/src/pipeline/run-orchestrator');
+  return { ...agentsMock, runOrchestratorPipeline: pipeline.runOrchestratorPipeline };
+});
 vi.mock('../app/api/agent/lib/kicad-storage', () => ({
   uploadKicadArtifact: vi.fn().mockResolvedValue({ signedUrl: undefined }),
 }));

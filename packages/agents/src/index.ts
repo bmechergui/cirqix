@@ -21,3 +21,8 @@ export {
   WORKER_OPTIONS,
   jobIdForProject,
 } from './pipeline/job';
+// Pipeline orchestrateur, decouple de Supabase et du flux SSE : executable
+// aussi bien dans la route web que dans le worker persistant.
+export { runOrchestratorPipeline } from './pipeline/run-orchestrator';
+export type { RunPipelineOptions } from './pipeline/run-orchestrator';
+export type { KicadArtifactName, PipelineStore, StoredArtifact } from './pipeline/store';
