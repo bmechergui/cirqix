@@ -90,10 +90,22 @@ services:
   worker:
     image: node:20-alpine
     container_name: cirqix-worker
-    working_dir: /app
-    # Étape 1 : le conteneur existe et reste sain, sans consommer la file.
-    # Remplacé par le vrai point d'entrée à l'étape 3.
-    command: ['sh', '-c', 'echo "worker en veille (etape 1)"; tail -f /dev/null']
+    # Le worker consomme la file et exécute le pipeline SANS plafond de durée :
+    # c'est ici que tombe la limite de 300 s de l'invocation web.
+    # Le dépôt est monté et construit au démarrage (pas d'image dédiée tant que
+    # le déploiement de la droplet reste manuel).
+    working_dir: /repo/services/worker
+    command:
+      - sh
+      - -c
+      - >-
+        corepack enable && pnpm install --frozen-lockfile
+        && pnpm --filter @cirqix/worker build
+        && node dist/index.js
+    volumes:
+      # Le worker exécute le code du dépôt : même pipeline que la route web,
+      # même sémantique de facturation et de provenance.
+      - ../..:/repo
     environment:
       - NODE_ENV=production
       - REDIS_URL=redis://redis:6379
