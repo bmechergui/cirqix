@@ -17,6 +17,10 @@ services:
       - ./routers:/app/routers:ro
       - ./main.py:/app/main.py:ro
       - ./security.py:/app/security.py:ro
+      # Importé par main.py (init_sentry). Sans ce montage, le main.py monté
+      # ci-dessus importe un module absent de l'image : ModuleNotFoundError,
+      # les 4 workers meurent au démarrage et AUCUNE route n'est servie.
+      - ./observability.py:/app/observability.py:ro
     environment:
       - PYTHONUNBUFFERED=1
       - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
