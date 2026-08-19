@@ -535,6 +535,71 @@ généré. Hors localhost/réseau Docker privé, le transport doit être HTTPS.
 
 **Routing — nets routables :** `_count_routable_nets` compte uniquement les nets avec ≥3 occurrences dans le PCB (1 déclaration globale + ≥2 pads). Les nets mono-pad `Net-(U1-X)` ne comptent pas.
 
+## Pipeline asynchrone — le plafond de 300 s (migration en cours)
+
+**Mesure fondatrice (2026-08-19, board STM32 de `examples/stm32-validation`,
+chaîne réelle dans le conteneur) :** génération 3 s · placement 175 s ·
+**routage 861 s** — soit ~17 min. `apps/web/src/app/api/agent/route.ts` déclare
+`maxDuration = 300`.
+
+**Le routage seul dure presque trois fois le budget entier de l'invocation.**
+Aucun PCB complet ne peut donc aboutir pour un utilisateur réel : la chaîne ne
+fonctionne aujourd'hui qu'exécutée à la main dans le conteneur, où rien ne la
+chronomètre.
+
+⚠️ `async` n'y change RIEN. `await` libère la boucle d'événements de Node, il ne
+rend pas la main à la plateforme : la fonction reste ouverte tant qu'elle tient
+le flux SSE. `maxDuration` est un plafond d'HORLOGE MURALE sur l'invocation.
+
+**NEVER** conclure qu'une étape longue « passe » parce qu'elle est asynchrone.
+
+### Le vrai plafond était côté client (corrigé)
+
+`routing-service.ts` accordait au routeur
+`Math.min(60 + layers * 30, ROUTING_TIMEOUT_MS / 1000)` — soit **180 s sur
+4 couches**, alors que la courbe mesurée donne 300 s → 36 % de complétion. Ni
+les 600 s du service Python, ni les 300 s de Vercel : c'était cette heuristique,
+cinq fois plus serrée que tout le reste. Voir `engines/routing-budget.ts`.
+
+⚠️ `--timeout` du routeur n'est PAS une limite de patience, c'est une
+**ressource** : `kct route` rend la main dès 100 % atteint et conserve ce qu'il a
+routé à l'échéance. Le relever ne coûte rien sur un board simple.
+`_ROUTE_TIMEOUT_S` = 3600 s, `_WATCHDOG_MARGIN_S` = 600 s — le garde-fou ne doit
+JAMAIS tirer avant le routeur, sinon on tue un processus qui allait rendre un
+routage partiel valide. Garde : `tests/test_route_budget.py`.
+
+### Architecture cible
+
+```
+Route (Vercel)  ──202 {runId}──>  file BullMQ (Redis)  ──>  worker (DigitalOcean)
+                                                              │ sans plafond
+navigateur  <──Realtime──  pcb_run_events (Postgres)  <───────┘
+```
+
+- `packages/agents/src/pipeline/` — `run-sink.ts` (transport), `pg-sink.ts`
+  (journal agrégé), `store.ts` (persistance), `run-orchestrator.ts` (le pipeline
+  lui-même), `job.ts` + `queue.ts` (file).
+- `services/worker/` — image dédiée, **aucun port publié**, client service-role.
+- Migration `019_pcb_runs.sql` — `pcb_runs` + `pcb_run_events`, RLS lecture seule.
+
+**NEVER** faire voyager `agent_mode` dans le payload du job : il gouverne le gate
+JLCPCB, donc une commande réelle et payante. Enfiler un job ne doit pas décerner
+la commandabilité. Il est posé par la ROUTE dans `pcb_runs`.
+**NEVER** dériver le gate JLCPCB de `pcb_runs` : un run est une tentative, seul
+`projects` porte un résultat prouvé.
+**NEVER** laisser `maxStalledCount` à son défaut (1) : sur 20 min de routage, le
+verrou de 30 s expire et BullMQ rejoue le job EN PARALLÈLE du premier.
+**ALWAYS** garder `CIRQIX_ASYNC_PIPELINE` inactif tant que le client n'a pas
+basculé : la route et le client doivent basculer ensemble.
+
+### État
+
+Livré : migration, conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
+annulation (bloque reasoner et re-tirages), worker, branche asynchrone de la
+route derrière drapeau.
+Reste : client Realtime, passage en `Popen` pour la progression pendant les
+20 min, et la validation d'un routage > 300 s en conditions réelles.
+
 ## Système de crédits
 
 - Chat:0.5 | Schéma:2 | Placement:2 | Routage:3 | DRC:1 | Export:1 | Footprint IA:3 | Vue 3D:1 | Simulation:3
