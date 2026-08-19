@@ -11,6 +11,7 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { routingSearchBudgetS } from './routing-budget';
 
 const log = pino({
   name: 'cirqix.agents.routing-service',
@@ -70,8 +71,10 @@ export async function runRealRouting(
   }
 
   const url = `${baseUrl.replace(/\/+$/, '')}/route/auto`;
-  // Per-layer timeout heuristic — capped by ROUTING_TIMEOUT_MS for safety.
-  const timeoutS = Math.min(60 + input.layers * 30, ROUTING_TIMEOUT_MS / 1000);
+  // Budget de RECHERCHE accordé au routeur — pas une limite de patience :
+  // `kct route` rend la main dès 100 % atteint. Voir `routing-budget.ts` pour
+  // pourquoi l'ancienne heuristique (180 s sur 4 couches) bridait la complétion.
+  const timeoutS = routingSearchBudgetS(input.layers);
   const body = JSON.stringify({
     kicad_pcb_b64: Buffer.from(input.kicadPcbContent, 'utf-8').toString('base64'),
     layers: input.layers,
