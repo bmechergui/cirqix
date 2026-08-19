@@ -8,13 +8,14 @@
  */
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { STEP_CAP_MS } from '../pipeline-budget';
 
 const log = pino({
   name: 'cirqix.agents.reasoning-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 
-const REASON_TIMEOUT_MS = 180_000;
+const REASON_TIMEOUT_MS = STEP_CAP_MS.reason;
 
 export interface ReasonerInput {
   kicadPcbContent: string;
