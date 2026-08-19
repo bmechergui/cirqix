@@ -26,3 +26,18 @@ export {
 export { runOrchestratorPipeline } from './pipeline/run-orchestrator';
 export type { RunPipelineOptions } from './pipeline/run-orchestrator';
 export type { KicadArtifactName, PipelineStore, StoredArtifact } from './pipeline/store';
+// File BullMQ.
+//
+// Exporte depuis l'entree principale plutot que par un sous-chemin
+// (`@cirqix/agents/pipeline-queue`) : le resolveur de vitest n'honore pas les
+// sous-chemins d'`exports` pour un paquet lie en workspace, et les tests de la
+// route echouaient a la resolution. Le cout est que `bullmq`/`ioredis` sont
+// charges par tout consommateur du paquet -- acceptable, tous etant cote
+// serveur, et aucune connexion n'etant ouverte a l'import (les fabriques seules
+// se connectent).
+export {
+  createPipelineQueue,
+  enqueuePipelineRun,
+  createPipelineWorker,
+} from './pipeline/queue';
+export type { PipelineRunner } from './pipeline/queue';

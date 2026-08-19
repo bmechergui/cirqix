@@ -23,7 +23,7 @@ import type {
 import { logger } from '@cirqix/logger';
 import type { RunJobContext } from './run-job.js';
 
-export { createPipelineWorker } from '@cirqix/agents/pipeline-queue';
+export { createPipelineWorker } from '@cirqix/agents';
 export type { PipelineJobPayload } from '@cirqix/agents';
 
 const log = logger.child({ module: 'worker.adapters' });

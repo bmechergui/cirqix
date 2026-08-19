@@ -17,6 +17,10 @@ import {
 } from './lib/credits';
 import { checkRateLimit } from '@/shared/lib/ratelimit';
 import { AGENT_RATE_LIMIT, AGENT_RATE_WINDOW_S, agentRateLimitKey } from './lib/rate-limit';
+import { asyncPipelineEnabled } from './lib/async-mode';
+import { createRun, RunAlreadyActiveError } from './lib/run-repository';
+import { createPipelineQueue, enqueuePipelineRun } from '@cirqix/agents';
+import { logger } from '@cirqix/logger';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -136,6 +140,75 @@ export async function POST(req: NextRequest) {
   // indéfiniment. Fuite mémoire non bornée, sur le chemin d'échec le plus
   // courant qui soit.
   setProjectPlan(projectId, creditRow?.plan ?? 'free');
+
+  // ---------------------------------------------------------------------------
+  // Chemin ASYNCHRONE — la route dépose et rend la main.
+  // ---------------------------------------------------------------------------
+  //
+  // C'est ici que le plafond disparaît. Mesuré le 2026-08-19 sur le board STM32 :
+  // génération 3 s + placement 175 s + routage 861 s ≈ 17 min, pour une
+  // invocation plafonnée à `maxDuration = 300`. Aucun PCB complet ne peut donc
+  // aboutir tant que la requête attend le résultat.
+  //
+  // En asynchrone, la route authentifie, réserve, ouvre le run, enfile, et
+  // répond en quelques centaines de millisecondes. Le worker exécute sans
+  // montre ; le navigateur suit le journal (`pcb_run_events`).
+  //
+  // ⚠️ La PROVENANCE est posée ICI, dans `pcb_runs.agent_mode`, et n'entre jamais
+  // dans le payload du job — sinon enfiler un job reviendrait à décerner la
+  // commandabilité JLCPCB, c'est-à-dire une commande réelle et payante.
+  //
+  // Le drapeau exige `REDIS_URL` : sans file, un job enfilé ne serait consommé
+  // par personne et l'utilisateur verrait sa demande acceptée puis jamais
+  // traitée — pire qu'un refus franc.
+  if (useOrchestrator && asyncPipelineEnabled(process.env, { requireRedis: true })) {
+    try {
+      const runId = await createRun(pipelineClient, {
+        projectId,
+        userId: user.id,
+        agentMode: 'orchestrator',
+        reservationId,
+        iterationStart: project.iteration_count ?? 0,
+      });
+
+      const queue = createPipelineQueue(process.env['REDIS_URL'] as string);
+      try {
+        await enqueuePipelineRun(queue, {
+          runId,
+          projectId,
+          userId: user.id,
+          prompt,
+          iterationStart: project.iteration_count ?? 0,
+        });
+      } finally {
+        // La route est éphémère : laisser la connexion Redis ouverte fuiterait
+        // un socket par requête sur un runtime serverless.
+        await queue.close();
+      }
+
+      // 202 : accepté, pas terminé. Le client suit `runId`.
+      return NextResponse.json({ success: true, runId }, { status: 202 });
+    } catch (err) {
+      if (err instanceof RunAlreadyActiveError) {
+        return NextResponse.json(
+          { success: false, error: 'A pipeline is already running for this project' },
+          { status: 409 },
+        );
+      }
+      // Le run n'a pas démarré : on rend la retenue tout de suite plutôt que
+      // d'attendre son TTL, sinon un échec d'enfilage gèlerait le solde.
+      if (reservationId) await releasePipelineReservation(pipelineClient, reservationId);
+      clearProjectPlan(projectId);
+      logger.child({ module: 'agent-route' }).error(
+        { err, projectId },
+        'enfilage du pipeline échoué',
+      );
+      return NextResponse.json(
+        { success: false, error: 'Could not queue the pipeline' },
+        { status: 500 },
+      );
+    }
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
