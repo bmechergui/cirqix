@@ -11,3 +11,13 @@ export type { PCBEngine, PCBEngineResult } from './engines/engine-router';
 // Contrat de sortie du pipeline : ce qui le décroche du flux SSE de Next, donc
 // de l'invocation plafonnée. Voir `pipeline/run-sink.ts`.
 export type { RunEvent, RunSink } from './pipeline/run-sink';
+// Transport durable du journal de run (worker) et contrat de file.
+export { PgSink, TOKEN_FLUSH_MS } from './pipeline/pg-sink';
+export type { RunEventRow, RunEventWriter } from './pipeline/pg-sink';
+export {
+  PIPELINE_QUEUE_NAME,
+  PipelineJobPayload,
+  JOB_OPTIONS,
+  WORKER_OPTIONS,
+  jobIdForProject,
+} from './pipeline/job';
