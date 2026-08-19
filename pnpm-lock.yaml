@@ -322,6 +322,9 @@ importers:
 
   services/worker:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.92.0
+        version: 0.92.0(zod@3.25.76)
       '@cirqix/agents':
         specifier: workspace:*
         version: link:../../packages/agents
@@ -334,6 +337,21 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.100.1
+      bullmq:
+        specifier: ^5.0.0
+        version: 5.71.1
+      ioredis:
+        specifier: ^5.3.0
+        version: 5.10.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      pino:
+        specifier: ^9.0.0
+        version: 9.14.0
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
     devDependencies:
       '@cirqix/config-typescript':
         specifier: workspace:*
@@ -341,6 +359,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.37
+      esbuild:
+        specifier: 0.21.5
+        version: 0.21.5
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

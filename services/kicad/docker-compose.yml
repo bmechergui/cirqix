@@ -88,24 +88,16 @@ services:
   # transite par Postgres (`pcb_run_events`, migration 019) lu en Supabase
   # Realtime — c'est ce qui permet au worker de rester sans surface réseau.
   worker:
-    image: node:20-alpine
+    build:
+      # Contexte = racine du dépôt : le worker consomme des paquets du workspace
+      # et le lockfile vit à la racine.
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    image: cirqix-worker:latest
     container_name: cirqix-worker
-    # Le worker consomme la file et exécute le pipeline SANS plafond de durée :
-    # c'est ici que tombe la limite de 300 s de l'invocation web.
-    # Le dépôt est monté et construit au démarrage (pas d'image dédiée tant que
-    # le déploiement de la droplet reste manuel).
-    working_dir: /repo/services/worker
-    command:
-      - sh
-      - -c
-      - >-
-        corepack enable && pnpm install --frozen-lockfile
-        && pnpm --filter @cirqix/worker build
-        && node dist/index.js
-    volumes:
-      # Le worker exécute le code du dépôt : même pipeline que la route web,
-      # même sémantique de facturation et de provenance.
-      - ../..:/repo
+    # PAS de montage du dépôt : les node_modules installés sous Windows ne se
+    # résolvent pas dans un conteneur Linux (binaires natifs par plateforme,
+    # liens pnpm). Mesuré — l'installation échoue au premier binaire, esbuild.
     environment:
       - NODE_ENV=production
       - REDIS_URL=redis://redis:6379
@@ -118,11 +110,6 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    healthcheck:
-      test: ['CMD', 'true']
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
 volumes:
   kicad-jobs:
