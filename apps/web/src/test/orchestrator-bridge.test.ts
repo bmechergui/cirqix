@@ -11,6 +11,7 @@ vi.mock('@cirqix/logger', () => ({
 
 import { CreditDeductionError } from '../app/api/agent/lib/credits';
 import { runRealOrchestrator } from '../app/api/agent/lib/orchestrator-bridge';
+import { SseSink } from '@/app/api/agent/lib/sse';
 
 function makeController() {
   const chunks: string[] = [];
@@ -57,8 +58,7 @@ describe('orchestrator finalization', () => {
     const { controller, chunks } = makeController();
 
     await expect(runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -89,8 +89,7 @@ describe('orchestrator finalization', () => {
     })());
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -107,8 +106,7 @@ describe('orchestrator finalization', () => {
     const { controller, chunks } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -162,8 +160,7 @@ describe('pipeline complet — DRC puis export', () => {
     const { controller } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -187,8 +184,7 @@ describe('pipeline complet — DRC puis export', () => {
     const { controller, chunks } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -209,8 +205,7 @@ describe('pipeline complet — DRC puis export', () => {
     const { controller } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -235,8 +230,7 @@ describe('pipeline complet — DRC puis export', () => {
     const { controller } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',
@@ -270,8 +264,7 @@ describe("préservation de l'état de validation", () => {
     const { controller } = makeController();
 
     await runRealOrchestrator({
-      controller: controller as never,
-      encoder: new TextEncoder(),
+      sink: new SseSink(controller as never),
       supabase: client as never,
       userId: 'u1',
       projectId: 'p1',

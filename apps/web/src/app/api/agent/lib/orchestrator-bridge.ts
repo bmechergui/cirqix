@@ -5,6 +5,7 @@ import { logger } from '@cirqix/logger';
 import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
 import { finalizePipelineSuccess } from './credits';
+import type { RunSink } from '@cirqix/agents';
 
 const log = logger.child({ module: 'orchestrator-bridge' });
 
@@ -13,8 +14,7 @@ const log = logger.child({ module: 'orchestrator-bridge' });
 type UiStep = 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
 
 interface BridgeOptions {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  encoder: TextEncoder;
+  sink: RunSink;
   supabase: SupabaseClient;
   userId: string;
   projectId: string;
@@ -29,7 +29,7 @@ type OrchestratorPcbState = Record<string, unknown> & {
 };
 
 export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart } = opts;
+  const { sink, supabase, userId, projectId, prompt, iterationStart } = opts;
 
   let mergedState: Partial<PCBState> = {
     projectId,
@@ -42,24 +42,20 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
     for await (const ev of runOrchestrator({ userMessage: prompt, projectId, history: [] })) {
       switch (ev.type) {
         case 'text':
-          controller.enqueue(encoder.encode(encodeSse({ type: 'token', content: ev.delta })));
+          await sink.emit({ type: 'token', content: ev.delta });
           break;
 
         case 'step': {
           const validSteps: UiStep[] = ['SCHEMA', 'ERC', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'];
           if (validSteps.includes(ev.step as UiStep)) {
-            controller.enqueue(
-              encoder.encode(encodeSse({ type: 'step', step: ev.step as UiStep }))
-            );
+            await sink.emit({ type: 'step', step: ev.step as UiStep });
           }
           break;
         }
 
         case 'reasoning':
           // Actions du reasoner IA (déblocage routage) → affichage temps-réel UI
-          controller.enqueue(
-            encoder.encode(encodeSse({ type: 'reasoning', steps: ev.steps }))
-          );
+          await sink.emit({ type: 'reasoning', steps: ev.steps });
           break;
 
         case 'pcb_state': {
@@ -127,8 +123,8 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           if (status === 'DRC_CLEAN') {
             break;
           }
-          controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: finalized })));
-          controller.enqueue(encoder.encode(encodeSse({ type: 'status', status })));
+          await sink.emit({ type: 'pcb_state', state: finalized });
+          await sink.emit({ type: 'status', status });
 
           // Persist to DB (best-effort)
           await supabase
@@ -158,7 +154,7 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
           if (ev.message.includes('credit') || ev.message.includes('402')) {
             throw new Error(ev.message); // Throw to trigger fallback
           }
-          controller.enqueue(encoder.encode(encodeSse({ type: 'error', message: ev.message })));
+          await sink.emit({ type: 'error', message: ev.message });
           break;
 
         case 'done':
@@ -195,10 +191,10 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
             mergedState as PCBState,
             'orchestrator',
           );
-          controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-          controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: mergedState as PCBState })));
-          controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: lastStatus })));
-          controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
+          await sink.emit({ type: 'step', step: null });
+          await sink.emit({ type: 'pcb_state', state: mergedState as PCBState });
+          await sink.emit({ type: 'status', status: lastStatus });
+          await sink.emit({ type: 'done' });
           break;
 
         case 'iteration':
@@ -212,6 +208,6 @@ export async function runRealOrchestrator(opts: BridgeOptions): Promise<void> {
     if (message.includes('credit') || message.includes('402')) {
       throw err; // Re-throw to trigger fallback in route.ts
     }
-    controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
+    await sink.emit({ type: 'error', message });
   }
 }

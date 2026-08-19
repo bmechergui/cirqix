@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient, createRouteHandlerClient } from '@/shared/lib/supabase-server';
 import { setProjectPlan, clearProjectPlan } from '@cirqix/agents';
-import { encodeSse, sseHeaders } from './lib/sse';
+import { encodeSse, sseHeaders, SseSink } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
@@ -140,12 +140,16 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // Le pipeline n'écrit plus dans le flux : il émet dans un `RunSink`.
+      // C'est ce qui le rendra exécutable dans un worker, hors de cette
+      // invocation plafonnée à `maxDuration`. Ici le transport reste le SSE
+      // actuel — octets identiques, comportement inchangé.
+      const sink = new SseSink(controller, encoder);
       try {
         if (useOrchestrator) {
           try {
             await runRealOrchestrator({
-              controller,
-              encoder,
+              sink,
               supabase: pipelineClient,
               userId: user.id,
               projectId,
@@ -155,8 +159,7 @@ export async function POST(req: NextRequest) {
           } catch (err) {
             if (shouldFallbackToLocalPipeline(err)) {
               await runLocalPipeline({
-                controller,
-                encoder,
+                sink,
                 supabase: pipelineClient,
                 userId: user.id,
                 projectId,
@@ -170,8 +173,7 @@ export async function POST(req: NextRequest) {
           }
         } else {
           await runSimulatorAgent({
-            controller,
-            encoder,
+            sink,
             supabase: pipelineClient,
             userId: user.id,
             projectId,

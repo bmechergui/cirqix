@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PCBState, SchemaComponent, SchemaNet } from '@cirqix/types';
 import { encodeSse } from './sse';
 import { finalizePipelineSuccess } from './credits';
+import type { RunSink } from '@cirqix/agents';
 
 interface SimulatedSchema {
   components: SchemaComponent[];
@@ -88,15 +89,14 @@ function deriveSchemaFromPrompt(prompt: string): SimulatedSchema {
 }
 
 async function streamText(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
+  sink: RunSink,
   text: string,
   chunkSize = 6,
   delayMs = 18,
 ): Promise<void> {
   for (let i = 0; i < text.length; i += chunkSize) {
     const slice = text.slice(i, i + chunkSize);
-    controller.enqueue(encoder.encode(encodeSse({ type: 'token', content: slice })));
+    await sink.emit({ type: 'token', content: slice });
     if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   }
 }
@@ -106,8 +106,7 @@ function wait(ms: number): Promise<void> {
 }
 
 interface SimulatorOptions {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  encoder: TextEncoder;
+  sink: RunSink;
   supabase: SupabaseClient;
   userId: string;
   projectId: string;
@@ -117,16 +116,14 @@ interface SimulatorOptions {
 }
 
 export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart } = opts;
+  const { sink, supabase, userId, projectId, prompt, iterationStart } = opts;
   const schema = deriveSchemaFromPrompt(prompt);
 
-  await streamText(
-    controller,
-    encoder,
+  await streamText(sink,
     `I'll design that PCB step by step. Starting with the schematic — identifying components and nets…\n\n`,
   );
 
-  controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: 'SCHEMA' })));
+  await sink.emit({ type: 'step', step: 'SCHEMA' });
   await wait(400);
   const schemaState: PCBState = {
     projectId,
@@ -138,13 +135,11 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
     board_width_mm: schema.board_width_mm,
     board_height_mm: schema.board_height_mm,
   };
-  await streamText(
-    controller,
-    encoder,
+  await streamText(sink,
     `**Schematic ready** — ${schema.components.length} components · ${schema.nets.length} nets · ${schema.board_width_mm}×${schema.board_height_mm}mm board.\n\n`,
   );
-  controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: schemaState })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'SCHEMA_DONE' })));
+  await sink.emit({ type: 'pcb_state', state: schemaState });
+  await sink.emit({ type: 'status', status: 'SCHEMA_DONE' });
   await supabase
     .from('projects')
     .update({
@@ -158,32 +153,30 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
     .eq('id', projectId);
 
   await wait(700);
-  controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: 'PLACEMENT' })));
-  await streamText(controller, encoder, `**Placing** ${schema.components.length} components…\n\n`);
+  await sink.emit({ type: 'step', step: 'PLACEMENT' });
+  await streamText(sink, `**Placing** ${schema.components.length} components…\n\n`);
   const placementState: PCBState = { ...schemaState, status: 'PLACEMENT_DONE' };
-  controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: placementState })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'PLACEMENT_DONE' })));
+  await sink.emit({ type: 'pcb_state', state: placementState });
+  await sink.emit({ type: 'status', status: 'PLACEMENT_DONE' });
   await supabase
     .from('projects')
     .update({ status: 'PLACEMENT_DONE', pcb_state: placementState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
 
   await wait(800);
-  controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: 'ROUTING' })));
-  await streamText(controller, encoder, `**Routing** signal and power nets…\n\n`);
+  await sink.emit({ type: 'step', step: 'ROUTING' });
+  await streamText(sink, `**Routing** signal and power nets…\n\n`);
   const routingState: PCBState = { ...placementState, status: 'ROUTING_DONE' };
-  controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: routingState })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'ROUTING_DONE' })));
+  await sink.emit({ type: 'pcb_state', state: routingState });
+  await sink.emit({ type: 'status', status: 'ROUTING_DONE' });
   await supabase
     .from('projects')
     .update({ status: 'ROUTING_DONE', pcb_state: routingState, agent_mode: 'simulator', updated_at: new Date().toISOString() })
     .eq('id', projectId);
 
   await wait(600);
-  controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: 'DRC' })));
-  await streamText(
-    controller,
-    encoder,
+  await sink.emit({ type: 'step', step: 'DRC' });
+  await streamText(sink,
     `**DRC clean** — 0 violations.\n\n`
       + `_Simulated run: this board was generated for demonstration and was never `
       + `validated by KiCad. Ordering is disabled for simulated boards — set `
@@ -191,8 +184,8 @@ export async function runSimulatorAgent(opts: SimulatorOptions): Promise<void> {
   );
   const drcState: PCBState = { ...routingState, status: 'DRC_CLEAN', drcViolations: [] };
   await finalizePipelineSuccess(supabase, userId, projectId, drcState, 'simulator');
-  controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: drcState })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: 'DRC_CLEAN' })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-  controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
+  await sink.emit({ type: 'pcb_state', state: drcState });
+  await sink.emit({ type: 'status', status: 'DRC_CLEAN' });
+  await sink.emit({ type: 'step', step: null });
+  await sink.emit({ type: 'done' });
 }

@@ -8,3 +8,6 @@ export { setProjectPlan, getProjectPlan, clearProjectPlan } from './tools/shared
 export { runPCBEngine, selectEngine, runCircuitSynthEngine, isCircuitSynthAvailable } from './engines/engine-router';
 export type { SchemaComponent, SchemaPin, SchemaNet, SchemaJson } from '@cirqix/types';
 export type { PCBEngine, PCBEngineResult } from './engines/engine-router';
+// Contrat de sortie du pipeline : ce qui le décroche du flux SSE de Next, donc
+// de l'invocation plafonnée. Voir `pipeline/run-sink.ts`.
+export type { RunEvent, RunSink } from './pipeline/run-sink';
