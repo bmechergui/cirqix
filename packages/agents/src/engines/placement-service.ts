@@ -9,6 +9,7 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { STEP_CAP_MS } from '../pipeline-budget';
 
 const log = pino({
   name: 'cirqix.agents.placement-service',
@@ -25,9 +26,10 @@ const log = pino({
  * jusqu'ici parce que la chaîne TS n'avait jamais tourné contre le service réel
  * (tests mockés uniquement) ; révélé par `tests/pipeline-live.test.ts`.
  *
- * Aligné sur les autres étapes longues : routage 90 s, reasoner 180 s.
+ * Le plafond vient de `pipeline-budget.ts` : les étapes longues y sont réglées
+ * ensemble, sous le budget d'invocation, plutôt que chacune dans son coin.
  */
-const PLACEMENT_TIMEOUT_MS = 180_000;
+const PLACEMENT_TIMEOUT_MS = STEP_CAP_MS.placement;
 
 export class PlacementServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {

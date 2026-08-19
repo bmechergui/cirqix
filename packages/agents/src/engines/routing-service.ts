@@ -11,6 +11,7 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { STEP_CAP_MS } from '../pipeline-budget';
 
 const log = pino({
   name: 'cirqix.agents.routing-service',
@@ -23,9 +24,14 @@ const log = pino({
  * il abandonnait donc des routages longs mais légitimes, transformant une
  * réussite en « service indisponible ». Observé le 2026-07-27 sur un tirage GA
  * défavorable (`pipeline-live.test.ts`, échec à ~90 s puis succès en 58 s au run
- * suivant). Aligné sur le budget du service + marge réseau.
+ * suivant).
+ *
+ * ⚠️ Valait 330_000 — soit 30 s de PLUS que `maxDuration = 300` côté route.
+ * `AbortSignal.timeout(330_000)` ne pouvait donc jamais se déclencher : la
+ * plateforme tuait l'invocation avant. Le plafond vient désormais de
+ * `pipeline-budget.ts`, qui garantit qu'il tient dans le budget d'invocation.
  */
-const ROUTING_TIMEOUT_MS = 330_000;
+const ROUTING_TIMEOUT_MS = STEP_CAP_MS.routing;
 
 export class RoutingServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
