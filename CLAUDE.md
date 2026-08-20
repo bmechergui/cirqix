@@ -636,27 +636,30 @@ Board STM32 placé non routé (`examples/stm32-validation/output/2_placement.kic
 envoyé à `POST /route/auto` avec le contrat exact du client (`timeout_s: 1800`,
 4 couches) :
 
-| Transport | Résultat |
+| État | Résultat |
 |---|---|
-| `fetch` global (undici) | `UND_ERR_HEADERS_TIMEOUT` — mort à 300 s |
-| `node:http` (échéances désarmées) | **605 s**, aller-retour HTTP complet |
+| `fetch` global (undici) | mort à 300 s — `UND_ERR_HEADERS_TIMEOUT` |
+| échéances de transport désarmées | 605 s → **500**, le partiel jeté |
+| repli Niveau 4 rétabli | **2547 s → 200, routé à 91 %** |
 
-**Une requête de 605 s traverse désormais toute la chaîne.** Le service, lui,
-routait déjà au-delà de 300 s avant le correctif — c'est le client qui
-raccrochait. La preuve la plus nette : après l'abandon du premier essai à 300 s,
-le service a continué et n'a rendu sa réponse qu'à 11:38:09, sept minutes plus
-tard, dans le vide.
+**Une requête de 42 minutes va au bout de la chaîne** — 8,5× l'ancien plafond,
+avec un routage RÉEL (`routed_percent: 91`, le plancher connu sans LLM), pas un
+succès de façade.
 
-⚠️ Ce run se termine tout de même en 500, pour une raison SANS RAPPORT avec le
-temps : `kct route` rend un routage sous `_MIN_ROUTED_PCT`, la chaîne bascule sur
-Freerouting, dont le round-trip Specctra renvoie un board **sans netlist**
-(99 nets en entrée, 0 en sortie) que la garde refuse — à raison.
+Le service, lui, routait déjà au-delà de 300 s avant le correctif : c'est le
+client qui raccrochait. La preuve la plus nette vient du premier essai — après
+l'abandon à 300 s, le service a continué et n'a rendu sa réponse que sept
+minutes plus tard, dans le vide.
 
-⚠️ **Le Niveau 3 jette alors un résultat valide.** Quand Freerouting échoue, la
-route lève `HTTPException(500)` au lieu de tomber sur le Niveau 4, qui rendrait
-le `kt_partial` déjà obtenu au Niveau 1 — un routage partiel réel, qui passe sa
-propre garde. Le commentaire du Niveau 4 annonce pourtant cette réutilisation :
-elle est inatteignable dès que Freerouting est présent et défaillant.
+⚠️ **Le budget est compté PAR NIVEAU, pas par appel.** Les 2547 s se répartissent
+entre le Niveau 1, Freerouting, puis le Niveau 4 qui relance `kct route` avec les
+mêmes 1800 s. Chaque niveau reçoit le budget entier, donc un appel peut valoir
+plusieurs fois `timeout_s`. Acceptable dans un worker sans plafond, à revoir si
+la borne devient contractuelle.
+
+⚠️ `via_count` et `track_length_mm` ressortent à **0** sur le chemin Niveau 4 :
+il ne les calcule pas et laisse les défauts du modèle. Ce sont des indicateurs
+d'affichage, pas un gate, mais ils décrivent un board qui n'existe pas.
 
 ### État
 
@@ -675,9 +678,11 @@ Reste :
   non testable sans un routage réel de ~14 min.
 - **Supabase Realtime** en transport principal ; le sondage actuel
   (`follow-run.ts`) reste alors le repli documenté.
-- **Qualité du routage** : voir le 500 ci-dessus — Freerouting perd la netlist
-  et son échec efface le partiel de kicad-tools. C'est le blocage restant, et il
-  n'a rien d'un problème de durée.
+- **Freerouting perd la netlist** sur son round-trip Specctra (99 nets en
+  entrée, 0 en sortie). La garde le refuse et le repli Niveau 4 livre désormais
+  le routage kicad-tools ; la cause amont, elle, reste entière.
+- **Budget par niveau** et **`via_count`/`track_length_mm` à 0** — voir les deux
+  avertissements ci-dessus.
 
 ## Système de crédits
 
