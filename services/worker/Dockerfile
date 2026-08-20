@@ -35,7 +35,10 @@ COPY services/worker/package.json      services/worker/
 # echoue plus loin avec un MODULE_NOT_FOUND trompeur.
 # Les VERSIONS restent pinnees par le lockfile ; seuls les binaires
 # specifiques a la plateforme sont resolus ici.
-RUN pnpm install --no-frozen-lockfile --filter @cirqix/worker...
+# Installation du workspace COMPLET, sans filtre : `--filter @cirqix/worker...`
+# selectionne le paquet et ses dependances, mais n installait pas esbuild --
+# le build echouait alors sur un MODULE_NOT_FOUND pour le binaire de bundle.
+RUN pnpm install --no-frozen-lockfile
 
 # Sources des seuls paquets dont le worker a besoin.
 COPY packages/ packages/
