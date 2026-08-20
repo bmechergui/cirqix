@@ -262,6 +262,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ② call_agent_erc        → Ingénieur ERC
      ① kicad-tools Schematic.validate() — pur Python, toujours dispo
      ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
+     ⚠️ (2026-08-20) `parse_erc_report` exigeait un `violations` de PREMIER
+        NIVEAU — la forme du rapport DRC. `kicad-cli sch erc --format json`
+        (schéma `erc.v1`) range les siennes sous `sheets[].violations` : le
+        parseur levait à CHAQUE exécution, `POST /erc` renvoyait 500, et l'ERC
+        d'autorité n'a JAMAIS rendu un verdict en production — seul
+        `runErcFallback()` travaillait. Le fail-closed a tenu (rien de faux
+        promu `ERC_CLEAN`), mais le contrôle principal était mort. Les deux
+        formes sont acceptées désormais ; une forme inconnue lève toujours.
+        Vérifié sur un vrai rapport : 40 violations parsées là où le parseur
+        levait. Garde : tests/test_fail_closed_drc_erc.py.
      ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
      ⚠️ (2026-07-27) `ERC_CLEAN` ne peut être accordé que par un contrôle
@@ -553,7 +563,7 @@ le flux SSE. `maxDuration` est un plafond d'HORLOGE MURALE sur l'invocation.
 
 **NEVER** conclure qu'une étape longue « passe » parce qu'elle est asynchrone.
 
-### Le vrai plafond était côté client (corrigé)
+### Le plafond n'était pas UN endroit, mais QUATRE (corrigés)
 
 `routing-service.ts` accordait au routeur
 `Math.min(60 + layers * 30, ROUTING_TIMEOUT_MS / 1000)` — soit **180 s sur
@@ -567,6 +577,34 @@ routé à l'échéance. Le relever ne coûte rien sur un board simple.
 `_ROUTE_TIMEOUT_S` = 3600 s, `_WATCHDOG_MARGIN_S` = 600 s — le garde-fou ne doit
 JAMAIS tirer avant le routeur, sinon on tue un processus qui allait rendre un
 routage partiel valide. Garde : `tests/test_route_budget.py`.
+
+⚠️ **Ce diagnostic était incomplet, et l'a été jusqu'au 2026-08-20.** Relever le
+budget côté client ne suffisait pas : le même nombre traverse QUATRE frontières,
+et il suffit qu'une seule reste serrée pour que tout le reste soit décoratif.
+Trouvées en enfilant de vrais jobs dans la file — jamais par les tests, qui
+mockent le service de part et d'autre :
+
+| Frontière | Valeur trouvée | Effet |
+|---|---|---|
+| `routingSearchBudgetS` (client) | 180 s sur 4 couches | routage tronqué à 36 % |
+| `RouteAutoRequest.timeout_s` (`le=`) | 900 s | **422** — le routage n'a pas lieu |
+| `_route_with_kicad_tools` | `_PYTHON_ROUTER_TIMEOUT_S` = 300 s codé en dur | budget de la requête **jeté** |
+| `_ROUTE_TIMEOUT_S` (`kct_route.py`) | 3600 s | seule des quatre à être correcte |
+
+La troisième est la plus coûteuse : la route acceptait le budget, répondait 200,
+et routait quand même 300 s. Rien dans la réponse ne trahissait la substitution.
+
+**NEVER** relever un budget à une seule extrémité : le vérifier sur toute la
+chaîne client → validation HTTP → appel au routeur, et laisser une garde de
+câblage à chaque saut (`tests/test_route_budget.py`).
+
+⚠️ Deux autres plafonds de la même famille, trouvés au même endroit :
+- `PLACEMENT_TIMEOUT_MS` valait 180 s pour un placement mesuré > 215 s sur un
+  board STM32 de 21 composants — le run se terminait sans qu'aucun composant
+  soit placé, donc sans jamais atteindre le routage
+  (`engines/placement-budget.ts`, 900 s) ;
+- `jobIdForProject` renvoyait `project:<uuid>`, refusé par BullMQ (`Custom Id
+  cannot contain :`) : **aucun job ne pouvait être enfilé**. Séparateur tiret.
 
 ### Architecture cible
 
@@ -592,9 +630,37 @@ verrou de 30 s expire et BullMQ rejoue le job EN PARALLÈLE du premier.
 **ALWAYS** garder `CIRQIX_ASYNC_PIPELINE` inactif tant que le client n'a pas
 basculé : la route et le client doivent basculer ensemble.
 
+### Le plafond est tombé — mesuré (2026-08-20)
+
+Board STM32 placé non routé (`examples/stm32-validation/output/2_placement.kicad_pcb`),
+envoyé à `POST /route/auto` avec le contrat exact du client (`timeout_s: 1800`,
+4 couches) :
+
+| Transport | Résultat |
+|---|---|
+| `fetch` global (undici) | `UND_ERR_HEADERS_TIMEOUT` — mort à 300 s |
+| `node:http` (échéances désarmées) | **605 s**, aller-retour HTTP complet |
+
+**Une requête de 605 s traverse désormais toute la chaîne.** Le service, lui,
+routait déjà au-delà de 300 s avant le correctif — c'est le client qui
+raccrochait. La preuve la plus nette : après l'abandon du premier essai à 300 s,
+le service a continué et n'a rendu sa réponse qu'à 11:38:09, sept minutes plus
+tard, dans le vide.
+
+⚠️ Ce run se termine tout de même en 500, pour une raison SANS RAPPORT avec le
+temps : `kct route` rend un routage sous `_MIN_ROUTED_PCT`, la chaîne bascule sur
+Freerouting, dont le round-trip Specctra renvoie un board **sans netlist**
+(99 nets en entrée, 0 en sortie) que la garde refuse — à raison.
+
+⚠️ **Le Niveau 3 jette alors un résultat valide.** Quand Freerouting échoue, la
+route lève `HTTPException(500)` au lieu de tomber sur le Niveau 4, qui rendrait
+le `kt_partial` déjà obtenu au Niveau 1 — un routage partiel réel, qui passe sa
+propre garde. Le commentaire du Niveau 4 annonce pourtant cette réutilisation :
+elle est inatteignable dès que Freerouting est présent et défaillant.
+
 ### État
 
-Livré : migration, conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
+Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
 annulation (bloque reasoner et re-tirages), worker (image dédiée, vérifié en
 conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
 branche asynchrone de la route derrière drapeau, suivi de run côté client.
@@ -609,8 +675,9 @@ Reste :
   non testable sans un routage réel de ~14 min.
 - **Supabase Realtime** en transport principal ; le sondage actuel
   (`follow-run.ts`) reste alors le repli documenté.
-- **Application de la migration `019`** et **validation d'un routage > 300 s** en
-  conditions réelles. Le plafond est armé, pas encore prouvé tombé.
+- **Qualité du routage** : voir le 500 ci-dessus — Freerouting perd la netlist
+  et son échec efface le partiel de kicad-tools. C'est le blocage restant, et il
+  n'a rien d'un problème de durée.
 
 ## Système de crédits
 
