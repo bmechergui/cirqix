@@ -10,6 +10,7 @@
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
 import { PLACEMENT_TIMEOUT_MS } from './placement-budget';
+import { longCallFetch } from './long-call-transport';
 
 const log = pino({
   name: 'cirqix.agents.placement-service',
@@ -70,7 +71,7 @@ export async function runRealPlacement(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await longCallFetch(url, {
       method: 'POST',
       headers: buildKicadServiceHeaders(),
       body,

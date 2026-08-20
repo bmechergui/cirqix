@@ -11,6 +11,7 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { longCallFetch } from './long-call-transport';
 import { routingSearchBudgetS } from './routing-budget';
 
 const log = pino({
@@ -83,7 +84,7 @@ export async function runRealRouting(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await longCallFetch(url, {
       method: 'POST',
       headers: buildKicadServiceHeaders(),
       body,
