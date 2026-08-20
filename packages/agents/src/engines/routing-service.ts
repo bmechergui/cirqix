@@ -12,22 +12,14 @@
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
 import { longCallFetch } from './long-call-transport';
-import { routingSearchBudgetS } from './routing-budget';
+import { routingSearchBudgetS, routingAbortMs } from './routing-budget';
 
 const log = pino({
   name: 'cirqix.agents.routing-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 
-/**
- * `/route/auto` s'accorde 300 s côté service (`routers/routing.py
- * _DEFAULT_TIMEOUT_S`), et `kct_route` jusqu'à 600 s. Le client coupait à 90 s :
- * il abandonnait donc des routages longs mais légitimes, transformant une
- * réussite en « service indisponible ». Observé le 2026-07-27 sur un tirage GA
- * défavorable (`pipeline-live.test.ts`, échec à ~90 s puis succès en 58 s au run
- * suivant). Aligné sur le budget du service + marge réseau.
- */
-const ROUTING_TIMEOUT_MS = 330_000;
+
 
 export class RoutingServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -88,7 +80,7 @@ export async function runRealRouting(
       method: 'POST',
       headers: buildKicadServiceHeaders(),
       body,
-      signal: AbortSignal.timeout(ROUTING_TIMEOUT_MS),
+      signal: AbortSignal.timeout(routingAbortMs(input.layers)),
     });
   } catch (err) {
     log.warn({ err, url }, 'routing service: fetch failed');

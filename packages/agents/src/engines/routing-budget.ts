@@ -35,3 +35,34 @@ export function routingSearchBudgetS(layers: number): number {
   const perLayer = 600 + Math.max(0, layers) * 300;
   return Math.min(perLayer, ROUTING_SEARCH_BUDGET_S);
 }
+
+/**
+ * Marge du garde-fou côté service (`_WATCHDOG_MARGIN_S` de `kct_route.py`).
+ *
+ * Le service s'accorde `timeout_s` de recherche PUIS cette marge pour écrire sa
+ * sortie. Le client doit donc attendre au moins la somme des deux.
+ */
+export const WATCHDOG_MARGIN_S = 600;
+
+/**
+ * Échéance du CLIENT — quand il raccroche.
+ *
+ * ⚠️ À ne pas confondre avec le budget de recherche ci-dessus. L'un est une
+ * RESSOURCE qu'on accorde au routeur, l'autre est le moment où l'on cesse
+ * d'attendre sa réponse. Ils doivent être cohérents, et ils ne l'étaient pas :
+ * le 2026-08-20, le client demandait 1800 s de routage (`routingSearchBudgetS(4)`)
+ * puis coupait la communication à **330 s**. Tout routage dépassant 5 min 30
+ * échouait donc en « service indisponible » — pendant que le service, lui,
+ * continuait de router dans le vide.
+ *
+ * C'était la sixième frontière du même plafond, commise dans le fichier corrigé
+ * le matin même : le budget DEMANDÉ avait été relevé, l'échéance du client non.
+ *
+ * Elle est DÉRIVÉE, pour qu'elle ne puisse plus diverger : demander plus de
+ * budget déplace mécaniquement l'échéance.
+ *
+ * Garde : tests/routing-budget.test.ts.
+ */
+export function routingAbortMs(layers: number): number {
+  return (routingSearchBudgetS(layers) + WATCHDOG_MARGIN_S) * 1000;
+}

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { routingSearchBudgetS, ROUTING_SEARCH_BUDGET_S } from '../engines/routing-budget';
+import {
+  routingSearchBudgetS,
+  ROUTING_SEARCH_BUDGET_S,
+  routingAbortMs,
+  WATCHDOG_MARGIN_S,
+} from '../engines/routing-budget';
 
 /**
  * Budget de recherche accordé au routeur, par appel.
@@ -38,5 +43,33 @@ describe('budget de recherche du routeur', () => {
 
   it('reste borné — un budget infini empêcherait toute récupération', () => {
     expect(routingSearchBudgetS(8)).toBeLessThanOrEqual(ROUTING_SEARCH_BUDGET_S);
+  });
+});
+
+/**
+ * L'échéance du CLIENT doit couvrir le budget qu'il DEMANDE.
+ *
+ * Le 2026-08-20, `routingSearchBudgetS(4)` demandait 1800 s au service pendant
+ * que `AbortSignal.timeout(ROUTING_TIMEOUT_MS)` raccrochait à **330 s**. Le
+ * client réclamait donc 30 minutes de routage puis coupait la communication au
+ * bout de 5 min 30 : tout routage dépassant 330 s échouait en
+ * « service indisponible », le service continuant à travailler dans le vide.
+ *
+ * Même faute que les cinq autres frontières, commise dans le fichier corrigé le
+ * matin même : le budget DEMANDÉ avait été relevé, l'échéance du client non.
+ */
+describe('échéance du client', () => {
+  it('couvre toujours le budget demandé, plus la marge du garde-fou', () => {
+    for (const layers of [2, 4, 8]) {
+      const budgetS = routingSearchBudgetS(layers);
+      expect(routingAbortMs(layers)).toBeGreaterThanOrEqual(
+        (budgetS + WATCHDOG_MARGIN_S) * 1000,
+      );
+    }
+  });
+
+  it('ne raccroche jamais avant le service', () => {
+    // La faute exacte du 2026-08-20 : 330 s d'échéance pour 1800 s demandées.
+    expect(routingAbortMs(4)).toBeGreaterThan(1800_000);
   });
 });
