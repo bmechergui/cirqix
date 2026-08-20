@@ -22,6 +22,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from tools.sexp_quote import quote_bare_property_values
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["erc"])
@@ -141,6 +143,20 @@ def run_erc(req: ERCRequest) -> ERCResponse:
             total_fixed = kt_fixed  # inclut les fixes kicad-tools
 
             for iteration in range(_MAX_ITERATIONS):
+                # ⚠️ Requoter AVANT d'écrire : c'est CE fichier que kicad-cli lit.
+                #
+                # Une valeur de propriété numérique nue — `(property "Value" 330`
+                # au lieu de `"330"` — fait refuser le fichier ENTIER par KiCad
+                # 10.0.4 : `rc=3: Failed to load schematic`. L'ERC d'autorité ne
+                # rendait alors AUCUN verdict et le repli TypeScript travaillait
+                # seul. Le board avait ce garde depuis le 2026-07-27, le schéma
+                # non. Garde : tests/test_erc_bare_property_quoting.py.
+                current_content, requoted = quote_bare_property_values(current_content)
+                if requoted:
+                    logger.warning(
+                        "ERC: %d valeur(s) de propriété requotée(s) — sans ce "
+                        "garde kicad-cli refuse le schéma entier", requoted,
+                    )
                 sch_path.write_text(current_content, encoding="utf-8")
                 report_json = _run_kicad_cli_erc(cli_path, sch_path)
                 violations = parse_erc_report(report_json)
