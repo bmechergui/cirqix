@@ -572,11 +572,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 layers=req.layers,
                 skipped=False,
             )
-        except HTTPException:
-            raise
         except Exception as exc:
-            logger.exception("Freerouting échoué: %s", exc)
-            raise HTTPException(status_code=500, detail="routing failed") from exc
+            # ⚠️ `HTTPException` COMPRISE — c'est ce que lève la garde netlist.
+            #
+            # Ce bloc relevait auparavant un 500, ce qui court-circuitait le
+            # Niveau 4 : le routage partiel déjà obtenu par kicad-tools
+            # (`kt_partial`) était jeté parce qu'un AUTRE routeur avait échoué.
+            # Mesuré le 2026-08-20 sur le board STM32 réel : Freerouting rend un
+            # board sans netlist (99 nets en entrée, 0 en sortie), la garde le
+            # refuse — à raison —, et un routage valide partait avec lui.
+            #
+            # Refuser le board de Freerouting reste juste ; condamner l'appel ne
+            # l'est pas. Freerouting ABSENT et Freerouting DÉFAILLANT conduisent
+            # désormais au même repli, comme l'annonçait déjà le commentaire du
+            # Niveau 4. Aucun risque de faux succès : le Niveau 4 revalide ce
+            # qu'il livre, et le Niveau 5 rend `skipped=True`, traité en
+            # fail-fast par `handleRouting`.
+            # Garde : tests/test_routing_netlist_guard.py.
+            logger.warning("Freerouting échoué (%s) — repli kicad-tools", exc)
 
     # --- Niveau 4 : kicad-tools negotiated sans limite (tous circuits) ---
     # Reuse the Niveau-1 partial when we already have one (avoid a second
@@ -594,7 +607,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             routed_percent=routed_pct,
             layers=req.layers,
             skipped=False,
-            warning=f"Freerouting indisponible — kicad-tools negotiated utilisé ({net_count} nets)",
+            warning=f"Freerouting indisponible ou défaillant — kicad-tools negotiated utilisé ({net_count} nets)",
         )
     except Exception as exc:
         logger.warning("kicad-tools A* (no limit) échoué (%s) — GND plane", exc)
