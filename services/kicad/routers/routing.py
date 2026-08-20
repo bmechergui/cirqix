@@ -405,6 +405,16 @@ def _net_decl_count(pcb: bytes) -> int:
     return len(_NET_DECL_RE.findall(pcb))
 
 
+def _niveau4_warning(freerouting_a_echoue: bool, net_count: int) -> str:
+    """Message du Niveau 4 — il doit nommer la cause, pas les deux.
+
+    « Freerouting absent » désigne le déploiement ; « Freerouting défaillant »
+    désigne ce qu'il a produit. Les confondre fait chercher au mauvais endroit.
+    """
+    cause = "défaillant" if freerouting_a_echoue else "absent"
+    return f"Freerouting {cause} — kicad-tools negotiated utilisé ({net_count} nets)"
+
+
 def _guard_netlist_preserved(pcb: bytes, input_nets: int, source: str) -> None:
     """Refuse de renvoyer un board qui a perdu TOUTE sa netlist.
 
@@ -513,6 +523,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     # Best kicad-tools partial result so far (reused at Niveau 4 if Freerouting absent)
     kt_partial: Optional[tuple[bytes, int]] = None
+    # Freerouting a-t-il TOURNÉ puis échoué, ou n'était-il pas là ?
+    #
+    # Les deux mènent au Niveau 4, mais ne se soignent pas au même endroit :
+    # ABSENT se lit dans le déploiement (binaire ou JVM manquants, problème
+    # d'image), DÉFAILLANT se lit dans les données (Freerouting a rendu quelque
+    # chose d'inutilisable — un board sans netlist, le 2026-08-20). Un message
+    # qui dit « indisponible ou défaillant » envoie chercher au mauvais endroit
+    # une fois sur deux.
+    freerouting_a_echoue = False
 
     # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
     if is_simple:
@@ -551,6 +570,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 skipped=False,
             )
         except Exception as exc:
+            freerouting_a_echoue = True
             logger.warning("Freerouting API échoué (%s) — subprocess fallback", exc)
 
     # --- Niveau 3 : Freerouting subprocess (fallback si API server absent) ---
@@ -589,6 +609,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # qu'il livre, et le Niveau 5 rend `skipped=True`, traité en
             # fail-fast par `handleRouting`.
             # Garde : tests/test_routing_netlist_guard.py.
+            freerouting_a_echoue = True
             logger.warning("Freerouting échoué (%s) — repli kicad-tools", exc)
 
     # --- Niveau 4 : kicad-tools negotiated sans limite (tous circuits) ---
@@ -607,7 +628,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             routed_percent=routed_pct,
             layers=req.layers,
             skipped=False,
-            warning=f"Freerouting indisponible ou défaillant — kicad-tools negotiated utilisé ({net_count} nets)",
+            warning=_niveau4_warning(freerouting_a_echoue, net_count),
         )
     except Exception as exc:
         logger.warning("kicad-tools A* (no limit) échoué (%s) — GND plane", exc)

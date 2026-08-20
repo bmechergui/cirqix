@@ -222,3 +222,50 @@ class TestFreeroutingEchecNeJettePasLeTravailDejaFait:
         assert res.skipped is True
         assert res.kicad_pcb_b64 is None
         assert res.routed_percent == 0
+
+
+class TestLeMessageDitLaquelleDesDeuxCausesSEstProduite:
+    """« indisponible ou defaillant » ne dit pas laquelle -- et les deux se soignent
+    differemment.
+
+    ABSENT se lit dans le deploiement : le binaire ou la JVM manquent, c'est un
+    probleme d'image. DEFAILLANT se lit dans les donnees : Freerouting a tourne
+    et a rendu quelque chose d'inutilisable -- lors de la mesure du 2026-08-20,
+    un board sans netlist. Confondre les deux envoie chercher au mauvais endroit.
+    """
+
+    @staticmethod
+    def _kicad_tools_rend_un_partiel(monkeypatch, partiel: bytes) -> None:
+        monkeypatch.setattr(
+            routing_router, "_route_with_kicad_tools", lambda *a, **k: (partiel, 60)
+        )
+        monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+
+    def _route(self, entree: bytes):
+        req = routing_router.RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
+        )
+        return routing_router.route_auto(req)
+
+    def test_freerouting_absent_le_dit(self, monkeypatch):
+        entree = _board_with_pads(nets=30)
+        self._kicad_tools_rend_un_partiel(monkeypatch, _board_with_pads(nets=30, segments=6))
+        monkeypatch.setattr(routing_router, "_find_freerouting", lambda: None)
+
+        warning = self._route(entree).warning or ""
+        assert "absent" in warning.lower()
+        assert "défaillant" not in warning.lower()
+
+    def test_freerouting_defaillant_le_dit(self, monkeypatch):
+        entree = _board_with_pads(nets=30)
+        self._kicad_tools_rend_un_partiel(monkeypatch, _board_with_pads(nets=30, segments=6))
+        monkeypatch.setattr(routing_router, "_find_freerouting", lambda: ("java", "fr.jar"))
+        monkeypatch.setattr(routing_router, "_export_specctra", lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_run_freerouting", lambda *a, **k: None)
+        monkeypatch.setattr(
+            routing_router, "_specctra_roundtrip", lambda *a, **k: _board(nets=0, segments=40)
+        )
+
+        warning = self._route(entree).warning or ""
+        assert "défaillant" in warning.lower()
+        assert "absent" not in warning.lower()
