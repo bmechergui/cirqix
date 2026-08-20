@@ -595,10 +595,22 @@ basculé : la route et le client doivent basculer ensemble.
 ### État
 
 Livré : migration, conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
-annulation (bloque reasoner et re-tirages), worker, branche asynchrone de la
-route derrière drapeau.
-Reste : client Realtime, passage en `Popen` pour la progression pendant les
-20 min, et la validation d'un routage > 300 s en conditions réelles.
+annulation (bloque reasoner et re-tirages), worker (image dédiée, vérifié en
+conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
+branche asynchrone de la route derrière drapeau, suivi de run côté client.
+
+Reste :
+- **Progression pendant le routage.** `kct_route.py` utilise
+  `subprocess.run(capture_output=True)` : la sortie du routeur n'est lue qu'à la
+  FIN. Sur 20 minutes, l'utilisateur ne voit donc rien. Le passage en `Popen`
+  avec lecture incrémentale servirait deux fins — l'affichage, et la détection
+  de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
+  bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
+  non testable sans un routage réel de ~14 min.
+- **Supabase Realtime** en transport principal ; le sondage actuel
+  (`follow-run.ts`) reste alors le repli documenté.
+- **Application de la migration `019`** et **validation d'un routage > 300 s** en
+  conditions réelles. Le plafond est armé, pas encore prouvé tombé.
 
 ## Système de crédits
 
