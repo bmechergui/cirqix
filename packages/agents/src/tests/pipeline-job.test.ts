@@ -103,6 +103,16 @@ describe('déduplication par projet', () => {
     expect(jobIdForProject('p1')).not.toBe(jobIdForProject('p2'));
   });
 
+  it('produit un identifiant que BullMQ accepte', () => {
+    // BullMQ REFUSE un `jobId` custom contenant `:` — `Job.validateOptions`
+    // lève `Custom Id cannot contain :`, car il compose ses propres clés Redis
+    // avec ce séparateur. L'ancien `project:<uuid>` faisait donc échouer
+    // CHAQUE enfilage, et les tests ne le voyaient pas : ils comparaient
+    // `jobIdForProject` à lui-même sans jamais confronter le résultat à la
+    // contrainte de la librairie. Trouvé en enfilant un vrai job.
+    expect(jobIdForProject('11111111-1111-4111-8111-111111111111')).not.toContain(':');
+  });
+
   it('nomme la file de façon stable', () => {
     expect(PIPELINE_QUEUE_NAME).toBe('pcb-pipeline');
   });

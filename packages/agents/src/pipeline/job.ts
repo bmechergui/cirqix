@@ -50,9 +50,17 @@ export type PipelineJobPayload = z.infer<typeof PipelineJobPayload>;
  *
  * Deux runs concurrents se disputeraient `iteration_count` et l'artefact du
  * board, chacun écrasant celui de l'autre.
+ *
+ * ⚠️ Le séparateur est un TIRET, jamais `:`. BullMQ compose ses propres clés
+ * Redis avec `:` et refuse donc un `jobId` custom qui en contient
+ * (`Job.validateOptions` → `Custom Id cannot contain :`). Avec `project:<uuid>`,
+ * CHAQUE enfilage levait — la bascule asynchrone était inutilisable dès son
+ * premier geste. Invisible en test : on comparait `jobIdForProject` à lui-même
+ * sans jamais confronter sa sortie à la contrainte de la librairie.
+ * Garde : tests/pipeline-job.test.ts.
  */
 export function jobIdForProject(projectId: string): string {
-  return `project:${projectId}`;
+  return `project-${projectId}`;
 }
 
 /**
