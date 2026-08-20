@@ -251,3 +251,58 @@ def test_parse_erc_report_violations_not_list_raises():
 
 def test_parse_erc_report_valid_empty_returns_empty_list():
     assert parse_erc_report(json.dumps({"violations": []})) == []
+
+
+# --- Forme RÉELLE de `kicad-cli sch erc --format json` -----------------------
+#
+# Les tests ci-dessus décrivaient une forme INVENTÉE : un `violations` de premier
+# niveau, copié du rapport DRC. Le rapport ERC n'en a pas — il range ses
+# violations sous `sheets[].violations`, une par feuille. Résultat : `sch erc`
+# levait `InvalidReportError` à CHAQUE exécution, `POST /erc` renvoyait 500, et
+# le contrôle d'autorité n'a jamais tourné une seule fois en production ; seul le
+# repli TypeScript rendait un verdict. Le fail-closed a tenu — c'est la raison
+# pour laquelle rien de faux n'a été promu — mais le contrôle principal était
+# mort. Constaté sur un vrai run, puis reproduit avec kicad-cli en conteneur.
+
+
+def _real_erc_report(violations: list[dict]) -> str:
+    """Rapport au format réellement émis par kicad-cli (schemas.kicad.org/erc.v1)."""
+    return json.dumps(
+        {
+            "$schema": "https://schemas.kicad.org/erc.v1.json",
+            "coordinate_units": "mm",
+            "kicad_version": "9.0.0",
+            "sheets": [
+                {"path": "/", "uuid_path": "/", "violations": violations},
+            ],
+        }
+    )
+
+
+def test_parse_erc_report_accepts_the_real_kicad_cli_shape():
+    assert parse_erc_report(_real_erc_report([])) == []
+
+
+def test_parse_erc_report_reads_violations_nested_under_sheets():
+    parsed = parse_erc_report(
+        _real_erc_report(
+            [
+                {
+                    "type": "pin_not_connected",
+                    "severity": "error",
+                    "description": "Pin not connected",
+                    "items": [{"description": "Symbol U1 Pin 3"}],
+                }
+            ]
+        )
+    )
+    assert len(parsed) == 1
+    assert parsed[0]["type"] == "pin_not_connected"
+    assert parsed[0]["ref"] == "U1"
+
+
+def test_parse_erc_report_without_violations_nor_sheets_still_raises():
+    # Le fail-closed reste entier : une forme qu'on ne sait pas lire n'est
+    # JAMAIS un « zéro violation ».
+    with pytest.raises(ErcInvalidReportError):
+        parse_erc_report(json.dumps({"$schema": "x", "date": "y"}))
