@@ -36,6 +36,17 @@ router = APIRouter(tags=["routing"])
 
 # 2-layer simple boards usually < 90s, 4-layer ~300s, 8-layer ~600s
 _DEFAULT_TIMEOUT_S: int = 300
+# Borne HAUTE acceptée par la route. Alignée sur `_ROUTE_TIMEOUT_S` de
+# tools/kct_route.py : la frontière HTTP ne doit jamais être plus serrée que le
+# budget que le routeur sait consommer, ni que celui que le client calcule
+# (`routingSearchBudgetS` → jusqu'à 3000 s sur 8 couches).
+#
+# ⚠️ Elle valait 900 s alors que les deux extrémités avaient été portées à
+# 1800-3600 s : `POST /route/auto` répondait **422 Unprocessable Entity** et le
+# routage n'avait pas lieu du tout. Relever un budget à ses deux bouts sans la
+# validation du milieu ne rallonge rien — ça coupe. Constaté sur un run réel le
+# 2026-08-20. Garde : tests/test_route_budget.py.
+_MAX_TIMEOUT_S: int = 3600
 _PCBNEW_RUNNER_TIMEOUT_S: int = 60
 _PCBNEW_RUNNER = Path(__file__).resolve().parent.parent / "tools" / "routing_pcbnew_runner.py"
 
@@ -61,7 +72,7 @@ _MIN_ROUTED_PCT: int = 95
 class RouteAutoRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description=".kicad_pcb encoded as base64")
     layers: int = Field(default=2, description="Copper layer count (2, 4, or 8)")
-    timeout_s: int = Field(default=_DEFAULT_TIMEOUT_S, ge=30, le=900)
+    timeout_s: int = Field(default=_DEFAULT_TIMEOUT_S, ge=30, le=_MAX_TIMEOUT_S)
 
     def model_post_init(self, _context: Any) -> None:
         if self.layers not in (2, 4, 8):
@@ -256,15 +267,21 @@ def _count_footprints(pcb_bytes: bytes) -> int:
     return len(re.findall(r'\(footprint\s+"', text))
 
 
-def _route_with_kicad_tools(pcb_bytes: bytes) -> tuple[bytes, int]:
+def _route_with_kicad_tools(pcb_bytes: bytes, timeout_s: int) -> tuple[bytes, int]:
     """Route via the official ``kct route`` CLI — délégué à tools/kct_route.
 
     Pas de sauvetage ici : si routed_pct < 100, l'orchestrateur appelle
     explicitement l'agent reasoner (POST /reason/auto) — étape visible UI.
+
+    ⚠️ `timeout_s` vient de la REQUÊTE. Cette fonction passait
+    `_PYTHON_ROUTER_TIMEOUT_S` (300 s) en ignorant ce que le client demandait :
+    le chemin PRINCIPAL de routage était donc plafonné à 300 s quoi qu'il
+    arrive, et seul le repli Freerouting honorait la demande. C'était le vrai
+    plafond du routage — celui qui rendait un routage de 15-20 min inatteignable
+    par l'API, quelles que soient les autres constantes relevées.
+    Garde : tests/test_route_budget.py.
     """
-    routed, routed_pct, _analysis = kct_route.route_kct(
-        pcb_bytes, timeout_s=_PYTHON_ROUTER_TIMEOUT_S
-    )
+    routed, routed_pct, _analysis = kct_route.route_kct(pcb_bytes, timeout_s=timeout_s)
     return routed, routed_pct
 
 
@@ -500,7 +517,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
     if is_simple:
         try:
-            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
+            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes, req.timeout_s)
             logger.info("kicad-tools A*: %d%% routé", routed_pct)
             if routed_pct >= _MIN_ROUTED_PCT:
                 _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
@@ -569,7 +586,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         if kt_partial is not None:
             new_pcb, routed_pct = kt_partial
         else:
-            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes)
+            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes, req.timeout_s)
         logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
         _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
         return RouteAutoResponse(
