@@ -93,12 +93,87 @@ class RouteAutoResponse(BaseModel):
 # Internal helpers (mocked in tests)
 # ----------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Client de l'API Freerouting (Niveau 2)
+# ---------------------------------------------------------------------------
+#
+# ⚠️ Le préfixe est `/v1`, PAS `/api/v1`. Le client sondait `/api/v1/system/status`
+# — un chemin que Freerouting v2.1.0 ne sert pas — donc la sonde renvoyait
+# toujours `None` et le Niveau 2 n'a JAMAIS été emprunté. Chaque routage repartait
+# sur le Niveau 3, un `java -jar` complet avec démarrage de JVM, pendant que la
+# JVM persistante (~400 Mo) attendait pour rien.
+#
+# Contrat mesuré le 2026-08-20 contre l'instance de production :
+#   GET  /api/v1/system/status            -> 404      | GET /v1/system/status -> 200
+#   POST /v1/sessions/create sans en-têtes -> 500      | avec en-têtes         -> 200
+#   POST /v1/jobs/{id}/input multipart     -> 415      | {"data": <b64>}       -> 200
+#   POST /v1/jobs/{id}/start               -> 405      | PUT                   -> 200
+#   états sérialisés en MAJUSCULES ("QUEUED", "COMPLETED")
+#
+# Quatre erreurs indépendantes, chacune suffisante seule.
+# Garde : tests/test_freerouting_api_contract.py.
+
+_FREEROUTING_API_PREFIX = "/v1"
+# Identité serveur-à-serveur. Le serveur EXIGE une identité, même en local
+# (« Freerouting-Profile-ID or Freerouting-Profile-Email ... must be set »).
+# Ce n'est pas un secret : l'API n'écoute que sur la boucle locale.
+_FREEROUTING_PROFILE_ID = os.environ.get(
+    "FREEROUTING_PROFILE_ID", "00000000-0000-4000-8000-000000000001"
+)
+_FREEROUTING_PROFILE_EMAIL = os.environ.get(
+    "FREEROUTING_PROFILE_EMAIL", "service@cirqix.local"
+)
+
+
+def _freerouting_api_base() -> str:
+    return os.environ.get("FREEROUTING_API_URL", "http://127.0.0.1:37864")
+
+
+def _freerouting_api_headers() -> dict[str, str]:
+    """En-têtes d'identité, obligatoires sur CHAQUE appel."""
+    return {
+        "Accept": "application/json",
+        "Freerouting-Profile-ID": _FREEROUTING_PROFILE_ID,
+        "Freerouting-Profile-Email": _FREEROUTING_PROFILE_EMAIL,
+        "Freerouting-Environment-Host": "cirqix/1.0",
+    }
+
+
+def _freerouting_input_payload(dsn_bytes: bytes) -> dict[str, str]:
+    """Corps d'envoi du DSN — un `BoardFilePayload`, pas un multipart.
+
+    Le multipart renvoie 415 Unsupported Media Type.
+    """
+    return {
+        "filename": "board.dsn",
+        "data": base64.b64encode(dsn_bytes).decode("ascii"),
+    }
+
+
+def _freerouting_job_done(state: str) -> bool:
+    """Le serveur sérialise l'enum en MAJUSCULES.
+
+    L'ancien client comparait à `"completed"` : la boucle de sondage ne sortait
+    donc jamais et finissait en timeout sur un job pourtant terminé.
+    """
+    return str(state).upper() == "COMPLETED"
+
+
+def _freerouting_job_failed(state: str) -> bool:
+    return str(state).upper() in ("FAILED", "CANCELLED", "INVALID")
+
+
 def _find_freerouting_api() -> Optional[str]:
     """Return Freerouting API base URL if the server is reachable, else None."""
-    import urllib.request, urllib.error
-    base = os.environ.get("FREEROUTING_API_URL", "http://127.0.0.1:37864")
+    import urllib.request
+
+    base = _freerouting_api_base()
     try:
-        urllib.request.urlopen(f"{base}/api/v1/system/status", timeout=2)
+        req = urllib.request.Request(
+            f"{base}{_FREEROUTING_API_PREFIX}/system/status",
+            headers=_freerouting_api_headers(),
+        )
+        urllib.request.urlopen(req, timeout=2)
         return base
     except Exception:
         return None
@@ -110,82 +185,69 @@ def _route_with_freerouting_api(
 ) -> bytes:
     """Route via Freerouting persistent REST API server (1 JVM for all users).
 
-    Flow: export DSN → POST session → POST job → upload DSN → PUT start →
+    Flow: export DSN → POST session → POST job → upload DSN (JSON) → PUT start →
           poll status → GET output (SES) → pcbnew Specctra import.
     """
     import json
     import time
-    import urllib.request, urllib.error
+    import urllib.request
 
-    base = os.environ.get("FREEROUTING_API_URL", "http://127.0.0.1:37864")
+    base = _freerouting_api_base()
+    pre = _FREEROUTING_API_PREFIX
 
-    def _api(method: str, path: str, body: Optional[bytes] = None,
-             content_type: str = "application/json") -> dict:
+    def _api(method: str, path: str, payload: Optional[dict] = None) -> dict:
+        headers = _freerouting_api_headers()
+        body: Optional[bytes] = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            f"{base}{path}", data=body, method=method,
-            headers={"Content-Type": content_type, "Accept": "application/json"},
+            f"{base}{path}", data=body, method=method, headers=headers
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())
-
-    def _api_raw(method: str, path: str, body: bytes, content_type: str) -> bytes:
-        req = urllib.request.Request(
-            f"{base}{path}", data=body, method=method,
-            headers={"Content-Type": content_type},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.read()
+            raw = resp.read()
+        return json.loads(raw) if raw else {}
 
     with tempfile.TemporaryDirectory() as tmp:
         dsn_path = Path(tmp) / "board.dsn"
         ses_path = Path(tmp) / "board.ses"
 
-        # Export PCB → DSN
         _export_specctra(pcb_bytes, dsn_path)
 
-        # Create session
-        session = _api("POST", "/api/v1/sessions/create", b"{}")
+        session = _api("POST", f"{pre}/sessions/create", {})
         session_id = session["id"]
 
-        # Enqueue job
-        job_body = json.dumps({"session_id": session_id}).encode()
-        job = _api("POST", "/api/v1/jobs/enqueue", job_body)
+        job = _api("POST", f"{pre}/jobs/enqueue", {"session_id": session_id})
         job_id = job["id"]
 
-        # Upload DSN (multipart)
-        dsn_bytes = dsn_path.read_bytes()
-        boundary = b"----CirqixBoundary"
-        body = (
-            b"--" + boundary + b"\r\n"
-            b'Content-Disposition: form-data; name="file"; filename="board.dsn"\r\n'
-            b"Content-Type: application/octet-stream\r\n\r\n"
-            + dsn_bytes + b"\r\n"
-            b"--" + boundary + b"--\r\n"
+        _api(
+            "POST",
+            f"{pre}/jobs/{job_id}/input",
+            _freerouting_input_payload(dsn_path.read_bytes()),
         )
-        _api_raw("POST", f"/api/v1/jobs/{job_id}/input",
-                 body, f"multipart/form-data; boundary={boundary.decode()}")
 
-        # Start routing
-        _api("PUT", f"/api/v1/jobs/{job_id}/start", b"{}")
+        _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 
-        # Poll until done
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            status = _api("GET", f"/api/v1/jobs/{job_id}")
+            status = _api("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
-            if state == "completed":
+            if _freerouting_job_done(state):
                 break
-            if state in ("failed", "cancelled"):
+            if _freerouting_job_failed(state):
                 raise RuntimeError(f"Freerouting API job {state}")
             time.sleep(2)
         else:
             raise RuntimeError("Freerouting API timeout")
 
-        # Download SES output
-        import base64 as _b64
-        output = _api("GET", f"/api/v1/jobs/{job_id}/output")
-        ses_b64 = output.get("output_file") or output.get("ses") or ""
-        ses_path.write_bytes(_b64.b64decode(ses_b64))
+        output = _api("GET", f"{pre}/jobs/{job_id}/output")
+        # `data` est le champ du `BoardFilePayload` ; les deux autres noms sont
+        # conservés en repli, sans preuve qu'ils existent — un output vide est
+        # rattrapé plus bas par la garde netlist.
+        ses_b64 = output.get("data") or output.get("output_file") or output.get("ses") or ""
+        if not ses_b64:
+            raise RuntimeError("Freerouting API returned an empty output")
+        ses_path.write_bytes(base64.b64decode(ses_b64))
 
         return _specctra_roundtrip(pcb_bytes, ses_path)
 

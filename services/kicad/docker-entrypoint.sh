@@ -38,9 +38,17 @@ fi
 
 # Xvfb (pcbnew headless) + Freerouting (1 JVM persistante, REST port 37864)
 Xvfb :99 -screen 0 1024x768x24 -ac &
+# ⚠️ PAS de `--api_server-endpoints=` : `ApiServerSettings.endpoints` est un
+# `String[]`, et la ligne de commande ne sait passer qu'une `String`. L'option
+# levait donc « Failed to set property value for: api_server-endpoints » à CHAQUE
+# démarrage depuis le 2026-07-27 — une erreur rouge dans les logs, pour un
+# réglage qui n'a jamais été appliqué. Le serveur repart sur son défaut
+# (`0.0.0.0:37864`) et écoute de toute façon : le retrait ne change RIEN au
+# comportement, il supprime une fausse alerte qui a coûté du temps de diagnostic.
+# Pour changer réellement le port, il faut un `freerouting.json` sous
+# `--user_data_path` (le tableau ne passe que par le fichier).
 java -jar /opt/freerouting/freerouting.jar \
-    --api_server.enabled=true \
-    --api_server-endpoints=http://127.0.0.1:37864 &
+    --api_server.enabled=true &
 
 # Laisse Xvfb + la JVM Freerouting démarrer avant uvicorn
 sleep 5
