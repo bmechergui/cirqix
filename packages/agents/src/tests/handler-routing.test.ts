@@ -79,6 +79,28 @@ function seedCache(overrides: Record<string, unknown> = {}) {
   } as never);
 }
 
+describe('couches annoncées', () => {
+  /**
+   * Deux choses distinctes portent le même nom :
+   *   - les couches DEMANDÉES — une décision de l'agent, bornée par le plan,
+   *     d'où le type `2 | 4 | 8` de `DesignJson.layers` ;
+   *   - les couches MESURÉES sur le board livré, que le service compte depuis
+   *     le 2026-08-21 dans le bloc `(layers …)` du fichier.
+   *
+   * Le handler forçait la seconde dans le type de la première
+   * (`service.layers as 2 | 4 | 8`). Un board à 6 couches serait passé pour un
+   * 2, 4 ou 8 — un chiffre faux, présenté comme une mesure.
+   */
+  it('remonte le nombre de couches mesuré, même hors des valeurs de plan', async () => {
+    seedCache();
+    routingMock.runRealRouting.mockResolvedValue(serviceResult({ layers: 6 }));
+
+    const result = await handleRouting(PROJECT);
+
+    expect(result['layers']).toBe(6);
+  });
+});
+
 describe('propagation du routed_percent réel', () => {
   it.each([0, 43, 73, 91, 99, 100])(
     'remonte %i%% tel quel — jamais un 100 arbitraire',

@@ -107,7 +107,13 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
       status: 'success',
       pcb_status: 'ROUTING_DONE',
       routed_percent: service.routedPercent, // vrai % — déclenche call_agent_reason si <100
-      layers: service.layers as 2 | 4 | 8,
+      // Couches MESURÉES sur le board livré — pas le type `2 | 4 | 8` de
+      // `DesignJson.layers`, qui décrit une DÉCISION bornée par le plan. Le
+      // `as 2 | 4 | 8` qui traînait ici affirmait au compilateur une contrainte
+      // que la mesure ne garantit pas : un board à 6 couches serait passé pour
+      // un 2, 4 ou 8. Aucun effet à l'exécution — mais un refactor s'appuyant
+      // sur ce type aurait hérité du mensonge.
+      layers: service.layers,
       kicad_pcb_content: finalPcb,
       // ⚠️ Le moteur vient du SERVICE, il n'est plus écrit en dur. La cascade a
       // quatre niveaux : sur un board dense, kicad-tools rend 91 %, sous le
