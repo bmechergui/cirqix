@@ -310,6 +310,17 @@ def _run_cmaes_in_subprocess(pcb_path: Path, out_path: Path, time_budget_s: floa
     return proc.returncode
 
 
+# Messages du Géomètre — nommés pour que la garde d'observabilité puisse les
+# retrouver, et pour qu'un futur refactor ne les supprime pas par distraction.
+_LOG_GEOMETRE_OK = (
+    "auto_place: Géomètre CMA-ES appliqué — %.1fs, déplacement max %.1fmm "
+    "(seuil %.1fmm)"
+)
+_LOG_GEOMETRE_SAUTE = (
+    "auto_place: Géomètre CMA-ES NON appliqué (%.1fs) — board de l'Architecte conservé"
+)
+
+
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
     cmaes --seed-method current`` (CMAwM, patch Cirqix ``seed="current"`` :
@@ -1074,6 +1085,27 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                         "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
                         n_err_before, n_err_after,
                     )
+                # ⚠️ Journaliser le SUCCÈS, pas seulement les échecs.
+                #
+                # Toutes les autres branches du Géomètre écrivent un warning ou
+                # une exception ; le succès, lui, était MUET. Un succès
+                # silencieux est indistinguable d'une étape jamais exécutée —
+                # et c'est exactement la condition qui a masqué pendant des
+                # semaines le fait que le Géomètre ne tournait JAMAIS en
+                # production (`signal.signal` hors thread principal).
+                #
+                # Le verdict seul ne suffit pas : sans le déplacement mesuré, on
+                # ne peut pas distinguer un micro-raffinement d'une dérive.
+                # Garde : tests/test_placement_geometre_observable.py.
+                logger.info(
+                    _LOG_GEOMETRE_OK,
+                    refine.get("elapsed_s", 0.0), max_disp, _CMAES_MAX_DISPLACEMENT_MM,
+                )
+        else:
+            # Sauté ou indisponible : le board reste celui de l'Architecte, ce
+            # qui est valide — mais il faut le DIRE plutôt que le laisser
+            # déduire d'une absence de trace.
+            logger.info(_LOG_GEOMETRE_SAUTE, refine.get("elapsed_s", 0.0))
 
         # ── Brique 1 : halo d'escape — dégage le canal de routage des boîtiers
         # denses (fine-pitch) en écartant leurs voisins mobiles. No-op sur une
