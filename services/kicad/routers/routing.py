@@ -501,6 +501,109 @@ def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
     return "".join(nouvelles).encode("utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Plans de masse, coules AVANT le routage
+# ---------------------------------------------------------------------------
+#
+# ⚠️ Le plan arrivait APRES le routage (`addGroundPlane`, cote TypeScript). Le
+# routeur n avait donc jamais su qu il existait, et tirait des pistes GND a
+# travers toute la carte au lieu de relier chaque pad par un moignon.
+#
+# L export DSN rend bien la zone sous forme de `(plane GND (polygon B.Cu ...))`
+# — verifie le 2026-08-21 — donc Freerouting SAIT s y raccorder. Encore
+# faut-il la lui donner.
+#
+# ⚠️ Le polygone TypeScript etait dessine a l ORIGINE : `(xy 0 0)` ...
+# `(xy largeur hauteur)`. Or le contour du board STM32 reel est a
+# `(gr_rect (start 100 100) (end 160 140))` — le plan tombait ENTIEREMENT hors
+# de la carte. Un plan hors contour ne relie rien.
+#
+# Decision produit (2026-08-21) : les plans vont sur les deux faces EXTERIEURES,
+# quel que soit le nombre de couches. En 4 couches cela donne GND/SIG/SIG/GND,
+# un empilage blinde ; les couches internes restent aux signaux.
+#
+# Garde : tests/test_ground_planes_avant_routage.py.
+
+_GROUND_PLANE_LAYERS: tuple[str, ...] = ("F.Cu", "B.Cu")
+_EDGE_COORD_RE = re.compile(
+    r"\((?:start|end|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)"
+)
+
+
+def _board_outline(pcb_bytes: bytes) -> Optional[tuple[float, float, float, float]]:
+    """Boite englobante du contour (Edge.Cuts), ou None s il est illisible.
+
+    Sans contour, on ne devine pas : un plan pose au hasard ne relierait rien.
+
+    Decoupage par chaine plutot que regex multiligne : le contour peut etre
+    ecrit sur une ligne (`gr_line ... (layer "Edge.Cuts")`) ou sur plusieurs
+    (`gr_rect` avec ses `(start ...)` / `(end ...)` indentes), et une regex
+    melant tabulations et retours a la ligne est fragile a ecrire comme a relire.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    xs: list[float] = []
+    ys: list[float] = []
+    for morceau in text.split("(gr_")[1:]:
+        if "Edge.Cuts" not in morceau:
+            continue
+        # Ne lire que jusqu au prochain element graphique : le suivant a son
+        # propre contexte, et ses coordonnees ne decrivent pas ce contour.
+        for x, y in _EDGE_COORD_RE.findall(morceau):
+            xs.append(float(x))
+            ys.append(float(y))
+    if not xs or not ys:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _add_ground_planes(pcb_bytes: bytes) -> bytes:
+    """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
+
+    N empile jamais un second plan : `kct route` coule lui-meme ses zones power,
+    et deux remplissages concurrents sur la meme couche seraient un conflit, pas
+    une securite.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+
+    numerote = re.search(r'\(net (\d+) "GND"\)', text)
+    if not numerote and not re.search(r'\(net "GND"\)', text):
+        return pcb_bytes
+
+    contour = _board_outline(pcb_bytes)
+    if contour is None:
+        logger.warning("plans de masse: contour Edge.Cuts illisible — aucun plan coule")
+        return pcb_bytes
+    x1, y1, x2, y2 = contour
+
+    existantes = set(re.findall(r'\(zone[^' + chr(10) + r']*\(layer "([^"]+)"', text))
+    a_couler = [c for c in _GROUND_PLANE_LAYERS if c not in existantes]
+    if not a_couler:
+        return pcb_bytes
+
+    # Sans numero de net, on n en invente pas : `(net_name "GND")` suffit a
+    # KiCad, et un identifiant fabrique pourrait en designer un autre.
+    ref = f"(net {numerote.group(1)}) " if numerote else ""
+
+    zones: list[str] = []
+    for couche in a_couler:
+        zones.append(
+            chr(10).join([
+                f'  (zone {ref}(net_name "GND") (layer "{couche}") (hatch edge 0.508)',
+                "    (connect_pads yes (clearance 0.5))",
+                "    (min_thickness 0.25)",
+                "    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))",
+                f"    (polygon (pts (xy {x1} {y1}) (xy {x2} {y1}) (xy {x2} {y2}) (xy {x1} {y2})))",
+                "  )",
+            ])
+        )
+
+    coupe = text.rstrip()
+    if not coupe.endswith(")"):
+        return pcb_bytes
+    corps = chr(10).join(zones)
+    return (coupe[:-1] + chr(10) + corps + chr(10) + ")").encode("utf-8")
+
+
 def _count_copper_layers(pcb_bytes: bytes) -> int:
     """Nombre de couches CUIVRE réellement déclarées par le board.
 
@@ -1004,7 +1107,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             )
             break
 
-        etendu = _expand_stackup(pcb_bytes, palier)
+        etendu = _add_ground_planes(_expand_stackup(pcb_bytes, palier))
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
             layers=req.layers,
