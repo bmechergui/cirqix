@@ -123,3 +123,31 @@ class TestCablage:
             "les plans doivent exister AVANT que le routeur reçoive le board — "
             "sinon il route GND en pistes, faute de savoir qu'un plan existe"
         )
+
+
+class TestIsolementDeLaZone:
+    """0,5 mm d isolement vide le cuivre entre les broches d un boitier fine-pitch.
+
+    Mesure du 2026-08-21, board STM32 (LQFP-48, pas de 0,5 mm) :
+
+        clearance 0.5  -> 6 connexions manquantes
+        clearance 0.25 -> 3 connexions manquantes
+        clearance 0.2  -> 3 connexions manquantes
+
+    Les broches restantes sont celles du LQFP-48 : entre deux pattes distantes de
+    0,5 mm il n y a place pour aucun cuivre de plan, quel que soit l isolement.
+    Ces broches-la demandent un routage de sortie (fanout), pas un plan plus
+    agressif — mais 0,25 mm est meilleur dans tous les cas, sans contrepartie.
+
+    La valeur 0,5 venait de la version TypeScript, ecrite pour un board simple.
+    """
+
+    def test_l_isolement_est_realiste_pour_du_fine_pitch(self):
+        out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
+        assert "(clearance 0.25)" in out, (
+            "0,5 mm repousse le plan hors d atteinte des boitiers a pas fin"
+        )
+
+    def test_le_gap_thermique_suit(self):
+        out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
+        assert "(thermal_gap 0.25)" in out

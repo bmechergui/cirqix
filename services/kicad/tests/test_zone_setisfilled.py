@@ -66,6 +66,11 @@ class TestApiDeZone:
             texte = (_TOOLS / nom).read_text(encoding="utf-8")
             if "for zone in board.Zones():" not in texte:
                 continue
-            assert "SetIsFilled(" in texte, (
+            assert "SetIsFilled" in texte, (
                 f"{nom} prepare ses zones avec une methode qui n existe plus"
             )
+            # ⚠️ La recherche se fait SANS parenthese : depuis le 2026-08-21 le
+            # nom est resolu par `getattr`, parce que `board.Zones()` rend
+            # parfois des `SwigPyObject` sans methodes (board issu de
+            # `kct stitch`). Exiger l appel direct interdirait le seul code qui
+            # marche dans les deux cas.

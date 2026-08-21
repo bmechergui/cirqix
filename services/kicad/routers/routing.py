@@ -610,9 +610,13 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
         zones.append(
             chr(10).join([
                 f'  (zone {ref}(net_name "GND") (layer "{couche}") (hatch edge 0.508)',
-                "    (connect_pads yes (clearance 0.5))",
+                # ⚠️ 0,5 mm vidait tout le cuivre entre les broches d un boitier
+                # fine-pitch. Mesure du 2026-08-21 sur le LQFP-48 (pas 0,5 mm) :
+                # 0.5 -> 6 connexions manquantes, 0.25 -> 3. La valeur venait de
+                # la version TypeScript, ecrite pour un board simple.
+                "    (connect_pads yes (clearance 0.25))",
                 "    (min_thickness 0.25)",
-                "    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))",
+                "    (fill yes (thermal_gap 0.25) (thermal_bridge_width 0.5))",
                 f"    (polygon (pts (xy {x1} {y1}) (xy {x2} {y1}) (xy {x2} {y2}) (xy {x1} {y2})))",
                 "  )",
             ])
@@ -692,6 +696,23 @@ def _route_with_kicad_tools(pcb_bytes: bytes, timeout_s: int) -> tuple[bytes, in
     return routed, routed_pct
 
 
+# Bruit que pcbnew crache a chaque chargement de board et qui n a jamais rien
+# a voir avec la panne. Il remplissait a lui seul les 300 caracteres du message
+# d erreur, cachant la VRAIE cause — trois diagnostics perdus le 2026-08-21
+# (SetFilled, GetConnectedItems, puis celui-ci).
+_BRUIT_PCBNEW = ("property.h", "PROPERTY_ENUM", "m_choices.GetCount")
+
+
+def _utile(sortie: str) -> str:
+    """Garde les lignes qui DISENT quelque chose, jette l assert wxWidgets."""
+    lignes = [
+        l for l in sortie.strip().splitlines()
+        if l.strip() and not any(bruit in l for bruit in _BRUIT_PCBNEW)
+    ]
+    # Les dernieres lignes portent l exception ; le debut est la pile d appels.
+    return " | ".join(lignes[-4:])[:600] if lignes else sortie.strip()[:300]
+
+
 def _run_pcbnew_operation(payload: dict[str, str]) -> None:
     """Run one pcbnew operation outside uvicorn's worker/thread process.
 
@@ -714,8 +735,10 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
             f"pcbnew child timed out after {_PCBNEW_RUNNER_TIMEOUT_S}s"
         ) from exc
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()[:300]
-        raise RuntimeError(f"pcbnew child exit {proc.returncode}: {detail}")
+        raise RuntimeError(
+            f"pcbnew child exit {proc.returncode}: "
+            f"{_utile(proc.stderr or proc.stdout or '')}"
+        )
 
 
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
