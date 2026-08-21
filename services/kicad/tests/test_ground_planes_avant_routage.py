@@ -76,10 +76,16 @@ class TestContourDuBoard:
 
 
 class TestPlansDeMasse:
-    def test_coule_sur_les_deux_faces_exterieures(self):
+    def test_coule_sur_la_face_arriere_en_deux_couches(self):
+        """Ce test exigeait LES DEUX faces jusqu au 2026-08-22.
+
+        La mesure l a infirme : sur 2 couches, un plan sur la face composants
+        laisse 2 a 6 connexions manquantes, jamais 0. Voir TestRegleDeCouche
+        pour la geometrie qui l explique. On corrige le test, pas la mesure.
+        """
         out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
-        zones = re.findall(r'\(zone[^\n]*\(layer "([^"]+)"', out)
-        assert sorted(zones) == ["B.Cu", "F.Cu"]
+        zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
+        assert zones == ["B.Cu"]
 
     def test_le_polygone_epouse_le_contour_reel(self):
         # LE défaut : un polygone à l'origine tomberait hors de la carte.
@@ -90,9 +96,9 @@ class TestPlansDeMasse:
     def test_reste_sur_les_faces_meme_en_quatre_couches(self):
         quatre = routing_router._expand_stackup(_board(RECT), 4)
         out = routing_router._add_ground_planes(quatre).decode("utf-8")
-        zones = re.findall(r'\(zone[^\n]*\(layer "([^"]+)"', out)
-        assert sorted(zones) == ["B.Cu", "F.Cu"]
-        assert "In1.Cu" not in re.findall(r'\(zone[^\n]*\(layer "([^"]+)"', out)
+        zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
+        assert zones == ["B.Cu", "F.Cu"]
+        assert not any("In" in z for z in zones)
 
     def test_ne_touche_pas_un_board_sans_gnd(self):
         sans = _board(RECT, gnd='\t(net 1 "VCC")')
@@ -151,3 +157,55 @@ class TestIsolementDeLaZone:
     def test_le_gap_thermique_suit(self):
         out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
         assert "(thermal_gap 0.25)" in out
+
+
+class TestRegleDeCouche:
+    """Sur 2 couches, le plan de la face composants ne peut pas etre raccorde.
+
+    Geometrie mesuree sur le LQFP-48 du board STM32 :
+
+        taille de pad : 1,475 x 0,3 mm
+        pas           : 0,5 mm
+        -> espace entre deux pattes : 0,2 mm
+
+    Un isolement de 0,25 mm de chaque cote en demanderait 0,5. Meme a 0,1 mm de
+    chaque cote il resterait ZERO. Le cuivre du plan ne passe pas entre les
+    pattes — ce n est pas un reglage, c est la geometrie.
+
+    Et sur 2 couches, chaque piste de sortie DECOUPE le plan de la face qu elle
+    traverse : on ne peut pas exiger a la fois un plan continu et un routage
+    dense sur la meme face.
+
+    Mesures (Freerouting, board STM32) :
+
+        aucun plan            -> 0 connexion manquante
+        plan B.Cu seul        -> 0 connexion manquante
+        plans F.Cu + B.Cu     -> 2 a 6 selon l isolement, jamais 0
+
+    Trois sources concordantes : la geometrie ci-dessus, kicad-tools upstream
+    (« sur un empilage 2 couches chaque masse recoit une priorite distincte sur
+    B.Cu »), et une revue externe.
+
+    ⚠️ A partir de 4 couches la regle S INVERSE : les signaux vivent a
+    l interieur, les deux faces exterieures restent continues, et le fanout
+    reprend tout son sens. C est le choix produit de l utilisateur, conserve.
+    """
+
+    def test_deux_couches_ne_coule_que_le_dessous(self):
+        out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
+        zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
+        assert zones == ["B.Cu"], f"attendu B.Cu seul, obtenu {zones}"
+
+    def test_quatre_couches_coule_les_deux_faces(self):
+        quatre = routing_router._expand_stackup(_board(RECT), 4)
+        out = routing_router._add_ground_planes(quatre).decode("utf-8")
+        zones = sorted(
+            re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
+        )
+        assert zones == ["B.Cu", "F.Cu"], f"attendu les deux faces, obtenu {zones}"
+
+    def test_les_couches_internes_ne_recoivent_jamais_de_plan(self):
+        six = routing_router._expand_stackup(_board(RECT), 6)
+        out = routing_router._add_ground_planes(six).decode("utf-8")
+        zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
+        assert not any("In" in z for z in zones), "les internes sont pour les signaux"

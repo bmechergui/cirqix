@@ -755,7 +755,30 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     x1, y1, x2, y2 = contour
 
     existantes = set(re.findall(r'\(zone[^' + chr(10) + r']*\(layer "([^"]+)"', text))
-    a_couler = [c for c in _GROUND_PLANE_LAYERS if c not in existantes]
+    # ⚠️ REGLE DE COUCHE. Sur 2 couches, le plan de la face composants ne peut
+    # pas etre raccorde : sur le LQFP-48 du board STM32, les pads font 0,3 mm
+    # pour un pas de 0,5 mm — il reste 0,2 mm entre deux pattes, et un
+    # isolement de 0,25 mm de chaque cote en demanderait 0,5. Le cuivre du
+    # plan ne passe pas entre les pattes : ce n est pas un reglage, c est la
+    # geometrie.
+    #
+    # Et chaque piste de sortie DECOUPE le plan de la face qu elle traverse :
+    # on ne peut pas exiger a la fois un plan continu et un routage dense sur
+    # la meme face. Mesures Freerouting sur le board STM32 :
+    #     aucun plan        -> 0 connexion manquante
+    #     plan B.Cu seul    -> 0 connexion manquante
+    #     les deux faces    -> 2 a 6 selon l isolement, JAMAIS 0
+    #
+    # A partir de 4 couches la regle S INVERSE : les signaux vivent a
+    # l interieur, les faces exterieures restent continues, et le fanout
+    # reprend tout son sens. C est le choix produit de l utilisateur, conserve.
+    #
+    # Trois sources concordantes : la geometrie mesuree ci-dessus, kicad-tools
+    # upstream (« sur un empilage 2 couches chaque masse recoit une priorite
+    # distincte sur B.Cu »), et une revue externe.
+    # Garde : tests/test_ground_planes_avant_routage.py::TestRegleDeCouche.
+    faces = _GROUND_PLANE_LAYERS if _count_copper_layers(pcb_bytes) >= 4 else ("B.Cu",)
+    a_couler = [c for c in faces if c not in existantes]
     if not a_couler:
         return pcb_bytes
 
