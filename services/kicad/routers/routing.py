@@ -640,6 +640,101 @@ def _dense_footprint_boxes(pcb_bytes: bytes) -> list[tuple[float, float, float, 
     return boites
 
 
+# Longueur de la piste de sortie, en mm. Assez pour degager le boitier, assez
+# court pour rester dans le canal d escape reserve par le placement.
+_ESCAPE_TRACE_MM: float = 1.2
+
+_PAD_ISOLEE_RE = re.compile(r"^Pad\s+(\S+)\s+\[[^\]]*\]\s+of\s+(\S+)\s")
+_ZONE_RE = re.compile(r"^Zone\s+\[")
+
+
+def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
+    """Broches que le DRC signale comme non reliees A UNE ZONE.
+
+    ⚠️ On ne retient QUE les paires « pad <-> zone ». Deux pads non relies entre
+    eux relevent du ROUTAGE : y poser un via de sortie ne relierait rien.
+
+    Le fanout est une REPARATION : un rapport qu on ne comprend pas ne produit
+    rien, jamais une exception. On n ajoute pas une panne a une panne.
+    """
+    isolees: list[tuple[str, str]] = []
+    for item in rapport_drc.get("unconnected_items", []) or []:
+        descriptions = [
+            str(i.get("description", "")) for i in (item.get("items") or [])
+        ]
+        if not any(_ZONE_RE.match(d) for d in descriptions):
+            continue
+        for d in descriptions:
+            m = _PAD_ISOLEE_RE.match(d)
+            if m:
+                isolees.append((m.group(2), m.group(1)))
+    return isolees
+
+
+def _rapport_drc(pcb_bytes: bytes) -> dict:
+    """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
+    cli = shutil.which("kicad-cli")
+    if cli is None:
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        pcb = Path(tmp) / "b.kicad_pcb"
+        rapport = Path(tmp) / "b.json"
+        pcb.write_bytes(pcb_bytes)
+        try:
+            subprocess.run(
+                [cli, "pcb", "drc", str(pcb), "--format", "json", "-o", str(rapport)],
+                capture_output=True, text=True, timeout=300, check=False,
+            )
+            return json.loads(rapport.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("fanout: rapport DRC indisponible (%s)", exc)
+            return {}
+
+
+def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
+    """Sort par un via les broches que le plan n a pas pu relier.
+
+    ⚠️ APRES le routage, jamais avant : le round-trip Specctra supprime toutes
+    les pistes, vias compris. Mesure du 2026-08-21 — 17 vias poses par
+    `kct stitch` avant routage, 4 apres.
+
+    ⚠️ `kct stitch --escape-distance` fait exactement ce travail et serait
+    preferable, mais il refuse d agir ici : son propre calcul de connectivite
+    repond « No unconnected pads found », ces pads tombant geometriquement dans
+    le polygone de la zone. On pilote donc la sortie par ce que le DRC signale
+    REELLEMENT.
+
+    Reparation, jamais regression : au moindre doute on rend le board d origine.
+    Garde : tests/test_escape_fanout.py.
+    """
+    isolees = _pads_isolees_du_plan(_rapport_drc(pcb_bytes))
+    if not isolees:
+        return pcb_bytes
+
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "escape_pads",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps(isolees),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+        except Exception as exc:
+            logger.warning("fanout: sortie de broche impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        n = json.loads(resultat.read_text(encoding="utf-8")).get("escaped", 0)
+        logger.info("fanout: %d broche(s) sortie(s) vers le plan", n)
+        return sortie.read_bytes()
+
+
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
 
@@ -1247,6 +1342,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     deadline = _now() + req.timeout_s
     meilleur: Optional[RouteAutoResponse] = None
+    # Denominateur de la mesure : les nets routables du board d ENTREE. Le
+    # recalculer sur la sortie fausserait le pourcentage.
+    nets_routables = _count_routable_nets(pcb_bytes)
 
     for palier in _layer_ladder(req.layers):
         restant = _remaining_budget_s(deadline)
@@ -1264,6 +1362,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
         )
         res = _route_auto_once(tentative)
+
+        # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
+        # et que le routeur n a pas routees, faute de les croire a sa charge.
+        if res.kicad_pcb_b64 and not res.skipped:
+            avant = base64.b64decode(res.kicad_pcb_b64)
+            apres = _fanout_pads_isolees(avant)
+            if apres is not avant:
+                res.kicad_pcb_b64 = base64.b64encode(apres).decode("ascii")
+                res.routed_percent = _measured_routed_percent(apres, nets_routables)
+                res.via_count = _count_vias(apres)
+                res.track_length_mm = _track_length_mm(apres)
+
         logger.info(
             "route_auto: palier %d couches -> %d%% (%s)",
             palier, res.routed_percent, res.engine or "aucun moteur",

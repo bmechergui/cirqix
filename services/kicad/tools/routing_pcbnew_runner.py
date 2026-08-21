@@ -78,6 +78,67 @@ def _connected_pads(connectivity, pad, pcbnew):
         return connectivity.GetConnectedItems(pad, [pcbnew.PCB_PAD_T])
 
 
+def _escape_pads(pcbnew, args: dict[str, str]) -> None:
+    """Fanout : une courte piste depuis chaque broche isolee vers un via.
+
+    Le plan ne peut pas atteindre les pattes d un boitier au pas de 0,5 mm, et
+    le routeur ne les route pas non plus puisqu il tient le net pour « pris en
+    charge par le plan ». La reponse standard est le fanout : sortir la patte
+    par une courte piste, puis traverser par un via jusqu au plan de l autre
+    face.
+
+    La direction pointe a l OPPOSE du centre du boitier — c est le canal que le
+    halo d escape du placement a justement reserve.
+
+    ⚠️ Reparation, jamais regression : chaque via est pose independamment, et un
+    pad introuvable est ignore sans faire echouer les autres.
+    """
+    board = pcbnew.LoadBoard(args["pcb"])
+    cibles = json.loads(args["pads"])
+    largeur = int(float(args.get("trace_mm", "0.25")) * 1_000_000)
+    distance = float(args.get("escape_mm", "1.2")) * 1_000_000
+    via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
+    perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
+
+    poses = 0
+    for ref, nom_pad in cibles:
+        fp = board.FindFootprintByReference(str(ref))
+        if fp is None:
+            continue
+        pad = next((p for p in fp.Pads() if str(p.GetPadName()) == str(nom_pad)), None)
+        if pad is None:
+            continue
+
+        centre = fp.GetPosition()
+        pos = pad.GetPosition()
+        dx = float(pos.x - centre.x)
+        dy = float(pos.y - centre.y)
+        norme = (dx * dx + dy * dy) ** 0.5
+        if norme < 1.0:
+            continue  # pad au centre exact : pas de direction de sortie evidente
+        vx = int(pos.x + dx / norme * distance)
+        vy = int(pos.y + dy / norme * distance)
+
+        piste = pcbnew.PCB_TRACK(board)
+        piste.SetStart(pos)
+        piste.SetEnd(pcbnew.VECTOR2I(vx, vy))
+        piste.SetWidth(largeur)
+        piste.SetLayer(pad.GetLayer())
+        piste.SetNetCode(pad.GetNetCode())
+        board.Add(piste)
+
+        via = pcbnew.PCB_VIA(board)
+        via.SetPosition(pcbnew.VECTOR2I(vx, vy))
+        via.SetWidth(via_d)
+        via.SetDrill(perc_d)
+        via.SetNetCode(pad.GetNetCode())
+        board.Add(via)
+        poses += 1
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(json.dumps({"escaped": poses}), encoding="utf-8")
+
+
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     board = pcbnew.LoadBoard(args["pcb"])
     if not board.BuildConnectivity():
@@ -129,6 +190,8 @@ def main(argv: list[str]) -> int:
         _export_specctra(pcbnew, args)
     elif operation == "specctra_roundtrip":
         _specctra_roundtrip(pcbnew, args)
+    elif operation == "escape_pads":
+        _escape_pads(pcbnew, args)
     elif operation == "measure_connectivity":
         _measure_connectivity(pcbnew, args)
     else:
