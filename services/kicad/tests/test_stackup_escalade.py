@@ -51,15 +51,35 @@ class TestEchelle:
     def test_part_de_deux_et_monte_par_paliers(self):
         assert routing_router._layer_ladder(8) == [2, 4, 6, 8]
 
+    def test_ne_s_arrete_pas_a_huit(self):
+        """L'echelle suit le plafond, elle n'a pas de maximum code en dur.
+
+        Decision du 2026-08-21 : monter jusqu'a ce que le routage aboutisse.
+        Un plafond a 8 etait un chiffre arbitraire — les cartes 10, 12 ou 16
+        couches existent.
+        """
+        assert routing_router._layer_ladder(12) == [2, 4, 6, 8, 10, 12]
+        assert routing_router._layer_ladder(16) == [2, 4, 6, 8, 10, 12, 14, 16]
+
     def test_ne_depasse_jamais_le_plafond_du_plan(self):
         assert routing_router._layer_ladder(4) == [2, 4]
         assert routing_router._layer_ladder(2) == [2]
+
+    def test_un_plafond_impair_est_ramene_au_palier_inferieur(self):
+        # Un empilage a nombre impair de couches cuivre ne se fabrique pas.
+        assert routing_router._layer_ladder(5) == [2, 4]
+        assert routing_router._layer_ladder(3) == [2]
 
     def test_un_plafond_inattendu_ne_fait_pas_exploser(self):
         # Un plafond hors grille (plan corrompu, valeur inconnue) ne doit ni
         # lever ni ouvrir de droits : on retombe sur le minimum.
         assert routing_router._layer_ladder(0) == [2]
-        assert routing_router._layer_ladder(3) == [2]
+        assert routing_router._layer_ladder(-4) == [2]
+
+    def test_une_borne_absolue_protege_de_l_emballement(self):
+        # Sans borne, un plafond aberrant ferait boucler l'escalade jusqu'a
+        # epuisement du budget sur des empilages qui ne se fabriquent pas.
+        assert routing_router._layer_ladder(10_000)[-1] == routing_router._MAX_LAYERS
 
 
 class TestReecritureDeLEmpilage:
@@ -96,3 +116,28 @@ class TestReecritureDeLEmpilage:
     def test_un_board_sans_bloc_layers_est_rendu_tel_quel(self):
         brut = b"(kicad_pcb)"
         assert routing_router._expand_stackup(brut, 4) == brut
+
+
+class TestValidationDuPlafond:
+    """`layers` est un PLAFOND depuis le 2026-08-21, plus une consigne.
+
+    Le modele n acceptait que 2, 4 ou 8 — la grille des plans. Il rejetait donc
+    un plafond legitime a 12 ou 16, alors que l echelle sait y monter.
+    """
+
+    def test_accepte_les_paliers_au_dela_de_huit(self):
+        for n in (10, 12, 16):
+            req = routing_router.RouteAutoRequest(kicad_pcb_b64="", layers=n)
+            assert req.layers == n
+
+    def test_refuse_un_nombre_impair(self):
+        import pytest
+        with pytest.raises(ValueError):
+            routing_router.RouteAutoRequest(kicad_pcb_b64="", layers=5)
+
+    def test_refuse_au_dela_de_la_borne_absolue(self):
+        import pytest
+        with pytest.raises(ValueError):
+            routing_router.RouteAutoRequest(
+                kicad_pcb_b64="", layers=routing_router._MAX_LAYERS + 2
+            )

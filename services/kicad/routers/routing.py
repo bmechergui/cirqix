@@ -77,8 +77,16 @@ class RouteAutoRequest(BaseModel):
     timeout_s: int = Field(default=_DEFAULT_TIMEOUT_S, ge=30, le=_MAX_TIMEOUT_S)
 
     def model_post_init(self, _context: Any) -> None:
-        if self.layers not in (2, 4, 8):
-            raise ValueError("layers must be 2, 4, or 8")
+        # ⚠️ `layers` est un PLAFOND depuis le 2026-08-21, plus une consigne :
+        # le service part de 2 et escalade jusqu a lui. Le modele n acceptait
+        # que 2, 4 ou 8 — la grille des PLANS — et rejetait donc un plafond
+        # legitime a 12 ou 16, alors que l echelle sait y monter.
+        #
+        # Un empilage a nombre impair de couches cuivre ne se fabrique pas.
+        if self.layers < 2 or self.layers > _MAX_LAYERS or self.layers % 2:
+            raise ValueError(
+                f"layers must be an even count between 2 and {_MAX_LAYERS}"
+            )
 
 
 class RouteAutoResponse(BaseModel):
@@ -446,18 +454,31 @@ _COPPER_LAYER_RE = re.compile(r'"[A-Za-z0-9.]+\.Cu"')
 #
 # Garde : tests/test_stackup_escalade.py.
 
-_LAYER_LADDER: tuple[int, ...] = (2, 4, 6, 8)
+# Borne absolue de l escalade.
+#
+# ⚠️ Ce n est PAS un plafond produit — celui-la vient du plan. C est un
+# garde-fou : sans lui, un plafond aberrant (plan corrompu, valeur non
+# validee) ferait boucler l escalade jusqu a epuisement du budget sur des
+# empilages qui ne se fabriquent pas.
+_MAX_LAYERS: int = 16
 
 
 def _layer_ladder(plafond: int) -> list[int]:
-    """Paliers d'escalade autorises, du plus economique au plus permissif.
+    """Paliers d escalade autorises, du plus economique au plus permissif.
+
+    2, 4, 6, 8, 10 ... jusqu au plafond. Pas de maximum code en dur : un
+    arret a 8 serait un chiffre arbitraire, les cartes 10, 12 ou 16 couches
+    existent (decision du 2026-08-21).
+
+    Un empilage a nombre IMPAIR de couches cuivre ne se fabrique pas : un
+    plafond impair est ramene au palier pair inferieur.
 
     Un plafond hors grille (plan corrompu, valeur inconnue) ne leve pas et
-    n'ouvre aucun droit : on retombe sur le minimum.
+    n ouvre aucun droit : on retombe sur le minimum.
     """
-    paliers = [n for n in _LAYER_LADDER if n <= plafond]
+    borne = min(int(plafond), _MAX_LAYERS)
+    paliers = [n for n in range(2, borne + 1, 2)]
     return paliers or [2]
-
 
 def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
     """Reecrit le bloc `(layers ...)` pour porter `n_couches` couches cuivre.
@@ -937,34 +958,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     # une fois sur deux.
     freerouting_a_echoue = False
 
-    # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
-    if is_simple and _budget_suffisant(_remaining_budget_s(deadline)):
-        try:
-            new_pcb, routed_pct = _route_with_kicad_tools(
-                pcb_bytes, _remaining_budget_s(deadline)
-            )
-            logger.info("kicad-tools A*: %d%% routé", routed_pct)
-            if routed_pct >= _MIN_ROUTED_PCT:
-                _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
-                return RouteAutoResponse(
-                    kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
-                    routed_percent=routed_pct,
-                    layers=_count_copper_layers(new_pcb),
-                    engine="kicad-tools",
-                    via_count=_count_vias(new_pcb),
-                    track_length_mm=_track_length_mm(new_pcb),
-                    skipped=False,
-                )
-            # Below threshold: keep it, but try Freerouting for a better result.
-            kt_partial = (new_pcb, routed_pct)
-            logger.info(
-                "kicad-tools %d%% < %d%% — tentative Freerouting",
-                routed_pct, _MIN_ROUTED_PCT,
-            )
-        except Exception as exc:
-            logger.warning("kicad-tools A* échoué (%s) — Freerouting API", exc)
-
-    # --- Niveau 2 : Freerouting REST API server (1 JVM persistant, meilleure qualité) ---
+    # --- Niveau 1 : Freerouting REST API server (1 JVM persistant, meilleure qualité) ---
     # ⚠️ Un niveau lance avec zero seconde echoue INSTANTANEMENT — et son
     # echec est ensuite impute au routeur, ce qui envoie chercher au mauvais
     # endroit. Mesure du 2026-08-21 : « Freerouting echoue (... timed out
@@ -992,7 +986,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
             freerouting_a_echoue = True
             logger.warning("Freerouting API échoué (%s) — subprocess fallback", exc)
 
-    # --- Niveau 3 : Freerouting subprocess (fallback si API server absent) ---
+    # --- Niveau 2 : Freerouting subprocess (fallback si API server absent) ---
     paths = _find_freerouting()
     if paths is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
@@ -1033,6 +1027,45 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
             # Garde : tests/test_routing_netlist_guard.py.
             freerouting_a_echoue = True
             logger.warning("Freerouting échoué (%s) — repli kicad-tools", exc)
+
+    # ⚠️ kicad-tools est passe DERRIERE Freerouting le 2026-08-21 (decision
+    # produit). L escalade de couches etait etouffee : mesure, le premier
+    # palier consommait 751 s — tout le budget — et Freerouting recevait
+    # ensuite ZERO seconde. Un palier Freerouting coute 4 a 31 s.
+    #
+    # La qualite va dans le meme sens (board STM32, 6 tirages) : Freerouting
+    # rend 0 connexion manquante et n ajoute AUCUNE violation ; kicad-tools en
+    # laisse 7 et ajoute 58 ERREURS de fabricabilite.
+    #
+    # Il RESTE dans la cascade : seul a savoir escalader les couches lui-meme
+    # (`--auto-layers`), et derniere chance quand Freerouting echoue.
+    # Garde : tests/test_ordre_des_niveaux.py.
+    # --- Niveau 3 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
+    if is_simple and _budget_suffisant(_remaining_budget_s(deadline)):
+        try:
+            new_pcb, routed_pct = _route_with_kicad_tools(
+                pcb_bytes, _remaining_budget_s(deadline)
+            )
+            logger.info("kicad-tools A*: %d%% routé", routed_pct)
+            if routed_pct >= _MIN_ROUTED_PCT:
+                _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
+                return RouteAutoResponse(
+                    kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
+                    routed_percent=routed_pct,
+                    layers=_count_copper_layers(new_pcb),
+                    engine="kicad-tools",
+                    via_count=_count_vias(new_pcb),
+                    track_length_mm=_track_length_mm(new_pcb),
+                    skipped=False,
+                )
+            # Below threshold: keep it, but try Freerouting for a better result.
+            kt_partial = (new_pcb, routed_pct)
+            logger.info(
+                "kicad-tools %d%% < %d%% — tentative Freerouting",
+                routed_pct, _MIN_ROUTED_PCT,
+            )
+        except Exception as exc:
+            logger.warning("kicad-tools A* échoué (%s) — Freerouting API", exc)
 
     # --- Niveau 4 : kicad-tools negotiated sans limite (tous circuits) ---
     # Reuse the Niveau-1 partial when we already have one (avoid a second
