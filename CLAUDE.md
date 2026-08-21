@@ -738,6 +738,36 @@ connu et assumé, il est écrit ici pour ne pas être redécouvert.
 couches ici, 178 segments sur F.Cu et 23 sur B.Cu). L'escalade appartient à
 `kct route --auto-layers`.
 
+### Pipeline complet par la file — validé de bout en bout (2026-08-21)
+
+Run `4290007c` enfilé dans BullMQ, consommé par le worker, **19 minutes**, tous
+les appels en 200 :
+
+```
+02:27:15  /schematic/validate-symbols  200
+02:27:17  /schematic/generate          200
+02:27:47  /erc                         200   ← l'ERC d'autorité rend un verdict
+02:28:09  /pcb/generate                200
+          … 6 cycles place → route → drc, tous 200
+02:44:28  /export/all                  200
+```
+
+C'est la validation qui englobe les autres : elle exerce le transport undici
+désarmé, les budgets de placement et de routage, l'API Freerouting réparée, le
+compteur de nets, le requotage ERC, et le worker sans plafond d'invocation.
+
+**19 min > 300 s** — l'ancienne route web n'aurait livré aucun de ces boards.
+
+⚠️ Le routage prend désormais **5 à 12 s** par cycle (Freerouting via l'API) au
+lieu de 600-2500 s : c'est ce qui rend six re-tirages de placement tenables dans
+un run de 19 minutes. Le temps du run est aujourd'hui dominé par le PLACEMENT
+(~2,5 min par tirage), plus par le routage.
+
+⚠️ Non couvert : la persistance Supabase, testée avec `SUPABASE_URL` bidon —
+tous les `dépôt de l artefact échoué` et `persistance intermédiaire échouée` du
+journal sont attendus. La moitié « journal + Realtime » reste à valider avec une
+vraie `SUPABASE_SERVICE_KEY`.
+
 ### État
 
 Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
