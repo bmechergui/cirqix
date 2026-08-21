@@ -657,6 +657,54 @@ mêmes 1800 s. Chaque niveau reçoit le budget entier, donc un appel peut valoir
 plusieurs fois `timeout_s`. Acceptable dans un worker sans plafond, à revoir si
 la borne devient contractuelle.
 
+### « Freerouting perd la netlist » était FAUX (2026-08-20)
+
+Ce diagnostic, écrit ici le matin même, disait : *round-trip Specctra, 99 nets en
+entrée, 0 en sortie*. Il venait du message de la garde, relayé sans être vérifié.
+
+**La netlist était intacte.** Deux écritures coexistent pour la même information :
+
+    (net 3 "TRIG_THR")   ← kicad-tools, et KiCad ≤ 9
+    (net "TRIG_THR")     ← pcbnew de KiCad 10 (`generator_version "10.0"`)
+
+`_NET_DECL_RE` n'acceptait que la première. Tout board réécrit par pcbnew 10 —
+donc tout board sorti du round-trip Specctra, donc de Freerouting — comptait
+ZÉRO net et se faisait refuser.
+
+La preuve qui tranche : `kicad-cli pcb drc` sur ce board « sans netlist » répond
+**« Found 0 unconnected items »**. Valide, routé, entièrement connecté.
+
+Après correction, même board via l'API : nets déclarés 30 → 76, nets routables
+6 → 6, segments 0 → 53, **en 2 s**.
+
+⚠️ La garde reste juste et nécessaire (issue #72 : un board réellement vidé était
+annoncé « routé à 100 % »). C'est sa MESURE qui était fausse — on corrige la
+mesure, jamais la garde. Gardes : `tests/test_net_counting_kicad10.py`.
+
+**NEVER** relayer le message d'une garde comme un diagnostic : il dit ce que la
+garde a MESURÉ, pas ce qui s'est passé.
+
+### Le Niveau 2 (API Freerouting) n'avait jamais servi
+
+La JVM persistante (~400 Mo, port 37864) répondait correctement depuis toujours.
+`_find_freerouting_api` sondait `/api/v1/system/status` — un chemin que
+Freerouting v2.1.0 ne sert pas ; le vrai préfixe est `/v1`. La sonde renvoyait
+donc toujours `None` et chaque routage repartait sur le Niveau 3, un `java -jar`
+complet avec démarrage de JVM.
+
+Quatre erreurs indépendantes du client, chacune suffisante seule : préfixe
+`/api`, absence des en-têtes d'identité (`Freerouting-Profile-ID`…, sinon 500),
+envoi du DSN en multipart (415 au lieu de `{"data": <b64>}`), et comparaison
+d'état en minuscules (le serveur sérialise `"COMPLETED"`). `POST …/start` répond
+405 : c'est un `PUT`. Gardes : `tests/test_freerouting_api_contract.py`.
+
+⚠️ **`api_server-endpoints` ne peut PAS se passer en ligne de commande** :
+`ApiServerSettings.endpoints` est un `String[]`. L'option levait
+« Failed to set property value » à chaque démarrage depuis le 2026-07-27 sans
+jamais s'appliquer — une erreur rouge, réelle, mais SANS RAPPORT avec le 404.
+Elle m'a fait conclure à un serveur mort pendant des heures. Pour changer le
+port, il faut un `freerouting.json` sous `--user_data_path`.
+
 ⚠️ `via_count` et `track_length_mm` ressortent à **0** sur le chemin Niveau 4 :
 il ne les calcule pas et laisse les défauts du modèle. Ce sont des indicateurs
 d'affichage, pas un gate, mais ils décrivent un board qui n'existe pas.
@@ -678,9 +726,8 @@ Reste :
   non testable sans un routage réel de ~14 min.
 - **Supabase Realtime** en transport principal ; le sondage actuel
   (`follow-run.ts`) reste alors le repli documenté.
-- **Freerouting perd la netlist** sur son round-trip Specctra (99 nets en
-  entrée, 0 en sortie). La garde le refuse et le repli Niveau 4 livre désormais
-  le routage kicad-tools ; la cause amont, elle, reste entière.
+- ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
+  ci-dessous : c'était notre compteur qui était aveugle.
 - **Budget par niveau** et **`via_count`/`track_length_mm` à 0** — voir les deux
   avertissements ci-dessus.
 
