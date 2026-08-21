@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -92,6 +93,46 @@ class RouteAutoResponse(BaseModel):
 # ----------------------------------------------------------------------------
 # Internal helpers (mocked in tests)
 # ----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Budget de l'APPEL, pas du niveau
+# ---------------------------------------------------------------------------
+#
+# `route_auto` enchaîne jusqu'à quatre routeurs. Chacun recevait `req.timeout_s`
+# EN ENTIER, donc un seul appel pouvait valoir plusieurs fois le budget demandé :
+# mesuré le 2026-08-20, `timeout_s: 1800` a produit **2547 s** de travail réel.
+#
+# Le client, lui, calcule son échéance à partir d'UN budget
+# (`routingAbortMs = budget + marge`). Il raccroche donc pendant que le service
+# travaille encore, et tout le travail déjà fait part à la poubelle. Un budget
+# qui ne borne rien n'est pas un budget.
+#
+# Une échéance UNIQUE est calculée à l'entrée ; chaque niveau reçoit le RESTANT.
+# Garde : tests/test_routing_budget_par_appel.py.
+
+# En dessous, on ne lance pas un niveau : un routeur tué en cours ne rend rien,
+# alors qu'un niveau plus rapide pourrait encore aboutir.
+_MIN_LEVEL_BUDGET_S: int = 30
+
+
+def _now() -> float:
+    """Horloge monotone — indirection pour que les tests puissent la piloter."""
+    return time.monotonic()
+
+
+def _remaining_budget_s(deadline: float, now: Optional[float] = None) -> int:
+    """Temps restant avant l'échéance de l'appel, jamais négatif.
+
+    Un budget négatif passé à un sous-processus serait interprété comme
+    « pas de limite » par certains outils : plancher à zéro.
+    """
+    reste = deadline - (_now() if now is None else now)
+    return max(0, int(reste))
+
+
+def _budget_suffisant(budget_s: int) -> bool:
+    return budget_s >= _MIN_LEVEL_BUDGET_S
+
 
 # ---------------------------------------------------------------------------
 # Client de l'API Freerouting (Niveau 2)
@@ -553,6 +594,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
     # Netlist d'entrée : sert de référence à la garde anti-board-vide (issue #72).
+    # Échéance de l'APPEL, calculée UNE fois. Chaque niveau recevra le restant.
+    deadline = _now() + req.timeout_s
+
     input_nets = _net_decl_count(pcb_bytes)
     net_count = _count_routable_nets(pcb_bytes)
     comp_count = _count_footprints(pcb_bytes)
@@ -617,9 +661,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     freerouting_a_echoue = False
 
     # --- Niveau 1 : kicad-tools A* (circuits simples ≤30 nets/comps) ---
-    if is_simple:
+    if is_simple and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
-            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes, req.timeout_s)
+            new_pcb, routed_pct = _route_with_kicad_tools(
+                pcb_bytes, _remaining_budget_s(deadline)
+            )
             logger.info("kicad-tools A*: %d%% routé", routed_pct)
             if routed_pct >= _MIN_ROUTED_PCT:
                 _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
@@ -642,7 +688,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     api_url = _find_freerouting_api()
     if api_url is not None:
         try:
-            new_pcb = _route_with_freerouting_api(pcb_bytes, req.timeout_s)
+            new_pcb = _route_with_freerouting_api(
+                pcb_bytes, _remaining_budget_s(deadline)
+            )
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-api")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
             logger.info("Freerouting API: %d%% routé (connectivité mesurée)", routed_pct)
@@ -664,7 +712,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 dsn = Path(tmp) / "board.dsn"
                 ses = Path(tmp) / "board.ses"
                 _export_specctra(pcb_bytes, dsn)
-                _run_freerouting(paths, dsn, ses, req.timeout_s)
+                _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
@@ -703,7 +751,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         if kt_partial is not None:
             new_pcb, routed_pct = kt_partial
         else:
-            new_pcb, routed_pct = _route_with_kicad_tools(pcb_bytes, req.timeout_s)
+            new_pcb, routed_pct = _route_with_kicad_tools(
+                pcb_bytes, _remaining_budget_s(deadline)
+            )
         logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
         _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
         return RouteAutoResponse(

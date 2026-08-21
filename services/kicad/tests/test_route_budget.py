@@ -121,9 +121,26 @@ def test_le_budget_recu_est_transmis_au_routeur_principal() -> None:
     assert "timeout_s=_PYTHON_ROUTER_TIMEOUT_S" not in ROUTER_SOURCE
 
 
-def test_les_appelants_passent_le_budget_de_la_requete() -> None:
-    calls = re.findall(r"(?<!def )_route_with_kicad_tools\((.*?)\)", ROUTER_SOURCE)
+def test_les_appelants_passent_un_budget_derive_de_la_requete() -> None:
+    """Le routeur doit recevoir un budget venant de la REQUETE, jamais une constante.
+
+    La formulation a evolue le 2026-08-20 : les niveaux recevaient `req.timeout_s`
+    en entier, chacun, si bien qu un appel valait plusieurs fois le budget demande
+    (2547 s mesures pour 1800 s demandes). Ils recoivent desormais
+    `_remaining_budget_s(deadline)` -- le temps RESTANT sur une echeance calculee
+    une seule fois a l entree, elle-meme derivee de `req.timeout_s`.
+
+    L intention du test est inchangee : ce qui est interdit, c est le plafond code
+    en dur (`_PYTHON_ROUTER_TIMEOUT_S`) qui jetait la demande du client.
+    """
+    calls = re.findall(
+        r"(?<!def )_route_with_kicad_tools\(([^)]*(?:\([^)]*\))?[^)]*)\)",
+        ROUTER_SOURCE,
+        re.S,
+    )
     invocations = [c for c in calls if "pcb_bytes" in c]
     assert invocations, "aucun appel a _route_with_kicad_tools trouve"
     for call in invocations:
-        assert "req.timeout_s" in call, f"appel sans budget de requete : {call}"
+        assert "_remaining_budget_s" in call or "req.timeout_s" in call, (
+            f"appel sans budget venant de la requete : {call}"
+        )
