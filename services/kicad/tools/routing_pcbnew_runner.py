@@ -29,7 +29,14 @@ def _specctra_roundtrip(pcbnew, args: dict[str, str]) -> None:
         board.Remove(track)
     pcbnew.ImportSpecctraSES(board, args["ses"])
     for zone in board.Zones():
-        zone.SetFilled(True)
+        # KiCad 10 : ZONE.SetFilled a disparu (renomme SetIsFilled) ; sous
+        # KiCad 9 les deux existent. La boucle ne s executait JAMAIS —
+        # aucun board de la chaine ne portait de zone — donc l erreur est
+        # restee invisible jusqu au 2026-08-21, ou les plans de masse
+        # coules avant le routage l ont declenchee : le processus enfant
+        # sortait en AttributeError et Freerouting echouait aux deux
+        # niveaux. Garde : tests/test_zone_setisfilled.py.
+        zone.SetIsFilled(True)
     filler = pcbnew.ZONE_FILLER(board)
     filler.Fill(board.Zones())
     pcbnew.SaveBoard(args["output"], board)
