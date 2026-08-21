@@ -965,8 +965,13 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
             logger.warning("kicad-tools A* échoué (%s) — Freerouting API", exc)
 
     # --- Niveau 2 : Freerouting REST API server (1 JVM persistant, meilleure qualité) ---
+    # ⚠️ Un niveau lance avec zero seconde echoue INSTANTANEMENT — et son
+    # echec est ensuite impute au routeur, ce qui envoie chercher au mauvais
+    # endroit. Mesure du 2026-08-21 : « Freerouting echoue (... timed out
+    # after 0 seconds) » alors qu il n avait jamais tourne, le Niveau 1 ayant
+    # consomme tout le budget. Mieux vaut passer au suivant.
     api_url = _find_freerouting_api()
-    if api_url is not None:
+    if api_url is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
             new_pcb = _route_with_freerouting_api(
                 pcb_bytes, _remaining_budget_s(deadline)
@@ -989,7 +994,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
 
     # --- Niveau 3 : Freerouting subprocess (fallback si API server absent) ---
     paths = _find_freerouting()
-    if paths is not None:
+    if paths is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 dsn = Path(tmp) / "board.dsn"
@@ -1036,10 +1041,15 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     try:
         if kt_partial is not None:
             new_pcb, routed_pct = kt_partial
-        else:
+        elif _budget_suffisant(_remaining_budget_s(deadline)):
             new_pcb, routed_pct = _route_with_kicad_tools(
                 pcb_bytes, _remaining_budget_s(deadline)
             )
+        else:
+            # Rien a sauver et plus de temps : on tombe sur le Niveau 5, qui rend
+            # `skipped=True`. Traite en fail-fast cote TypeScript — jamais un
+            # faux succes.
+            raise RuntimeError("budget epuise avant le Niveau 4")
         logger.info("kicad-tools A* (no limit): %d%% routé", routed_pct)
         _guard_netlist_preserved(new_pcb, input_nets, "kicad-tools")
         return RouteAutoResponse(

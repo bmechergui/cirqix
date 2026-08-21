@@ -75,3 +75,41 @@ class TestCablage:
         # Et le restant doit bien etre passe au palier, sinon chaque palier
         # repartirait du budget entier.
         assert "timeout_s=max(restant, _MIN_LEVEL_BUDGET_S)" in self.SOURCE
+
+
+class TestAucunNiveauNeDemarreSansBudget:
+    """Un niveau lance avec zero seconde echoue instantanement -- pour rien.
+
+    Mesure du 2026-08-21 : le Niveau 1 (kicad-tools) a consomme les 600 s du
+    budget au premier palier d escalade. Freerouting a ensuite recu ZERO :
+
+        Freerouting echoue (... timed out after 0 seconds) -- repli kicad-tools
+
+    `subprocess.run(timeout=0)` leve immediatement. Le niveau n a pas ete
+    « trop lent » : il n a jamais tourne. Pire, son echec a ete compte comme un
+    echec de Freerouting, ce qui envoie chercher au mauvais endroit.
+
+    Le garde existait sur le Niveau 1 seulement. Il doit couvrir CHAQUE niveau :
+    mieux vaut passer au suivant -- ou rendre ce qu on a -- que consommer un
+    tour de cascade pour un echec certain.
+    """
+
+    SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
+
+    def test_chaque_niveau_verifie_le_budget_avant_de_partir(self):
+        """Un comptage de ratio serait un mauvais proxy : on verifie les ENTREES.
+
+        Chaque niveau qui consomme du temps doit tester le budget sur la ligne
+        meme qui decide de le lancer.
+        """
+        entrees = [
+            "if is_simple and _budget_suffisant(",
+            "if api_url is not None and _budget_suffisant(",
+            "if paths is not None and _budget_suffisant(",
+            "elif _budget_suffisant(",
+        ]
+        manquants = [e for e in entrees if e not in self.SOURCE]
+        assert manquants == [], f"niveaux sans garde de budget : {manquants}"
+
+    def test_la_boucle_d_escalade_verifie_aussi(self):
+        assert "if meilleur is not None and not _budget_suffisant(restant)" in self.SOURCE
