@@ -68,7 +68,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
-  agentsMock.runOrchestratorPipeline.mockResolvedValue(undefined);
+  // Le pipeline RENVOIE son issue depuis le 2026-08-21 : « ne pas lever » ne
+  // veut pas dire « avoir réussi ». Le défaut du harnais suit ce contrat.
+  agentsMock.runOrchestratorPipeline.mockResolvedValue({ ok: true });
 });
 
 describe('cycle de vie du run', () => {
@@ -128,8 +130,8 @@ describe('battement de cœur', () => {
     vi.useFakeTimers();
     let releasePipeline: (() => void) | undefined;
     agentsMock.runOrchestratorPipeline.mockImplementation(
-      () => new Promise<void>((resolve) => {
-        releasePipeline = resolve;
+      () => new Promise<{ ok: true }>((resolve) => {
+        releasePipeline = () => resolve({ ok: true });
       }),
     );
 
@@ -149,5 +151,59 @@ describe('battement de cœur', () => {
     await vi.advanceTimersByTimeAsync(120_000);
     expect(heartbeat).toHaveBeenCalledTimes(afterRun);
     vi.useRealTimers();
+  });
+});
+
+/**
+ * Un run dont le DERNIER mot est une erreur ne doit pas compter comme un succès.
+ *
+ * Le pipeline ne LÈVE pas sur une erreur non liée aux crédits : il l'émet au
+ * journal et rend la main — c'est voulu, une erreur métier doit atteindre
+ * l'utilisateur sans tuer le porteur. Mais `runJob` en déduisait « succeeded ».
+ *
+ * Mesuré le 2026-08-21 sur un run RÉEL, base de production, 126 événements :
+ *
+ *     seq 127  kind=error  « Orchestrator completed in a non-billable state:
+ *                            ROUTING_DONE »
+ *     pcb_runs.status = 'succeeded'   ← faux
+ *
+ * Le board n'était ni DRC-clean ni livré, et le dernier message à l'utilisateur
+ * était une erreur. Toute réconciliation ou tout tableau de bord lisant
+ * `pcb_runs` l'aurait compté comme une réussite.
+ */
+describe('un run terminé sur une erreur', () => {
+  it('est clos en failed, avec la cause', async () => {
+    agentsMock.runOrchestratorPipeline.mockResolvedValue({
+      ok: false,
+      error: 'Orchestrator completed in a non-billable state: ROUTING_DONE',
+    });
+    const { ctx, finish } = makeCtx();
+
+    await runJob(payload, ctx);
+
+    expect(finish).toHaveBeenCalledWith(
+      payload.runId,
+      'failed',
+      'Orchestrator completed in a non-billable state: ROUTING_DONE',
+    );
+  });
+
+  it('reste succeeded quand le pipeline aboutit vraiment', async () => {
+    agentsMock.runOrchestratorPipeline.mockResolvedValue({ ok: true });
+    const { ctx, finish } = makeCtx();
+
+    await runJob(payload, ctx);
+
+    expect(finish).toHaveBeenCalledWith(payload.runId, 'succeeded');
+  });
+
+  it('laisse l annulation primer sur l échec', async () => {
+    // Un run annulé n'est pas un run raté : l'utilisateur a décidé d'arrêter.
+    agentsMock.runOrchestratorPipeline.mockResolvedValue({ ok: false, error: 'peu importe' });
+    const { ctx, finish } = makeCtx({ isCancelled: vi.fn().mockResolvedValue(true) });
+
+    await runJob(payload, ctx);
+
+    expect(finish).toHaveBeenCalledWith(payload.runId, 'cancelled');
   });
 });

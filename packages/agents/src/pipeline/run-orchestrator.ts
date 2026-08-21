@@ -23,6 +23,25 @@ import type { PipelineStore } from './store';
 /** Étapes qui apparaissent dans la Timeline (SPEC est interne). */
 type UiStep = 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
 
+/**
+ * Issue d'un run, telle que le PORTEUR doit la comprendre.
+ *
+ * ⚠️ Le pipeline ne LÈVE pas sur une erreur non liée aux crédits : il l'émet au
+ * journal et rend la main — c'est voulu, une erreur métier doit atteindre
+ * l'utilisateur sans tuer le porteur. Mais « ne pas lever » ne veut pas dire
+ * « avoir réussi », et le worker en déduisait `succeeded`.
+ *
+ * Mesuré le 2026-08-21 sur un run RÉEL en base de production : 126 événements,
+ * dernier `kind=error` (« non-billable state: ROUTING_DONE »), et
+ * `pcb_runs.status = 'succeeded'`. Le board n'était ni DRC-clean ni livré, et
+ * le dernier message à l'utilisateur était une erreur — toute réconciliation
+ * l'aurait compté comme une réussite.
+ *
+ * L'issue est donc RENVOYÉE, plus déduite d'une absence d'exception.
+ * Garde : services/worker/src/tests/run-job.test.ts.
+ */
+export type RunOutcome = { ok: true } | { ok: false; error: string };
+
 export interface RunPipelineOptions {
   sink: RunSink;
   store: PipelineStore;
@@ -42,7 +61,9 @@ function isCreditFailure(message: string): boolean {
   return message.includes('credit') || message.includes('402');
 }
 
-export async function runOrchestratorPipeline(opts: RunPipelineOptions): Promise<void> {
+export async function runOrchestratorPipeline(
+  opts: RunPipelineOptions,
+): Promise<RunOutcome> {
   const { sink, store, projectId, prompt, iterationStart } = opts;
 
   let mergedState: Partial<PCBState> = {
@@ -180,5 +201,8 @@ export async function runOrchestratorPipeline(opts: RunPipelineOptions): Promise
     // Remonte au porteur : c'est lui qui décide d'armer le repli local.
     if (isCreditFailure(message)) throw err;
     await sink.emit({ type: 'error', message });
+    return { ok: false, error: message };
   }
+
+  return { ok: true };
 }

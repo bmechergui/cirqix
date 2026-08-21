@@ -74,7 +74,7 @@ export async function runJob(
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
-    await runOrchestratorPipeline({
+    const outcome = await runOrchestratorPipeline({
       sink,
       store: ctx.createStore(userId, projectId),
       projectId,
@@ -87,8 +87,25 @@ export async function runJob(
     // son terme d'un run interrompu par son porteur.
     const cancelled = await ctx.isCancelled(runId);
     await sink.close();
-    await ctx.finish(runId, cancelled ? 'cancelled' : 'succeeded');
-    log.info({ runId, projectId, cancelled }, 'run terminé');
+
+    if (cancelled) {
+      // Un run annulé n'est pas un run raté : l'utilisateur a décidé d'arrêter.
+      await ctx.finish(runId, 'cancelled');
+      log.info({ runId, projectId, cancelled: true }, 'run terminé');
+    } else if (!outcome.ok) {
+      // ⚠️ « Ne pas lever » ne veut pas dire « avoir réussi ». Le pipeline émet
+      // les erreurs métier au journal et rend la main — sans quoi une erreur
+      // n'atteindrait jamais l'utilisateur. On en déduisait `succeeded`.
+      //
+      // Mesuré le 2026-08-21 sur un run RÉEL : 126 événements, dernier
+      // `kind=error` (« non-billable state: ROUTING_DONE »), et le run
+      // enregistré `succeeded`. Le board n'était ni DRC-clean ni livré.
+      await ctx.finish(runId, 'failed', outcome.error);
+      log.warn({ runId, projectId, err: outcome.error }, 'run terminé en erreur');
+    } else {
+      await ctx.finish(runId, 'succeeded');
+      log.info({ runId, projectId, cancelled: false }, 'run terminé');
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'pipeline failed';
     // Le journal doit porter la cause : c'est tout ce que l'utilisateur verra,
