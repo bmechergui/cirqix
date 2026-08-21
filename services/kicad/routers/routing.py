@@ -305,22 +305,27 @@ def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
 
 
 def _count_routable_nets(pcb_bytes: bytes) -> int:
-    """Count nets that actually require routing (≥ 2 pads assigned).
+    """Nets qui demandent réellement un routage (≥ 2 pads attribués).
 
-    In a .kicad_pcb file each net appears exactly once as a top-level
-    declaration ``(net N "name")`` plus once per pad that carries it.
-    Total occurrences = 1 (declaration) + pad_count.
-    A net needs routing only when pad_count ≥ 2, i.e. total count ≥ 3.
+    Le seuil dépend du writer, parce que la forme numérotée porte une
+    DÉCLARATION en tête du fichier en plus des pads, et la forme nommée non :
 
-    Single-pad nets (unconnected Arduino pins → Net-(U1-X)) appear exactly
-    twice (declaration + 1 pad) and are correctly excluded.
+        (net 3 "GND")  → 1 déclaration + 1 par pad  → routable si ≥ 3
+        (net "GND")    → 1 par pad, sans déclaration → routable si ≥ 2
+
+    Les nets à un seul pad (broches non connectées, `Net-(U1-X)`) sont exclus
+    dans les deux cas : il n'y a rien à router.
     """
-    text = pcb_bytes.decode("utf-8", errors="replace")
     from collections import Counter
-    all_occurrences = re.findall(r'\(net\s+(\d+)\s+"[^"]+"\)', text)
-    counts = Counter(all_occurrences)
-    # ≥3 = 1 top-level declaration + at least 2 pad assignments
-    return sum(1 for c in counts.values() if c >= 3)
+
+    text = pcb_bytes.decode("utf-8", errors="replace")
+
+    numerotes = Counter(nom for _, nom in _NET_NUMBERED_RE.findall(text) if nom)
+    if numerotes:
+        return sum(1 for c in numerotes.values() if c >= 3)
+
+    nommes = Counter(nom for nom in _NET_NAMED_RE.findall(text) if nom)
+    return sum(1 for c in nommes.values() if c >= 2)
 
 
 def _count_footprints(pcb_bytes: bytes) -> int:
@@ -457,14 +462,30 @@ def _measured_routed_percent(
 # Garde de netlist
 # ----------------------------------------------------------------------------
 
-# Une DÉCLARATION de net est `(net N "nom")` ; `(net N)` dans un segment n'est
-# qu'une référence. Ne compter que les déclarations, sinon un board réduit à des
-# pistes orphelines satisferait la garde.
-_NET_DECL_RE = re.compile(rb'\(net \d+ "')
+# Un net PORTEUR D'UN NOM s'écrit de DEUX façons selon le writer :
+#
+#     (net 3 "TRIG_THR")   ← kicad-tools, et KiCad <= 9
+#     (net "TRIG_THR")     ← pcbnew de KiCad 10 (`generator_version "10.0"`)
+#
+# `(net N)` seul, dans un segment, n'est qu'une référence : ne pas le compter,
+# sinon un board réduit à des pistes orphelines satisferait la garde.
+#
+# ⚠️ Seule la première forme était reconnue. Tout board réécrit par pcbnew 10 —
+# c'est-à-dire tout board sorti du round-trip Specctra, donc de Freerouting —
+# comptait ZÉRO net et se faisait refuser par `_guard_netlist_preserved`.
+# Mesuré le 2026-08-20 : entrée 30 occurrences numérotées, sortie 78 nommées,
+# et `kicad-cli pcb drc` sur cette sortie répond « Found 0 unconnected items ».
+# Le board était valide, routé et connecté : le « 0 en sortie » était un FAUX
+# POSITIF du compteur, et il bloquait Freerouting en entier.
+# Garde : tests/test_net_counting_kicad10.py.
+_NET_NUMBERED_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
+_NET_NAMED_RE = re.compile(r'\(net\s+"([^"]*)"\)')
 
 
 def _net_decl_count(pcb: bytes) -> int:
-    return len(_NET_DECL_RE.findall(pcb))
+    """Nombre d'occurrences de net porteuses d'un nom, quelle que soit la forme."""
+    text = pcb.decode("utf-8", errors="replace")
+    return len(_NET_NUMBERED_RE.findall(text)) + len(_NET_NAMED_RE.findall(text))
 
 
 def _niveau4_warning(freerouting_a_echoue: bool, net_count: int) -> str:
