@@ -423,6 +423,84 @@ def _layers_block(text: str) -> str:
 _COPPER_LAYER_RE = re.compile(r'"[A-Za-z0-9.]+\.Cu"')
 
 
+# ---------------------------------------------------------------------------
+# Escalade de couches
+# ---------------------------------------------------------------------------
+#
+# `tools/pcb.py` genere TOUJOURS deux couches cuivre. Freerouting, lui, route
+# sur autant de couches que le DSN en declare — verifie le 2026-08-21 :
+#
+#     board 2 couches -> DSN ['F.Cu', 'B.Cu']
+#     board 4 couches -> DSN ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu']
+#
+# Il n'a donc aucune limite propre : l'empilage est une DONNEE D'ENTREE. Jusqu'ici
+# personne ne la decidait — `req.layers` arrivait au service et n'etait que
+# recopie dans la reponse.
+#
+# Nouveau contrat : `req.layers` est un PLAFOND (celui du plan), pas une consigne.
+# On part de 2 et on monte tant que le routage n'est pas complet.
+#
+# ⚠️ Une carte 4 couches coute sensiblement plus cher a fabriquer qu'une 2
+# couches. On monte parce que le routage a ECHOUE, jamais parce que le plan
+# l'autorise : le plan plafonne le besoin, il ne le prescrit pas.
+#
+# Garde : tests/test_stackup_escalade.py.
+
+_LAYER_LADDER: tuple[int, ...] = (2, 4, 6, 8)
+
+
+def _layer_ladder(plafond: int) -> list[int]:
+    """Paliers d'escalade autorises, du plus economique au plus permissif.
+
+    Un plafond hors grille (plan corrompu, valeur inconnue) ne leve pas et
+    n'ouvre aucun droit : on retombe sur le minimum.
+    """
+    paliers = [n for n in _LAYER_LADDER if n <= plafond]
+    return paliers or [2]
+
+
+def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
+    """Reecrit le bloc `(layers ...)` pour porter `n_couches` couches cuivre.
+
+    Ne RETIRE jamais de couche : descendre casserait les pistes deja posees sur
+    les couches internes. Les couches non cuivre (masque, serigraphie,
+    Edge.Cuts) sont preservees telles quelles, et le reste du fichier n'est pas
+    touche.
+
+    Numerotation KiCad : F.Cu = 0, internes 1..n, B.Cu = 31.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    lignes = text.splitlines(keepends=True)
+
+    debut = fin = None
+    for i, ligne in enumerate(lignes):
+        if debut is None:
+            if ligne.strip().startswith("(layers"):
+                debut = i
+            continue
+        if ligne.strip() == ")":
+            fin = i
+            break
+    if debut is None or fin is None:
+        return pcb_bytes
+
+    corps = lignes[debut + 1:fin]
+    actuel = len(set(_COPPER_LAYER_RE.findall("".join(corps))))
+    if n_couches <= actuel:
+        return pcb_bytes
+
+    indent = corps[0][: len(corps[0]) - len(corps[0].lstrip())] if corps else "\t\t"
+    autres = [l for l in corps if not _COPPER_LAYER_RE.search(l)]
+
+    cuivre = [f'{indent}(0 "F.Cu" signal)\n']
+    for k in range(1, n_couches - 1):
+        cuivre.append(f'{indent}({k} "In{k}.Cu" signal)\n')
+    cuivre.append(f'{indent}(31 "B.Cu" signal)\n')
+
+    nouvelles = lignes[: debut + 1] + cuivre + autres + lignes[fin:]
+    return "".join(nouvelles).encode("utf-8")
+
+
 def _count_copper_layers(pcb_bytes: bytes) -> int:
     """Nombre de couches CUIVRE réellement déclarées par le board.
 
@@ -675,8 +753,7 @@ def _guard_netlist_preserved(pcb: bytes, input_nets: int, source: str) -> None:
 # Endpoints
 # ----------------------------------------------------------------------------
 
-@router.post("/route/auto", response_model=RouteAutoResponse)
-def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
+def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     """
     Auto-route a board.
 
@@ -885,3 +962,68 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         skipped=True,
         warning=reason,
     )
+
+
+@router.post("/route/auto", response_model=RouteAutoResponse)
+def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
+    """Route en escaladant les couches jusqu'a obtenir 100 %.
+
+    `req.layers` est un PLAFOND (celui du plan), pas une consigne. On part de 2
+    couches et on monte 4 -> 6 -> 8 tant que le routage n'est pas complet.
+
+    ⚠️ Une carte 4 couches coute sensiblement plus cher a fabriquer qu'une 2
+    couches. On monte parce que le routage a ECHOUE, jamais parce que le plan
+    l'autorise : le plan plafonne le besoin, il ne le prescrit pas.
+
+    L'escalade est possible parce que Freerouting route sur autant de couches
+    que le DSN en declare — l'empilage est une donnee d'entree, pas une decision
+    du routeur. Mesure du 2026-08-21 : board 4 couches -> DSN
+    ['F.Cu', 'In1.Cu', 'In2.Cu', 'B.Cu'].
+
+    ⚠️ Le budget vaut pour l'APPEL ENTIER, escalade comprise : chaque palier
+    recoit le temps RESTANT. Sans cela, l'escalade multiplierait le budget par
+    le nombre de paliers — exactement le defaut corrige plus haut au niveau de
+    la cascade.
+
+    Garde : tests/test_stackup_escalade.py.
+    """
+    try:
+        pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
+
+    deadline = _now() + req.timeout_s
+    meilleur: Optional[RouteAutoResponse] = None
+
+    for palier in _layer_ladder(req.layers):
+        restant = _remaining_budget_s(deadline)
+        if meilleur is not None and not _budget_suffisant(restant):
+            logger.info(
+                "route_auto: escalade interrompue avant %d couches — budget epuise",
+                palier,
+            )
+            break
+
+        etendu = _expand_stackup(pcb_bytes, palier)
+        tentative = RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
+            layers=req.layers,
+            timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
+        )
+        res = _route_auto_once(tentative)
+        logger.info(
+            "route_auto: palier %d couches -> %d%% (%s)",
+            palier, res.routed_percent, res.engine or "aucun moteur",
+        )
+
+        if res.routed_percent >= 100 and not res.skipped:
+            return res
+        if meilleur is None or res.routed_percent > meilleur.routed_percent:
+            meilleur = res
+
+    # Aucun palier n'a atteint 100 % : on rend le MEILLEUR, jamais le dernier.
+    # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
+    # et livrer le dernier essai plutot que le meilleur serait une regression
+    # silencieuse.
+    assert meilleur is not None  # `_layer_ladder` rend toujours au moins [2]
+    return meilleur

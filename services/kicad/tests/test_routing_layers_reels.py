@@ -74,7 +74,7 @@ class TestCablage:
             ligne for ligne in self.SOURCE.splitlines()
             if not ligne.lstrip().startswith("#")
         )
-        boards = code.count("kicad_pcb_b64=base64.b64encode(")
+        boards = code.count("kicad_pcb_b64=base64.b64encode(new_pcb)")
         mesures = code.count("layers=_count_copper_layers(new_pcb)")
         assert mesures == boards, (
             f"{boards} réponses livrent un board, {mesures} décrivent ses couches"

@@ -60,5 +60,18 @@ class TestCablage:
         ]
         assert appels_bruts == [], f"budget brut encore passé : {appels_bruts}"
 
-    def test_l_echeance_est_calculee_une_seule_fois(self):
-        assert self.SOURCE.count("deadline = _now() + req.timeout_s") == 1
+    def test_l_echeance_est_calculee_a_deux_niveaux_seulement(self):
+        """Deux echeances imbriquees, pas une par palier ni une par niveau.
+
+        Depuis l'escalade de couches (2026-08-21), le budget se lit a deux
+        etages : `route_auto` borne l'APPEL ENTIER, escalade comprise, et
+        passe le RESTANT a chaque palier ; `_route_auto_once` borne ce palier
+        et sert le restant a chacun de ses quatre niveaux.
+
+        Sans le premier etage, l'escalade multiplierait le budget par le nombre
+        de paliers -- exactement le defaut corrige au niveau de la cascade.
+        """
+        assert self.SOURCE.count("deadline = _now() + req.timeout_s") == 2
+        # Et le restant doit bien etre passe au palier, sinon chaque palier
+        # repartirait du budget entier.
+        assert "timeout_s=max(restant, _MIN_LEVEL_BUDGET_S)" in self.SOURCE

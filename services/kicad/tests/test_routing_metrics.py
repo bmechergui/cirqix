@@ -66,7 +66,7 @@ class TestCablage:
         # Une `RouteAutoResponse` avec un board mais sans mesures rendrait le
         # zéro par défaut — c'est-à-dire un chiffre faux.
         code = self.SOURCE
-        blocs = code.count("kicad_pcb_b64=base64.b64encode(")
+        blocs = code.count("kicad_pcb_b64=base64.b64encode(new_pcb)")
         mesures = code.count("via_count=_count_vias(")
         assert mesures == blocs, (
             f"{blocs} réponses livrent un board, {mesures} portent les mesures"

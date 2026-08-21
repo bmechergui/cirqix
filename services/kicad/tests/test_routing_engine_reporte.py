@@ -51,7 +51,7 @@ class TestCablage:
             ligne for ligne in self.SOURCE.splitlines()
             if not ligne.lstrip().startswith("#")
         )
-        boards = code.count("kicad_pcb_b64=base64.b64encode(")
+        boards = code.count("kicad_pcb_b64=base64.b64encode(new_pcb)")
         moteurs = code.count("engine=")
         assert moteurs == boards, (
             f"{boards} réponses livrent un board, {moteurs} nomment leur moteur"
