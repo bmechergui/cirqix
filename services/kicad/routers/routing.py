@@ -577,6 +577,69 @@ def _board_outline(pcb_bytes: bytes) -> Optional[tuple[float, float, float, floa
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+# Seuil de « boitier dense », identique a celui du placement
+# (`tools/placement.py::_DENSE_PAD_COUNT`, lui-meme aligne sur
+# `kicad_tools.optim.fom_features`). On ne reinvente pas un critere qui existe.
+_DENSE_PAD_COUNT: int = 16
+# Marge autour du boitier : le plan doit s arreter assez loin pour laisser au
+# routeur un canal de sortie de broche.
+_KEEPOUT_MARGIN_MM: float = 1.5
+
+
+def _dense_footprint_boxes(pcb_bytes: bytes) -> list[tuple[float, float, float, float]]:
+    """Boites englobantes des boitiers fine-pitch haut-broches, avec marge.
+
+    ⚠️ Un plan ne peut pas atteindre les broches d un LQFP au pas de 0,5 mm :
+    entre deux pattes il n y a place pour aucun cuivre, quel que soit
+    l isolement (mesure du 2026-08-21 : 0,5 mm -> 6 connexions manquantes,
+    0,25 -> 3, 0,2 -> 3). Le routeur, lui, considere GND « pris en charge par
+    le plan » et cesse de le router : ces broches ne sont alors reliees ni par
+    le plan, ni par une piste.
+
+    On lit le fichier avec le parseur de kicad-tools, celui qu utilise deja le
+    placement — pas de geometrie custom.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    with tempfile.TemporaryDirectory() as tmp:
+        chemin = Path(tmp) / "b.kicad_pcb"
+        chemin.write_bytes(pcb_bytes)
+        try:
+            pcb = PCB.load(str(chemin))
+        except Exception as exc:
+            logger.warning("keepout fine-pitch: board illisible (%s) — aucun keepout", exc)
+            return []
+
+    boites: list[tuple[float, float, float, float]] = []
+    for fp in pcb.footprints:
+        pads = list(getattr(fp, "pads", []) or [])
+        if len(pads) < _DENSE_PAD_COUNT:
+            continue
+        # ⚠️ Les positions de pad sont RELATIVES au boitier : il faut y ajouter
+        # sa position. Sans cela la boite se calcule autour de l origine et le
+        # keepout tombe hors de la carte — meme erreur que le plan de masse
+        # dessine a (0,0), corrigee le meme jour.
+        origine = getattr(fp, "position", (0.0, 0.0))
+        ox = float(getattr(origine, "x", origine[0]))
+        oy = float(getattr(origine, "y", origine[1]))
+
+        xs: list[float] = []
+        ys: list[float] = []
+        for pad in pads:
+            pos = getattr(pad, "position", None)
+            if pos is None:
+                continue
+            px = float(getattr(pos, "x", pos[0]))
+            py = float(getattr(pos, "y", pos[1]))
+            xs.append(ox + px)
+            ys.append(oy + py)
+        if not xs:
+            continue
+        m = _KEEPOUT_MARGIN_MM
+        boites.append((min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m))
+    return boites
+
+
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
 
@@ -618,6 +681,27 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
                 "    (min_thickness 0.25)",
                 "    (fill yes (thermal_gap 0.25) (thermal_bridge_width 0.5))",
                 f"    (polygon (pts (xy {x1} {y1}) (xy {x2} {y1}) (xy {x2} {y2}) (xy {x1} {y2})))",
+                "  )",
+            ])
+        )
+
+    # ⚠️ Un plan ne peut pas atteindre les broches d un boitier fine-pitch :
+    # entre deux pattes au pas de 0,5 mm il n y a place pour aucun cuivre. Le
+    # routeur, lui, considere GND « pris en charge par le plan » et cesse de
+    # le router — ces broches finissent reliees NI par le plan NI par une
+    # piste (2 a 3 connexions manquantes mesurees le 2026-08-21).
+    #
+    # Un keepout de COULEE resout les deux : le plan cesse de pretendre les
+    # couvrir, et le routeur les route jusqu au bord du plan. Pistes et vias
+    # restent autorises — on interdit le remplissage, pas le routage.
+    for (kx1, ky1, kx2, ky2) in _dense_footprint_boxes(pcb_bytes):
+        zones.append(
+            chr(10).join([
+                '  (zone (net 0) (net_name "") (layer "F.Cu") (hatch edge 0.508)',
+                "    (keepout (tracks allowed) (vias allowed) (pads allowed)",
+                "             (copperpour not_allowed) (footprints allowed))",
+                f"    (polygon (pts (xy {kx1} {ky1}) (xy {kx2} {ky1}) "
+                f"                  (xy {kx2} {ky2}) (xy {kx1} {ky2})))",
                 "  )",
             ])
         )
