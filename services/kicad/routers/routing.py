@@ -390,6 +390,52 @@ _SEGMENT_RE = re.compile(
 )
 
 
+def _layers_block(text: str) -> str:
+    """Contenu du bloc `(layers …)` en tête de fichier, vide s'il est absent.
+
+    Lecture ligne à ligne plutôt qu'une expression régulière multiligne : la
+    fermeture est une ligne réduite à `)`, et une regex mêlant tabulations et
+    échappements est fragile à écrire comme à relire.
+    """
+    dedans = False
+    bloc: list[str] = []
+    for ligne in text.splitlines():
+        if not dedans:
+            if ligne.strip().startswith("(layers"):
+                dedans = True
+            continue
+        if ligne.strip() == ")":
+            break
+        bloc.append(ligne)
+    return chr(10).join(bloc)
+
+_COPPER_LAYER_RE = re.compile(r'"[A-Za-z0-9.]+\.Cu"')
+
+
+def _count_copper_layers(pcb_bytes: bytes) -> int:
+    """Nombre de couches CUIVRE réellement déclarées par le board.
+
+    ⚠️ `layers` recopiait la DEMANDE du client (`layers=req.layers`) sans jamais
+    regarder le board : une requête à 4 couches recevait « 4 » sur un board qui
+    en a 2. `handlers/routing.ts` remonte ce chiffre à l'orchestrateur et à
+    l'utilisateur (« … 12 nets, 4 couches »), donc c'était de la désinformation,
+    pas un détail d'affichage. Même famille que `via_count`.
+
+    Ne lit que le bloc `(layers …)` en tête : les `(layer "F.Cu")` des pistes
+    sont des RÉFÉRENCES, pas des déclarations — les compter donnerait le nombre
+    de segments.
+
+    Un board sans bloc `(layers …)` rend 0 : rien à mesurer n'est pas une
+    autorisation à inventer une valeur plausible.
+    Garde : tests/test_routing_layers_reels.py.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    bloc = _layers_block(text)
+    if not bloc:
+        return 0
+    return len(set(_COPPER_LAYER_RE.findall(bloc)))
+
+
 def _count_vias(pcb_bytes: bytes) -> int:
     return len(_VIA_RE.findall(pcb_bytes.decode("utf-8", errors="replace")))
 
@@ -712,7 +758,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 return RouteAutoResponse(
                     kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                     routed_percent=routed_pct,
-                    layers=req.layers,
+                    layers=_count_copper_layers(new_pcb),
                     via_count=_count_vias(new_pcb),
                     track_length_mm=_track_length_mm(new_pcb),
                     skipped=False,
@@ -739,7 +785,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
-                layers=req.layers,
+                layers=_count_copper_layers(new_pcb),
                 via_count=_count_vias(new_pcb),
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
@@ -764,7 +810,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             return RouteAutoResponse(
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
-                layers=req.layers,
+                layers=_count_copper_layers(new_pcb),
                 via_count=_count_vias(new_pcb),
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
@@ -805,7 +851,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         return RouteAutoResponse(
             kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
             routed_percent=routed_pct,
-            layers=req.layers,
+            layers=_count_copper_layers(new_pcb),
             via_count=_count_vias(new_pcb),
             track_length_mm=_track_length_mm(new_pcb),
             skipped=False,
