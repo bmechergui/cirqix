@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import math
 import re
 import shutil
 import subprocess
@@ -369,6 +370,45 @@ def _count_routable_nets(pcb_bytes: bytes) -> int:
     return sum(1 for c in nommes.values() if c >= 2)
 
 
+# ---------------------------------------------------------------------------
+# Mesures du board routé
+# ---------------------------------------------------------------------------
+#
+# ⚠️ `via_count` et `track_length_mm` n'étaient JAMAIS calculés : les réponses
+# sortaient avec les valeurs par défaut du modèle (`0`, `0.0`), que le client
+# TypeScript lit et transmet à l'interface. Un board réellement routé — 53
+# segments mesurés le 2026-08-20 — s'affichait « 0 via, 0 mm de piste ».
+#
+# Ce ne sont pas des indicateurs manquants, ce sont des chiffres FAUX présentés
+# comme réels. Et un zéro est plausible (un board sans via en a zéro), donc rien
+# ne distinguait « mesuré à zéro » de « jamais mesuré ».
+# Garde : tests/test_routing_metrics.py.
+
+_VIA_RE = re.compile(r"\(via\s")
+_SEGMENT_RE = re.compile(
+    r"\(segment\s+\(start\s+(-?[\d.]+)\s+(-?[\d.]+)\)\s+\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)"
+)
+
+
+def _count_vias(pcb_bytes: bytes) -> int:
+    return len(_VIA_RE.findall(pcb_bytes.decode("utf-8", errors="replace")))
+
+
+def _track_length_mm(pcb_bytes: bytes) -> float:
+    """Longueur cumulée des segments de piste, en millimètres.
+
+    Ne compte que les `(segment …)` : les `(arc …)` portent aussi du cuivre mais
+    demandent la géométrie de l'arc. Freerouting et `kct route` produisent des
+    segments ; un routeur qui émettrait des arcs sous-estimerait la longueur —
+    limite connue, pas un chiffre inventé.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    total = 0.0
+    for x1, y1, x2, y2 in _SEGMENT_RE.findall(text):
+        total += math.hypot(float(x2) - float(x1), float(y2) - float(y1))
+    return round(total, 3)
+
+
 def _count_footprints(pcb_bytes: bytes) -> int:
     """Count footprint blocks in a .kicad_pcb S-expression."""
     text = pcb_bytes.decode("utf-8", errors="replace")
@@ -673,6 +713,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                     routed_percent=routed_pct,
                     layers=req.layers,
+                    via_count=_count_vias(new_pcb),
+                    track_length_mm=_track_length_mm(new_pcb),
                     skipped=False,
                 )
             # Below threshold: keep it, but try Freerouting for a better result.
@@ -698,6 +740,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
                 layers=req.layers,
+                via_count=_count_vias(new_pcb),
+                track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
             )
         except Exception as exc:
@@ -721,6 +765,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
                 layers=req.layers,
+                via_count=_count_vias(new_pcb),
+                track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
             )
         except Exception as exc:
@@ -760,6 +806,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
             routed_percent=routed_pct,
             layers=req.layers,
+            via_count=_count_vias(new_pcb),
+            track_length_mm=_track_length_mm(new_pcb),
             skipped=False,
             warning=_niveau4_warning(freerouting_a_echoue, net_count),
         )
