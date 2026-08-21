@@ -109,9 +109,15 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
       routed_percent: service.routedPercent, // vrai % — déclenche call_agent_reason si <100
       layers: service.layers as 2 | 4 | 8,
       kicad_pcb_content: finalPcb,
-      engine: 'kicad-tools',
+      // ⚠️ Le moteur vient du SERVICE, il n'est plus écrit en dur. La cascade a
+      // quatre niveaux : sur un board dense, kicad-tools rend 91 %, sous le
+      // seuil, et c'est Freerouting qui livre. Annoncer « kicad-tools » dans ce
+      // cas est une attribution fausse, et elle envoie chercher au mauvais
+      // endroit. Garde : tests/routing-budget.test.ts.
+      engine: service.engine ?? 'inconnu',
       note:
-        `Routage kicad-tools ${service.routedPercent}% — ${schema.nets.length} nets, ` +
+        `Routage ${service.engine ?? 'moteur non identifié'} ` +
+        `${service.routedPercent}% — ${schema.nets.length} nets, ` +
         `${service.layers} couches.` +
         (service.routedPercent < 100
           ? ' Nets bloqués → reasoner auto-déclenché par l\'orchestrateur.'

@@ -52,6 +52,9 @@ function serviceResult(overrides: Record<string, unknown> = {}) {
     layers: 2,
     viaCount: 4,
     trackLengthMm: 120,
+    // Le service NOMME son moteur depuis le 2026-08-21 : la cascade a quatre
+    // niveaux et le handler n'a plus le droit de le deviner.
+    engine: 'kicad-tools',
     ...overrides,
   };
 }
@@ -86,6 +89,7 @@ describe('propagation du routed_percent réel', () => {
       const result = await handleRouting(PROJECT);
 
       expect(result['routed_percent']).toBe(pct);
+      // Le moteur est PROPAGE, jamais devine.
       expect(result['engine']).toBe('kicad-tools');
     },
   );

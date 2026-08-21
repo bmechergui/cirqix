@@ -73,3 +73,32 @@ describe('échéance du client', () => {
     expect(routingAbortMs(4)).toBeGreaterThan(1800_000);
   });
 });
+
+/**
+ * Le moteur annoncé doit être celui qui a réellement routé.
+ *
+ * `handlers/routing.ts` écrivait `engine: 'kicad-tools'` EN DUR et composait sa
+ * note avec — « Routage kicad-tools 91% … ». Or la cascade a quatre niveaux :
+ * sur un board dense, kicad-tools rend 91 %, sous le seuil, et c'est
+ * **Freerouting** qui produit le board livré.
+ *
+ * Mesures du 2026-08-21 sur le board STM32, qui rendent l'attribution décisive :
+ * Freerouting ×3 → 0 connexion manquante en 4-5 s ; kicad-tools ×2 → 7
+ * manquantes en 568-750 s. Attribuer le premier résultat au second effacerait
+ * exactement ce qu'il faut voir.
+ */
+describe('attribution du moteur de routage', () => {
+  it('lit le moteur renvoyé par le service', async () => {
+    const { readRoutingEngine } = await import('../engines/routing-service.js');
+    expect(readRoutingEngine({ engine: 'freerouting-api' })).toBe('freerouting-api');
+    expect(readRoutingEngine({ engine: 'kicad-tools' })).toBe('kicad-tools');
+  });
+
+  it('n invente aucun moteur quand le service n en nomme pas', async () => {
+    // Un service plus ancien ne renvoie pas le champ : mieux vaut ne rien dire
+    // que de désigner le mauvais.
+    const { readRoutingEngine } = await import('../engines/routing-service.js');
+    expect(readRoutingEngine({})).toBeUndefined();
+    expect(readRoutingEngine({ engine: 42 })).toBeUndefined();
+  });
+});

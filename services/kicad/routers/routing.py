@@ -89,6 +89,17 @@ class RouteAutoResponse(BaseModel):
     track_length_mm: float = 0.0
     skipped: bool = False
     warning: Optional[str] = None
+    # Quel niveau a REELLEMENT produit le board livre.
+    #
+    # La cascade a quatre niveaux, et le client TypeScript ecrivait
+    # `engine: 'kicad-tools'` EN DUR. Sur un board dense, kicad-tools rend 91 %,
+    # sous le seuil, et c'est Freerouting qui livre — l'utilisateur lisait
+    # pourtant « Routage kicad-tools ». Une attribution fausse envoie chercher au
+    # mauvais endroit ; elle m'a coute plusieurs heures le 2026-08-20.
+    #
+    # `None` quand aucun board n'est livre : une reponse vide ne s'attribue pas
+    # un moteur.
+    engine: Optional[str] = None
 
 
 # ----------------------------------------------------------------------------
@@ -759,6 +770,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                     routed_percent=routed_pct,
                     layers=_count_copper_layers(new_pcb),
+                    engine="kicad-tools",
                     via_count=_count_vias(new_pcb),
                     track_length_mm=_track_length_mm(new_pcb),
                     skipped=False,
@@ -786,6 +798,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
                 layers=_count_copper_layers(new_pcb),
+                engine="freerouting-api",
                 via_count=_count_vias(new_pcb),
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
@@ -811,6 +824,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
                 routed_percent=routed_pct,
                 layers=_count_copper_layers(new_pcb),
+                engine="freerouting-cli",
                 via_count=_count_vias(new_pcb),
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
@@ -852,6 +866,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             kicad_pcb_b64=base64.b64encode(new_pcb).decode("ascii"),
             routed_percent=routed_pct,
             layers=_count_copper_layers(new_pcb),
+            engine="kicad-tools",
             via_count=_count_vias(new_pcb),
             track_length_mm=_track_length_mm(new_pcb),
             skipped=False,

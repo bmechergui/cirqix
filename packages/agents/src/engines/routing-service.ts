@@ -42,6 +42,8 @@ export interface RealRoutingResult {
   trackLengthMm?: number;
   skipped: boolean;
   warning?: string;
+  /** Quel niveau du service a réellement produit le board. */
+  engine?: string;
 }
 
 interface ServiceResponseBody {
@@ -52,6 +54,26 @@ interface ServiceResponseBody {
   track_length_mm?: unknown;
   skipped?: unknown;
   warning?: unknown;
+  engine?: unknown;
+}
+
+/**
+ * Moteur annoncé par le service — jamais deviné.
+ *
+ * `handlers/routing.ts` écrivait `engine: 'kicad-tools'` EN DUR et composait sa
+ * note avec. Or la cascade du service a quatre niveaux : sur un board dense,
+ * kicad-tools rend 91 %, sous le seuil, et c'est Freerouting qui livre. L'
+ * utilisateur lisait pourtant « Routage kicad-tools ».
+ *
+ * Une attribution fausse envoie chercher au mauvais endroit — elle a coûté
+ * plusieurs heures le 2026-08-20. Un service plus ancien qui ne renvoie pas le
+ * champ ne se voit donc attribuer AUCUN moteur : mieux vaut se taire que
+ * désigner le mauvais.
+ */
+export function readRoutingEngine(body: { engine?: unknown }): string | undefined {
+  return typeof body.engine === 'string' && body.engine.length > 0
+    ? body.engine
+    : undefined;
 }
 
 export async function runRealRouting(
@@ -120,6 +142,8 @@ export async function runRealRouting(
   }
   if (typeof parsed.via_count === 'number') result.viaCount = parsed.via_count;
   if (typeof parsed.track_length_mm === 'number') result.trackLengthMm = parsed.track_length_mm;
+  const engine = readRoutingEngine(parsed);
+  if (engine) result.engine = engine;
   if (typeof parsed.warning === 'string') result.warning = parsed.warning;
   return result;
 }

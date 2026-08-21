@@ -709,6 +709,35 @@ port, il faut un `freerouting.json` sous `--user_data_path`.
 il ne les calcule pas et laisse les défauts du modèle. Ce sont des indicateurs
 d'affichage, pas un gate, mais ils décrivent un board qui n'existe pas.
 
+### Banc de routage STM32 — 6 tirages (2026-08-21)
+
+Board `examples/stm32-validation/output/2_placement.kicad_pcb`, budget 900 s par
+tirage, **même instrument pour les deux** (`kicad-cli pcb drc`, connexions
+manquantes), et le board placé non routé en TÉMOIN — sans lui on attribuerait au
+routage des défauts qui préexistent.
+
+| | Connexions manquantes | Durée | Violations | Vias |
+|---|---|---|---|---|
+| témoin (placé non routé) | 43 | — | 25 | — |
+| **Freerouting API** ×3 | **0 · 0 · 0** | **4-5 s** | 27-28 | 7-8 |
+| **kicad-tools** ×3 | **7 · 7 · 7** | 568-750 s | 197-198 | 69 |
+
+Constance remarquable des deux côtés — contrairement au PLACEMENT, qui reste
+stochastique (6, 8 et 12 connexions manquantes selon le tirage).
+
+`kicad-tools` rend exactement **91 %**, le plancher documenté. C'est SOUS
+`_MIN_ROUTED_PCT` (95 %), donc la cascade bascule d'elle-même sur Freerouting :
+l'ordre actuel produit déjà le bon résultat, mais paie ~10 min de Niveau 1 dont
+le produit est ensuite jeté.
+
+⚠️ **Décision produit (2026-08-21) : kicad-tools reste devant.** Choix de
+robustesse — c'est du code maîtrisé, Freerouting est une JVM tierce. Le coût est
+connu et assumé, il est écrit ici pour ne pas être redécouvert.
+
+⚠️ Freerouting **n'ajoute aucune couche** : il route dans l'empilage reçu (2
+couches ici, 178 segments sur F.Cu et 23 sur B.Cu). L'escalade appartient à
+`kct route --auto-layers`.
+
 ### État
 
 Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
