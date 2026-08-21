@@ -730,13 +730,61 @@ stochastique (6, 8 et 12 connexions manquantes selon le tirage).
 l'ordre actuel produit déjà le bon résultat, mais paie ~10 min de Niveau 1 dont
 le produit est ensuite jeté.
 
-⚠️ **Décision produit (2026-08-21) : kicad-tools reste devant.** Choix de
-robustesse — c'est du code maîtrisé, Freerouting est une JVM tierce. Le coût est
-connu et assumé, il est écrit ici pour ne pas être redécouvert.
+⚠️ **Les 198 violations de kicad-tools ne sont pas cosmétiques.** Ventilation
+face au témoin (25 violations, toutes des `warning` préexistants) :
 
-⚠️ Freerouting **n'ajoute aucune couche** : il route dans l'empilage reçu (2
-couches ici, 178 segments sur F.Cu et 23 sur B.Cu). L'escalade appartient à
-`kct route --auto-layers`.
+| Type | Sévérité | Ajoutées par kicad-tools |
+|---|---|---|
+| `hole_to_hole` | warning | +113 |
+| `drill_out_of_range` | **error** | +42 |
+| `clearance` | **error** | +10 |
+| `annular_width` | **error** | +4 |
+| `track_width` | **error** | +2 |
+
+**58 ERREURS de fabricabilité.** `drill_out_of_range` et `annular_width` font
+refuser la carte par JLCPCB ; `clearance` est un court-circuit potentiel. La
+cause tient dans un rapport : **69 vias contre 5**. Freerouting, lui, rend
+exactement le board du témoin plus le cuivre : 25 violations avant, 25 après.
+
+« 91 % routé » ne dit donc pas ce qu'on croit : ce n'est pas une carte
+incomplète à 9 %, c'est une carte **non fabricable**. Et c'est ce qui explique
+les six cycles place → route → DRC du run complet — le board ne passait pas le
+DRC, donc la chaîne re-tirait le placement.
+
+### ⚠️ Pourquoi kicad-tools reste devant — ce n'est PAS la robustesse
+
+Décision produit du 2026-08-21, avec sa vraie justification, mesurée :
+
+```
+board placé (entrée) : 2 couches   F.Cu, B.Cu
+sortie kicad-tools   : 4 couches   F.Cu, B.Cu, In1.Cu, In2.Cu   ← il en AJOUTE
+sortie Freerouting   : 2 couches   F.Cu, B.Cu                    ← inchangé
+```
+
+**Freerouting n'ajoute aucune couche** : il route dans l'empilage reçu.
+**kicad-tools escalade** (`kct route --auto-layers`).
+
+Or `tools/pcb.py` (ligne ~778) code en dur `(0 "F.Cu") (31 "B.Cu")` : le
+générateur produit **toujours** 2 couches cuivre. **kicad-tools est donc le seul
+chemin par lequel une carte Cirqix devient 4 ou 8 couches** — c'est-à-dire le
+seul qui puisse honorer les plans Pro (4) et Pro Max (8).
+
+Sur une carte que 2 couches suffisent à router, Freerouting gagne sur tous les
+critères. Sur une carte qui en exige davantage, Freerouting seul **ne peut pas
+y arriver**, faute du levier.
+
+**NEVER** conclure de la comparaison de qualité qu'il faut inverser les niveaux :
+les deux routeurs ne résolvent pas le même problème.
+
+⚠️ Enchaîner Freerouting **sur** la sortie de kicad-tools ne se produit jamais :
+le Niveau 2 reçoit le board PLACÉ, pas le résultat du Niveau 1. Tenté à la main,
+l'export Specctra du board kicad-tools fait d'ailleurs échouer le processus
+pcbnew. Le routage incrémental avait déjà été mesuré et écarté
+(`--preserve-existing` perdait la moitié du cuivre reçu).
+
+Artefacts d'inspection (non versionnés, `output/` est gitignoré) :
+`examples/stm32-validation/output/freerouting/` — les deux boards, leurs rendus
+et le tableau complet.
 
 ### Pipeline complet par la file — validé de bout en bout (2026-08-21)
 
