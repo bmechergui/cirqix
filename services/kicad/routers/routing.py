@@ -1376,7 +1376,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             )
             break
 
-        etendu = _add_ground_planes(_expand_stackup(pcb_bytes, palier))
+        # ⚠️ Les plans sont coules APRES le routage, pas ici. Coules avant, le
+        # routeur voyait la zone GND, en deduisait « GND est pris en charge » et
+        # cessait de router ce net — alors que le plan ne peut PAS atteindre les
+        # pattes d un LQFP-48. Ni le plan ni le routeur ne faisait le travail :
+        # 3 connexions manquantes, qu aucun levier ne resorbait.
+        etendu = _expand_stackup(pcb_bytes, palier)
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
             layers=req.layers,
@@ -1387,13 +1392,33 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
         if res.kicad_pcb_b64 and not res.skipped:
-            avant = base64.b64decode(res.kicad_pcb_b64)
-            apres = _fanout_pads_isolees(avant)
-            if apres is not avant:
-                res.kicad_pcb_b64 = base64.b64encode(apres).decode("ascii")
-                res.routed_percent = _measured_routed_percent(apres, nets_routables)
-                res.via_count = _count_vias(apres)
-                res.track_length_mm = _track_length_mm(apres)
+            # Le routeur a relie toutes les broches par des pistes, fine-pitch
+            # comprises. Les plans arrivent maintenant en COMPLEMENT — du cuivre
+            # et du blindage en plus, sans responsabilite de connexion.
+            #
+            # Mesure du 2026-08-22 (idee de l utilisateur, verifiee) :
+            #     routage sans plan   -> 0 manquante, 181 segments, 8 vias
+            #     plans ajoutes apres -> 0 manquante, zones sur F.Cu ET B.Cu
+            #
+            # Le prix est un peu plus de cuivre pose (181 segments contre 105) :
+            # mince, face a une carte qui passe le DRC.
+            avec_plans = _add_ground_planes(base64.b64decode(res.kicad_pcb_b64))
+            # Filet : si une broche reste orpheline malgre tout, on la sort par
+            # un via. Le plus souvent il n y a rien a reparer.
+            final = _fanout_pads_isolees(avec_plans)
+
+            res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
+            res.layers = _count_copper_layers(final)
+            res.via_count = _count_vias(final)
+            res.track_length_mm = _track_length_mm(final)
+
+            # ⚠️ Ne RE-MESURER que si le fanout a ajoute des connexions. Couler
+            # un plan ne change pas ce que le routeur a accompli — le plan ajoute
+            # du cuivre sur un net deja relie, il ne peut que completer. Ecraser
+            # le pourcentage du moteur par une nouvelle mesure dans ce cas, c est
+            # remplacer un chiffre etabli par un chiffre recalcule sans raison.
+            if final is not avec_plans:
+                res.routed_percent = _measured_routed_percent(final, nets_routables)
 
         logger.info(
             "route_auto: palier %d couches -> %d%% (%s)",

@@ -1,24 +1,37 @@
-"""Plans de masse coulés AVANT le routage, sur les deux faces extérieures.
+"""Plans de masse coulés APRÈS le routage, sur les deux faces extérieures.
 
-Deux défauts corrigés d'un coup.
+⚠️ Le sens a été inversé le 2026-08-22, sur une idée de l'utilisateur, et la
+mesure lui a donné raison.
 
-**1. Le plan arrivait APRÈS le routage.** `handleRouting` appelait
-`addGroundPlane` sur le board déjà routé : le routeur n'avait jamais su que le
-plan existait, et tirait donc des pistes GND à travers toute la carte au lieu de
-relier chaque pad par un moignon. Vérifié le 2026-08-21 : l'export DSN rend bien
-la zone sous forme de `(plane GND (polygon B.Cu …))`, donc Freerouting SAIT s'y
-raccorder — encore faut-il la lui donner.
+Coulés AVANT, les plans plafonnaient à 3 connexions manquantes sur le board
+STM32 : le routeur voyait une zone GND, en déduisait « GND est pris en charge »
+et cessait de router ce net — alors que le plan ne peut PAS atteindre les
+pattes d'un LQFP-48 (pads de 0,3 mm au pas de 0,5 mm : 0,2 mm entre deux
+pattes, quand il en faudrait 0,5). Ni le plan ni le routeur ne faisait le
+travail. Aucun levier n'en venait à bout — isolement, keepout, fanout, vias de
+couture.
 
-**2. Le polygone était dessiné à l'ORIGINE.** La version TypeScript trace
-`(xy 0 0) … (xy largeur hauteur)`. Or le contour du board STM32 réel est à
-`(gr_rect (start 100 100) (end 160 140))` : le plan tombait **entièrement hors
-de la carte**. Un plan hors contour ne relie rien et ne se voit pas.
+Coulés APRÈS, tout se résout :
 
-⚠️ Décision produit (2026-08-21) : les plans vont sur les deux faces
-EXTÉRIEURES — `F.Cu` et `B.Cu` — quel que soit le nombre de couches. Sur un
-board 4 couches cela donne `GND / SIG / SIG / GND`, un empilage blindé ; les
-couches internes restent aux signaux. Le coût assumé est un via par broche de
-signal, puisque les composants sont montés sur les faces.
+    1. routage sans plan   -> 0 connexion manquante, 181 segments, 8 vias
+    2. plans ajoutés après -> 0 connexion manquante, zones sur F.Cu ET B.Cu
+
+Le routeur, ne croyant rien « pris en charge », relie toutes les broches par des
+pistes — fine-pitch comprises. Le plan cesse d'être un SUBSTITUT au routage pour
+devenir un COMPLÉMENT : du cuivre et du blindage en plus, sans responsabilité de
+connexion.
+
+Le prix est un peu plus de cuivre posé (181 segments contre 105), et il est
+mince face à une carte qui passe le DRC.
+
+Deux corrections de fond survivent à ce changement :
+  - le polygone épouse le contour RÉEL (`Edge.Cuts`) et non l'origine : la
+    version TypeScript dessinait `(xy 0 0) … (xy largeur hauteur)` alors que le
+    contour du board STM32 est à `(100,100)-(160,140)` — le plan tombait
+    entièrement hors de la carte ;
+  - le net GND est reconnu sous ses DEUX écritures, `(net 3 "GND")` et
+    `(net "GND")` — cette derniere est celle que produit pcbnew 10, donc tout
+    board sorti du routage.
 """
 from __future__ import annotations
 
@@ -126,13 +139,24 @@ class TestPlansDeMasse:
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
-    def test_les_plans_sont_coules_avant_le_routage(self):
-        code = self.SOURCE
-        pose = code.index("_add_ground_planes(")
-        route = code.index("_route_auto_once(tentative)")
-        assert pose < route, (
-            "les plans doivent exister AVANT que le routeur reçoive le board — "
-            "sinon il route GND en pistes, faute de savoir qu'un plan existe"
+    def test_les_plans_sont_coules_APRES_le_routage(self):
+        """Inversé le 2026-08-22 : coulés avant, ils plafonnaient à 3 manquantes.
+
+        Le routeur voyait la zone, croyait GND pris en charge, et cessait de le
+        router — alors que le plan ne peut pas atteindre les pattes d'un
+        LQFP-48. Coulés après, le routeur relie tout par des pistes et le plan
+        devient un complément : 0 connexion manquante, deux plans quand même.
+
+        On regarde le CORPS de l'enveloppe, pas le fichier : comparer des
+        positions globales comparerait les DÉFINITIONS de fonctions.
+        """
+        debut = self.SOURCE.index('@router.post("/route/auto"')
+        corps = self.SOURCE[debut:]
+        pose = corps.index("_add_ground_planes(")
+        route = corps.index("res = _route_auto_once(tentative)")
+        assert pose > route, (
+            "les plans doivent être coulés APRÈS le routage — sinon le routeur "
+            "cesse de router GND en croyant le plan responsable"
         )
 
 
