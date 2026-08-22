@@ -755,30 +755,28 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     x1, y1, x2, y2 = contour
 
     existantes = set(re.findall(r'\(zone[^' + chr(10) + r']*\(layer "([^"]+)"', text))
-    # ⚠️ REGLE DE COUCHE. Sur 2 couches, le plan de la face composants ne peut
-    # pas etre raccorde : sur le LQFP-48 du board STM32, les pads font 0,3 mm
-    # pour un pas de 0,5 mm — il reste 0,2 mm entre deux pattes, et un
-    # isolement de 0,25 mm de chaque cote en demanderait 0,5. Le cuivre du
-    # plan ne passe pas entre les pattes : ce n est pas un reglage, c est la
-    # geometrie.
+    # ⚠️ DECISION PRODUIT (2026-08-22, reaffirmee) : les plans vont sur les
+    # DEUX faces exterieures, y compris en 2 couches.
     #
-    # Et chaque piste de sortie DECOUPE le plan de la face qu elle traverse :
-    # on ne peut pas exiger a la fois un plan continu et un routage dense sur
-    # la meme face. Mesures Freerouting sur le board STM32 :
-    #     aucun plan        -> 0 connexion manquante
-    #     plan B.Cu seul    -> 0 connexion manquante
-    #     les deux faces    -> 2 a 6 selon l isolement, JAMAIS 0
+    # La reserve a ete posee deux fois, mesures a l appui, et tranchee dans ce
+    # sens. Elle est conservee ici pour que le cout soit connu, pas rediscute :
     #
-    # A partir de 4 couches la regle S INVERSE : les signaux vivent a
-    # l interieur, les faces exterieures restent continues, et le fanout
-    # reprend tout son sens. C est le choix produit de l utilisateur, conserve.
+    #   LQFP-48 : pads 0,3 mm, pas 0,5 mm -> 0,2 mm entre deux pattes.
+    #   Un isolement de 0,25 mm de chaque cote en demanderait 0,5 : le cuivre
+    #   du plan ne passe pas entre les pattes. Le routeur croit alors GND pris
+    #   en charge et ne le route pas ; le plan ne peut pas l atteindre. Ni l un
+    #   ni l autre ne fait le travail.
     #
-    # Trois sources concordantes : la geometrie mesuree ci-dessus, kicad-tools
-    # upstream (« sur un empilage 2 couches chaque masse recoit une priorite
-    # distincte sur B.Cu »), et une revue externe.
-    # Garde : tests/test_ground_planes_avant_routage.py::TestRegleDeCouche.
-    faces = _GROUND_PLANE_LAYERS if _count_copper_layers(pcb_bytes) >= 4 else ("B.Cu",)
-    a_couler = [c for c in faces if c not in existantes]
+    # Le dispositif qui rend ce choix tenable, dans l ordre :
+    #   1. keepout de coulee autour des boitiers denses  (le plan s arrete)
+    #   2. fanout des broches signalees par le DRC       (sortie + via)
+    #   3. vias de couture sur les ilots fragmentes      (`kct stitch`)
+    #
+    # Sans le point 3, la piste de sortie du fanout coupe le plan en ilots et
+    # le DRC signale « Zone <-> Zone ». La couture est la reponse industrielle
+    # standard a un plan fragmente.
+    # Garde : tests/test_ground_planes_avant_routage.py.
+    a_couler = [c for c in _GROUND_PLANE_LAYERS if c not in existantes]
     if not a_couler:
         return pcb_bytes
 

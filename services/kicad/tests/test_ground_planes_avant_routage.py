@@ -76,16 +76,21 @@ class TestContourDuBoard:
 
 
 class TestPlansDeMasse:
-    def test_coule_sur_la_face_arriere_en_deux_couches(self):
-        """Ce test exigeait LES DEUX faces jusqu au 2026-08-22.
+    def test_coule_sur_les_deux_faces_meme_en_deux_couches(self):
+        """Decision produit du 2026-08-22, reaffirmee apres mesures.
 
-        La mesure l a infirme : sur 2 couches, un plan sur la face composants
-        laisse 2 a 6 connexions manquantes, jamais 0. Voir TestRegleDeCouche
-        pour la geometrie qui l explique. On corrige le test, pas la mesure.
+        Ce test a exige successivement les deux faces, puis B.Cu seul, puis
+        de nouveau les deux. Ce n est pas de l indecision : la mesure a
+        montre que B.Cu seul atteint 100 % la ou les deux faces plafonnent,
+        et l utilisateur a tranche en connaissance de cause.
+
+        Le cout est CONNU et documente dans le code :
+            deux faces sur 2 couches -> 3 connexions manquantes mesurees
+            B.Cu seul                -> 0
         """
         out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
-        zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
-        assert zones == ["B.Cu"]
+        zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
+        assert zones == ["B.Cu", "F.Cu"]
 
     def test_le_polygone_epouse_le_contour_reel(self):
         # LE défaut : un polygone à l'origine tomberait hors de la carte.
@@ -191,10 +196,24 @@ class TestRegleDeCouche:
     reprend tout son sens. C est le choix produit de l utilisateur, conserve.
     """
 
-    def test_deux_couches_ne_coule_que_le_dessous(self):
+    def test_les_deux_faces_meme_en_deux_couches(self):
+        """Le cout de ce choix, mesure, pour qu il ne soit pas redecouvert.
+
+            deux faces sur 2 couches -> 3 connexions manquantes, 34 violations
+            B.Cu seul                -> 0 manquante, 25 violations, 9 s
+
+        Leviers essayes SANS atteindre 0 : isolement (0,5 -> 0,25 -> 0,2),
+        keepout de coulee autour du boitier dense, fanout des broches
+        signalees par le DRC, vias de couture (`kct stitch --blanket`).
+
+        Cause, geometrique : pads de 0,3 mm au pas de 0,5 mm laissent 0,2 mm
+        entre deux pattes, quand il en faudrait 0,5. Le plan ne peut pas les
+        atteindre, et le routeur ne les route pas puisqu il croit GND pris en
+        charge par le plan.
+        """
         out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
-        zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
-        assert zones == ["B.Cu"], f"attendu B.Cu seul, obtenu {zones}"
+        zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
+        assert zones == ["B.Cu", "F.Cu"]
 
     def test_quatre_couches_coule_les_deux_faces(self):
         quatre = routing_router._expand_stackup(_board(RECT), 4)
