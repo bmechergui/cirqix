@@ -16,13 +16,51 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from tools.sexp_quote import quote_bare_property_values
+
 logger = logging.getLogger(__name__)
+
+# Où conserver un schéma que `kicad-cli` a refusé de charger.
+#
+# ⚠️ `run_erc` travaille dans un `TemporaryDirectory` : le fichier fautif est
+# détruit avant même que l'erreur soit lue. Il ne reste qu'un message, et ce
+# message est GÉNÉRIQUE — « Failed to load schematic » sort aussi bien pour une
+# valeur de propriété non quotée que pour un fichier tronqué, ou même ABSENT.
+#
+# Sans l'artefact, la cause n'est ni nommable ni reproductible. Deux journées
+# d'enquête sur ce service ont buté exactement là.
+#
+# `/tmp/kicad-jobs` est un volume Docker persistant : la conservation est donc
+# BORNÉE, un diagnostic ne doit pas remplir le disque.
+_FAILED_ERC_DIR = Path(os.environ.get("KICAD_JOBS_DIR", "/tmp/kicad-jobs")) / "erc-failed"
+_MAX_FAILED_ARTEFACTS = 10
+
+
+def _keep_failed_schematic(content: str) -> Optional[Path]:
+    """Conserve le schéma refusé et renvoie son chemin, `None` si impossible.
+
+    Le diagnostic est un CONFORT : s'il échoue, l'erreur d'origine doit
+    continuer de remonter telle quelle. On n'ajoute jamais une panne à une panne.
+    """
+    try:
+        _FAILED_ERC_DIR.mkdir(parents=True, exist_ok=True)
+        chemin = _FAILED_ERC_DIR / f"erc-{time.time_ns()}.kicad_sch"
+        chemin.write_text(content, encoding="utf-8")
+
+        anciens = sorted(_FAILED_ERC_DIR.glob("*.kicad_sch"))
+        for vieux in anciens[:-_MAX_FAILED_ARTEFACTS]:
+            vieux.unlink(missing_ok=True)
+        return chemin
+    except Exception as exc:  # pragma: no cover - dépend du système de fichiers
+        logger.warning("ERC: conservation de l artefact impossible (%s)", exc)
+        return None
 
 router = APIRouter(tags=["erc"])
 
@@ -141,8 +179,32 @@ def run_erc(req: ERCRequest) -> ERCResponse:
             total_fixed = kt_fixed  # inclut les fixes kicad-tools
 
             for iteration in range(_MAX_ITERATIONS):
+                # ⚠️ Requoter AVANT d'écrire : c'est CE fichier que kicad-cli lit.
+                #
+                # Une valeur de propriété numérique nue — `(property "Value" 330`
+                # au lieu de `"330"` — fait refuser le fichier ENTIER par KiCad
+                # 10.0.4 : `rc=3: Failed to load schematic`. L'ERC d'autorité ne
+                # rendait alors AUCUN verdict et le repli TypeScript travaillait
+                # seul. Le board avait ce garde depuis le 2026-07-27, le schéma
+                # non. Garde : tests/test_erc_bare_property_quoting.py.
+                current_content, requoted = quote_bare_property_values(current_content)
+                if requoted:
+                    logger.warning(
+                        "ERC: %d valeur(s) de propriété requotée(s) — sans ce "
+                        "garde kicad-cli refuse le schéma entier", requoted,
+                    )
                 sch_path.write_text(current_content, encoding="utf-8")
-                report_json = _run_kicad_cli_erc(cli_path, sch_path)
+                try:
+                    report_json = _run_kicad_cli_erc(cli_path, sch_path)
+                except Exception:
+                    # Conserver AVANT de laisser remonter : le tempdir disparaît
+                    # à la sortie du bloc, et avec lui la seule trace exploitable.
+                    artefact = _keep_failed_schematic(current_content)
+                    if artefact is not None:
+                        logger.error(
+                            "ERC: schéma refusé conservé pour diagnostic → %s", artefact
+                        )
+                    raise
                 violations = parse_erc_report(report_json)
 
                 if not violations:

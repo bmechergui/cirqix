@@ -1,0 +1,35 @@
+# Contexte de build des images construites depuis la RACINE du dépôt
+# (aujourd'hui `services/worker/Dockerfile`).
+#
+# ⚠️ `node_modules` est la ligne critique. Sans elle, un `COPY services/worker/`
+# écrase les node_modules que le conteneur vient d'installer par ceux de l'hôte
+# — installés sous Windows, donc avec des binaires natifs et des liens pnpm
+# inutilisables sous Linux. Symptôme mesuré : l'installation réussit, puis le
+# build échoue sur `Cannot find module '.../esbuild/bin/esbuild'`, alors que
+# `ls .bin` montrait esbuild présent juste avant.
+node_modules
+**/node_modules
+
+# Artefacts de build : reconstruits dans l'image.
+dist
+.next
+**/dist
+**/.next
+**/*.tsbuildinfo
+
+# Sorties de graphes et de tests, volumineuses et sans usage à l'exécution.
+graphify-out
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+tmp
+services/kicad/examples/*/output
+
+# Secrets : ne doivent jamais entrer dans une couche d'image.
+.env
+.env.*
+**/.env
+**/.env.*
+
+.git

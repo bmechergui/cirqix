@@ -29,9 +29,27 @@ logger = logging.getLogger(__name__)
 # 1.0), il faut donc laisser le temps aux tentatives multicouches de tourner.
 # Mesuré sur STM32 LQFP-48 (3_final) : 60s→9%, 300s→36%, 600s→55% (converge
 # en 431s). C'est un PLAFOND, pas une attente fixe : kct route rend la main dès
-# 100% atteint. ⚠ Production : 600s = 10 min par appel route ; la boucle du
-# reasoner (≤3 appels) peut atteindre 30 min — à arbitrer vs coût cible 0,12€.
-_ROUTE_TIMEOUT_S: int = 600
+# 100% atteint — le relever ne coûte donc RIEN quand le routage aboutit tôt.
+#
+# Porté de 600s à 3600s le 2026-08-19. Deux raisons :
+#   * la courbe ci-dessus (300s→36%, 600s→55%) dit que le temps de recherche EST
+#     le levier de complétion sur un board dense ; 600s bridait la qualité ;
+#   * le plafond de 600s n'avait de sens que tant que le pipeline tournait dans
+#     l'invocation web (maxDuration=300). Le pipeline part dans un worker
+#     persistant : plus rien ne justifie de brider la recherche.
+# Un routage complexe dure 15-20 min et davantage ; l'arrêt anticipé est désormais
+# une DÉCISION de l'utilisateur (annulation), pas une constante écrite d'avance.
+_ROUTE_TIMEOUT_S: int = 3600
+
+# Garde-fou de PROCESSUS — nature différente du budget ci-dessus.
+#
+# `--timeout` est une ressource donnée au routeur ; ceci est un filet au cas où
+# le processus se fige. Il ne doit JAMAIS tirer le premier : `kct route` conserve
+# ce qu'il a routé quand SON échéance tombe, puis écrit le .kicad_pcb. Le tuer
+# avant, c'est perdre un routage partiel réel pour une panne imaginaire.
+# L'ancienne marge de 60s ne suffisait pas à couvrir l'écriture sur un board
+# lourd. Garde : tests/test_route_budget.py.
+_WATCHDOG_MARGIN_S: int = 600
 
 # Escalade de couches : --auto-layers active l'escalade automatique ; on NE fixe
 # PAS --max-layers (plafond) → le routeur utilise son défaut (4 couches, l'outil
@@ -1399,7 +1417,7 @@ def _run_kct_route(src: Path, dst: Path, timeout_s: int,
                            min_completion=min_completion, only_nets=only_nets)
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=timeout_s + 60, check=False, env=_kct_env(),
+        timeout=timeout_s + _WATCHDOG_MARGIN_S, check=False, env=_kct_env(),
     )
 
 

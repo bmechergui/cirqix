@@ -38,7 +38,28 @@ export type SSEEvent =
  * Décision à seuil : le routage doit-il être secouru par le reasoner ?
  * Règle métier déterministe (pct < 100), pas un jugement LLM → vit dans le code.
  */
-export function shouldRescueRouting(result: Record<string, unknown>): boolean {
+/**
+ * État de contrôle d'un run, consulté par les décisions déterministes.
+ *
+ * Sans plafond de durée, l'arrêt anticipé n'est plus une constante écrite
+ * d'avance : c'est une décision de l'utilisateur. Les trois règles ci-dessous
+ * sont précisément celles qui RELANCENT du travail lourd quand le résultat
+ * n'est pas parfait — reasoner, re-tirage de placement (≈17 min la tentative).
+ * Les laisser partir après une annulation reviendrait à ignorer la décision et
+ * à continuer de consommer crédits et CPU.
+ *
+ * Un routage INTERROMPU n'est pas un routage INCOMPLET : le second mérite un
+ * sauvetage, le premier non.
+ */
+export interface RunControl {
+  cancelled?: boolean;
+}
+
+export function shouldRescueRouting(
+  result: Record<string, unknown>,
+  control: RunControl = {},
+): boolean {
+  if (control.cancelled) return false;
   const pct = result['routed_percent'];
   return typeof pct === 'number' && pct < 100;
 }
@@ -60,7 +81,9 @@ export function shouldRetryPlacement(
   result: Record<string, unknown>,
   attempt: number,
   maxAttempts: number = MAX_PLACEMENT_ATTEMPTS,
+  control: RunControl = {},
 ): boolean {
+  if (control.cancelled) return false;
   const pct = result['routed_percent'];
   return typeof pct === 'number' && pct < 100 && attempt < maxAttempts;
 }
@@ -103,7 +126,9 @@ export function shouldRetryForDrc(
   result: Record<string, unknown>,
   attempt: number,
   maxAttempts: number = MAX_DRC_ATTEMPTS,
+  control: RunControl = {},
 ): boolean {
+  if (control.cancelled) return false;
   if (result['status'] === 'error') return false;
   if (result['drc_clean'] === true) return false;
   return attempt < maxAttempts;

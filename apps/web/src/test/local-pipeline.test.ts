@@ -27,6 +27,7 @@ vi.mock('@cirqix/logger', () => ({
 }));
 
 import { runLocalPipeline } from '../app/api/agent/lib/local-pipeline';
+import { SseSink } from '@/app/api/agent/lib/sse';
 
 function makeSupabase(rpcError: { message: string } | null = null) {
   const updates: Array<Record<string, unknown>> = [];
@@ -60,8 +61,7 @@ async function runAndCollect(rpcError: { message: string } | null = null) {
   const { controller, chunks } = makeController();
 
   await runLocalPipeline({
-    controller: controller as never,
-    encoder: new TextEncoder(),
+    sink: new SseSink(controller as never),
     supabase: client as never,
     userId: 'u1',
     projectId: 'p1',

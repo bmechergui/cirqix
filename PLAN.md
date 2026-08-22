@@ -875,6 +875,47 @@ test d'import/version et build CI bloquant (`test_docker_build_context.py`).
 > Phase 6 (RL_PCB devient simplement un candidat de plus dans la sélection
 > `auto_place` existante). Détails : `docs/notefinal.md` (2026-06-02).
 
+### Étape 5.0 — Pipeline asynchrone (BLOQUANT pour la mise en production)
+
+**Mesuré le 2026-08-19** (board STM32 de `examples/stm32-validation`, chaîne
+réelle exécutée dans le conteneur) :
+
+| Étape | Durée |
+|---|---|
+| Génération | 3 s |
+| Placement | 175 s |
+| **Routage** | **861 s — 14,3 min** |
+| **Total** | **~17 min** |
+
+`apps/web/src/app/api/agent/route.ts` déclare `maxDuration = 300`. **Le routage
+seul dure presque trois fois le budget entier de l'invocation.**
+
+Conséquence : aucun PCB complet ne peut aboutir pour un utilisateur réel. La
+chaîne ne fonctionne qu'exécutée à la main dans le conteneur. C'est ce qui
+sépare une démo d'un produit — et cela conditionne toute facturation, puisque le
+gate JLCPCB ne peut jamais s'ouvrir légitimement.
+
+**Livré (PR #142)** — migration `019` (`pcb_runs`, `pcb_run_events`, RLS) ·
+conteneurs Redis/worker · `RunSink` puis `PgSink` · budgets de routage
+180 s → 3600 s · contrat de job strict · annulation qui bloque reasoner et
+re-tirages · file BullMQ · pipeline découplé de Supabase · worker · route en
+`202` derrière `CIRQIX_ASYNC_PIPELINE` · image dédiée du worker.
+
+**Reste :**
+1. Client Realtime (`startRun` + souscription) — sans lui, activer le drapeau
+   casserait l'interface : la route et le client basculent ensemble.
+2. Passage en `Popen` côté Python — la sortie du routeur n'est lue qu'à la fin,
+   donc 20 minutes d'attente muette pour l'utilisateur.
+3. Application de la migration `019` en base.
+4. **Validation réelle** : un routage > 300 s de bout en bout. Le plafond est
+   armé, pas encore prouvé tombé.
+
+**Point ouvert :** comment `KICAD_SERVICE_URL` est-il joignable depuis Vercel en
+production ? `docker-compose.yml` ne publie que sur `127.0.0.1:8766` et aucun
+proxy n'apparaît dans le dépôt.
+
+---
+
 ### Étape 5.1 — Sécurité
 
 - Rate limiting Upstash Ratelimit (10 req/min `/api/agent/run`)

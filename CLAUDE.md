@@ -262,6 +262,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ② call_agent_erc        → Ingénieur ERC
      ① kicad-tools Schematic.validate() — pur Python, toujours dispo
      ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
+     ⚠️ (2026-08-20) `parse_erc_report` exigeait un `violations` de PREMIER
+        NIVEAU — la forme du rapport DRC. `kicad-cli sch erc --format json`
+        (schéma `erc.v1`) range les siennes sous `sheets[].violations` : le
+        parseur levait à CHAQUE exécution, `POST /erc` renvoyait 500, et l'ERC
+        d'autorité n'a JAMAIS rendu un verdict en production — seul
+        `runErcFallback()` travaillait. Le fail-closed a tenu (rien de faux
+        promu `ERC_CLEAN`), mais le contrôle principal était mort. Les deux
+        formes sont acceptées désormais ; une forme inconnue lève toujours.
+        Vérifié sur un vrai rapport : 40 violations parsées là où le parseur
+        levait. Garde : tests/test_fail_closed_drc_erc.py.
      ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
      ⚠️ (2026-07-27) `ERC_CLEAN` ne peut être accordé que par un contrôle
@@ -534,6 +544,299 @@ Toutes les routes KiCad sauf `/health` exigent
 généré. Hors localhost/réseau Docker privé, le transport doit être HTTPS.
 
 **Routing — nets routables :** `_count_routable_nets` compte uniquement les nets avec ≥3 occurrences dans le PCB (1 déclaration globale + ≥2 pads). Les nets mono-pad `Net-(U1-X)` ne comptent pas.
+
+## Pipeline asynchrone — le plafond de 300 s (migration en cours)
+
+**Mesure fondatrice (2026-08-19, board STM32 de `examples/stm32-validation`,
+chaîne réelle dans le conteneur) :** génération 3 s · placement 175 s ·
+**routage 861 s** — soit ~17 min. `apps/web/src/app/api/agent/route.ts` déclare
+`maxDuration = 300`.
+
+**Le routage seul dure presque trois fois le budget entier de l'invocation.**
+Aucun PCB complet ne peut donc aboutir pour un utilisateur réel : la chaîne ne
+fonctionne aujourd'hui qu'exécutée à la main dans le conteneur, où rien ne la
+chronomètre.
+
+⚠️ `async` n'y change RIEN. `await` libère la boucle d'événements de Node, il ne
+rend pas la main à la plateforme : la fonction reste ouverte tant qu'elle tient
+le flux SSE. `maxDuration` est un plafond d'HORLOGE MURALE sur l'invocation.
+
+**NEVER** conclure qu'une étape longue « passe » parce qu'elle est asynchrone.
+
+### Le plafond n'était pas UN endroit, mais QUATRE (corrigés)
+
+`routing-service.ts` accordait au routeur
+`Math.min(60 + layers * 30, ROUTING_TIMEOUT_MS / 1000)` — soit **180 s sur
+4 couches**, alors que la courbe mesurée donne 300 s → 36 % de complétion. Ni
+les 600 s du service Python, ni les 300 s de Vercel : c'était cette heuristique,
+cinq fois plus serrée que tout le reste. Voir `engines/routing-budget.ts`.
+
+⚠️ `--timeout` du routeur n'est PAS une limite de patience, c'est une
+**ressource** : `kct route` rend la main dès 100 % atteint et conserve ce qu'il a
+routé à l'échéance. Le relever ne coûte rien sur un board simple.
+`_ROUTE_TIMEOUT_S` = 3600 s, `_WATCHDOG_MARGIN_S` = 600 s — le garde-fou ne doit
+JAMAIS tirer avant le routeur, sinon on tue un processus qui allait rendre un
+routage partiel valide. Garde : `tests/test_route_budget.py`.
+
+⚠️ **Ce diagnostic était incomplet, et l'a été jusqu'au 2026-08-20.** Relever le
+budget côté client ne suffisait pas : le même nombre traverse QUATRE frontières,
+et il suffit qu'une seule reste serrée pour que tout le reste soit décoratif.
+Trouvées en enfilant de vrais jobs dans la file — jamais par les tests, qui
+mockent le service de part et d'autre :
+
+| Frontière | Valeur trouvée | Effet |
+|---|---|---|
+| `routingSearchBudgetS` (client) | 180 s sur 4 couches | routage tronqué à 36 % |
+| `RouteAutoRequest.timeout_s` (`le=`) | 900 s | **422** — le routage n'a pas lieu |
+| `_route_with_kicad_tools` | `_PYTHON_ROUTER_TIMEOUT_S` = 300 s codé en dur | budget de la requête **jeté** |
+| `_ROUTE_TIMEOUT_S` (`kct_route.py`) | 3600 s | seule des quatre à être correcte |
+
+La troisième est la plus coûteuse : la route acceptait le budget, répondait 200,
+et routait quand même 300 s. Rien dans la réponse ne trahissait la substitution.
+
+**NEVER** relever un budget à une seule extrémité : le vérifier sur toute la
+chaîne client → validation HTTP → appel au routeur, et laisser une garde de
+câblage à chaque saut (`tests/test_route_budget.py`).
+
+⚠️ Deux autres plafonds de la même famille, trouvés au même endroit :
+- `PLACEMENT_TIMEOUT_MS` valait 180 s pour un placement mesuré > 215 s sur un
+  board STM32 de 21 composants — le run se terminait sans qu'aucun composant
+  soit placé, donc sans jamais atteindre le routage
+  (`engines/placement-budget.ts`, 900 s) ;
+- `jobIdForProject` renvoyait `project:<uuid>`, refusé par BullMQ (`Custom Id
+  cannot contain :`) : **aucun job ne pouvait être enfilé**. Séparateur tiret.
+
+### Architecture cible
+
+```
+Route (Vercel)  ──202 {runId}──>  file BullMQ (Redis)  ──>  worker (DigitalOcean)
+                                                              │ sans plafond
+navigateur  <──Realtime──  pcb_run_events (Postgres)  <───────┘
+```
+
+- `packages/agents/src/pipeline/` — `run-sink.ts` (transport), `pg-sink.ts`
+  (journal agrégé), `store.ts` (persistance), `run-orchestrator.ts` (le pipeline
+  lui-même), `job.ts` + `queue.ts` (file).
+- `services/worker/` — image dédiée, **aucun port publié**, client service-role.
+- Migration `019_pcb_runs.sql` — `pcb_runs` + `pcb_run_events`, RLS lecture seule.
+
+**NEVER** faire voyager `agent_mode` dans le payload du job : il gouverne le gate
+JLCPCB, donc une commande réelle et payante. Enfiler un job ne doit pas décerner
+la commandabilité. Il est posé par la ROUTE dans `pcb_runs`.
+**NEVER** dériver le gate JLCPCB de `pcb_runs` : un run est une tentative, seul
+`projects` porte un résultat prouvé.
+**NEVER** laisser `maxStalledCount` à son défaut (1) : sur 20 min de routage, le
+verrou de 30 s expire et BullMQ rejoue le job EN PARALLÈLE du premier.
+**ALWAYS** garder `CIRQIX_ASYNC_PIPELINE` inactif tant que le client n'a pas
+basculé : la route et le client doivent basculer ensemble.
+
+### Le plafond est tombé — mesuré (2026-08-20)
+
+Board STM32 placé non routé (`examples/stm32-validation/output/2_placement.kicad_pcb`),
+envoyé à `POST /route/auto` avec le contrat exact du client (`timeout_s: 1800`,
+4 couches) :
+
+| État | Résultat |
+|---|---|
+| `fetch` global (undici) | mort à 300 s — `UND_ERR_HEADERS_TIMEOUT` |
+| échéances de transport désarmées | 605 s → **500**, le partiel jeté |
+| repli Niveau 4 rétabli | **2547 s → 200, routé à 91 %** |
+
+**Une requête de 42 minutes va au bout de la chaîne** — 8,5× l'ancien plafond,
+avec un routage RÉEL (`routed_percent: 91`, le plancher connu sans LLM), pas un
+succès de façade.
+
+Le service, lui, routait déjà au-delà de 300 s avant le correctif : c'est le
+client qui raccrochait. La preuve la plus nette vient du premier essai — après
+l'abandon à 300 s, le service a continué et n'a rendu sa réponse que sept
+minutes plus tard, dans le vide.
+
+⚠️ **Le budget est compté PAR NIVEAU, pas par appel.** Les 2547 s se répartissent
+entre le Niveau 1, Freerouting, puis le Niveau 4 qui relance `kct route` avec les
+mêmes 1800 s. Chaque niveau reçoit le budget entier, donc un appel peut valoir
+plusieurs fois `timeout_s`. Acceptable dans un worker sans plafond, à revoir si
+la borne devient contractuelle.
+
+### « Freerouting perd la netlist » était FAUX (2026-08-20)
+
+Ce diagnostic, écrit ici le matin même, disait : *round-trip Specctra, 99 nets en
+entrée, 0 en sortie*. Il venait du message de la garde, relayé sans être vérifié.
+
+**La netlist était intacte.** Deux écritures coexistent pour la même information :
+
+    (net 3 "TRIG_THR")   ← kicad-tools, et KiCad ≤ 9
+    (net "TRIG_THR")     ← pcbnew de KiCad 10 (`generator_version "10.0"`)
+
+`_NET_DECL_RE` n'acceptait que la première. Tout board réécrit par pcbnew 10 —
+donc tout board sorti du round-trip Specctra, donc de Freerouting — comptait
+ZÉRO net et se faisait refuser.
+
+La preuve qui tranche : `kicad-cli pcb drc` sur ce board « sans netlist » répond
+**« Found 0 unconnected items »**. Valide, routé, entièrement connecté.
+
+Après correction, même board via l'API : nets déclarés 30 → 76, nets routables
+6 → 6, segments 0 → 53, **en 2 s**.
+
+⚠️ La garde reste juste et nécessaire (issue #72 : un board réellement vidé était
+annoncé « routé à 100 % »). C'est sa MESURE qui était fausse — on corrige la
+mesure, jamais la garde. Gardes : `tests/test_net_counting_kicad10.py`.
+
+**NEVER** relayer le message d'une garde comme un diagnostic : il dit ce que la
+garde a MESURÉ, pas ce qui s'est passé.
+
+### Le Niveau 2 (API Freerouting) n'avait jamais servi
+
+La JVM persistante (~400 Mo, port 37864) répondait correctement depuis toujours.
+`_find_freerouting_api` sondait `/api/v1/system/status` — un chemin que
+Freerouting v2.1.0 ne sert pas ; le vrai préfixe est `/v1`. La sonde renvoyait
+donc toujours `None` et chaque routage repartait sur le Niveau 3, un `java -jar`
+complet avec démarrage de JVM.
+
+Quatre erreurs indépendantes du client, chacune suffisante seule : préfixe
+`/api`, absence des en-têtes d'identité (`Freerouting-Profile-ID`…, sinon 500),
+envoi du DSN en multipart (415 au lieu de `{"data": <b64>}`), et comparaison
+d'état en minuscules (le serveur sérialise `"COMPLETED"`). `POST …/start` répond
+405 : c'est un `PUT`. Gardes : `tests/test_freerouting_api_contract.py`.
+
+⚠️ **`api_server-endpoints` ne peut PAS se passer en ligne de commande** :
+`ApiServerSettings.endpoints` est un `String[]`. L'option levait
+« Failed to set property value » à chaque démarrage depuis le 2026-07-27 sans
+jamais s'appliquer — une erreur rouge, réelle, mais SANS RAPPORT avec le 404.
+Elle m'a fait conclure à un serveur mort pendant des heures. Pour changer le
+port, il faut un `freerouting.json` sous `--user_data_path`.
+
+⚠️ `via_count` et `track_length_mm` ressortent à **0** sur le chemin Niveau 4 :
+il ne les calcule pas et laisse les défauts du modèle. Ce sont des indicateurs
+d'affichage, pas un gate, mais ils décrivent un board qui n'existe pas.
+
+### Banc de routage STM32 — 6 tirages (2026-08-21)
+
+Board `examples/stm32-validation/output/2_placement.kicad_pcb`, budget 900 s par
+tirage, **même instrument pour les deux** (`kicad-cli pcb drc`, connexions
+manquantes), et le board placé non routé en TÉMOIN — sans lui on attribuerait au
+routage des défauts qui préexistent.
+
+| | Connexions manquantes | Durée | Violations | Vias |
+|---|---|---|---|---|
+| témoin (placé non routé) | 43 | — | 25 | — |
+| **Freerouting API** ×3 | **0 · 0 · 0** | **4-5 s** | 27-28 | 7-8 |
+| **kicad-tools** ×3 | **7 · 7 · 7** | 568-750 s | 197-198 | 69 |
+
+Constance remarquable des deux côtés — contrairement au PLACEMENT, qui reste
+stochastique (6, 8 et 12 connexions manquantes selon le tirage).
+
+`kicad-tools` rend exactement **91 %**, le plancher documenté. C'est SOUS
+`_MIN_ROUTED_PCT` (95 %), donc la cascade bascule d'elle-même sur Freerouting :
+l'ordre actuel produit déjà le bon résultat, mais paie ~10 min de Niveau 1 dont
+le produit est ensuite jeté.
+
+⚠️ **Les 198 violations de kicad-tools ne sont pas cosmétiques.** Ventilation
+face au témoin (25 violations, toutes des `warning` préexistants) :
+
+| Type | Sévérité | Ajoutées par kicad-tools |
+|---|---|---|
+| `hole_to_hole` | warning | +113 |
+| `drill_out_of_range` | **error** | +42 |
+| `clearance` | **error** | +10 |
+| `annular_width` | **error** | +4 |
+| `track_width` | **error** | +2 |
+
+**58 ERREURS de fabricabilité.** `drill_out_of_range` et `annular_width` font
+refuser la carte par JLCPCB ; `clearance` est un court-circuit potentiel. La
+cause tient dans un rapport : **69 vias contre 5**. Freerouting, lui, rend
+exactement le board du témoin plus le cuivre : 25 violations avant, 25 après.
+
+« 91 % routé » ne dit donc pas ce qu'on croit : ce n'est pas une carte
+incomplète à 9 %, c'est une carte **non fabricable**. Et c'est ce qui explique
+les six cycles place → route → DRC du run complet — le board ne passait pas le
+DRC, donc la chaîne re-tirait le placement.
+
+### ⚠️ Pourquoi kicad-tools reste devant — ce n'est PAS la robustesse
+
+Décision produit du 2026-08-21, avec sa vraie justification, mesurée :
+
+```
+board placé (entrée) : 2 couches   F.Cu, B.Cu
+sortie kicad-tools   : 4 couches   F.Cu, B.Cu, In1.Cu, In2.Cu   ← il en AJOUTE
+sortie Freerouting   : 2 couches   F.Cu, B.Cu                    ← inchangé
+```
+
+**Freerouting n'ajoute aucune couche** : il route dans l'empilage reçu.
+**kicad-tools escalade** (`kct route --auto-layers`).
+
+Or `tools/pcb.py` (ligne ~778) code en dur `(0 "F.Cu") (31 "B.Cu")` : le
+générateur produit **toujours** 2 couches cuivre. **kicad-tools est donc le seul
+chemin par lequel une carte Cirqix devient 4 ou 8 couches** — c'est-à-dire le
+seul qui puisse honorer les plans Pro (4) et Pro Max (8).
+
+Sur une carte que 2 couches suffisent à router, Freerouting gagne sur tous les
+critères. Sur une carte qui en exige davantage, Freerouting seul **ne peut pas
+y arriver**, faute du levier.
+
+**NEVER** conclure de la comparaison de qualité qu'il faut inverser les niveaux :
+les deux routeurs ne résolvent pas le même problème.
+
+⚠️ Enchaîner Freerouting **sur** la sortie de kicad-tools ne se produit jamais :
+le Niveau 2 reçoit le board PLACÉ, pas le résultat du Niveau 1. Tenté à la main,
+l'export Specctra du board kicad-tools fait d'ailleurs échouer le processus
+pcbnew. Le routage incrémental avait déjà été mesuré et écarté
+(`--preserve-existing` perdait la moitié du cuivre reçu).
+
+Artefacts d'inspection (non versionnés, `output/` est gitignoré) :
+`examples/stm32-validation/output/freerouting/` — les deux boards, leurs rendus
+et le tableau complet.
+
+### Pipeline complet par la file — validé de bout en bout (2026-08-21)
+
+Run `4290007c` enfilé dans BullMQ, consommé par le worker, **19 minutes**, tous
+les appels en 200 :
+
+```
+02:27:15  /schematic/validate-symbols  200
+02:27:17  /schematic/generate          200
+02:27:47  /erc                         200   ← l'ERC d'autorité rend un verdict
+02:28:09  /pcb/generate                200
+          … 6 cycles place → route → drc, tous 200
+02:44:28  /export/all                  200
+```
+
+C'est la validation qui englobe les autres : elle exerce le transport undici
+désarmé, les budgets de placement et de routage, l'API Freerouting réparée, le
+compteur de nets, le requotage ERC, et le worker sans plafond d'invocation.
+
+**19 min > 300 s** — l'ancienne route web n'aurait livré aucun de ces boards.
+
+⚠️ Le routage prend désormais **5 à 12 s** par cycle (Freerouting via l'API) au
+lieu de 600-2500 s : c'est ce qui rend six re-tirages de placement tenables dans
+un run de 19 minutes. Le temps du run est aujourd'hui dominé par le PLACEMENT
+(~2,5 min par tirage), plus par le routage.
+
+⚠️ Non couvert : la persistance Supabase, testée avec `SUPABASE_URL` bidon —
+tous les `dépôt de l artefact échoué` et `persistance intermédiaire échouée` du
+journal sont attendus. La moitié « journal + Realtime » reste à valider avec une
+vraie `SUPABASE_SERVICE_KEY`.
+
+### État
+
+Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
+annulation (bloque reasoner et re-tirages), worker (image dédiée, vérifié en
+conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
+branche asynchrone de la route derrière drapeau, suivi de run côté client.
+
+Reste :
+- **Progression pendant le routage.** `kct_route.py` utilise
+  `subprocess.run(capture_output=True)` : la sortie du routeur n'est lue qu'à la
+  FIN. Sur 20 minutes, l'utilisateur ne voit donc rien. Le passage en `Popen`
+  avec lecture incrémentale servirait deux fins — l'affichage, et la détection
+  de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
+  bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
+  non testable sans un routage réel de ~14 min.
+- **Supabase Realtime** en transport principal ; le sondage actuel
+  (`follow-run.ts`) reste alors le repli documenté.
+- ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
+  ci-dessous : c'était notre compteur qui était aveugle.
+- **Budget par niveau** et **`via_count`/`track_length_mm` à 0** — voir les deux
+  avertissements ci-dessus.
 
 ## Système de crédits
 

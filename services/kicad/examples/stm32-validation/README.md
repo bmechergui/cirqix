@@ -146,3 +146,46 @@ la garde anti-régression de la boucle conserve toujours le meilleur board vu.
 Les fichiers intermédiaires (`_optimised`, `_routed`, `step1/2/3`…) et tout
 `output/` sont régénérables et **ne doivent jamais être committés** (règle
 CLAUDE.md — `.gitignore` : `services/kicad/examples/*/output/`).
+
+## Freerouting vs kicad-tools sur ce board (2026-08-21)
+
+Six tirages, même board d'entrée (`output/2_placement.kicad_pcb`), même
+instrument (`kicad-cli pcb drc`), board placé non routé en **témoin** — sans lui
+on attribuerait au routage des défauts qui préexistent.
+
+| | Connexions manquantes | Violations | dont erreurs | Vias | Couches | Durée |
+|---|---|---|---|---|---|---|
+| témoin (placé, non routé) | 43 | 25 | **0** | — | 2 | — |
+| Freerouting ×3 | **0 · 0 · 0** | **25** | **0** | 5-8 | 2 | **4-31 s** |
+| kicad-tools ×3 | 7 · 7 · 7 | 197-198 | **58** | 69 | 4 | 568-750 s |
+
+Les deux routeurs sont remarquablement déterministes ici — contrairement au
+PLACEMENT, qui varie de 6 à 12 connexions manquantes selon le tirage.
+
+### Les 58 erreurs de kicad-tools
+
+`drill_out_of_range` ×42, `clearance` ×10, `annular_width` ×4, `track_width` ×2,
+plus 113 `hole_to_hole` en warning. Ce sont des défauts de **fabricabilité** :
+JLCPCB refuse la carte. La cause tient dans un rapport — **69 vias contre 5**.
+
+« 91 % routé » ne décrit donc pas une carte incomplète à 9 %, mais une carte
+**non fabricable**.
+
+### ⚠️ Mais ils ne résolvent pas le même problème
+
+```
+board placé (entrée) : 2 couches   F.Cu, B.Cu
+sortie kicad-tools   : 4 couches   F.Cu, B.Cu, In1.Cu, In2.Cu   ← il en AJOUTE
+sortie Freerouting   : 2 couches   F.Cu, B.Cu                    ← inchangé
+```
+
+Freerouting route dans l'empilage reçu ; kicad-tools escalade
+(`--auto-layers`). Comme `tools/pcb.py` génère toujours 2 couches cuivre,
+**kicad-tools est le seul chemin vers les 4 et 8 couches des plans Pro et
+Pro Max**.
+
+D'où la décision produit : **kicad-tools reste au Niveau 1**. Pas par
+robustesse — pour l'escalade de couches.
+
+Artefacts d'inspection : `output/freerouting/` (les deux boards, leurs rendus,
+le tableau détaillé). Non versionnés — `output/` est gitignoré.

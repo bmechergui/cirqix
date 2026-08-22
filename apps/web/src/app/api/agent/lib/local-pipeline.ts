@@ -5,6 +5,7 @@ import { encodeSse } from './sse';
 import { uploadKicadArtifact } from './kicad-storage';
 import { logger } from '@cirqix/logger';
 import { finalizePipelineSuccess } from './credits';
+import type { RunSink } from '@cirqix/agents';
 
 const log = logger.child({ module: 'local-pipeline' });
 
@@ -12,8 +13,7 @@ const log = logger.child({ module: 'local-pipeline' });
 class PipelineStepError extends Error {}
 
 interface PipelineOptions {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  encoder: TextEncoder;
+  sink: RunSink;
   supabase: SupabaseClient;
   userId: string;
   projectId: string;
@@ -23,19 +23,18 @@ interface PipelineOptions {
 }
 
 async function streamText(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
+  sink: RunSink,
   text: string,
 ) {
   for (let i = 0; i < text.length; i += 6) {
     const slice = text.slice(i, i + 6);
-    controller.enqueue(encoder.encode(encodeSse({ type: 'token', content: slice })));
+    await sink.emit({ type: 'token', content: slice });
     await new Promise((r) => setTimeout(r, 10));
   }
 }
 
 export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
-  const { controller, encoder, supabase, userId, projectId, prompt, iterationStart } = opts;
+  const { sink, supabase, userId, projectId, prompt, iterationStart } = opts;
 
   let mergedState: Partial<PCBState> = {
     projectId,
@@ -49,7 +48,7 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     fallbackStatus: PCBStatus,
     stepName: AgentStep,
   ) {
-    controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: stepName })));
+    await sink.emit({ type: 'step', step: stepName });
 
     // Le handler fait foi. Un outil en échec n'accorde AUCUN statut : on
     // interrompt le pipeline sans rien persister. Sans ce garde-fou, un DRC en
@@ -106,8 +105,8 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
       // `orchestrator`, donc ce run ne facture rien.
       await finalizePipelineSuccess(supabase, userId, projectId, finalized, 'local_fallback');
     }
-    controller.enqueue(encoder.encode(encodeSse({ type: 'pcb_state', state: finalized })));
-    controller.enqueue(encoder.encode(encodeSse({ type: 'status', status: statusLabel })));
+    await sink.emit({ type: 'pcb_state', state: finalized });
+    await sink.emit({ type: 'status', status: statusLabel });
 
     if (statusLabel !== 'DRC_CLEAN') await supabase.from('projects').update({
       status: statusLabel,
@@ -120,26 +119,26 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
   }
 
   try {
-    await streamText(controller, encoder, "Running LOCAL pipeline (No Anthropic API required)...\n\n");
+    await streamText(sink, "Running LOCAL pipeline (No Anthropic API required)...\n\n");
     
-    await streamText(controller, encoder, "1. Generating Schema via Circuit-Synth...\n");
+    await streamText(sink, "1. Generating Schema via Circuit-Synth...\n");
     const schema = await executeToolStub('call_agent_schema', { user_description: prompt, complexity: 'simple' }, projectId);
     await updateState('call_agent_schema', schema, 'SCHEMA_DONE', 'SCHEMA');
 
-    await streamText(controller, encoder, "2. Running ERC...\n");
+    await streamText(sink, "2. Running ERC...\n");
     const erc = await executeToolStub('call_agent_erc', { auto_fix: true }, projectId);
     await updateState('call_agent_erc', erc, 'ERC_CLEAN', 'ERC');
 
-    await streamText(controller, encoder, "3. Placing components via Pcbnew...\n");
+    await streamText(sink, "3. Placing components via Pcbnew...\n");
     // No board_width_mm/board_height_mm — call_agent_placement reads from schema cache.
     const placement = await executeToolStub('call_agent_placement', {}, projectId);
     await updateState('call_agent_placement', placement, 'PLACEMENT_DONE', 'PLACEMENT');
 
-    await streamText(controller, encoder, "4. Routing tracks via Freerouting...\n");
+    await streamText(sink, "4. Routing tracks via Freerouting...\n");
     const routing = await executeToolStub('call_agent_routing', { placement_json: '{}', schema_json: '{}' }, projectId);
     await updateState('call_agent_routing', routing, 'ROUTING_DONE', 'ROUTING');
 
-    await streamText(controller, encoder, "5. Running DRC...\n");
+    await streamText(sink, "5. Running DRC...\n");
     const drc = await executeToolStub('call_agent_drc', { auto_fix: true }, projectId);
     if (drc['status'] === 'error') {
       await updateState('call_agent_drc', drc, 'DRC_CLEAN', 'DRC');
@@ -149,11 +148,11 @@ export async function runLocalPipeline(opts: PipelineOptions): Promise<void> {
     if (mergedState.status !== 'DRC_CLEAN') {
       throw new PipelineStepError('DRC completed with remaining violations');
     }
-    controller.enqueue(encoder.encode(encodeSse({ type: 'step', step: null })));
-    controller.enqueue(encoder.encode(encodeSse({ type: 'done' })));
+    await sink.emit({ type: 'step', step: null });
+    await sink.emit({ type: 'done' });
 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Local pipeline failed';
-    controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
+    await sink.emit({ type: 'error', message });
   }
 }
