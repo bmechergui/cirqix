@@ -643,6 +643,13 @@ def _dense_footprint_boxes(pcb_bytes: bytes) -> list[tuple[float, float, float, 
 
 # Longueur de la piste de sortie, en mm. Assez pour degager le boitier, assez
 # court pour rester dans le canal d escape reserve par le placement.
+# Longueur de la sortie de broche, depuis le CENTRE du pad.
+#
+# ⚠️ 2,0 mm essaye le 2026-08-23 et MESURE PIRE : 0 sortie posee, 3 broches
+# orphelines, contre 7 vias et 1 orpheline a 1,2 mm. L hypothese — le via
+# retombe au ras des voisines, la pastille faisant 1,475 mm de long — etait
+# plausible mais fausse : un trajet plus long rencontre simplement DAVANTAGE
+# d obstacles. Ne pas rallonger sans remesurer.
 _ESCAPE_TRACE_MM: float = 1.2
 
 _PAD_ISOLEE_RE = re.compile(r"^Pad\s+(\S+)\s+\[[^\]]*\]\s+of\s+(\S+)\s")
@@ -1039,20 +1046,20 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 #
 # Reactiver ce reglage EXIGE d abord un remplissage reel des zones
 # (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
-# ⚠️ NEUTRE — mesure du 2026-08-23, zones desormais REMPLIES (3 polygones) :
+# ⚠️ NEUTRE. Verdict du 2026-08-23, zones remplies ET echappement conscient :
 #
-#     ordre actuel (router tout, couler)  : 0 manquante | 25 warnings | 214 seg.
-#     variante     (GND confie au plan)   : 3 manquantes | 26 warnings | 111 seg.
+#   ordre actuel (router tout, couler) : 0 manquante    | 25 warnings | 214 seg.
+#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warnings | ~105 seg.
 #
-# La variante fait exactement ce qu on attend d elle — MOITIE moins de cuivre,
-# les pistes GND redondantes disparaissent — mais laisse 3 broches fine-pitch
-# que le plan n atteint pas, et le fanout ne peut pas les rattraper : pose a
-# l aveugle, il ajoute 4 a 6 ERREURS dont des courts-circuits GND/+3.3V, et la
-# garde le refuse (voir `_fanout_pads_isolees`).
+# La variante tient ses promesses : MOITIE moins de cuivre, et zero erreur
+# depuis que l echappement refuse les sorties qui court-circuitent. Mais elle
+# laisse 1 a 3 broches fine-pitch orphelines selon le tirage — toujours les
+# memes, 35 et 47 du LQFP-48 — et un board livre doit etre connecte.
 #
-# Reactiver EXIGE un echappement conscient de son environnement — un via place
-# en verifiant ce qu il traverse. Tant qu il n existe pas, 0 connexion
-# manquante vaut mieux que du cuivre plus propre.
+# Ce qui manque n est plus la securite mais la REUSSITE de la sortie : le
+# controle refuse toutes les directions autour de ces deux pastilles. Il
+# faudrait une sortie sur l autre face (via-in-pad) ou une piste plus fine
+# que les 0,25 mm actuels — 0,2 mm separent deux voisines.
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
 
 

@@ -94,20 +94,106 @@ def _connected_pads(connectivity, pad, pcbnew):
         return connectivity.GetConnectedItems(pad, [pcbnew.PCB_PAD_T])
 
 
+# Geometrie de l echappement — PURE, sans pcbnew, donc testable.
+#
+# ⚠️ Pose a l aveugle, le fanout ajoutait 6 ERREURS dont deux courts-circuits
+# GND/+3.3V (mesure du 2026-08-23, board STM32). Choisir une direction de
+# sortie est de la geometrie : on la separe de la manipulation de board.
+_ROTATIONS = tuple(range(0, 360, 15))   # la naturelle d abord, puis on tourne
+_ECHANTILLON = 100_000                  # 0,1 mm entre deux points du trajet
+
+
+def _dist_point_boite(x: float, y: float, boite) -> float:
+    """Distance d un point a une boite (gauche, haut, droite, bas). 0 si dedans."""
+    gauche, haut, droite, bas = boite
+    dx = max(gauche - x, 0.0, x - droite)
+    dy = max(haut - y, 0.0, y - bas)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
+    """Vrai si tout le segment reste a `marge` des obstacles d un autre net.
+
+    ⚠️ `exempt` est la boite du PAD lui-meme, et l exemption est necessaire :
+    sur un LQFP-48 les pastilles font 0,3 mm au pas de 0,5 — 0,2 mm d espace
+    entre deux voisines. Le long de sa propre pastille, la piste d echappement
+    (0,25 mm) reste DANS l empreinte du pad : sa distance aux voisines est
+    celle du pad, que la carte accepte deja. Sans cette exemption le controle
+    echoue des le point de depart et AUCUNE broche fine-pitch ne peut sortir
+    — mesure du 2026-08-23 : 0 broche sortie, 3 connexions manquantes.
+
+    Au-dela du pad, la marge pleine s applique : c est la que le via se pose
+    et que les courts-circuits se creaient.
+    """
+    if not obstacles:
+        return True
+    dx, dy = x1 - x0, y1 - y0
+    longueur = (dx * dx + dy * dy) ** 0.5
+    pas = max(2, int(longueur / _ECHANTILLON) + 1)
+    for i in range(pas + 1):
+        t = i / pas
+        px, py = x0 + dx * t, y0 + dy * t
+        if exempt is not None and _dist_point_boite(px, py, exempt) == 0:
+            continue  # dans sa propre pastille : la clearance est celle du pad
+        for boite in obstacles:
+            if _dist_point_boite(px, py, boite) < marge:
+                return False
+    return True
+
+
+def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None):
+    """Premiere direction dont le trajet ENTIER est degage, sinon None.
+
+    La direction naturelle (a l oppose du centre du boitier) est essayee en
+    premier : c est le canal que le halo d escape du placement a reserve. On
+    ne tourne que si elle est occupee.
+
+    ⚠️ Rendre None est un resultat LEGITIME : ne rien poser vaut mieux qu un
+    court-circuit. Une broche orpheline se voit au DRC et bloque la commande ;
+    un court-circuit peut partir en fabrication.
+    """
+    import math
+    norme = (vx * vx + vy * vy) ** 0.5
+    if norme < 1e-9:
+        return None
+    base = math.atan2(vy / norme, vx / norme)
+    for degres in _ROTATIONS:
+        for signe in ((1, -1) if degres else (1,)):
+            angle = base + math.radians(degres) * signe
+            x1 = x0 + math.cos(angle) * distance
+            y1 = y0 + math.sin(angle) * distance
+            if _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt):
+                return int(x1), int(y1)
+    return None
+
+
+def _obstacles_d_un_autre_net(board, net_code) -> list:
+    """Boites englobantes des pistes, vias et pads d un AUTRE net."""
+    boites = []
+    for item in list(board.GetTracks()) + [
+        p for fp in board.GetFootprints() for p in fp.Pads()
+    ]:
+        try:
+            if item.GetNetCode() == net_code:
+                continue
+            b = item.GetBoundingBox()
+            boites.append((b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom()))
+        except Exception:
+            continue  # un item sans boite ni net ne peut pas etre un obstacle connu
+    return boites
+
 def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     """Fanout : une courte piste depuis chaque broche isolee vers un via.
 
-    Le plan ne peut pas atteindre les pattes d un boitier au pas de 0,5 mm, et
-    le routeur ne les route pas non plus puisqu il tient le net pour « pris en
-    charge par le plan ». La reponse standard est le fanout : sortir la patte
-    par une courte piste, puis traverser par un via jusqu au plan de l autre
-    face.
+    Le plan ne peut pas atteindre les pattes d un boitier au pas de 0,5 mm.
+    On sort donc la patte par une courte piste, puis on traverse par un via.
 
-    La direction pointe a l OPPOSE du centre du boitier — c est le canal que le
-    halo d escape du placement a justement reserve.
-
-    ⚠️ Reparation, jamais regression : chaque via est pose independamment, et un
-    pad introuvable est ignore sans faire echouer les autres.
+    ⚠️ La sortie CONSULTE son environnement (`_choisir_sortie`). Posee a
+    l aveugle — direction opposee au centre, sans regarder le trajet — elle
+    ajoutait 6 ERREURS dont deux courts-circuits GND/+3.3V sur le board STM32
+    (mesure du 2026-08-23). Une broche sans sortie degagee est RENONCEE, pas
+    forcee : orpheline elle bloque la commande au DRC, court-circuitee elle
+    peut partir en fabrication.
     """
     board = pcbnew.LoadBoard(args["pcb"])
     cibles = json.loads(args["pads"])
@@ -115,8 +201,11 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     distance = float(args.get("escape_mm", "1.2")) * 1_000_000
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
+    # Marge : demi-via + clearance visee. Le DRC fautif mesurait 0,0181 mm.
+    marge = via_d / 2 + float(args.get("clearance_mm", "0.2")) * 1_000_000
 
     poses = 0
+    renonces = 0
     for ref, nom_pad in cibles:
         fp = board.FindFootprintByReference(str(ref))
         if fp is None:
@@ -129,11 +218,19 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         pos = pad.GetPosition()
         dx = float(pos.x - centre.x)
         dy = float(pos.y - centre.y)
-        norme = (dx * dx + dy * dy) ** 0.5
-        if norme < 1.0:
+        if (dx * dx + dy * dy) ** 0.5 < 1.0:
             continue  # pad au centre exact : pas de direction de sortie evidente
-        vx = int(pos.x + dx / norme * distance)
-        vy = int(pos.y + dy / norme * distance)
+
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        b = pad.GetBoundingBox()
+        propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
+        sortie = _choisir_sortie(
+            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre
+        )
+        if sortie is None:
+            renonces += 1
+            continue
+        vx, vy = sortie
 
         piste = pcbnew.PCB_TRACK(board)
         piste.SetStart(pos)
@@ -152,7 +249,9 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         poses += 1
 
     pcbnew.SaveBoard(args["output"], board)
-    Path(args["result"]).write_text(json.dumps({"escaped": poses}), encoding="utf-8")
+    Path(args["result"]).write_text(
+        json.dumps({"escaped": poses, "renonces": renonces}), encoding="utf-8"
+    )
 
 
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
