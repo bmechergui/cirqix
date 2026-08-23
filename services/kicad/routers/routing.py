@@ -699,6 +699,49 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
             return {}
 
 
+def _gnd_orphelines(pcb_bytes: bytes) -> int:
+    """Nombre de broches GND que le DRC declare non reliees a leur plan."""
+    try:
+        return len(_pads_isolees_du_plan(_rapport_drc(pcb_bytes)))
+    except Exception as exc:
+        # Ne pas declencher un repli couteux sur une mesure qu on n a pas pu
+        # faire : sans verdict, on garde ce que la sequence a produit.
+        logger.warning("plan de masse : orphelines non mesurables (%s)", exc)
+        return 0
+
+
+def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
+                            budget_s: float):
+    """Refait le routage SANS confier GND au plan, puis recoule les plans.
+
+    Repli de la sequence demandee par l utilisateur. Il n intervient que si des
+    broches GND sont restees orphelines : la sequence est toujours essayee
+    d abord, et gardee des qu elle aboutit.
+
+    ⚠️ Rend None sur echec — l appelant garde alors le board de la sequence.
+    Un repli qui echoue ne doit pas detruire le resultat qu il devait ameliorer.
+    """
+    global _NETS_CONFIES_AU_PLAN
+    memoire = _NETS_CONFIES_AU_PLAN
+    try:
+        _NETS_CONFIES_AU_PLAN = ()
+        tentative = RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(pcb_bytes).decode("ascii"),
+            layers=req.layers,
+            timeout_s=max(budget_s, _MIN_LEVEL_BUDGET_S),
+        )
+        res = _route_auto_once(tentative)
+        if not res.kicad_pcb_b64 or res.skipped:
+            return None
+        board = _fill_zones(_add_ground_planes(base64.b64decode(res.kicad_pcb_b64)))
+        return _fanout_pads_isolees(board)
+    except Exception as exc:
+        logger.warning("repli routage GND impossible (%s) — sequence conservee", exc)
+        return None
+    finally:
+        _NETS_CONFIES_AU_PLAN = memoire
+
+
 def _fill_zones(pcb_bytes: bytes) -> bytes:
     """Remplit les zones de cuivre. Reparation : au moindre doute, board rendu tel quel.
 
@@ -1046,31 +1089,21 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 #
 # Reactiver ce reglage EXIGE d abord un remplissage reel des zones
 # (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
-# ⚠️ NEUTRE. Verdict du 2026-08-23, apres quatre correctifs successifs :
-# zones remplies, echappement conscient, recherche en direction ET en
-# distance, marges de piste et de via separees.
+# Séquence demandée par l'utilisateur, active depuis le 2026-08-23 :
+#   ① le plan prend GND en charge — il est retiré de la netlist du DSN
+#   ② le routeur ne route que les SIGNAUX
+#   ③ coulée finale, remplie
+#   ④ les broches GND non reliées reçoivent une sortie fine + un via
 #
-#   ordre actuel (router tout, couler) : 0 manquante      | 25 warnings | 214 seg.
-#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warn. | ~105 seg.
+# Elle divise le cuivre posé par deux (≈105 segments contre 214) : les pistes
+# GND que le routeur tirait deviennent redondantes dès que le plan est coulé.
 #
-# La geometrie de l echappement est desormais CORRECTE : sur le board place,
-# `_choisir_sortie` trouve une sortie pour la pastille 35, la ou elle
-# renoncait. Ce qui bloque en production est ailleurs — APRES le routage, les
-# PISTES deviennent obstacles a leur tour, et le voisinage immediat des
-# broches fine-pitch est alors sature :
-#
-#     depuis la pastille 35, vers l exterieur
-#     0,8 mm : obstacle a 0,000 mm     1,4 mm : 0,494 mm  OK
-#     1,0 mm : obstacle a 0,142 mm     1,5 mm : 0,585 mm  OK
-#     1,2 mm : obstacle a 0,318 mm     (piste : 0,325 exige)
-#
-# Le trajet doit TRAVERSER la zone bloquee pour atteindre la zone libre : un
-# via plus loin ne sert a rien si la piste qui y mene ne passe pas.
-#
-# L echappement APRES routage n est pas negociable — le round-trip Specctra
-# supprime toute piste posee avant. Il faudrait donc un routeur qui reserve
-# lui-meme le canal, ou un escape sur une couche interne.
-_NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
+# ⚠️ Elle n'aboutit pas toujours. Mesuré sur le board STM32, 1 à 3 broches
+# fine-pitch du LQFP-48 restent orphelines : l'espace libre autour d'elles
+# (0,318 mm) est inférieur à ce qu'un via réclame (0,500 mm), et le trajet
+# vers la zone dégagée doit traverser cette zone saturée. D'où le repli
+# ci-dessous — jamais livrer une carte non connectée.
+_NETS_CONFIES_AU_PLAN: tuple[str, ...] = ("GND",)
 
 
 def _strip_net_from_dsn(dsn_text: str, net_name: str) -> tuple[str, int]:
@@ -1590,6 +1623,20 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Filet : si une broche reste orpheline malgre tout, on la sort par
             # un via. Le plus souvent il n y a rien a reparer.
             final = _fanout_pads_isolees(avec_plans)
+
+            # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
+            # elle laisse parfois des broches fine-pitch non reliées : le via
+            # d'échappement ne rentre pas (0,318 mm libres pour 0,500 exigés).
+            # Une carte non connectée ne part pas en fabrication — on refait
+            # alors le routage en INCLUANT GND, qui relie tout par des pistes.
+            # Plus de cuivre, mais une carte complète.
+            if _NETS_CONFIES_AU_PLAN and _gnd_orphelines(final):
+                logger.warning(
+                    "plan de masse : %d broche(s) GND non reliée(s) — "
+                    "repli sur un routage incluant GND", _gnd_orphelines(final))
+                secours = _router_en_incluant_gnd(etendu, req, restant)
+                if secours is not None:
+                    final = secours
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)
