@@ -619,6 +619,8 @@ navigateur  <──Realtime──  pcb_run_events (Postgres)  <─────�
   lui-même), `job.ts` + `queue.ts` (file).
 - `services/worker/` — image dédiée, **aucun port publié**, client service-role.
 - Migration `019_pcb_runs.sql` — `pcb_runs` + `pcb_run_events`, RLS lecture seule.
+- Migration `020_pcb_run_events_realtime.sql` — `REPLICA IDENTITY FULL` +
+  publication `supabase_realtime` (no-op si la publication n'existe pas).
 
 **NEVER** faire voyager `agent_mode` dans le payload du job : il gouverne le gate
 JLCPCB, donc une commande réelle et payante. Enfiler un job ne doit pas décerner
@@ -627,8 +629,10 @@ la commandabilité. Il est posé par la ROUTE dans `pcb_runs`.
 `projects` porte un résultat prouvé.
 **NEVER** laisser `maxStalledCount` à son défaut (1) : sur 20 min de routage, le
 verrou de 30 s expire et BullMQ rejoue le job EN PARALLÈLE du premier.
-**ALWAYS** garder `CIRQIX_ASYNC_PIPELINE` inactif tant que le client n'a pas
-basculé : la route et le client doivent basculer ensemble.
+**ALWAYS** garder `CIRQIX_ASYNC_PIPELINE` fail-closed dans le code : le défaut
+est inactif. Le client a basculé (Realtime + sondage) ; allumer le drapeau
+(`1` / `true`) seulement là où Redis ET le worker tournent. Sans file, un
+`202` accepterait un job que personne ne consomme.
 
 ### Le plafond est tombé — mesuré (2026-08-20)
 
@@ -831,8 +835,10 @@ Reste :
   de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
   bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
   non testable sans un routage réel de ~14 min.
-- **Supabase Realtime** en transport principal ; le sondage actuel
-  (`follow-run.ts`) reste alors le repli documenté.
+- ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
+  s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
+  le catch-up. Publication : migration `020`. Le drapeau
+  `CIRQIX_ASYNC_PIPELINE` reste à allumer là où Redis + worker tournent.
 - ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
   ci-dessous : c'était notre compteur qui était aveugle.
 - **Budget par niveau** et **`via_count`/`track_length_mm` à 0** — voir les deux

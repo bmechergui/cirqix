@@ -1,4 +1,7 @@
--- Credits/RLS security regression tests through migration 018.
+-- Credits/RLS security regression tests through migration 020.
+-- La publication `supabase_realtime` est créée par `ci-scaffold.sql` (absente
+-- d'un PostgreSQL nu). AG vérifie l'identité ; AH l'appartenance si la
+-- publication existe — ne pas asserter `pg_publication_tables` sans ce garde.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -1251,6 +1254,79 @@ BEGIN
     RAISE EXCEPTION 'FAIL AF: bob lit % evenements du run d alice', vus_par_bob;
   END IF;
   RAISE NOTICE 'PASS AF - run events follow run ownership';
+END $$;
+
+-- AG. Realtime + RLS exigent REPLICA IDENTITY FULL sur le journal. Sans ça,
+--     la politique `EXISTS (pcb_runs.user_id = auth.uid())` ne peut pas être
+--     évaluée sur le replica : souscription « ok », zéro événement.
+DO $$
+DECLARE ident "char";
+BEGIN
+  SELECT c.relreplident INTO ident
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relname = 'pcb_run_events';
+  IF ident IS DISTINCT FROM 'f' THEN
+    RAISE EXCEPTION 'FAIL AG: pcb_run_events replica identity is %, expected FULL (f)', ident;
+  END IF;
+  RAISE NOTICE 'PASS AG - pcb_run_events replica identity FULL';
+END $$;
+
+-- AH. Si la publication existe : le journal y est, pcb_runs n'y est pas.
+--     (sur CI le scaffold la crée ; sur un PG nu sans 020-pub, no-op).
+DO $$
+DECLARE run_events_in boolean;
+        runs_in boolean;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    RAISE NOTICE 'SKIP AH - supabase_realtime publication absent';
+    RETURN;
+  END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public' AND tablename = 'pcb_run_events'
+  ) INTO run_events_in;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public' AND tablename = 'pcb_runs'
+  ) INTO runs_in;
+  IF NOT run_events_in THEN
+    RAISE EXCEPTION 'FAIL AH: pcb_run_events not in supabase_realtime';
+  END IF;
+  IF runs_in THEN
+    RAISE EXCEPTION 'FAIL AH: pcb_runs must not be in supabase_realtime';
+  END IF;
+  RAISE NOTICE 'PASS AH - realtime publishes journal only';
+END $$;
+
+-- AI. Un client ne peut pas ÉCRIRE le journal — forger un `done` n'ouvre
+--     pas le gate JLCPCB, mais tromperait l'UI. GRANT + absence de policy.
+DO $$
+DECLARE code text := '';
+        run_id uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT id INTO run_id FROM public.pcb_runs
+   WHERE user_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+  RESET ROLE;
+
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO public.pcb_run_events (run_id, kind, payload)
+    VALUES (run_id, 'done', '{}'::jsonb);
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code = '' THEN
+    RAISE EXCEPTION 'FAIL AI: un client a pu INSERER un evenement de run';
+  END IF;
+  RAISE NOTICE 'PASS AI - clients cannot write pcb_run_events';
 END $$;
 
 ROLLBACK;

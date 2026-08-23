@@ -1,14 +1,12 @@
 /**
  * Bascule vers le pipeline asynchrone.
  *
- * La route et le client doivent basculer ENSEMBLE : passer la route en `202`
- * pendant que le client attend un flux SSE casserait l'application pour tous les
- * utilisateurs. Ce drapeau permet de livrer les deux chemins, de valider
- * l'asynchrone sur un environnement réel, puis de changer le défaut.
+ * Le client a basculé : un `202 {runId}` est suivi via Realtime (sondage en
+ * repli). La route peut donc répondre `202` dès que ce drapeau est allumé.
  *
  * Il échoue FERMÉ, délibérément : toute valeur non explicitement affirmative
- * laisse le comportement actuel. Un drapeau mal orthographié doit être sans
- * effet, jamais activer en silence un chemin non validé.
+ * laisse le SSE synchrone (plafond 300 s). Un drapeau mal orthographié doit
+ * être sans effet, jamais activer en silence un chemin qui exige Redis + worker.
  */
 
 /** Valeurs reconnues comme un « oui ». Volontairement courtes et strictes. */

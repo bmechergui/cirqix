@@ -111,3 +111,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+
+-- Publication Realtime : sur une instance Supabase elle existe déjà. Ici elle
+-- permet à la migration 020 d'exécuter réellement `ADD TABLE` et au test
+-- d'isolation de vérifier l'appartenance (pcb_run_events in, pcb_runs out).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    CREATE PUBLICATION supabase_realtime;
+  END IF;
+END $$;

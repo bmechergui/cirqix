@@ -902,13 +902,15 @@ re-tirages · file BullMQ · pipeline découplé de Supabase · worker · route 
 `202` derrière `CIRQIX_ASYNC_PIPELINE` · image dédiée du worker.
 
 **Reste :**
-1. Client Realtime (`startRun` + souscription) — sans lui, activer le drapeau
-   casserait l'interface : la route et le client basculent ensemble.
+1. ~~Client Realtime (`startRun` + souscription)~~ — **livré.** `followRun`
+   s'abonne aux INSERT ; le sondage HTTP est le repli et le catch-up.
+   Allumer `CIRQIX_ASYNC_PIPELINE=1` seulement avec Redis + worker.
 2. Passage en `Popen` côté Python — la sortie du routeur n'est lue qu'à la fin,
    donc 20 minutes d'attente muette pour l'utilisateur.
-3. Application de la migration `019` en base.
-4. **Validation réelle** : un routage > 300 s de bout en bout. Le plafond est
-   armé, pas encore prouvé tombé.
+3. ~~Application de la migration `019` en base.~~ Appliquée (`20260820095437 pcb_runs`).
+   Migration `020` (publication Realtime) à appliquer sur l'instance Supabase.
+4. ~~**Validation réelle** : un routage > 300 s de bout en bout.~~ Mesuré
+   (run `4290007c`, 19 min, tous les appels en 200).
 
 **Point ouvert :** comment `KICAD_SERVICE_URL` est-il joignable depuis Vercel en
 production ? `docker-compose.yml` ne publie que sur `127.0.0.1:8766` et aucun

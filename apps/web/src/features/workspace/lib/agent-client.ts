@@ -27,10 +27,10 @@ export async function runAgent({ projectId, prompt, onEvent, signal }: RunAgentO
   const res = await fetch('/api/agent', init);
 
   // Mode ASYNCHRONE : la route a depose le travail et rendu la main (`202`).
-  // Il n'y a pas de flux a lire — la progression vit dans `pcb_run_events`, que
-  // l'on relit par curseur. C'est ce chemin qui permet a un routage de 20 min
-  // d'aboutir, la ou l'invocation web etait coupee a 300 s ; et il survit a la
-  // fermeture de l'onglet, puisque rien ne depend plus de cette connexion.
+  // Il n'y a pas de flux a lire — la progression vit dans `pcb_run_events`.
+  // Realtime d'abord, sondage HTTP en repli (`followRun`). C'est ce chemin qui
+  // permet a un routage de 20 min d'aboutir, la ou l'invocation web etait
+  // coupee a 300 s ; et il survit a la fermeture de l'onglet.
   if (res.status === 202) {
     const { runId } = (await res.json()) as { runId?: string };
     if (!runId) {
