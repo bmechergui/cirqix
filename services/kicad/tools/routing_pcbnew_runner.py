@@ -148,7 +148,8 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
     return True
 
 
-def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None):
+def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
+                    marge_piste=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
 
     La direction naturelle (a l oppose du centre du boitier) est essayee en
@@ -174,8 +175,19 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None):
             for facteur in _FACTEURS:
                 x1 = x0 + math.cos(angle) * distance * facteur
                 y1 = y0 + math.sin(angle) * distance * facteur
-                if _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt):
-                    return int(x1), int(y1)
+                # ⚠️ La PISTE et le VIA n exigent pas la meme marge : 0,25 mm
+                # de large contre 0,60. Imposer celle du via au trajet entier
+                # lui demandait le DOUBLE de son besoin, et aucune broche
+                # fine-pitch ne pouvait sortir — mesure du 2026-08-23 :
+                # 0,318 mm disponible pour 0,500 exige, quand la piste seule
+                # en reclame 0,325.
+                if not _trajet_libre(x0, y0, x1, y1, obstacles,
+                                     marge_piste or marge, exempt):
+                    continue
+                # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
+                if any(_dist_point_boite(x1, y1, o) < marge for o in obstacles):
+                    continue
+                return int(x1), int(y1)
     return None
 
 
@@ -214,7 +226,9 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
     # Marge : demi-via + clearance visee. Le DRC fautif mesurait 0,0181 mm.
-    marge = via_d / 2 + float(args.get("clearance_mm", "0.2")) * 1_000_000
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+    marge = via_d / 2 + clearance          # le via, au bout du trajet
+    marge_piste = largeur / 2 + clearance  # la piste, sur tout le trajet
 
     poses = 0
     renonces = 0
@@ -237,7 +251,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         sortie = _choisir_sortie(
-            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre
+            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre, marge_piste
         )
         if sortie is None:
             renonces += 1

@@ -1046,26 +1046,30 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 #
 # Reactiver ce reglage EXIGE d abord un remplissage reel des zones
 # (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
-# ⚠️ NEUTRE. Verdict du 2026-08-23, apres zones remplies, echappement
-# conscient de son environnement et recherche en direction ET en distance :
+# ⚠️ NEUTRE. Verdict du 2026-08-23, apres quatre correctifs successifs :
+# zones remplies, echappement conscient, recherche en direction ET en
+# distance, marges de piste et de via separees.
 #
 #   ordre actuel (router tout, couler) : 0 manquante      | 25 warnings | 214 seg.
-#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warn. | ~110 seg.
+#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warn. | ~105 seg.
 #
-# La variante tient ses promesses — MOITIE moins de cuivre, zero erreur — mais
-# deux pastilles du LQFP-48 (35 et 47) ne sortent JAMAIS, et la cause est
-# geometrique, mesuree sur le board :
+# La geometrie de l echappement est desormais CORRECTE : sur le board place,
+# `_choisir_sortie` trouve une sortie pour la pastille 35, la ou elle
+# renoncait. Ce qui bloque en production est ailleurs — APRES le routage, les
+# PISTES deviennent obstacles a leur tour, et le voisinage immediat des
+# broches fine-pitch est alors sature :
 #
-#     obstacle le plus proche au bout de la sortie : 0,318 mm
-#     marge exigee (rayon de via 0,3 + clearance 0,2) : 0,500 mm
+#     depuis la pastille 35, vers l exterieur
+#     0,8 mm : obstacle a 0,000 mm     1,4 mm : 0,494 mm  OK
+#     1,0 mm : obstacle a 0,142 mm     1,5 mm : 0,585 mm  OK
+#     1,2 mm : obstacle a 0,318 mm     (piste : 0,325 exige)
 #
-# Le via NE RENTRE PAS. Ni la direction ni la longueur n y changent rien —
-# les deux ont ete cherchees exhaustivement. Meme le via minimum JLCPCB
-# (0,45 mm) exigerait 0,425 mm : toujours plus que 0,318.
+# Le trajet doit TRAVERSER la zone bloquee pour atteindre la zone libre : un
+# via plus loin ne sert a rien si la piste qui y mene ne passe pas.
 #
-# Ce n est donc PAS un probleme de routage mais de PLACEMENT : il faudrait un
-# couloir d escape libre autour du boitier fine-pitch. Tant qu il n existe
-# pas, 0 connexion manquante vaut mieux que du cuivre plus propre.
+# L echappement APRES routage n est pas negociable — le round-trip Specctra
+# supprime toute piste posee avant. Il faudrait donc un routeur qui reserve
+# lui-meme le canal, ou un escape sur une couche interne.
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
 
 
