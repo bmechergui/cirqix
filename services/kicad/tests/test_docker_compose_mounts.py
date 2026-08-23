@@ -17,6 +17,8 @@ isolé. Cette garde le rend impossible à réintroduire en silence.
 from __future__ import annotations
 
 import re
+
+import pytest
 from pathlib import Path
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -54,7 +56,37 @@ def test_main_py_est_monte() -> None:
     assert "main.py" in _mounted_paths()
 
 
+def _compose_est_du_depot() -> bool:
+    """Le compose lu est-il celui du depot, ou la copie figee de l image ?
+
+    ⚠️ La suite tourne le plus souvent DANS le conteneur, ou `/app` melange
+    des fichiers montes a chaud (`routers/`, `tools/`, `main.py`) et des
+    fichiers cuits dans l image (`docker-compose.yml`, `tests/`). Le
+    2026-08-23, le test ci-dessous a echoue toute une soiree en annoncant
+    `observability` non monte — alors que le montage existait depuis
+    longtemps sur l hote. Il lisait un compose anterieur a son ajout et
+    rendait un verdict sur un etat disparu.
+
+    Un test qui mesure un fichier perime est pire qu absent : il fabrique un
+    defaut, et on finit par apprendre a ignorer son echec. On preferera
+    donc SAUTER, en disant pourquoi.
+    """
+    # ⚠️ Le critere ne doit pas etre CIRCULAIRE : chercher dans le compose une
+    # marque de fraicheur reviendrait a tester ce qu on veut mesurer. On
+    # regarde donc si le fichier vit dans un arbre de travail Git — vrai sur
+    # l hote, faux dans l image, ou seuls des fichiers copies subsistent.
+    for parent in [COMPOSE.parent, *COMPOSE.parents]:
+        if (parent / ".git").exists():
+            return True
+    return False
+
+
 def test_tout_module_importe_par_main_est_monte() -> None:
+    if not _compose_est_du_depot():
+        pytest.skip(
+            f"{COMPOSE} est la copie cuite dans l image, pas le fichier du "
+            "depot : le verdict porterait sur un etat disparu. Relancer "
+            "depuis l hote, ou reconstruire l image.")
     mounted = _mounted_paths()
     manquants = sorted(
         module for module in _imported_local_modules() if f"{module}.py" not in mounted
