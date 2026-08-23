@@ -729,26 +729,16 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
     return rempli
 
 
-def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
-    """Sort par un via les broches que le plan n a pas pu relier.
+def _compte_erreurs(rapport: dict) -> int:
+    """Nombre de violations de severite `error`. Les warnings ne bloquent rien."""
+    return sum(
+        1 for v in (rapport.get("violations") or [])
+        if isinstance(v, dict) and v.get("severity") == "error"
+    )
 
-    ⚠️ APRES le routage, jamais avant : le round-trip Specctra supprime toutes
-    les pistes, vias compris. Mesure du 2026-08-21 — 17 vias poses par
-    `kct stitch` avant routage, 4 apres.
 
-    ⚠️ `kct stitch --escape-distance` fait exactement ce travail et serait
-    preferable, mais il refuse d agir ici : son propre calcul de connectivite
-    repond « No unconnected pads found », ces pads tombant geometriquement dans
-    le polygone de la zone. On pilote donc la sortie par ce que le DRC signale
-    REELLEMENT.
-
-    Reparation, jamais regression : au moindre doute on rend le board d origine.
-    Garde : tests/test_escape_fanout.py.
-    """
-    isolees = _pads_isolees_du_plan(_rapport_drc(pcb_bytes))
-    if not isolees:
-        return pcb_bytes
-
+def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
+    """Pose un via par broche isolee. Rend le board d origine en cas d echec."""
     with tempfile.TemporaryDirectory() as tmp:
         entree = Path(tmp) / "in.kicad_pcb"
         sortie = Path(tmp) / "out.kicad_pcb"
@@ -771,6 +761,43 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
         n = json.loads(resultat.read_text(encoding="utf-8")).get("escaped", 0)
         logger.info("fanout: %d broche(s) sortie(s) vers le plan", n)
         return sortie.read_bytes()
+
+
+def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
+    """Sort par un via les broches que le plan n a pas pu relier.
+
+    ⚠️ APRES le routage, jamais avant : le round-trip Specctra supprime toutes
+    les pistes, vias compris (17 vias poses avant routage, 4 apres).
+
+    ⚠️ Le via est pose A L AVEUGLE — la direction de sortie pointe a l oppose
+    du centre du boitier, sans regarder ce qui se trouve sur le trajet. Mesure
+    du 2026-08-23, board STM32 : le fanout ajoute 6 ERREURS dont DEUX
+    `shorting_items` entre GND et +3.3V. Sans lui, zero erreur.
+
+    D ou la garde : on compare les erreurs AVANT et APRES, et on rend
+    l original des qu elles augmentent. Echanger une connexion manquante
+    contre un court-circuit est un mauvais marche — la premiere bloque la
+    commande au DRC, le second peut partir en fabrication.
+
+    Garde : tests/test_fanout_jamais_regression.py.
+    """
+    rapport = _rapport_drc(pcb_bytes)
+    isolees = _pads_isolees_du_plan(rapport)
+    if not isolees:
+        return pcb_bytes
+
+    repare = _pose_les_vias_d_echappement(pcb_bytes, isolees)
+    if repare is pcb_bytes:
+        return pcb_bytes
+
+    avant = _compte_erreurs(rapport)
+    apres = _compte_erreurs(_rapport_drc(repare))
+    if apres > avant:
+        logger.warning(
+            "fanout: %d erreur(s) ajoutee(s) (%d -> %d) — board d origine conserve",
+            apres - avant, avant, apres)
+        return pcb_bytes
+    return repare
 
 
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
@@ -1012,6 +1039,20 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 #
 # Reactiver ce reglage EXIGE d abord un remplissage reel des zones
 # (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
+# ⚠️ NEUTRE — mesure du 2026-08-23, zones desormais REMPLIES (3 polygones) :
+#
+#     ordre actuel (router tout, couler)  : 0 manquante | 25 warnings | 214 seg.
+#     variante     (GND confie au plan)   : 3 manquantes | 26 warnings | 111 seg.
+#
+# La variante fait exactement ce qu on attend d elle — MOITIE moins de cuivre,
+# les pistes GND redondantes disparaissent — mais laisse 3 broches fine-pitch
+# que le plan n atteint pas, et le fanout ne peut pas les rattraper : pose a
+# l aveugle, il ajoute 4 a 6 ERREURS dont des courts-circuits GND/+3.3V, et la
+# garde le refuse (voir `_fanout_pads_isolees`).
+#
+# Reactiver EXIGE un echappement conscient de son environnement — un via place
+# en verifiant ce qu il traverse. Tant qu il n existe pas, 0 connexion
+# manquante vaut mieux que du cuivre plus propre.
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
 
 
