@@ -1034,6 +1034,35 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     return repare
 
 
+def _couches_deja_couvertes(text: str) -> set:
+    r"""Couches portant deja une zone de cuivre.
+
+    ⚠️ Le motif precedent exigeait `(zone` et `(layer` sur la MEME ligne :
+
+        re.findall(r'\(zone[^\n]*\\(layer "([^"]+)"', text)
+
+    KiCad les ecrit sur des lignes SEPAREES. L ensemble ressortait donc
+    toujours vide et `_add_ground_planes` coulait par-dessus une zone
+    existante. Mesure du 2026-08-24 sur le board d un run reel : QUATRE zones
+    GND, deux par face, et 3 erreurs DRC
+    « Copper zones intersect (must have distinct priorities) ».
+
+    Aucun re-tirage de placement ne corrige cela — le run rebouclait six fois
+    sur 18 violations identiques avant d epuiser ses iterations.
+
+    Invisible en local : notre generateur ecrit ses zones sur une seule ligne,
+    et la fixture en heritait. Le defaut n apparait que sur un board reecrit
+    par pcbnew — donc tout board sorti du round-trip Specctra.
+    """
+    couches = set()
+    for bloc in text.split("(zone")[1:]:
+        # On ne lit que le debut du bloc : `(layer ...)` y figure toujours,
+        # avant les polygones remplis qui peuvent peser des milliers de lignes.
+        tete = bloc[:400]
+        couches.update(re.findall(r'\(layers?\s+"([^"]+)"', tete))
+    return couches
+
+
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
 
@@ -1053,7 +1082,7 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
         return pcb_bytes
     x1, y1, x2, y2 = contour
 
-    existantes = set(re.findall(r'\(zone[^' + chr(10) + r']*\(layer "([^"]+)"', text))
+    existantes = _couches_deja_couvertes(text)
     # ⚠️ DECISION PRODUIT (2026-08-22, reaffirmee) : les plans vont sur les
     # DEUX faces exterieures, y compris en 2 couches.
     #
