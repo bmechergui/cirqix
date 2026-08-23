@@ -79,13 +79,27 @@ class TestChoixDeLaSortie:
         x, _ = sortie
         assert x < 1 * MM, "la sortie devrait avoir quitte la direction bloquee"
 
-    def test_un_pad_totalement_encercle_ne_recoit_rien(self):
-        # Le cas qui compte : ne RIEN poser vaut mieux qu un court-circuit.
+    def test_une_poche_libre_suffit_a_poser_le_via(self):
+        # ⚠️ Un via n a pas besoin de SORTIR : il descend vers le plan de l autre
+        # face. Une poche degagee autour de la pastille suffit donc, meme
+        # entouree — c est le cas normal sous un boitier dense.
         mur = [
             (-9 * MM, -9 * MM, 9 * MM, -1 * MM),
             (-9 * MM, 1 * MM, 9 * MM, 9 * MM),
             (-9 * MM, -9 * MM, -1 * MM, 9 * MM),
             (1 * MM, -9 * MM, 9 * MM, 9 * MM),
+        ]
+        assert runner._choisir_sortie(0, 0, 1.0, 0.0, 2 * MM, mur,
+                                      marge=MM // 4) is not None
+
+    def test_un_pad_sans_le_moindre_espace_ne_recoit_rien(self):
+        # Le cas qui compte : ne RIEN poser vaut mieux qu un court-circuit. Ici
+        # le cuivre voisin touche la pastille — aucune distance ne degage.
+        mur = [
+            (-9 * MM, -9 * MM, 9 * MM, -MM // 20),
+            (-9 * MM, MM // 20, 9 * MM, 9 * MM),
+            (-9 * MM, -9 * MM, -MM // 20, 9 * MM),
+            (MM // 20, -9 * MM, 9 * MM, 9 * MM),
         ]
         assert runner._choisir_sortie(0, 0, 1.0, 0.0, 2 * MM, mur, marge=MM // 2) is None
 

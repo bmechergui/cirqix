@@ -107,7 +107,42 @@ _ECHANTILLON = 100_000                  # 0,1 mm entre deux points du trajet
 # a distance unique, 2 pastilles du LQFP-48 restaient orphelines a chaque
 # tirage. Rallonger SEULEMENT (1,2 -> 2,0 mm) avait empire le resultat — il
 # faut pouvoir raccourcir aussi.
-_FACTEURS = (1.0, 0.8, 1.25, 0.65, 1.5)
+# La portee de la sortie est DERIVEE de la geometrie, jamais listee.
+#
+# ⚠️ Une liste de facteurs reglee sur un board ne vaut que pour ce board.
+# Mesure du 2026-08-23 : la patte 8 du LQFP-48 avait besoin de 2,5 mm quand
+# la portee s arretait a 1,8 — mais un QFN de 5 mm ou un BGA de 15 en
+# demanderaient tout autre chose. Ce qui borne la recherche, c est la TAILLE
+# DU BOITIER : au-dela de son encombrement, on n est plus dans la zone que
+# ses propres broches encombrent.
+#
+# Le pas vaut le diametre du via : plus grand, on sauterait par-dessus un
+# interstice ou il tenait ; plus petit, on paie des essais sans gain.
+_PAS_MAX_ESSAIS = 40          # borne de securite, jamais atteinte en pratique
+
+
+def _distances_a_essayer(nominal: float, portee: float, pas: float):
+    """Distances de sortie : le nominal, puis on s en ecarte alternativement.
+
+    ⚠️ Il faut pouvoir RACCOURCIR autant qu allonger. Mesure du 2026-08-23 :
+    porter la sortie de 1,2 a 2,0 mm avait EMPIRE le resultat — 0 sortie posee
+    au lieu de 7 — un trajet plus long croisant simplement davantage
+    d obstacles. Balayer seulement vers le haut reproduirait cette erreur.
+
+    Le nominal vient en premier : c est la distance qui marche presque
+    toujours, et une sortie courte est plus propre qu une longue.
+    """
+    pas = max(pas, 50_000.0)
+    yield nominal
+    for i in range(1, _PAS_MAX_ESSAIS):
+        court = nominal - i * pas
+        if court >= pas:
+            yield court
+        long = nominal + i * pas
+        if long <= portee:
+            yield long
+        elif court < pas:
+            return
 
 
 def _dist_point_boite(x: float, y: float, boite) -> float:
@@ -149,7 +184,7 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
-                    marge_piste=None):
+                    marge_piste=None, portee=None, pas=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
 
     La direction naturelle (a l oppose du centre du boitier) est essayee en
@@ -165,6 +200,12 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     if norme < 1e-9:
         return None
     base = math.atan2(vy / norme, vx / norme)
+    # `distance` reste le point de depart naturel ; `portee` et `pas` sont
+    # derives du boitier par l appelant. Sans eux on garde le comportement
+    # historique — une seule distance — plutot que d inventer une borne.
+    depart = distance
+    portee = portee if portee is not None else distance
+    pas = pas if pas is not None else max(distance / 4.0, 1.0)
     # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
     # d une direction avant de tourner. Le couloir reserve par le halo
     # d escape du placement vaut mieux qu une deviation — l ordre inverse
@@ -172,9 +213,9 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     for degres in _ROTATIONS:
         for signe in ((1, -1) if degres else (1,)):
             angle = base + math.radians(degres) * signe
-            for facteur in _FACTEURS:
-                x1 = x0 + math.cos(angle) * distance * facteur
-                y1 = y0 + math.sin(angle) * distance * facteur
+            for d in _distances_a_essayer(depart, portee, pas):
+                x1 = x0 + math.cos(angle) * d
+                y1 = y0 + math.sin(angle) * d
                 # ⚠️ La PISTE et le VIA n exigent pas la meme marge : 0,25 mm
                 # de large contre 0,60. Imposer celle du via au trajet entier
                 # lui demandait le DOUBLE de son besoin, et aucune broche
@@ -189,6 +230,64 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                     continue
                 return int(x1), int(y1)
     return None
+
+
+def _direction_d_echappement(pad, centre_fp) -> tuple:
+    """Direction de sortie : l AXE LONG de la pastille, oriente vers l exterieur.
+
+    ⚠️ On utilisait la direction « a l oppose du centre du boitier ». Sur un QFP
+    elle est DIAGONALE pour toute pastille qui n est pas au milieu d un cote —
+    mesure du 2026-08-23 sur le LQFP-48 : 28,4 degres d ecart pour les pattes 35
+    et 47, les deux seules qui echouaient. A ce biais, la sortie entre
+    immediatement dans les pastilles voisines (obstacle mesure a 0,000 mm des
+    0,8 mm) et aucune distance ne la sauve.
+
+    Une patte de QFP s echappe perpendiculairement au bord du boitier, c est-a-
+    dire dans le prolongement de sa propre pastille. Le centre ne sert plus qu a
+    choisir le SENS — vers l exterieur, jamais vers le silicium.
+
+    Pastille carre (via, THT rond) : pas d axe long, on retombe sur le centre.
+    """
+    pos = pad.GetPosition()
+    dx, dy = float(pos.x - centre_fp.x), float(pos.y - centre_fp.y)
+    try:
+        b = pad.GetBoundingBox()
+        largeur = float(b.GetRight() - b.GetLeft())
+        hauteur = float(b.GetBottom() - b.GetTop())
+    except Exception:
+        return dx, dy
+    # 20 % d ecart : en deca la pastille est trop carree pour designer un axe.
+    if max(largeur, hauteur) < 1.2 * min(largeur, hauteur):
+        return dx, dy
+    if largeur > hauteur:
+        return (1.0 if dx >= 0 else -1.0), 0.0
+    return 0.0, (1.0 if dy >= 0 else -1.0)
+
+
+def _portee_d_echappement(fp, via_d: float) -> tuple:
+    """(portee, pas) de la recherche de sortie, derives du BOITIER lui-meme.
+
+    ⚠️ Ce qui encombre le voisinage d une patte, ce sont les autres pattes du
+    meme boitier et les pistes qui en sortent. La zone a franchir est donc
+    proportionnelle a la TAILLE du composant : un LQFP-48 de 9 mm, un QFN de 5,
+    un BGA de 15 n ont pas le meme besoin. Une liste de distances reglee sur un
+    board ne vaudrait que pour ce board.
+
+    Portee = l encombrement du boitier. Au-dela, on a quitte la zone que ses
+    propres broches saturent ; s il n y a toujours pas de place, c est que le
+    voisinage est occupe par autre chose, et allonger encore ne ferait que
+    croiser davantage de pistes.
+
+    Pas = le diametre du via. Plus grand, on sauterait par-dessus un interstice
+    ou il tenait ; plus petit, on paie des essais sans gain.
+    """
+    try:
+        b = fp.GetBoundingBox()
+        taille = max(float(b.GetRight() - b.GetLeft()),
+                     float(b.GetBottom() - b.GetTop()))
+    except Exception:
+        taille = 0.0
+    return max(taille, via_d * 4), max(via_d, 100_000.0)
 
 
 def _obstacles_d_un_autre_net(board, net_code) -> list:
@@ -242,16 +341,17 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
 
         centre = fp.GetPosition()
         pos = pad.GetPosition()
-        dx = float(pos.x - centre.x)
-        dy = float(pos.y - centre.y)
+        dx, dy = _direction_d_echappement(pad, centre)
         if (dx * dx + dy * dy) ** 0.5 < 1.0:
             continue  # pad au centre exact : pas de direction de sortie evidente
 
         obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
+        portee, pas = _portee_d_echappement(fp, via_d)
         sortie = _choisir_sortie(
-            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre, marge_piste
+            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre, marge_piste,
+            portee, pas
         )
         if sortie is None:
             renonces += 1
