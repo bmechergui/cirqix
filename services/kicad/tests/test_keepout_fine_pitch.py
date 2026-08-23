@@ -10,8 +10,15 @@ et ce sont TOUTES des broches GND du LQFP-48 :
 
 Entre deux pattes distantes de 0,5 mm il n y a place pour aucun cuivre de plan,
 quel que soit l isolement (0,5 -> 6 manquantes ; 0,25 -> 3 ; 0,2 -> 3). Le
-routeur, lui, considere GND « pris en charge par le plan » et cesse de le
-router : ces broches ne sont donc reliees ni par le plan, ni par une piste.
+routeur, lui, tient pour deja connectees les pastilles qui tombent
+GEOMETRIQUEMENT dans le polygone de la zone : ces broches ne sont donc reliees
+ni par le plan, ni par une piste.
+
+⚠️ Mesure du 2026-08-23 sur le DSN exporte, qui corrige la formulation
+precedente (« le routeur cesse de router ce net ») : le net GND n est PAS
+retire de la netlist. Ses 18 broches sont presentees au routeur AVEC comme
+SANS coulee ; seul `(plane GND ...)` apparait ou disparait. Le routeur n est
+pas prive du travail, il le croit deja fait.
 
 La solution est un KEEPOUT de coulee autour des boitiers denses : le plan cesse
 de pretendre les couvrir, et le routeur les route normalement jusqu au bord du

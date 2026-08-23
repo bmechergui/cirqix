@@ -803,9 +803,18 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
 
     # ⚠️ Un plan ne peut pas atteindre les broches d un boitier fine-pitch :
     # entre deux pattes au pas de 0,5 mm il n y a place pour aucun cuivre. Le
-    # routeur, lui, considere GND « pris en charge par le plan » et cesse de
-    # le router — ces broches finissent reliees NI par le plan NI par une
-    # piste (2 a 3 connexions manquantes mesurees le 2026-08-21).
+    # routeur, lui, tient pour deja connectees les pastilles qui tombent
+    # GEOMETRIQUEMENT dans le polygone de la zone, et cesse de les router —
+    # ces broches finissent reliees NI par le plan NI par une piste (2 a 3
+    # connexions manquantes mesurees le 2026-08-21).
+    #
+    # ⚠️ Verifie le 2026-08-23 sur le DSN reellement exporte : le net GND
+    # n est PAS retire de la netlist — ses 18 broches sont presentees au
+    # routeur AVEC comme SANS coulee. Seul le bloc `(plane GND ...)` change
+    # (2 declarations, une par face). Le routeur n est donc pas PRIVE du
+    # travail, il DECIDE de ne pas le faire. Meme confusion que `kct stitch`,
+    # qui repondait « No unconnected pads found » pour la meme raison :
+    # etre dans le polygone n est pas etre relie au cuivre.
     #
     # Un keepout de COULEE resout les deux : le plan cesse de pretendre les
     # couvrir, et le routeur les route jusqu au bord du plan. Pistes et vias
