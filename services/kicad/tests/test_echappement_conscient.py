@@ -106,3 +106,30 @@ class TestCablage:
         corps = self.SOURCE[self.SOURCE.index("def _escape_pads(") :]
         corps = corps[: corps.index(chr(10) + "def ")]
         assert "renonces" in corps
+
+
+class TestRechercheEnDistance:
+    """Une sortie n est pas seulement une DIRECTION.
+
+    Mesure du 2026-08-23 : a distance unique (1,2 mm), deux pastilles du
+    LQFP-48 restaient orphelines a chaque tirage. Rallonger SEULEMENT
+    (1,2 -> 2,0 mm) avait EMPIRE le resultat — 0 sortie posee au lieu de 7 —
+    parce qu un trajet plus long rencontre davantage d obstacles. Il faut
+    pouvoir raccourcir autant qu allonger.
+    """
+
+    def test_la_distance_nominale_est_essayee_en_premier(self):
+        sortie = runner._choisir_sortie(0, 0, 1.0, 0.0, 2 * MM, [], marge=MM // 2)
+        assert sortie is not None
+        x, _ = sortie
+        assert abs(x - 2 * MM) < MM // 10, "sans obstacle, on ne doit pas devier"
+
+    def test_un_obstacle_au_bout_fait_raccourcir(self):
+        # Le couloir est degage, mais le point d arrivee nominal est occupe :
+        # une sortie plus COURTE dans la meme direction resout le cas, alors
+        # qu aucune rotation ne le ferait.
+        loin = (1.7 * MM, -5 * MM, 4 * MM, 5 * MM)
+        sortie = runner._choisir_sortie(0, 0, 1.0, 0.0, 2 * MM, [loin], marge=MM // 4)
+        assert sortie is not None
+        x, y = sortie
+        assert x < 1.7 * MM and abs(y) < MM, "la sortie aurait du raccourcir tout droit"

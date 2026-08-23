@@ -101,6 +101,13 @@ def _connected_pads(connectivity, pad, pcbnew):
 # sortie est de la geometrie : on la separe de la manipulation de board.
 _ROTATIONS = tuple(range(0, 360, 15))   # la naturelle d abord, puis on tourne
 _ECHANTILLON = 100_000                  # 0,1 mm entre deux points du trajet
+# Facteurs de distance essayes, la nominale d abord. Une sortie n est pas
+# seulement une DIRECTION : a direction egale, quelques dixiemes de plus ou de
+# moins font passer le via entre deux obstacles ou non. Mesure du 2026-08-23 :
+# a distance unique, 2 pastilles du LQFP-48 restaient orphelines a chaque
+# tirage. Rallonger SEULEMENT (1,2 -> 2,0 mm) avait empire le resultat — il
+# faut pouvoir raccourcir aussi.
+_FACTEURS = (1.0, 0.8, 1.25, 0.65, 1.5)
 
 
 def _dist_point_boite(x: float, y: float, boite) -> float:
@@ -157,13 +164,18 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None):
     if norme < 1e-9:
         return None
     base = math.atan2(vy / norme, vx / norme)
+    # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
+    # d une direction avant de tourner. Le couloir reserve par le halo
+    # d escape du placement vaut mieux qu une deviation — l ordre inverse
+    # faisait devier de 45 degres la ou raccourcir de 0,4 mm suffisait.
     for degres in _ROTATIONS:
         for signe in ((1, -1) if degres else (1,)):
             angle = base + math.radians(degres) * signe
-            x1 = x0 + math.cos(angle) * distance
-            y1 = y0 + math.sin(angle) * distance
-            if _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt):
-                return int(x1), int(y1)
+            for facteur in _FACTEURS:
+                x1 = x0 + math.cos(angle) * distance * facteur
+                y1 = y0 + math.sin(angle) * distance * facteur
+                if _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt):
+                    return int(x1), int(y1)
     return None
 
 

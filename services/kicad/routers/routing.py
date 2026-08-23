@@ -1046,20 +1046,26 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 #
 # Reactiver ce reglage EXIGE d abord un remplissage reel des zones
 # (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
-# ⚠️ NEUTRE. Verdict du 2026-08-23, zones remplies ET echappement conscient :
+# ⚠️ NEUTRE. Verdict du 2026-08-23, apres zones remplies, echappement
+# conscient de son environnement et recherche en direction ET en distance :
 #
-#   ordre actuel (router tout, couler) : 0 manquante    | 25 warnings | 214 seg.
-#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warnings | ~105 seg.
+#   ordre actuel (router tout, couler) : 0 manquante      | 25 warnings | 214 seg.
+#   variante     (GND confie au plan)  : 1 a 3 manquantes | 25-28 warn. | ~110 seg.
 #
-# La variante tient ses promesses : MOITIE moins de cuivre, et zero erreur
-# depuis que l echappement refuse les sorties qui court-circuitent. Mais elle
-# laisse 1 a 3 broches fine-pitch orphelines selon le tirage — toujours les
-# memes, 35 et 47 du LQFP-48 — et un board livre doit etre connecte.
+# La variante tient ses promesses — MOITIE moins de cuivre, zero erreur — mais
+# deux pastilles du LQFP-48 (35 et 47) ne sortent JAMAIS, et la cause est
+# geometrique, mesuree sur le board :
 #
-# Ce qui manque n est plus la securite mais la REUSSITE de la sortie : le
-# controle refuse toutes les directions autour de ces deux pastilles. Il
-# faudrait une sortie sur l autre face (via-in-pad) ou une piste plus fine
-# que les 0,25 mm actuels — 0,2 mm separent deux voisines.
+#     obstacle le plus proche au bout de la sortie : 0,318 mm
+#     marge exigee (rayon de via 0,3 + clearance 0,2) : 0,500 mm
+#
+# Le via NE RENTRE PAS. Ni la direction ni la longueur n y changent rien —
+# les deux ont ete cherchees exhaustivement. Meme le via minimum JLCPCB
+# (0,45 mm) exigerait 0,425 mm : toujours plus que 0,318.
+#
+# Ce n est donc PAS un probleme de routage mais de PLACEMENT : il faudrait un
+# couloir d escape libre autour du boitier fine-pitch. Tant qu il n existe
+# pas, 0 connexion manquante vaut mieux que du cuivre plus propre.
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
 
 
