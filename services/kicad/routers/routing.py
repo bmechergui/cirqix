@@ -692,6 +692,43 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
             return {}
 
 
+def _fill_zones(pcb_bytes: bytes) -> bytes:
+    """Remplit les zones de cuivre. Reparation : au moindre doute, board rendu tel quel.
+
+    ⚠️ Sans cet appel, `_add_ground_planes` ne produit que des CONTOURS : le
+    board sort avec des zones et zero `filled_polygon`. Mesure du 2026-08-23,
+    board STM32 — 3 zones declarees, 0 polygone rempli. Le plan n offrait donc
+    aucun blindage, et le defaut restait invisible parce que les pistes
+    assuraient toute la connectivite.
+
+    `_specctra_roundtrip` remplit deja, mais il s execute AVANT la coulee.
+    """
+    if b"(zone" not in pcb_bytes:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "fill_zones",
+                "pcb": str(entree),
+                "output": str(sortie),
+            })
+        except Exception as exc:
+            logger.warning("plans : remplissage impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.exists():
+            return pcb_bytes
+        rempli = sortie.read_bytes()
+    if b"filled_polygon" not in rempli:
+        # Un remplissage qui ne produit aucun polygone n a pas eu lieu : mieux
+        # vaut le dire que livrer un contour vide en le croyant rempli.
+        logger.warning("plans : aucun polygone rempli — board conserve")
+        return pcb_bytes
+    return rempli
+
+
 def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     """Sort par un via les broches que le plan n a pas pu relier.
 
@@ -1490,6 +1527,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Le prix est un peu plus de cuivre pose (181 segments contre 105) :
             # mince, face a une carte qui passe le DRC.
             avec_plans = _add_ground_planes(base64.b64decode(res.kicad_pcb_b64))
+            # Un plan non rempli n est qu un contour : sans cuivre, aucun blindage.
+            avec_plans = _fill_zones(avec_plans)
             # Filet : si une broche reste orpheline malgre tout, on la sort par
             # un via. Le plus souvent il n y a rien a reparer.
             final = _fanout_pads_isolees(avec_plans)

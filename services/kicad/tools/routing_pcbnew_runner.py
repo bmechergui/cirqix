@@ -52,6 +52,22 @@ def _specctra_roundtrip(pcbnew, args: dict[str, str]) -> None:
     pcbnew.SaveBoard(args["output"], board)
 
 
+def _fill_zones(pcbnew, args: dict[str, str]) -> None:
+    """Remplit les zones de CUIVRE. Sans cela un plan n est qu un contour."""
+    board = pcbnew.LoadBoard(args["pcb"])
+    # ⚠️ `SetIsFilled(True)` DECLARE la zone remplie sans calculer un seul
+    # polygone : le fichier sort avec des zones et zero `filled_polygon`.
+    # C est exactement le defaut trouve le 2026-08-23. Seul `ZONE_FILLER.Fill`
+    # produit du cuivre ; le drapeau ne sert qu a autoriser le calcul.
+    for zone in board.Zones():
+        marque = getattr(zone, "SetIsFilled", None) or getattr(zone, "SetFilled", None)
+        if marque is not None:
+            marque(True)
+    filler = pcbnew.ZONE_FILLER(board)
+    filler.Fill(board.Zones())
+    pcbnew.SaveBoard(args["output"], board)
+
+
 def _connected_pads(connectivity, pad, pcbnew):
     """Pads relies au pad donne, quelle que soit la version de KiCad.
 
@@ -190,6 +206,8 @@ def main(argv: list[str]) -> int:
         _export_specctra(pcbnew, args)
     elif operation == "specctra_roundtrip":
         _specctra_roundtrip(pcbnew, args)
+    elif operation == "fill_zones":
+        _fill_zones(pcbnew, args)
     elif operation == "escape_pads":
         _escape_pads(pcbnew, args)
     elif operation == "measure_connectivity":
