@@ -397,12 +397,103 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         x, y = fp.position
         cx = min(max(x, min_x), max_x)
         cy = min(max(y, min_y), max_y)
-        if (cx, cy) != (x, y):
-            logger.warning("connector %s hors-carte (%.2f,%.2f) -> clampé (%.2f,%.2f)",
-                           fp.reference, x, y, cx, cy)
-            fp.position = (cx, cy)
+        # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
+        # connecteurs superposés À L'INTÉRIEUR du contour produisent le même
+        # blocage, et n'étaient pas clampés donc pas examinés.
+        nx, ny = _position_libre_pour_ancrage(pcb, fp.reference, cx, cy,
+                                              min_x, max_x, min_y, max_y)
+        if (nx, ny) != (x, y):
+            logger.warning("ancrage %s (%.2f,%.2f) -> reposé (%.2f,%.2f)",
+                           fp.reference, x, y, nx, ny)
+            fp.position = (nx, ny)
             clamped.append(fp.reference)
     return clamped
+
+
+# Pas de recherche pour reposer un ancrage : la MOITIÉ de son propre encombrement.
+# Dérivé du footprint, jamais d'une constante — un connecteur 40 broches et un
+# 2 broches n'ont pas le même besoin, et une valeur fixe conviendrait à l'un en
+# trahissant l'autre. Plancher à 1 mm pour progresser même sur un footprint
+# minuscule ou sans courtyard déclaré.
+_PAS_MIN_MM: float = 1.0
+
+
+def _encombrement_mm(pcb, ref: str) -> float:
+    """Plus grande dimension du footprint, d'après ses propres pads."""
+    fp = next((f for f in pcb.footprints if f.reference == ref), None)
+    if fp is None:
+        return _PAS_MIN_MM
+    xs, ys = [], []
+    for pad in getattr(fp, "pads", []) or []:
+        px, py = getattr(pad, "position", (0.0, 0.0))
+        xs.append(px)
+        ys.append(py)
+    if not xs:
+        return _PAS_MIN_MM
+    return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
+
+
+def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
+                                 min_x: float, max_x: float,
+                                 min_y: float, max_y: float) -> tuple:
+    """Repose un ancrage clampé là où il n'entre en collision avec RIEN.
+
+    ⚠️ Le clamp traitait chaque ancrage INDÉPENDAMMENT : deux connecteurs
+    hors-carte du même côté atterrissaient au MÊME coin. Mesuré le
+    2026-08-23 sur le premier pipeline complet passé par la file —
+    l'orchestrateur rapportait « courtyards overlap + PTH inside courtyard
+    → J1 et J3 co-localisés (même position x=128.5, y=123) » et re-tirait le
+    placement en boucle, trois minutes par tirage.
+
+    Or **le re-tirage ne peut pas réparer ça** : les connecteurs sont ancrés,
+    donc l'optimiseur ne les déplace jamais. Le run épuisait ses itérations
+    sans pouvoir atteindre DRC_CLEAN.
+
+    La collision est jugée par `PCB.check_placement_collision`, l'API native
+    de kicad-tools : elle compare les COURTYARDS RÉELS de chaque composant.
+    Aucune constante d'écart, donc aucune hypothèse sur la taille des
+    boîtiers — un connecteur 40 broches est traité comme tel.
+    """
+    try:
+        if not pcb.check_placement_collision(ref, cx, cy).has_collision:
+            return cx, cy
+    except Exception as exc:  # API absente ou footprint atypique
+        logger.debug("collision non vérifiable pour %s (%s)", ref, exc)
+        return cx, cy
+
+    pas = _encombrement_mm(pcb, ref)
+    # On glisse le long des bords : un ancrage clampé y est déjà, et c'est là
+    # que la place se trouve. Spirale en croix, jamais en diagonale.
+    for i in range(1, 41):
+        for nx, ny in ((cx, cy + i * pas), (cx, cy - i * pas),
+                       (cx + i * pas, cy), (cx - i * pas, cy)):
+            if not (min_x <= nx <= max_x and min_y <= ny <= max_y):
+                continue
+            try:
+                if not pcb.check_placement_collision(ref, nx, ny).has_collision:
+                    return nx, ny
+            except Exception:
+                return cx, cy
+    # Aucune place libre : on garde la position clampée. Superposer deux
+    # connecteurs reste moins grave que les poser hors du contour, où leurs
+    # nets seraient inroutables.
+    logger.warning("ancrage %s : aucune position libre trouvée dans la carte", ref)
+    return cx, cy
+    for i in range(1, len(occupees) + 2):
+        for nx, ny in ((cx, cy + i * _ECART_ANCRAGES_MM),
+                       (cx, cy - i * _ECART_ANCRAGES_MM),
+                       (cx + i * _ECART_ANCRAGES_MM, cy),
+                       (cx - i * _ECART_ANCRAGES_MM, cy)):
+            if not (min_x <= nx <= max_x and min_y <= ny <= max_y):
+                continue
+            if any(abs(nx - ox) < _ECART_ANCRAGES_MM and abs(ny - oy) < _ECART_ANCRAGES_MM
+                   for ox, oy in occupees):
+                continue
+            return nx, ny
+    # Aucune place : on rend la position clampée telle quelle. Superposer
+    # deux connecteurs reste moins grave que les poser hors du contour, où
+    # leurs nets seraient inroutables.
+    return cx, cy
 
 
 # Retrait du bord pour reposer un composant sorti du contour, et pas d'une
