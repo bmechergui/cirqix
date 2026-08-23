@@ -836,6 +836,53 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
             return pcb_bytes
         return sortie.read_bytes()
 
+def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
+    """Relie par un via les pastilles qu une piste a detachees du plan.
+
+    ⚠️ Cause etablie le 2026-08-23 : sur le board PLACE, plans coules et
+    remplis, ZERO broche GND orpheline — le plan atteint tout, fine-pitch
+    compris. Les orphelines n apparaissent qu APRES le routage, quand les
+    pistes de signal posees sur F.Cu DECOUPENT le plan en ilots. Le DRC le
+    disait depuis le debut : `Zone [GND] on F.Cu <-> Zone [GND] on F.Cu`.
+
+    Ce n est donc pas un probleme de geometrie fine-pitch, mais de
+    FRAGMENTATION. Un ilot detache se recoud par un via vers l autre face.
+
+    Reparation, jamais regression : au moindre doute on rend le board recu.
+    """
+    isolees = _pads_isolees_du_plan(_rapport_drc(pcb_bytes))
+    if not isolees:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "stitch_islands",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps(isolees),
+            })
+        except Exception as exc:
+            logger.warning("couture des ilots impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        n = json.loads(resultat.read_text(encoding="utf-8")).get("stitched", 0)
+        recousu = sortie.read_bytes()
+    if not n:
+        return pcb_bytes
+    logger.info("couture : %d ilot(s) du plan relie(s) par un via", n)
+    # Meme garde que le fanout : une reparation ne doit jamais ajouter
+    # d erreurs. Un via mal place vaut moins qu une broche orpheline.
+    if _compte_erreurs(_rapport_drc(recousu)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+        logger.warning("couture : erreurs ajoutees — board d origine conserve")
+        return pcb_bytes
+    return recousu
+
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
     try:
@@ -1780,6 +1827,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Filet : si une broche reste orpheline malgre tout, on la sort par
             # un via. Le plus souvent il n y a rien a reparer.
             final = _fanout_pads_isolees(avec_plans)
+            # Puis la couture : ce que le fanout n a pas pu sortir tient
+            # souvent a un ilot de plan detache par une piste, pas a la
+            # pastille elle-meme.
+            final = _recoudre_les_ilots(final)
 
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via

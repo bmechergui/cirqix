@@ -428,6 +428,96 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
     Path(args["result"]).write_text(
         json.dumps({"vias": positions, "renonces": renonces}), encoding="utf-8")
 
+def _candidats_de_couture(x0, y0, portee, pas):
+    """Positions de via candidates, du plus proche au plus lointain.
+
+    Un ilot peut s etendre dans n importe quelle direction : chercher sur un
+    seul axe reviendrait a supposer sa forme. On balaie donc en anneaux.
+    """
+    import math
+
+    pas = max(pas, 50_000.0)
+    rayon = pas
+    while rayon <= portee:
+        n = max(8, int(2 * math.pi * rayon / pas))
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            yield int(x0 + math.cos(a) * rayon), int(y0 + math.sin(a) * rayon)
+        rayon += pas
+
+
+def _est_relie(pcbnew, board, pad, temoin) -> bool:
+    """Vrai si `pad` et `temoin` sont relies par du cuivre continu."""
+    if temoin is None:
+        return False
+    board.BuildConnectivity()
+    conn = board.GetConnectivity()
+    conn.RecalculateRatsnest()
+    cible = temoin.m_Uuid.AsString()
+    for item in _connected_pads(conn, pad, pcbnew):
+        try:
+            if item.m_Uuid.AsString() == cible:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
+    """Recoud par un via les pastilles isolees dans un ilot de plan.
+
+    ⚠️ On ne DEVINE pas ou poser : on essaie et on VERIFIE. Chaque candidat est
+    pose, la connectivite reconstruite, et le via n est garde que si la
+    pastille rejoint un TEMOIN — une broche du meme net restee sur le plan
+    principal. Un via pose au juge peut atterrir dans le meme ilot et ne rien
+    relier : il ne resterait qu un trou de percage facture et un obstacle de
+    plus pour le routage suivant.
+    """
+    board = pcbnew.LoadBoard(args["pcb"])
+    cibles = json.loads(args["pads"])
+    via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
+    perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
+    portee = float(args.get("portee_mm", "8.0")) * 1_000_000
+
+    isoles = {(str(r), str(n)) for r, n in cibles}
+    poses = 0
+    for ref, nom_pad in cibles:
+        fp = board.FindFootprintByReference(str(ref))
+        if fp is None:
+            continue
+        pad = next((p for p in fp.Pads() if str(p.GetPadName()) == str(nom_pad)), None)
+        if pad is None:
+            continue
+        # Temoin : une broche du MEME net qui n est pas elle-meme isolee.
+        temoin = None
+        for f in board.GetFootprints():
+            for q in f.Pads():
+                if (q.GetNetCode() == pad.GetNetCode()
+                        and (str(f.GetReference()), str(q.GetPadName())) not in isoles):
+                    temoin = q
+                    break
+            if temoin is not None:
+                break
+        pos = pad.GetPosition()
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        marge = via_d / 2 + float(args.get("clearance_mm", "0.2")) * 1_000_000
+        for x, y in _candidats_de_couture(pos.x, pos.y, portee, via_d):
+            if any(_dist_point_boite(x, y, o) < marge for o in obstacles):
+                continue
+            via = pcbnew.PCB_VIA(board)
+            via.SetPosition(pcbnew.VECTOR2I(x, y))
+            via.SetWidth(via_d)
+            via.SetDrill(perc_d)
+            via.SetNetCode(pad.GetNetCode())
+            board.Add(via)
+            if _est_relie(pcbnew, board, pad, temoin):
+                poses += 1
+                break
+            board.Remove(via)
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(json.dumps({"stitched": poses}), encoding="utf-8")
+
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     board = pcbnew.LoadBoard(args["pcb"])
     if not board.BuildConnectivity():
@@ -479,6 +569,8 @@ def main(argv: list[str]) -> int:
         _export_specctra(pcbnew, args)
     elif operation == "specctra_roundtrip":
         _specctra_roundtrip(pcbnew, args)
+    elif operation == "stitch_islands":
+        _stitch_islands(pcbnew, args)
     elif operation == "plan_escape":
         _plan_escape(pcbnew, args)
     elif operation == "fill_zones":
