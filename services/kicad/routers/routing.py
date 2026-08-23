@@ -274,6 +274,7 @@ def _route_with_freerouting_api(
         ses_path = Path(tmp) / "board.ses"
 
         _export_specctra(pcb_bytes, dsn_path)
+        _confier_au_plan(dsn_path)
 
         session = _api("POST", f"{pre}/sessions/create", {})
         session_id = session["id"]
@@ -950,6 +951,82 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
         )
 
 
+# Nets que le PLAN prend en charge : ils sont retires de la netlist du DSN, donc
+# le routeur ne leur tire aucune piste. Le plan est coule APRES le routage, et
+# les pastilles qu il n atteint pas reellement recoivent un via d echappement.
+#
+# ⚠️ NE PAS obtenir cet effet en declarant un plan dans le DSN : le routeur
+# tiendrait alors pour connectees les pastilles geometriquement contenues dans
+# le polygone, ce qui est FAUX sur un pas de 0,5 mm (3 connexions manquantes
+# mesurees). Retirer le net est sans ambiguite ; declarer un plan est une
+# promesse que la geometrie ne tient pas.
+# ⚠️ DESACTIVE le 2026-08-23, apres mesure. Confier GND au plan suppose que le
+# plan porte du CUIVRE — or nos zones n en portent pas : le board rendu compte
+# 3 zones et ZERO `filled_polygon`. Ce sont des contours vides.
+#
+# Mesure, board STM32, variante activee :
+#     17 connexions manquantes (contre 0 aujourd hui), et pas seulement sur le
+#     fine-pitch : C1, C2, C3, C12..C16 et U1 — de gros pads que le plan
+#     atteindrait sans peine s il etait rempli.
+#
+# L ordre actuel (router TOUT, couler ensuite) masque le defaut : les pistes
+# font le travail, donc l absence de remplissage ne se voit pas dans le DRC.
+# Retirer GND du routage retire ce masque et revele le plan vide.
+#
+# Reactiver ce reglage EXIGE d abord un remplissage reel des zones
+# (`ZONE_FILLER` dans le processus pcbnew), puis une nouvelle mesure.
+_NETS_CONFIES_AU_PLAN: tuple[str, ...] = ()
+
+
+def _strip_net_from_dsn(dsn_text: str, net_name: str) -> tuple[str, int]:
+    """Retire `(net <nom> (pins ...))` de la section network. Rend (texte, broches)."""
+    debut = dsn_text.find(f"(net {net_name}")
+    if debut == -1:
+        return dsn_text, 0
+    # Refuser un prefixe commun : `GND` ne doit pas emporter `GNDA`.
+    suivant = dsn_text[debut + len(f"(net {net_name}")]
+    if not suivant.isspace():
+        return dsn_text, 0
+
+    profondeur, i = 0, debut
+    while i < len(dsn_text):
+        if dsn_text[i] == "(":
+            profondeur += 1
+        elif dsn_text[i] == ")":
+            profondeur -= 1
+            if profondeur == 0:
+                break
+        i += 1
+    else:
+        return dsn_text, 0  # parentheses desequilibrees : on ne touche a rien
+
+    bloc = dsn_text[debut : i + 1]
+    pins = bloc[bloc.find("(pins") :].replace("(pins", "").replace(")", "")
+    n = len(pins.split())
+
+    fin = i + 1
+    while fin < len(dsn_text) and dsn_text[fin] in " " + chr(9):
+        fin += 1
+    if dsn_text[fin : fin + 1] == chr(10):
+        fin += 1
+    tete = dsn_text[:debut].rstrip(" " + chr(9))
+    return tete + dsn_text[fin:], n
+
+
+def _confier_au_plan(dsn_path: Path) -> int:
+    """Retire du DSN les nets pris en charge par le plan. Rend le nb de broches."""
+    texte = dsn_path.read_text(encoding="utf-8", errors="replace")
+    total = 0
+    for net in _NETS_CONFIES_AU_PLAN:
+        texte, n = _strip_net_from_dsn(texte, net)
+        total += n
+    if total:
+        dsn_path.write_text(texte, encoding="utf-8")
+        logger.info("routage : %d broches confiees au plan (%s)", total,
+                    ", ".join(_NETS_CONFIES_AU_PLAN))
+    return total
+
+
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
     """Export a PCB to Specctra DSN in a bounded pcbnew child process.
 
@@ -1226,6 +1303,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 dsn = Path(tmp) / "board.dsn"
                 ses = Path(tmp) / "board.ses"
                 _export_specctra(pcb_bytes, dsn)
+                _confier_au_plan(dsn)
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
