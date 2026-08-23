@@ -380,6 +380,54 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     )
 
 
+def _plan_escape(pcbnew, args: dict[str, str]) -> None:
+    """Calcule les positions de via SANS toucher au board.
+
+    ⚠️ Se lance sur le board PLACE, avant le routage des signaux. Apres, il n y
+    a plus de place : mesure du 2026-08-23, 504 candidats essayes autour des
+    pattes orphelines du LQFP-48 — 21 distances x 24 directions, jusqu a
+    12,7 mm — aucun ne passe, le voisinage comptant alors 182 obstacles.
+
+    Les positions rendues sont ensuite DECLAREES dans le DSN pour que le
+    routeur travaille autour, puis reposees apres l aller-retour Specctra.
+    """
+    board = pcbnew.LoadBoard(args["pcb"])
+    cibles = json.loads(args["pads"])
+    largeur = int(float(args.get("trace_mm", "0.25")) * 1_000_000)
+    distance = float(args.get("escape_mm", "1.2")) * 1_000_000
+    via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+    marge, marge_piste = via_d / 2 + clearance, largeur / 2 + clearance
+
+    positions = []
+    renonces = 0
+    for ref, nom_pad in cibles:
+        fp = board.FindFootprintByReference(str(ref))
+        if fp is None:
+            continue
+        pad = next((p for p in fp.Pads() if str(p.GetPadName()) == str(nom_pad)), None)
+        if pad is None:
+            continue
+        pos = pad.GetPosition()
+        dx, dy = _direction_d_echappement(pad, fp.GetPosition())
+        if (dx * dx + dy * dy) ** 0.5 < 1.0:
+            continue
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        b = pad.GetBoundingBox()
+        propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
+        portee, pas = _portee_d_echappement(fp, via_d)
+        sortie = _choisir_sortie(pos.x, pos.y, dx, dy, distance, obstacles,
+                                 marge, propre, marge_piste, portee, pas)
+        if sortie is None:
+            renonces += 1
+            continue
+        positions.append({"ref": str(ref), "pad": str(nom_pad),
+                          "pad_x": int(pos.x), "pad_y": int(pos.y),
+                          "via_x": int(sortie[0]), "via_y": int(sortie[1]),
+                          "layer": int(pad.GetLayer()), "net": int(pad.GetNetCode())})
+    Path(args["result"]).write_text(
+        json.dumps({"vias": positions, "renonces": renonces}), encoding="utf-8")
+
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     board = pcbnew.LoadBoard(args["pcb"])
     if not board.BuildConnectivity():
@@ -431,6 +479,8 @@ def main(argv: list[str]) -> int:
         _export_specctra(pcbnew, args)
     elif operation == "specctra_roundtrip":
         _specctra_roundtrip(pcbnew, args)
+    elif operation == "plan_escape":
+        _plan_escape(pcbnew, args)
     elif operation == "fill_zones":
         _fill_zones(pcbnew, args)
     elif operation == "escape_pads":

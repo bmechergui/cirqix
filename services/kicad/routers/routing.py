@@ -275,6 +275,12 @@ def _route_with_freerouting_api(
 
         _export_specctra(pcb_bytes, dsn_path)
         _confier_au_plan(dsn_path)
+        if _VIAS_RESERVES:
+            dsn_path.write_text(_injecter_wiring(
+                dsn_path.read_text(encoding="utf-8", errors="replace"),
+                [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
+                _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+            ), encoding="utf-8")
 
         session = _api("POST", f"{pre}/sessions/create", {})
         session_id = session["id"]
@@ -698,6 +704,137 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
             logger.warning("fanout: rapport DRC indisponible (%s)", exc)
             return {}
 
+
+# Padstack des vias reserves. Nom impose par le DSN que pcbnew exporte —
+# `(use_via "Via[0-1]_600:300_um")` dans le bloc `(class kicad_default ...)`.
+# Un nom inconnu ferait rejeter le DSN par Freerouting.
+_PADSTACK_VIA = "Via[0-1]_600:300_um"
+
+# Vias reserves pour l appel de routage en cours. Variable de module parce que
+# `_export_specctra` est appele depuis deux chemins (API et sous-processus)
+# et qu il faut injecter aux DEUX — un seul site oublie et la reservation ne
+# vaudrait que pour la moitie des routages, sans que rien ne le signale.
+_VIAS_RESERVES: list = []
+
+
+def _bloc_wiring(vias: list, net: str) -> str:
+    """Vias reserves, au format Specctra. Rend "" si la liste est vide.
+
+    ⚠️ Unites du DSN, verifiees sur un export reel : `(resolution um 10)`, les
+    coordonnees sont en MICROMETRES et **Y est negatif** (Specctra oriente Y
+    vers le haut, KiCad vers le bas). Oublier le signe placerait chaque via en
+    miroir de sa vraie position — un board syntaxiquement valide et
+    geometriquement faux.
+
+    ⚠️ `(type protect)` n est pas decoratif : sans lui le routeur peut
+    deplacer ou supprimer le via, et la reservation ne reserverait rien.
+    """
+    if not vias:
+        return ""
+    lignes = []
+    for x_nm, y_nm in vias:
+        lignes.append(
+            '    (via "%s" %.1f %.1f (net %s) (type protect))'
+            % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0, net)
+        )
+    return chr(10).join(lignes)
+
+
+def _injecter_wiring(dsn_text: str, vias: list, net: str) -> str:
+    """Ecrit les vias reserves dans le bloc `(wiring)` du DSN.
+
+    ⚠️ pcbnew laisse ce bloc VIDE meme sur un board portant 160 segments —
+    verifie le 2026-08-23. Son exporteur ne transporte pas les pistes
+    existantes ; on ecrit donc nous-memes, mais seulement quelques vias.
+
+    ⚠️ Un DSN dont on ne reconnait pas la structure est rendu TEL QUEL : mieux
+    vaut un routage sans reservation qu un DSN corrompu, que Freerouting
+    rejetterait en bloc.
+    """
+    bloc = _bloc_wiring(vias, net)
+    if not bloc:
+        return dsn_text
+    i = dsn_text.find("(wiring")
+    if i == -1:
+        logger.warning("DSN sans bloc (wiring) — reservation abandonnee")
+        return dsn_text
+    j = dsn_text.find(")", i + len("(wiring"))
+    if j == -1:
+        logger.warning("DSN au bloc (wiring) non ferme — reservation abandonnee")
+        return dsn_text
+    return dsn_text[:i] + "(wiring" + chr(10) + bloc + chr(10) + "  " + dsn_text[j:]
+
+def _vias_a_reserver(pcb_bytes: bytes) -> list:
+    """Positions de via a reserver, calculees sur le board PLACE.
+
+    On coule les plans sur une COPIE pour savoir quelles broches GND le plan
+    n atteindra pas — c est le DRC qui les designe, pas une heuristique. Puis
+    on calcule leur sortie tant que la place existe encore.
+
+    ⚠️ La copie ne sert qu a MESURER : le board rendu au routeur reste sans
+    plan, sinon le routeur croirait GND deja connecte et cesserait de router
+    ses pastilles — le piege documente plus haut.
+
+    Rend [] au moindre echec : la reservation est un BONUS, jamais un passage
+    oblige. Sans elle le routage se deroule comme avant.
+    """
+    try:
+        sonde = _fill_zones(_add_ground_planes(pcb_bytes))
+        isolees = _pads_isolees_du_plan(_rapport_drc(sonde))
+        if not isolees:
+            return []
+        with tempfile.TemporaryDirectory() as tmp:
+            entree = Path(tmp) / "in.kicad_pcb"
+            resultat = Path(tmp) / "r.json"
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "plan_escape",
+                "pcb": str(entree),
+                "result": str(resultat),
+                "pads": json.dumps(isolees),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+            data = json.loads(resultat.read_text(encoding="utf-8"))
+        vias = data.get("vias") or []
+        if vias:
+            logger.info("reservation : %d via(s) d echappement places avant routage,"
+                        " %d renonce(s)", len(vias), data.get("renonces", 0))
+        return vias
+    except Exception as exc:
+        logger.warning("reservation impossible (%s) — routage sans reservation", exc)
+        return []
+
+
+def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
+    """Repose apres routage les vias reserves — l aller-retour Specctra les efface.
+
+    ⚠️ Mesure du 2026-08-21 : 17 vias poses AVANT routage, 4 apres. Le
+    round-trip supprime toutes les pistes, vias compris. La reservation ne sert
+    donc qu a faire router les signaux AUTOUR ; c est ici qu elle se
+    materialise.
+    """
+    if not vias:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "escape_pads",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps([[v["ref"], v["pad"]] for v in vias]),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+        except Exception as exc:
+            logger.warning("repose des vias impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        return sortie.read_bytes()
 
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
@@ -1432,6 +1569,12 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 ses = Path(tmp) / "board.ses"
                 _export_specctra(pcb_bytes, dsn)
                 _confier_au_plan(dsn)
+                if _VIAS_RESERVES:
+                    dsn.write_text(_injecter_wiring(
+                        dsn.read_text(encoding="utf-8", errors="replace"),
+                        [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
+                        _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                    ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
@@ -1597,6 +1740,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # pattes d un LQFP-48. Ni le plan ni le routeur ne faisait le travail :
         # 3 connexions manquantes, qu aucun levier ne resorbait.
         etendu = _expand_stackup(pcb_bytes, palier)
+
+        # ⚠️ Reserver AVANT de router : apres, il n y a plus de place. Mesure
+        # du 2026-08-23 — 504 candidats essayes autour des pattes orphelines
+        # du LQFP-48, aucun ne passe, le voisinage comptant 182 obstacles
+        # (les pistes de signal). Les vias sont declares dans le DSN pour que
+        # le routeur travaille autour, puis reposes apres le round-trip
+        # Specctra, qui efface tout ce qui le precede.
+        global _VIAS_RESERVES
+        _VIAS_RESERVES = _vias_a_reserver(etendu) if _NETS_CONFIES_AU_PLAN else []
+
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
             layers=req.layers,
@@ -1617,7 +1770,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             #
             # Le prix est un peu plus de cuivre pose (181 segments contre 105) :
             # mince, face a une carte qui passe le DRC.
-            avec_plans = _add_ground_planes(base64.b64decode(res.kicad_pcb_b64))
+            # Reposer les vias reserves : le round-trip Specctra les a effaces,
+            # mais le routeur a travaille AUTOUR de leurs positions.
+            route = _reposer_vias_reserves(base64.b64decode(res.kicad_pcb_b64),
+                                           _VIAS_RESERVES)
+            avec_plans = _add_ground_planes(route)
             # Un plan non rempli n est qu un contour : sans cuivre, aucun blindage.
             avec_plans = _fill_zones(avec_plans)
             # Filet : si une broche reste orpheline malgre tout, on la sort par
