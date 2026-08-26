@@ -677,6 +677,8 @@ _ESCAPE_TRACE_MM: float = 1.2
 # paire qui releve du routage.
 _PAD_ISOLEE_RE = re.compile(r"^Pad\s+(\S+)\s+\[([^\]]*)\]\s+of\s+(\S+)\s")
 _ZONE_RE = re.compile(r"^Zone\s+\[")
+# `Zone [GND] on F.Cu, priority 0` -> le net de la zone.
+_ZONE_NET_RE = re.compile(r"^Zone\s+\[([^\]]*)\]")
 
 
 def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
@@ -952,6 +954,62 @@ def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
         logger.warning("couture : erreurs ajoutees — board d origine conserve")
         return pcb_bytes
     return recousu
+
+def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> int:
+    """Corrige le pourcentage du moteur par ce que le DRC voit sur le board LIVRE.
+
+    ⚠️ La mesure du moteur regarde AILLEURS : le board juste apres le routeur,
+    avant que les plans soient coules et les reparations faites, et sans les
+    nets confies au plan. Une pastille GND restee orpheline lui est donc
+    structurellement invisible.
+
+    Banc du 2026-08-26, cinq cartes de 17 a 100 composants : TROIS annoncees
+    a 100 % gardaient 1, 1 et 3 connexions manquantes.
+
+    L enjeu depasse l affichage : `routed_percent` decide d arreter, de
+    relancer le placement ou d appeler le reasoner, et les statuts qui en
+    decoulent alimentent le gate JLCPCB. Un 100 % mensonger arrete la chaine
+    sur une carte incomplete.
+
+    ⚠️ Correction A LA BAISSE seulement. Si le moteur annonce 50 %, ce n est
+    pas au DRC de le promouvoir — il constate des manques, pas des reussites.
+    Et un DRC indisponible ne change rien : mieux vaut le chiffre du routeur
+    qu un chiffre invente.
+    """
+    if routables <= 0:
+        return percent_moteur
+    rapport = _rapport_drc(pcb_bytes)
+    manquants = rapport.get("unconnected_items") or []
+    if not manquants:
+        return percent_moteur
+    # On compte les NETS touches, pas les paires : un net tres fragmente
+    # rendrait le pourcentage negatif.
+    nets = set()
+    for item in manquants:
+        for i in item.get("items") or []:
+            d = str(i.get("description", ""))
+            m = _PAD_ISOLEE_RE.match(d)
+            if m:
+                nets.add(m.group(2))
+                continue
+            # ⚠️ Une paire `Zone [GND] <-> Zone [GND]` est un PLAN COUPE EN
+            # ILOTS, pas une pastille orpheline. Ne chercher que des pastilles
+            # la rendait invisible — mesure du 2026-08-26 : les 3 « manquantes »
+            # de la carte a 100 composants etaient exactement cela, et le
+            # pourcentage restait a 100 %.
+            z = _ZONE_NET_RE.match(d)
+            if z:
+                nets.add(z.group(1))
+    if not nets:
+        return percent_moteur
+    reel = int(round(100 * max(0, routables - len(nets)) / routables))
+    if reel < percent_moteur:
+        logger.warning(
+            "routage : %d %% annonce par le moteur, mais le DRC voit %d net(s) "
+            "incomplet(s) sur %d — pourcentage ramene a %d %%",
+            percent_moteur, len(nets), routables, reel)
+        return reel
+    return percent_moteur
 
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
@@ -1960,6 +2018,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # remplacer un chiffre etabli par un chiffre recalcule sans raison.
             if final is not avec_plans:
                 res.routed_percent = _measured_routed_percent(final, nets_routables)
+
+            # ⚠️ Dernier mot au DRC, qui voit le board LIVRE — plans coules,
+            # reparations faites. La mesure du moteur, elle, regarde le board
+            # juste apres le routeur et ignore les nets confies au plan.
+            res.routed_percent = _percent_verifie(
+                final, res.routed_percent, nets_routables
+            )
 
         logger.info(
             "route_auto: palier %d couches -> %d%% (%s)",

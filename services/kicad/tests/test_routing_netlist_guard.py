@@ -127,6 +127,12 @@ class TestRouteAutoEndToEnd:
         )
         # Pas de Freerouting disponible dans le test → on va jusqu'au repli.
         monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
         monkeypatch.setattr(routing_router, "_find_freerouting", lambda: None)
 
         req = routing_router.RouteAutoRequest(
@@ -140,6 +146,10 @@ class TestRouteAutoEndToEnd:
 
     def test_route_auto_reussit_quand_la_netlist_survit(self, monkeypatch):
         entree = _board_with_pads(nets=30)
+        # ⚠️ Board SYNTHETIQUE : sans piste reelle, un vrai DRC le declare
+        # incomplet et `_percent_verifie` ramenerait le pourcentage a 3 %.
+        # Ce test mesure la garde NETLIST, pas le verdict DRC.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
         sortie = _board_with_pads(nets=30, segments=12)
 
         monkeypatch.setattr(
@@ -176,6 +186,12 @@ class TestFreeroutingEchecNeJettePasLeTravailDejaFait:
     @staticmethod
     def _freerouting_qui_perd_la_netlist(monkeypatch, sortie_vide: bytes) -> None:
         monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
         monkeypatch.setattr(routing_router, "_find_freerouting", lambda: ("java", "fr.jar"))
         monkeypatch.setattr(routing_router, "_export_specctra", lambda *a, **k: None)
         monkeypatch.setattr(routing_router, "_run_freerouting", lambda *a, **k: None)
@@ -240,6 +256,12 @@ class TestLeMessageDitLaquelleDesDeuxCausesSEstProduite:
             routing_router, "_route_with_kicad_tools", lambda *a, **k: (partiel, 60)
         )
         monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
 
     def _route(self, entree: bytes):
         req = routing_router.RouteAutoRequest(
