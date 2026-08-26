@@ -9,6 +9,7 @@ uvicorn worker that is concurrently serving other routing requests.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import defaultdict
 import os
@@ -40,6 +41,31 @@ def _charger_board(pcbnew, chemin: str):
     board = pcbnew.LoadBoard(chemin)
     if board is not None:
         return board
+
+    # ⚠️ Tentative de reparation AVANT de renoncer. KiCad refuse le fichier
+    # ENTIER si une valeur de keepout est entre guillemets :
+    #     (keepout (tracks "not_allowed") ...)  -> None
+    #     (keepout (tracks not_allowed) ...)    -> charge
+    # Mesure du 2026-08-26 : c est ce qui privait l ESP32 du banc de
+    # Freerouting, le renvoyant sur un chemin degrade a 19 connexions
+    # manquantes. Le keepout fautif vient de kicad-tools, pas de nous.
+    #
+    # La reparation vit ICI, dans le chargeur, et pas chez un appelant :
+    # SIX operations chargent un board, et n en corriger qu une laissait
+    # echouer les cinq autres — mesure : 3 boards illisibles encore
+    # capturees apres avoir corrige le seul export Specctra.
+    try:
+        brut = Path(chemin).read_text(encoding="utf-8", errors="replace")
+        motif = (chr(92) + "((tracks|vias|pads|copperpour|footprints) " +
+                 chr(34) + "([a-z_]+)" + chr(34) + chr(92) + ")")
+        repare, n = re.subn(motif, lambda m: "(%s %s)" % (m.group(1), m.group(2)), brut)
+        if n:
+            Path(chemin).write_text(repare, encoding="utf-8")
+            board = pcbnew.LoadBoard(chemin)
+            if board is not None:
+                return board
+    except Exception:
+        pass
     garde = ""
     try:
         _DOSSIER_ILLISIBLES.mkdir(parents=True, exist_ok=True)

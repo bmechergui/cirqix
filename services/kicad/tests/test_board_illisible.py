@@ -89,6 +89,51 @@ class TestCablage:
         apres = self.SOURCE[self.SOURCE.index("def _charger_board(") :]
         corps = apres[: apres.index(chr(10) + "def ")]
         reste = apres[apres.index(chr(10) + "def ") :]
-        assert corps.count("pcbnew.LoadBoard(") == 1, "le chargeur doit appeler LoadBoard une fois"
+        # Deux appels : l essai, puis la relance apres reparation du keepout.
+        # Plus de deux signalerait une boucle de reessai non bornee.
+        assert corps.count("pcbnew.LoadBoard(") == 2, (
+            "le chargeur essaie une fois, repare, et reessaie une fois")
         directs = avant.count("pcbnew.LoadBoard(") + reste.count("pcbnew.LoadBoard(")
         assert directs == 0, f"{directs} appel(s) direct(s) hors du chargeur"
+
+
+class TestReparationAuChargement:
+    """Le chargeur REPARE avant de renoncer.
+
+    Mesure du 2026-08-26 : corriger le seul `_export_specctra` laissait encore
+    TROIS boards illisibles par tirage — `_fill_zones`, l API Freerouting et son
+    repli chargent chacun leur board. SIX operations passent par `LoadBoard`.
+
+    La reparation vit donc dans le chargeur, seul point de passage commun.
+    """
+
+    def test_un_keepout_guillemete_est_repare_et_charge(self, tmp_path):
+        appels = {"n": 0}
+
+        class Pcbnew:
+            @staticmethod
+            def LoadBoard(chemin):
+                appels["n"] += 1
+                texte = Path(chemin).read_text(encoding="utf-8")
+                # Le vrai pcbnew refuse les valeurs entre guillemets.
+                return None if '"not_allowed"' in texte else "BOARD"
+
+        f = tmp_path / "b.kicad_pcb"
+        f.write_text('(kicad_pcb (zone (keepout (tracks "not_allowed"))))', encoding="utf-8")
+        assert runner._charger_board(Pcbnew, str(f)) == "BOARD"
+        assert appels["n"] == 2, "le chargeur doit reessayer APRES reparation"
+        assert '"not_allowed"' not in f.read_text(encoding="utf-8")
+
+    def test_un_board_irreparable_leve_toujours(self, tmp_path, monkeypatch):
+        # La reparation est une chance de plus, pas une excuse pour se taire.
+        monkeypatch.setattr(runner, "_DOSSIER_ILLISIBLES", tmp_path / "garde")
+
+        class Muet:
+            @staticmethod
+            def LoadBoard(_p):
+                return None
+
+        f = tmp_path / "b.kicad_pcb"
+        f.write_text("(kicad_pcb vraiment casse)", encoding="utf-8")
+        with pytest.raises(RuntimeError):
+            runner._charger_board(Muet, str(f))
