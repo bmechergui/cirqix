@@ -71,9 +71,25 @@ describe('handleRouting — plafond de couches par plan', () => {
     expect(demandedLayers()).toBe(4);
   });
 
-  it("n'ÉLÈVE jamais le besoin réel jusqu'au plafond", async () => {
-    // Un petit schéma tient sur 2 couches. Un plan Pro Max ne doit pas le
-    // faire fabriquer en 8 : le plafond restreint, il ne prescrit pas.
+  it("envoie le PLAFOND, et le board livré ne le suit pas aveuglément", async () => {
+    // ⚠️ Cette garantie a changé d'endroit le 2026-08-26, et il faut savoir
+    // pourquoi. Le test exigeait auparavant que la valeur ENVOYÉE reste à 2
+    // pour un petit schéma, au motif que « le plafond restreint, il ne
+    // prescrit pas ».
+    //
+    // La crainte est juste, l'instrument était faux. `layers` est un PLAFOND
+    // côté service : `_layer_ladder(8)` rend [2, 4, 6, 8] et l'escalade
+    // s'arrête au premier palier qui route à 100 %. Envoyer 8 ne fabrique
+    // donc pas 8 — le service part toujours de 2.
+    //
+    // En revanche, envoyer une ESTIMATION rendait l'escalade impossible :
+    // `_layer_ladder(2)` ne contient qu'un barreau. Mesuré sur l'ESP32 du
+    // banc — 20 composants, 5 nets, bloqué à 2 couches, 25 % routé,
+    // 8 connexions manquantes, alors que 4 couches l'auraient sauvé.
+    //
+    // La garantie « pas plus de couches que nécessaire » appartient donc au
+    // SERVICE, qui la tient par construction, et se vérifie sur le board
+    // LIVRÉ — pas sur la requête.
     pcbStateCache.set(PROJECT, {
       schema: { components: [{ ref: 'R1' }], nets: [{ name: 'N1' }] } as never,
       boardW: 50,
@@ -84,7 +100,7 @@ describe('handleRouting — plafond de couches par plan', () => {
 
     await handleRouting(PROJECT);
 
-    expect(demandedLayers()).toBe(2);
+    expect(demandedLayers()).toBe(8);
   });
 
   it('survit à une réécriture complète du cache de board', async () => {

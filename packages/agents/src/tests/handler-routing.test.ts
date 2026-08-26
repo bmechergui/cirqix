@@ -134,29 +134,44 @@ describe('propagation du routed_percent réel', () => {
   });
 });
 
-describe('heuristique du nombre de couches', () => {
+describe('plafond de couches demandé au service', () => {
   it.each([
-    [30, 30, 2],
-    [5, 5, 2],
-    [31, 5, 4],
-    [5, 31, 4],
-    [80, 80, 4],
-  ])('%i composants / %i nets → %i couches', async (comps, nets, expected) => {
+    [30, 30],
+    [5, 5],
+    [31, 5],
+    [80, 80],
+  ])('%i composants / %i nets → le plafond du plan, quelle que soit la taille',
+    async (comps, nets) => {
+    // ⚠️ Ce bloc mesurait auparavant une HEURISTIQUE — « ≤ 30 composants et
+    // ≤ 30 nets → 2 couches, sinon 4 ». Elle a été retirée le 2026-08-26.
+    //
+    // Elle était une ESTIMATION faite AVANT le routage, et elle privait le
+    // service d'escalader sur une MESURE : `_layer_ladder(2)` ne rend qu'un
+    // seul palier, donc monter à 4 était structurellement impossible. Mesuré
+    // sur l'ESP32 du banc — 20 composants, 5 nets, bloqué à 2 couches,
+    // 25 % routé, 8 connexions manquantes.
+    //
+    // Le handler envoie désormais le PLAFOND du plan. Le service part toujours
+    // de 2 et s'arrête au premier palier qui route à 100 %, donc une petite
+    // carte reste en 2 couches — la garantie tient par construction, chez lui.
     seedCache({ schema: schemaOf(comps, nets), kicad_pcb_content: PCB_WITH_TRACK });
-    // Ces cas mesurent le BESOIN calculé par l'heuristique. Depuis que le plan
-    // plafonne les couches (Free 2 · Pro 4 · Pro Max 8), la valeur demandée au
-    // service est le minimum des deux : sans plan semé, tout retomberait sur
-    // `free` et les cas à 4 couches seraient rabotés à 2. On sème donc un plan
-    // qui laisse l'heuristique s'exprimer — le plafond lui-même est couvert par
-    // `routing-plan-cap.test.ts`.
     setProjectPlan(PROJECT, 'pro');
 
     await handleRouting(PROJECT);
 
-    // On observe la DÉCISION du handler (ce qu'il demande au service), pas
-    // l'écho du service — c'est le handler qui porte l'heuristique.
     const sent = routingMock.runRealRouting.mock.calls[0]?.[0] as { layers: number };
-    expect(sent.layers).toBe(expected);
+    expect(sent.layers).toBe(4);
+  });
+
+  it('un compte gratuit reste plafonné à 2, même sur un gros schéma', async () => {
+    // Le gate commercial est intact : c'est la seule borne qu'on conserve.
+    seedCache({ schema: schemaOf(80, 80), kicad_pcb_content: PCB_WITH_TRACK });
+    setProjectPlan(PROJECT, 'free');
+
+    await handleRouting(PROJECT);
+
+    const sent = routingMock.runRealRouting.mock.calls[0]?.[0] as { layers: number };
+    expect(sent.layers).toBe(2);
   });
 });
 

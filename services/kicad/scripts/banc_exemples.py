@@ -67,7 +67,11 @@ def _passer(circuit: dict, sortie: Path) -> dict:
     board = base64.b64decode(place_auto(
         AutoPlacementRequest(kicad_pcb_b64=_b64(board))).kicad_pcb_b64)
 
-    route = route_auto(RouteAutoRequest(kicad_pcb_b64=_b64(board), layers=2, timeout_s=1800))
+    # ⚠️ `layers` est le PLAFOND, pas le palier vise : le service part
+    # toujours de 2 et s arrete au premier palier qui route a 100 %. Passer 2
+    # ici donnait une echelle a UN barreau et interdisait toute escalade —
+    # c est ce qui bloquait l ESP32 a 25 % de routage.
+    route = route_auto(RouteAutoRequest(kicad_pcb_b64=_b64(board), layers=8, timeout_s=1800))
     board = base64.b64decode(route.kicad_pcb_b64)
 
     sortie.mkdir(parents=True, exist_ok=True)
