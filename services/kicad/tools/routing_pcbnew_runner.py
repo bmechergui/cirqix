@@ -11,18 +11,59 @@ from __future__ import annotations
 import json
 import sys
 from collections import defaultdict
+import os
+import time
 from pathlib import Path
 
 
+# Boards que pcbnew a refuse de charger. On les conserve pour pouvoir les
+# examiner : sans cela le fichier fautif est perdu avec le repertoire
+# temporaire, et il ne reste qu une AttributeError sans contexte.
+_DOSSIER_ILLISIBLES = Path(os.environ.get("KICAD_JOBS_DIR", "/tmp/kicad-jobs")) / "boards-illisibles"
+_MAX_ILLISIBLES = 10
+
+
+def _charger_board(pcbnew, chemin: str):
+    """`LoadBoard` avec un echec EXPLICITE et le board fautif conserve.
+
+    ⚠️ `_charger_board(pcbnew, )` rend `None` — pas une exception, `None` — quand il
+    ne sait pas lire un fichier. Utiliser ce None donne une
+    `AttributeError: NoneType has no attribute GetTracks`, a trois niveaux du
+    vrai probleme.
+
+    Mesure du 2026-08-26 : c est exactement ce qui arrivait a l ESP32 du banc.
+    L export Specctra echouait, Freerouting n etait jamais appele, et la
+    cascade retombait sur kicad-tools — 19 connexions manquantes et 5 erreurs,
+    quand les quatre autres cartes etaient propres. Le board fautif partait
+    avec le repertoire temporaire : impossible de savoir lequel, ni pourquoi.
+    """
+    board = pcbnew.LoadBoard(chemin)
+    if board is not None:
+        return board
+    garde = ""
+    try:
+        _DOSSIER_ILLISIBLES.mkdir(parents=True, exist_ok=True)
+        anciens = sorted(_DOSSIER_ILLISIBLES.glob("*.kicad_pcb"))
+        for vieux in anciens[: max(0, len(anciens) - _MAX_ILLISIBLES + 1)]:
+            vieux.unlink(missing_ok=True)
+        copie = _DOSSIER_ILLISIBLES / ("%d.kicad_pcb" % int(time.time() * 1000))
+        copie.write_bytes(Path(chemin).read_bytes())
+        garde = " — copie conservee : %s" % copie
+    except Exception:
+        garde = " — copie impossible"
+    raise RuntimeError(
+        "pcbnew n a pas pu charger le board %s (LoadBoard a rendu None)%s"
+        % (chemin, garde))
+
 def _export_specctra(pcbnew, args: dict[str, str]) -> None:
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     for track in list(board.GetTracks()):
         board.Remove(track)
     pcbnew.ExportSpecctraDSN(board, args["dsn"])
 
 
 def _specctra_roundtrip(pcbnew, args: dict[str, str]) -> None:
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     # Freerouting's SES replaces every old route; retaining stale tracks can
     # create dangling ends after placement changes.
     for track in list(board.GetTracks()):
@@ -54,7 +95,7 @@ def _specctra_roundtrip(pcbnew, args: dict[str, str]) -> None:
 
 def _fill_zones(pcbnew, args: dict[str, str]) -> None:
     """Remplit les zones de CUIVRE. Sans cela un plan n est qu un contour."""
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     # ⚠️ `SetIsFilled(True)` DECLARE la zone remplie sans calculer un seul
     # polygone : le fichier sort avec des zones et zero `filled_polygon`.
     # C est exactement le defaut trouve le 2026-08-23. Seul `ZONE_FILLER.Fill`
@@ -340,7 +381,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     forcee : orpheline elle bloque la commande au DRC, court-circuitee elle
     peut partir en fabrication.
     """
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     cibles = json.loads(args["pads"])
     largeur = int(float(args.get("trace_mm", "0.25")) * 1_000_000)
     distance = float(args.get("escape_mm", "1.2")) * 1_000_000
@@ -429,7 +470,7 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
     Les positions rendues sont ensuite DECLAREES dans le DSN pour que le
     routeur travaille autour, puis reposees apres l aller-retour Specctra.
     """
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     cibles = json.loads(args["pads"])
     largeur = int(float(args.get("trace_mm", "0.25")) * 1_000_000)
     distance = float(args.get("escape_mm", "1.2")) * 1_000_000
@@ -511,7 +552,7 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
     relier : il ne resterait qu un trou de percage facture et un obstacle de
     plus pour le routage suivant.
     """
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     cibles = json.loads(args["pads"])
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
@@ -588,7 +629,7 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     d une boite englobante tombe hors d un ilot concave, et un via pose dehors
     ne relierait rien.
     """
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     nets = set(json.loads(args.get("nets", "[]")))
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
@@ -641,7 +682,7 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     Path(args["result"]).write_text(json.dumps({"stitched": poses}), encoding="utf-8")
 
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
-    board = pcbnew.LoadBoard(args["pcb"])
+    board = _charger_board(pcbnew, args["pcb"])
     if not board.BuildConnectivity():
         raise RuntimeError("pcbnew failed to build board connectivity")
     connectivity = board.GetConnectivity()
