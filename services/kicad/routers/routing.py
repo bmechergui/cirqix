@@ -1233,6 +1233,107 @@ def _couches_deja_couvertes(text: str) -> set:
     return couches
 
 
+# Mots-cles de keepout dont KiCad attend un JETON NU, jamais une chaine.
+_CLES_KEEPOUT = ("tracks", "vias", "pads", "copperpour", "footprints")
+
+
+def _deguillemeter_keepout(pcb_bytes: bytes) -> bytes:
+    """Retire les guillemets des valeurs de keepout. KiCad les refuse.
+
+    ⚠️ Cause racine des 19 connexions manquantes de l ESP32 du banc, isolee le
+    2026-08-26 en capturant le board que pcbnew refusait :
+
+        (keepout (tracks "not_allowed") ...)   -> LoadBoard rend None
+        (keepout (tracks not_allowed) ...)     -> charge
+
+    pcbnew refuse le fichier ENTIER. L export Specctra echoue, Freerouting
+    n est jamais appele, et la cascade retombe sur kicad-tools : 7 connexions
+    manquantes et 58 erreurs de fabricabilite la ou Freerouting en produit
+    zero.
+
+    ⚠️ Le keepout fautif n est PAS le notre — le notre ecrit ses valeurs nues.
+    Il vient d un board genere par kicad_tools. On repare a la lecture, comme
+    on requote deja les proprietes numeriques nues des schemas.
+
+    ⚠️ J ai d abord accuse les COUCHES du meme keepout (32 citees sur une carte
+    qui en declare 2). Anomalie reelle, mais la mesure a tranche : la retirer
+    ne changeait rien, deguillemeter suffit.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    motif = (chr(92) + "((" + "|".join(_CLES_KEEPOUT) + ") " + chr(34) +
+             "([a-z_]+)" + chr(34) + chr(92) + ")")
+    nouveau, n = re.subn(motif, lambda m: "(%s %s)" % (m.group(1), m.group(2)), text)
+    if not n:
+        return pcb_bytes
+    logger.info("keepout : %d valeur(s) deguillemetee(s) — KiCad refuse les chaines", n)
+    return nouveau.encode("utf-8")
+
+def _retirer_couches_fantomes(pcb_bytes: bytes) -> bytes:
+    """Retire des zones les couches que la carte ne declare pas.
+
+    ⚠️ Cause racine des 19 connexions manquantes de l ESP32 du banc, trouvee le
+    2026-08-26 en capturant le board que pcbnew refusait :
+
+        couches cuivre declarees par la carte :  2  (F.Cu, B.Cu)
+        couches citees par un keepout         : 32  (F.Cu, B.Cu, In1..In30)
+
+    pcbnew refuse alors le fichier ENTIER — `LoadBoard` rend `None`. L export
+    Specctra echoue, Freerouting n est jamais appele, et la cascade retombe sur
+    kicad-tools : 7 connexions manquantes et 58 erreurs de fabricabilite la ou
+    Freerouting en produit zero.
+
+    ⚠️ Le keepout fautif n est PAS le notre — le notre ecrit `(copperpour
+    not_allowed)` sans guillemets. Il vient d un board genere par kicad_tools.
+    On repare a la lecture, comme on requote deja les proprietes numeriques.
+
+    ⚠️ On retire les COUCHES, jamais la zone : un keepout supprime laisserait
+    le plan couler sous un boitier fine-pitch.
+    """
+    text = pcb_bytes.decode("utf-8", errors="replace")
+    reelles = set(_couches_cuivre_declarees(text))
+    if not reelles:
+        return pcb_bytes
+
+    def nettoyer(m):
+        citees = re.findall(chr(34) + "([^" + chr(34) + "]+)" + chr(34), m.group(1))
+        gardees = [c for c in citees if not c.endswith(".Cu") or c in reelles]
+        if gardees == citees:
+            return m.group(0)
+        return "(layers " + " ".join(chr(34) + c + chr(34) for c in gardees) + ")"
+
+    motif = (chr(92) + "(layers ((?:" + chr(92) + "s*" + chr(34) + "[^" + chr(34) + "]+" + chr(34) + ")+)" + chr(92) + "s*" + chr(92) + ")")
+    nouveau, n = re.subn(motif, nettoyer, text)
+    if not n or nouveau == text:
+        return pcb_bytes
+    logger.info("zones : couches fantomes retirees (la carte n en declare que %d)",
+                len(reelles))
+    return nouveau.encode("utf-8")
+
+
+def _couches_cuivre_declarees(text: str) -> list:
+    """Couches cuivre du bloc `(layers ...)` DE LA CARTE.
+
+    ⚠️ Borne au bloc lui-meme, pas a un nombre de caracteres : les ZONES ont
+    leur propre `(layers ...)`, et une fenetre fixe les avalait — le
+    nettoyage croyait alors declarees les couches fantomes qu il devait
+    retirer, et ne retirait rien.
+    """
+    i = text.find("(layers")
+    if i == -1:
+        return []
+    prof = 0
+    for j in range(i, len(text)):
+        if text[j] == "(":
+            prof += 1
+        elif text[j] == ")":
+            prof -= 1
+            if prof == 0:
+                bloc = text[i:j + 1]
+                break
+    else:
+        return []
+    return re.findall(chr(34) + "([A-Za-z0-9]+" + chr(92) + ".Cu)" + chr(34), bloc)
+
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
 
@@ -1545,6 +1646,12 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
     scratch — without stale TS-generated traces that pointed to pre-placement
     component positions.
     """
+    # ⚠️ Nettoyer AVANT de charger : une zone citant des couches que la
+    # carte ne declare pas fait rendre `None` a `LoadBoard`, et pcbnew refuse
+    # le fichier ENTIER. Mesure du 2026-08-26 : un keepout de kicad-tools
+    # citait 32 couches sur une carte qui en declare 2.
+    pcb_bytes = _retirer_couches_fantomes(pcb_bytes)
+    pcb_bytes = _deguillemeter_keepout(pcb_bytes)
     with tempfile.TemporaryDirectory() as tmp:
         in_pcb = Path(tmp) / "in.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
