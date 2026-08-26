@@ -939,6 +939,77 @@ _HALO_PUSH_STEP_MM: float = 0.5
 _HALO_PUSH_MAX_STEPS: int = 60
 
 
+# Part de la surface de carte au-dela de laquelle un boitier est DOMINANT.
+# 12 % : un module ESP32-WROOM (41 x 48 mm) sur une carte de 93 x 70 en
+# occupe 30, un LQFP-48 (9 x 9) sur la meme carte en occupe 1.
+_PART_DOMINANTE = 0.12
+
+
+def _encombrement_fp(fp) -> tuple:
+    """Etendue (largeur, hauteur) d un footprint, d apres ses pads."""
+    xs = [p.position[0] for p in getattr(fp, "pads", []) or []]
+    ys = [p.position[1] for p in getattr(fp, "pads", []) or []]
+    if not xs:
+        return 0.0, 0.0
+    return max(xs) - min(xs), max(ys) - min(ys)
+
+
+def _boitiers_dominants(pcb) -> list:
+    """Refs des boitiers occupant une part notable de la carte.
+
+    ⚠️ Le critere porte sur la SURFACE RELATIVE, pas sur le nombre de broches.
+    `_dense_part_refs` (>= 16 pads) repond a une autre question — le canal
+    d escape — et ne convient pas ici : un LQFP-48 de 9 x 9 mm sur une carte
+    de 100 mm n a rien de dominant, et l ancrer priverait l optimiseur d un
+    degre de liberte utile.
+
+    Mesure du 2026-08-26 : meme sur une carte de 93 x 70 mm ou son courtyard
+    de 41 x 48 tient largement, l ESP32-WROOM recevait 9 chevauchements —
+    `OptimizationWorkflow` empile les passifs par-dessus et `PlacementFixer`
+    n y parvient pas, deplacer un boitier de 2000 mm2 demandant de deplacer
+    tout le reste.
+
+    Sans taille de carte connue, « dominant » n a pas de sens : on ne devine
+    pas, on rend une liste vide.
+    """
+    try:
+        l_carte, h_carte = pcb.board_size
+    except Exception:
+        return []
+    aire = float(l_carte) * float(h_carte)
+    if aire <= 0:
+        return []
+    dominants = []
+    for fp in pcb.footprints:
+        if not fp.reference:
+            continue
+        l, h = _encombrement_fp(fp)
+        if l * h >= _PART_DOMINANTE * aire:
+            dominants.append(fp.reference)
+    return dominants
+
+
+def _centrer(pcb, refs: list) -> None:
+    """Pose les refs au centre de la carte, en les ecartant les unes des autres.
+
+    ⚠️ Ancrer un boitier LA OU `gen_pcb` l a laisse figerait un mauvais
+    placement — la grille de depart n a aucune intention. Un module dominant
+    va au milieu, et les passifs s organisent autour : c est ce que fait un
+    concepteur.
+    """
+    try:
+        l_carte, h_carte = pcb.board_size
+    except Exception:
+        return
+    cx, cy = float(l_carte) / 2.0, float(h_carte) / 2.0
+    for i, ref in enumerate(refs):
+        fp = next((f for f in pcb.footprints if f.reference == ref), None)
+        if fp is None:
+            continue
+        l, h = _encombrement_fp(fp)
+        # Plusieurs dominants : on les decale de leur propre largeur.
+        fp.position = (cx + i * (l + 5.0), cy)
+
 def _dense_part_refs(pcb) -> list[str]:
     """Refs des composants fine-pitch haut-broches (≥ ``_DENSE_PAD_COUNT`` pads).
 
@@ -1105,6 +1176,16 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
 
         # Connecteurs ancrés + clampés dans le contour AVANT l'optimisation
         conn = _connector_refs(pcb)
+        # ⚠️ Les boitiers DOMINANTS rejoignent les ancrages, apres avoir ete
+        # centres. Un module qui occupe un quart de la carte ne se place pas
+        # par tirage genetique : mesure du 2026-08-26, l ESP32-WROOM recevait
+        # 9 chevauchements de courtyard meme avec la place necessaire.
+        dominants = _boitiers_dominants(pcb)
+        if dominants:
+            logger.info("auto_place: boitier(s) dominant(s) centre(s) et ancre(s) : %s",
+                        ", ".join(dominants))
+            _centrer(pcb, dominants)
+            conn = conn + [r for r in dominants if r not in conn]
         _clamp_fixed_refs_to_outline(pcb, conn)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
