@@ -38,48 +38,65 @@ def _mcu(famille: str) -> dict:
 
 
 def circuit(famille: str, cible: int) -> dict:
-    """Circuit coherent d environ `cible` composants."""
+    """Circuit coherent d environ `cible` composants.
+
+    ⚠️ La premiere version reliait chaque condensateur entre +3,3 V et GND et ne
+    creait un signal que tous les six composants. Resultat mesure le 2026-08-26
+    sur l ESP32 du banc : 78 pastilles portant un net, dont 37 sur DEUX rails,
+    et seulement 5 nets a deux pastilles ou plus.
+
+    Une telle carte n eprouve pas le ROUTAGE, elle eprouve la distribution de
+    puissance — et elle fausse la mesure : avec 4 nets routables au
+    denominateur, chaque echec coute 25 points de pourcentage.
+
+    On construit donc des GRAPPES : chaque peripherique est relie au MCU par un
+    net de signal qui lui est propre. Les decouplages restent sur les rails,
+    puisque c est leur role, mais ils cessent d etre la majorite.
+    """
     composants = [_mcu(famille)]
-    liaisons: dict[str, list] = {"GND": [], "+3.3V": [], "VIN": []}
+    liaisons: dict[str, list] = {}
 
     def relier(net: str, ref: str, pin) -> None:
         liaisons.setdefault(net, []).append({"ref": ref, "pin": pin})
 
-    # Regulateur : VIN -> +3.3V
+    # Alimentation : entree, regulateur, rails.
     composants.append({"ref": "U2", "value": "AMS1117-3.3",
                        "symbol": "Regulator_Linear:AMS1117-3.3",
                        "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2"})
-    relier("VIN", "U2", 3), relier("+3.3V", "U2", 2), relier("GND", "U2", 1)
-    relier("+3.3V", "U1", 1), relier("GND", "U1", 8)
-
-    # Connecteur d alimentation
     composants.append({"ref": "J1", "value": "5V",
                        "symbol": "Connector_Generic:Conn_01x02",
                        "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"})
-    relier("VIN", "J1", 1), relier("GND", "J1", 2)
+    relier("VIN", "J1", 1), relier("VIN", "U2", 3)
+    relier("GND", "J1", 2), relier("GND", "U2", 1)
+    relier("+3.3V", "U2", 2), relier("+3.3V", "U1", 1)
+    relier("GND", "U1", 8)
 
-    # Le reste : grappes de decouplage, puis LED indicatrices, puis rappels.
-    # Chaque condensateur relie +3.3V a GND — c est ce qui charge reellement le
-    # plan de masse et met le routage a l epreuve.
+    # Grappes de signal : une LED pilotee par une broche du MCU a travers sa
+    # resistance de limitation. Chaque grappe cree DEUX nets a deux pastilles —
+    # exactement ce qu un routeur doit resoudre.
+    broche = 10
     i = 1
     while len(composants) < cible:
-        n = len(composants)
-        if n % 3 != 2:
-            ref = f"C{i}"
-            composants.append({"ref": ref, "value": "100nF",
-                               "symbol": "Device:C", "footprint": _CMS})
-            relier("+3.3V", ref, 1), relier("GND", ref, 2)
-        elif n % 6 == 2:
-            ref = f"R{i}"
-            composants.append({"ref": ref, "value": "10k",
+        reste = cible - len(composants)
+        if reste >= 2 and i % 4 != 0:
+            r, d_ = f"R{i}", f"D{i}"
+            composants.append({"ref": r, "value": "330",
                                "symbol": "Device:R", "footprint": _RES})
-            relier("+3.3V", ref, 1), relier(f"SIG{i}", ref, 2)
-            relier(f"SIG{i}", "U1", 10 + (i % 30))
-        else:
-            ref = f"D{i}"
-            composants.append({"ref": ref, "value": "LED",
+            composants.append({"ref": d_, "value": "LED",
                                "symbol": "Device:LED", "footprint": _LED})
-            relier(f"SIG{i - 1}", ref, 1), relier("GND", ref, 2)
+            relier(f"GPIO{i}", "U1", broche)
+            relier(f"GPIO{i}", r, 1)
+            relier(f"LED{i}", r, 2)
+            relier(f"LED{i}", d_, 1)
+            relier("GND", d_, 2)
+            broche += 1
+        else:
+            # Un decouplage tous les quatre composants : leur vraie proportion
+            # sur une carte reelle.
+            c = f"C{i}"
+            composants.append({"ref": c, "value": "100nF",
+                               "symbol": "Device:C", "footprint": _CMS})
+            relier("+3.3V", c, 1), relier("GND", c, 2)
         i += 1
 
     nets = [{"name": nom, "pins": pins} for nom, pins in liaisons.items() if len(pins) >= 2]
