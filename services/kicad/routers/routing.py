@@ -1011,6 +1011,48 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
         return reel
     return percent_moteur
 
+def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
+    """Relie par un via les ilots d un meme plan, decoupes par les pistes.
+
+    ⚠️ Distinct de `_recoudre_les_ilots`, qui traite des PASTILLES isolees.
+    Ici il n y a pas de pastille en cause : c est le cuivre du plan lui-meme
+    qui est coupe. Mesure du 2026-08-26, carte a 100 composants — zone GND sur
+    F.Cu = 5 ilots, sur B.Cu = 1 seul. Le DRC le signalait par des paires
+    `Zone [GND] <-> Zone [GND]`, invisibles a la couture de pastilles.
+
+    Reparation, jamais regression : au moindre doute on rend le board recu, et
+    on refuse un resultat qui ajoute des erreurs.
+    """
+    if b"filled_polygon" not in pcb_bytes:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "stitch_zones",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "nets": json.dumps(list(_NETS_CONFIES_AU_PLAN)),
+            })
+        except Exception as exc:
+            logger.warning("couture des zones impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        n = json.loads(resultat.read_text(encoding="utf-8")).get("stitched", 0)
+        recousu = sortie.read_bytes()
+    if not n:
+        return pcb_bytes
+    logger.info("couture : %d via(s) poses dans les ilots de plan", n)
+    if _compte_erreurs(_rapport_drc(recousu)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+        logger.warning("couture de zones : erreurs ajoutees — board d origine conserve")
+        return pcb_bytes
+    return recousu
+
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
     try:
@@ -1991,6 +2033,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # souvent a un ilot de plan detache par une piste, pas a la
             # pastille elle-meme.
             final = _recoudre_les_ilots(final)
+            # Puis les ILOTS DE PLAN : les pistes de signal decoupent le
+            # cuivre de la face composants, et aucune pastille n est en cause.
+            final = _recoudre_les_zones(final)
 
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via

@@ -556,6 +556,90 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
     pcbnew.SaveBoard(args["output"], board)
     Path(args["result"]).write_text(json.dumps({"stitched": poses}), encoding="utf-8")
 
+def _points_dans_boite(x1, y1, x2, y2, pas):
+    """Points candidats dans une boite : le centre d abord, puis une grille.
+
+    Le centre est le meilleur pari sur un ilot convexe — et la plupart le
+    sont. On ne balaie que s il est refuse par le polygone.
+    """
+    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+    yield cx, cy
+    pas = max(int(pas), 100_000)
+    y = y1 + pas // 2
+    while y < y2:
+        x = x1 + pas // 2
+        while x < x2:
+            if (x, y) != (cx, cy):
+                yield x, y
+            x += pas
+        y += pas
+
+
+def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
+    """Pose un via dans chaque ilot d un plan, pour les relier par l autre face.
+
+    ⚠️ Les pistes de signal DECOUPENT le plan de la face composants. Mesure du
+    2026-08-26, carte a 100 composants : zone GND sur F.Cu = 5 ilots, sur B.Cu
+    = 1 seul. Le DRC les signalait par des paires
+    `Zone [GND] <-> Zone [GND]` que la couture de PASTILLES ne pouvait pas
+    traiter — il n y a pas de pastille en cause, seulement du cuivre coupe.
+
+    ⚠️ Le point de pose est VERIFIE dans le polygone (`Contains`) : le centre
+    d une boite englobante tombe hors d un ilot concave, et un via pose dehors
+    ne relierait rien.
+    """
+    board = pcbnew.LoadBoard(args["pcb"])
+    nets = set(json.loads(args.get("nets", "[]")))
+    via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
+    perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+
+    poses = 0
+    for zone in board.Zones():
+        try:
+            nom = str(zone.GetNetname())
+        except Exception:
+            continue
+        if nets and nom not in nets:
+            continue
+        obstacles = _obstacles_d_un_autre_net(board, zone.GetNetCode())
+        for couche in zone.GetLayerSet().Seq():
+            try:
+                poly = zone.GetFilledPolysList(couche)
+                total = poly.OutlineCount()
+            except Exception:
+                continue
+            if total < 2:
+                continue  # plan d un seul tenant : rien a recoudre
+            for i in range(total):
+                b = poly.Outline(i).BBox()
+                pose = False
+                for x, y in _points_dans_boite(b.GetLeft(), b.GetTop(),
+                                               b.GetRight(), b.GetBottom(), via_d * 3):
+                    pt = pcbnew.VECTOR2I(int(x), int(y))
+                    try:
+                        if not poly.Contains(pt, i):
+                            continue
+                    except Exception:
+                        continue
+                    if any(_dist_point_boite(x, y, o) < via_d / 2 + clearance
+                           for o in obstacles):
+                        continue
+                    via = pcbnew.PCB_VIA(board)
+                    via.SetPosition(pt)
+                    via.SetWidth(via_d)
+                    via.SetDrill(perc_d)
+                    via.SetNetCode(zone.GetNetCode())
+                    board.Add(via)
+                    poses += 1
+                    pose = True
+                    break
+                if not pose:
+                    continue
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(json.dumps({"stitched": poses}), encoding="utf-8")
+
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     board = pcbnew.LoadBoard(args["pcb"])
     if not board.BuildConnectivity():
@@ -620,6 +704,8 @@ def main(argv: list[str]) -> int:
         _export_specctra(pcbnew, args)
     elif operation == "specctra_roundtrip":
         _specctra_roundtrip(pcbnew, args)
+    elif operation == "stitch_zones":
+        _stitch_zones(pcbnew, args)
     elif operation == "stitch_islands":
         _stitch_islands(pcbnew, args)
     elif operation == "plan_escape":
