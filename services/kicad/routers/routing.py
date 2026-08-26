@@ -698,6 +698,42 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
     return isolees
 
 
+# Regles ouvertes pour une carte portant un boitier fine-pitch. Valeurs
+# atteignables chez JLCPCB en option payante (via bouche/recouvert) — pas le
+# procede standard, d ou le conditionnement.
+_REGLES_FINE_PITCH = {
+    "min_via_diameter": 0.3,
+    "min_through_hole_diameter": 0.15,
+    "min_via_annular_width": 0.075,
+    "min_hole_clearance": 0.15,
+    "min_clearance": 0.15,
+    "min_track_width": 0.15,
+}
+
+
+def _projet_kicad(pcb_bytes: bytes):
+    """Fichier projet aux regles ouvertes, ou None si la carte n en a pas besoin.
+
+    ⚠️ Les contraintes de percage ne viennent PAS du fichier de carte : il n en
+    declare aucune. Depuis KiCad 6 elles vivent dans le fichier PROJET
+    (`.kicad_pro`). Sans lui, `kicad-cli` applique ses defauts — via >= 0,50 mm,
+    percage >= 0,30, anneau >= 0,10 — et nos boards n ont jamais eu de projet.
+
+    Consequence mesuree le 2026-08-26 : le via-in-pad, seule reparation
+    possible pour les pattes d un LQFP-48 que le plan n atteint pas, etait
+    refuse par 9 erreurs. Avec un projet aux regles ouvertes : 0.
+
+    ⚠️ On n ouvre PAS par defaut. Un percage de 0,15 mm est une OPTION PAYANTE
+    chez JLCPCB. La condition est la presence reelle d un boitier dense — meme
+    critere que le halo d escape et le keepout de coulee.
+    """
+    if not _dense_footprint_boxes(pcb_bytes):
+        return None
+    return {
+        "board": {"design_settings": {"rules": dict(_REGLES_FINE_PITCH)}},
+        "meta": {"filename": "b.kicad_pro", "version": 3},
+    }
+
 def _rapport_drc(pcb_bytes: bytes) -> dict:
     """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
     cli = shutil.which("kicad-cli")
@@ -707,6 +743,13 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
         pcb = Path(tmp) / "b.kicad_pcb"
         rapport = Path(tmp) / "b.json"
         pcb.write_bytes(pcb_bytes)
+        # ⚠️ Le fichier PROJET doit etre a cote du board, sinon kicad-cli
+        # applique ses defauts et le verdict porte sur des regles que la
+        # carte ne suit pas.
+        projet = _projet_kicad(pcb_bytes)
+        if projet is not None:
+            (Path(tmp) / "b.kicad_pro").write_text(
+                json.dumps(projet), encoding="utf-8")
         try:
             subprocess.run(
                 [cli, "pcb", "drc", str(pcb), "--format", "json", "-o", str(rapport)],
