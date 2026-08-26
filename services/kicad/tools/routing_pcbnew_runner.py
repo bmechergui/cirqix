@@ -563,12 +563,25 @@ def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     connectivity = board.GetConnectivity()
     connectivity.RecalculateRatsnest()
 
+    # ⚠️ Les nets CONFIES AU PLAN sont exclus. La mesure a lieu juste apres
+    # le routeur, AVANT que les plans soient coules : a cet instant ils n ont
+    # aucun cuivre et comptent comme non routes. Mesure du 2026-08-26 — une
+    # carte LED entierement connectee (0 manquante, 0 violation) etait
+    # annoncee a 66 %, et `routed_percent < 100` declenche le reasoner, les
+    # re-tirages de placement et le repli.
+    exclus = {n for n in json.loads(args.get("exclure_nets", "[]")) if n}
     pads_by_net: dict[int, list] = defaultdict(list)
     for footprint in board.GetFootprints():
         for pad in footprint.Pads():
             net_code = int(pad.GetNetCode())
-            if net_code > 0:
-                pads_by_net[net_code].append(pad)
+            if net_code <= 0:
+                continue
+            try:
+                if str(pad.GetNetname()) in exclus:
+                    continue
+            except Exception:
+                pass
+            pads_by_net[net_code].append(pad)
 
     unrouted_nets = 0
     for net_pads in pads_by_net.values():

@@ -383,17 +383,31 @@ def _count_routable_nets(pcb_bytes: bytes) -> int:
 
     Les nets à un seul pad (broches non connectées, `Net-(U1-X)`) sont exclus
     dans les deux cas : il n'y a rien à router.
+
+    ⚠️ Les nets CONFIÉS AU PLAN sont exclus eux aussi. Mesure du 2026-08-26,
+    carte LED passée dans la chaîne complète : 4 segments, zéro pour GND,
+    0 connexion manquante et 0 violation DRC — mais `routed_percent` annonçait
+    **66 %**, GND comptant comme non routé alors que le plan le relie.
+
+    Ce chiffre n'est pas décoratif : `routed_percent < 100` déclenche le
+    reasoner, les re-tirages de placement et le repli. Une carte parfaite
+    relançait donc la machine indéfiniment. C'est aussi l'explication des
+    « 91 % » du board STM32 — 12 nets routables, GND confié au plan, 11/12.
+
+    Exclure un net que le plan prend en charge n'est pas une indulgence : c'est
+    la bonne question posée. Personne n'attend de piste pour ce net-là.
     """
     from collections import Counter
 
     text = pcb_bytes.decode("utf-8", errors="replace")
+    au_plan = set(_NETS_CONFIES_AU_PLAN)
 
     numerotes = Counter(nom for _, nom in _NET_NUMBERED_RE.findall(text) if nom)
     if numerotes:
-        return sum(1 for c in numerotes.values() if c >= 3)
+        return sum(1 for nom, c in numerotes.items() if c >= 3 and nom not in au_plan)
 
     nommes = Counter(nom for nom in _NET_NAMED_RE.findall(text) if nom)
-    return sum(1 for c in nommes.values() if c >= 2)
+    return sum(1 for nom, c in nommes.items() if c >= 2 and nom not in au_plan)
 
 
 # ---------------------------------------------------------------------------
@@ -1460,6 +1474,9 @@ def _measure_routing(pcb_bytes: bytes) -> tuple[int, int]:
         in_pcb.write_bytes(pcb_bytes)
         _run_pcbnew_operation({
             "operation": "measure_connectivity",
+        # Meme exclusion que `_count_routable_nets` : sans elle le
+        # numerateur et le denominateur ne parleraient pas du meme ensemble.
+        "exclure_nets": json.dumps(list(_NETS_CONFIES_AU_PLAN)),
             "pcb": str(in_pcb),
             "result": str(result_path),
         })
