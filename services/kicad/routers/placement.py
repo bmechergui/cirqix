@@ -101,6 +101,15 @@ class AutoPlacementResponse(BaseModel):
     kicad_pcb_b64: str
     placed_count: int
     positions: list[dict]  # [{ref, x_mm, y_mm}]
+    # ⚠️ Conflits de placement que l Inspecteur n a PAS su resoudre.
+    # Mesure du 2026-08-26, ESP32 du banc : 9 `courtyards_overlap`,
+    # 8 `shorting_items` et 2 `pth_inside_courtyard` livres SANS un mot.
+    # L appelant routait un board deja casse et decouvrait les degats au
+    # DRC, trois etapes plus loin, sans pouvoir les imputer.
+    #
+    # Defaut a 0 : un chemin qui ne sait pas compter ne doit pas faire
+    # echouer la validation.
+    conflits_restants: int = 0
 
 
 # ---------------------------------------------------------------------------

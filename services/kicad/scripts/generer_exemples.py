@@ -100,9 +100,60 @@ def circuit(famille: str, cible: int) -> dict:
         i += 1
 
     nets = [{"name": nom, "pins": pins} for nom, pins in liaisons.items() if len(pins) >= 2]
-    cote = max(40.0, min(180.0, 18.0 + 1.9 * len(composants)))
+    l, h = _dimensions(composants)
     return {"components": composants, "nets": nets,
-            "board_width_mm": round(cote, 1), "board_height_mm": round(cote * 0.75, 1)}
+            "board_width_mm": l, "board_height_mm": h}
+
+
+# Encombrement approximatif (courtyard) des boitiers qu on genere, en mm.
+# Mesure sur les empreintes reelles ; le module ESP32-WROOM est de loin le plus
+# gros, et c est lui qui dictait l echec.
+_ENCOMBREMENT = {
+    "RF_Module:ESP32-WROOM-32": (41.3, 48.1),
+    "Package_QFP:LQFP-48_7x7mm_P0.5mm": (9.0, 9.0),
+    "Package_TO_SOT_SMD:SOT-223-3_TabPin2": (8.9, 7.3),
+    "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical": (3.6, 9.0),
+    _RES: (1.6, 3.0),
+    _CMS: (1.6, 3.0),
+    _LED: (1.6, 3.0),
+}
+_DEFAUT = (3.0, 3.0)
+
+
+def _dimensions(composants: list) -> tuple:
+    """Taille de carte deduite de l encombrement REEL des boitiers.
+
+    ⚠️ Le dimensionnement se faisait au NOMBRE de composants —
+    `18 + 1,9 x n` — sans regarder leur taille. Vingt resistances et un module
+    ESP32 donnaient la meme carte.
+
+    Mesure du 2026-08-26 : courtyard de l ESP32-WROOM 41,3 x 48,1 mm pour une
+    carte generee a 56 x 42. Le boitier etait PLUS HAUT que la carte, et le
+    placement rendait 12 `courtyards_overlap` et 8 `shorting_items` — un echec
+    qu aucun placeur ne pouvait resoudre.
+
+    Deux contraintes, on prend la plus forte :
+      - la surface totale des boitiers, avec de la marge de routage ;
+      - le plus gros boitier, qui doit tenir avec ses degagements.
+    """
+    aires, maxi_l, maxi_h = 0.0, 0.0, 0.0
+    for c in composants:
+        l, h = _ENCOMBREMENT.get(c.get("footprint", ""), _DEFAUT)
+        aires += l * h
+        maxi_l, maxi_h = max(maxi_l, l), max(maxi_h, h)
+    # Facteur 4 : un placement routable n occupe pas plus du quart de la
+    # surface en cuivre, le reste sert aux pistes et aux degagements.
+    par_surface = (aires * 4.0) ** 0.5
+    # ⚠️ On CONSERVE le dimensionnement par nombre de composants comme plancher.
+    # Il donnait 75 x 56 mm a 30 composants et 180 x 135 a 100 — des tailles qui
+    # rendaient ZERO erreur de fabricabilite au banc du 2026-08-26. Le seul
+    # critere de surface les ramenait a 40 x 30 et 51 x 38, nettement plus
+    # serre : on aurait corrige l ESP32 en degradant les quatre autres.
+    par_nombre = 18.0 + 1.9 * len(composants)
+    # Le plus gros boitier doit tenir, avec 10 mm de degagement de chaque cote.
+    cote = max(par_surface, par_nombre, maxi_l + 20.0, maxi_h + 20.0, 40.0)
+    cote = min(cote, 400.0)
+    return round(cote, 1), round(max(cote * 0.75, maxi_h + 20.0), 1)
 
 
 CAS = [

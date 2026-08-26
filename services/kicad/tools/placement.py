@@ -170,6 +170,24 @@ def _normalize_to_board_frame(pcb_path: Path) -> int:
     return len(outside)
 
 
+def _compter_conflits_erreur(pcb_path: Path) -> int:
+    """Conflits de placement de severite ERROR encore presents.
+
+    Rend 0 si la mesure est impossible : on ne fabrique pas un chiffre, et
+    un compteur en panne ne doit pas faire echouer un placement valide.
+    """
+    try:
+        from kicad_tools.placement.analyzer import PlacementAnalyzer
+        from kicad_tools.placement.conflict import ConflictSeverity
+
+        conflits = PlacementAnalyzer().find_conflicts(str(pcb_path))
+        return sum(1 for c in conflits
+                   if getattr(c, "severity", None) == ConflictSeverity.ERROR)
+    except Exception as exc:
+        logger.warning("auto_place: conflits non mesurables (%s)", exc)
+        return 0
+
+
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
 
@@ -1253,10 +1271,27 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 "sont inroutables et kct route refusera le board ; réparation "
                 "non implémentée", n_hors)
 
+        # ⚠️ Compter ce qu on n a PAS su reparer, et le dire. Mesure du
+        # 2026-08-26, ESP32 du banc : 9 `courtyards_overlap`, 8
+        # `shorting_items` et 2 `pth_inside_courtyard` livres SANS un mot.
+        # L appelant routait un board deja casse et decouvrait les degats
+        # au DRC, trois etapes plus loin, sans pouvoir les imputer.
+        #
+        # On ne LEVE pas : un board imparfait vaut mieux qu aucun board, et
+        # l orchestrateur sait deja re-tirer. Mais on ne ment plus par
+        # omission.
+        conflits_restants = _compter_conflits_erreur(out)
+        if conflits_restants:
+            logger.error(
+                "auto_place: %d conflit(s) de placement NON RESOLU(S) — le "
+                "board est livre en l etat, le DRC les signalera",
+                conflits_restants)
+
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
+            "conflits_restants": conflits_restants,
             # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
             # attendu par le client TS (`placement-service.ts::isValidPosition`).
             # Le code émettait `x`/`y`, contredisant son propre modèle : le client
