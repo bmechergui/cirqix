@@ -1334,6 +1334,12 @@ def _couches_cuivre_declarees(text: str) -> list:
         return []
     return re.findall(chr(34) + "([A-Za-z0-9]+" + chr(92) + ".Cu)" + chr(34), bloc)
 
+# Retrait du plan par rapport au contour. `copper_edge_clearance` vaut
+# 0,5 mm par defaut chez KiCad ; on prend une marge au-dessus pour absorber
+# l arrondi du remplissage.
+_RETRAIT_BORD_MM: float = 0.6
+
+
 def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     """Coule une zone GND sur chaque face exterieure, si elle n y est pas deja.
 
@@ -1352,6 +1358,22 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
         logger.warning("plans de masse: contour Edge.Cuts illisible — aucun plan coule")
         return pcb_bytes
     x1, y1, x2, y2 = contour
+
+    # ⚠️ RETRAIT du bord. Coule sur la boite englobante brute, le cuivre du
+    # plan arrive au ras d Edge.Cuts et le DRC leve une ERREUR — pas un
+    # avertissement : `copper_edge_clearance`, qui fait refuser la carte.
+    # Mesure du 2026-08-26 : 3 erreurs de cette famille sur stm32-baseline.
+    #
+    # Un fabricant fraise le contour avec une tolerance ; du cuivre
+    # affleurant se retrouve expose ou arrache.
+    #
+    # On retire, on ne supprime pas : un plan absent laisserait GND sans
+    # porteur et la sequence « le plan prend GND en charge » s effondrerait.
+    x1, y1 = x1 + _RETRAIT_BORD_MM, y1 + _RETRAIT_BORD_MM
+    x2, y2 = x2 - _RETRAIT_BORD_MM, y2 - _RETRAIT_BORD_MM
+    if x2 - x1 < 1.0 or y2 - y1 < 1.0:
+        logger.warning("plans de masse: carte trop petite pour un retrait de bord")
+        return pcb_bytes
 
     existantes = _couches_deja_couvertes(text)
     # ⚠️ DECISION PRODUIT (2026-08-22, reaffirmee) : les plans vont sur les

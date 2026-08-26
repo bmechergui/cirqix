@@ -107,8 +107,23 @@ class TestPlansDeMasse:
 
     def test_le_polygone_epouse_le_contour_reel(self):
         # LE défaut : un polygone à l'origine tomberait hors de la carte.
+        #
+        # ⚠️ On compare en TOLÉRANCE, plus en égalité exacte. Depuis le
+        # 2026-08-26 le plan est retiré du bord de `_RETRAIT_BORD_MM` : coulé
+        # au ras d'Edge.Cuts, son cuivre levait une ERREUR
+        # `copper_edge_clearance` qui fait refuser la carte (3 occurrences
+        # mesurées sur stm32-baseline). Le polygone doit épouser le contour,
+        # pas le toucher.
+        import re as _re
+
         out = routing_router._add_ground_planes(_board(RECT)).decode("utf-8")
-        assert "(xy 100" in out and "(xy 160" in out
+        pts = [(float(x), float(y))
+               for x, y in _re.findall(r"\(xy ([-\d.]+) ([-\d.]+)\)",
+                                       out[out.index("(zone"):])]
+        assert pts, "aucun polygone de plan"
+        marge = routing_router._RETRAIT_BORD_MM
+        assert abs(min(x for x, _ in pts) - (100.0 + marge)) < 0.01
+        assert abs(max(x for x, _ in pts) - (160.0 - marge)) < 0.01
         assert "(xy 0 0)" not in out
 
     def test_reste_sur_les_faces_meme_en_quatre_couches(self):
