@@ -658,15 +658,24 @@ def _dense_footprint_boxes(pcb_bytes: bytes) -> list[tuple[float, float, float, 
 # d obstacles. Ne pas rallonger sans remesurer.
 _ESCAPE_TRACE_MM: float = 1.2
 
-_PAD_ISOLEE_RE = re.compile(r"^Pad\s+(\S+)\s+\[[^\]]*\]\s+of\s+(\S+)\s")
+# `Pad 47 [GND] of U2 on F.Cu` -> pastille, NET, reference.
+# Le net sert a distinguer une paire pad<->pad reparable (net a plan) d une
+# paire qui releve du routage.
+_PAD_ISOLEE_RE = re.compile(r"^Pad\s+(\S+)\s+\[([^\]]*)\]\s+of\s+(\S+)\s")
 _ZONE_RE = re.compile(r"^Zone\s+\[")
 
 
 def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
     """Broches que le DRC signale comme non reliees A UNE ZONE.
 
-    ⚠️ On ne retient QUE les paires « pad <-> zone ». Deux pads non relies entre
-    eux relevent du ROUTAGE : y poser un via de sortie ne relierait rien.
+    ⚠️ Les paires « pad <-> pad » relevent en general du ROUTAGE : y poser un via
+    ne relierait rien. MAIS si le net est pris en charge par un PLAN, un via sous
+    chaque pastille les relie par l autre face — c est meme la seule reparation
+    possible quand aucune sortie laterale n existe.
+
+    Mesure du 2026-08-26 : apres via-in-pad, la derniere connexion manquante du
+    board STM32 etait `Pad 47 [GND] of U2 <-> Pad 8 [GND] of U2`, deux pastilles
+    du meme net a plan. Les ignorer laissait le board incomplet pour rien.
 
     Le fanout est une REPARATION : un rapport qu on ne comprend pas ne produit
     rien, jamais une exception. On n ajoute pas une panne a une panne.
@@ -676,12 +685,16 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
         descriptions = [
             str(i.get("description", "")) for i in (item.get("items") or [])
         ]
-        if not any(_ZONE_RE.match(d) for d in descriptions):
-            continue
-        for d in descriptions:
-            m = _PAD_ISOLEE_RE.match(d)
-            if m:
-                isolees.append((m.group(2), m.group(1)))
+        pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descriptions) if m]
+        touche_zone = any(_ZONE_RE.match(d) for d in descriptions)
+        if not touche_zone:
+            # Paire pad <-> pad : on ne la retient que si le net est confie a un
+            # plan, seul cas ou un via repare quelque chose.
+            nets = {m.group(2) for m in pads}
+            if not nets or not nets.issubset(set(_NETS_CONFIES_AU_PLAN)):
+                continue
+        for m in pads:
+            isolees.append((m.group(3), m.group(1)))
     return isolees
 
 

@@ -305,6 +305,28 @@ def _obstacles_d_un_autre_net(board, net_code) -> list:
             continue  # un item sans boite ni net ne peut pas etre un obstacle connu
     return boites
 
+# Percage minimal fabricable. En deca, on dessinerait un trou que personne ne
+# peut realiser — JLCPCB descend a 0,20 mm de diametre de via.
+_VIA_MIN_MM = 200_000.0
+
+
+def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
+    """Diametre d un via pose DANS la pastille. 0 si aucun ne tient.
+
+    ⚠️ Le via ne doit JAMAIS depasser la pastille. Tout l argument tient la :
+    un via aussi large qu elle herite de SA clearance, celle que la carte
+    accepte deja. Plus large, il redevient un obstacle pour les voisines.
+
+    Mesure du 2026-08-26, LQFP-48 : pastille 0,30 x 1,48 mm, obstacle le plus
+    proche a 0,350 mm — un via de 0,30 tient, la ou aucune sortie laterale
+    n existait (0 chemin degage sur 567 candidats).
+
+    On ne retrecit pas sans raison : un via plus fin perce plus petit et coute
+    plus cher a fabriquer.
+    """
+    d = min(largeur_pad, via_nominal)
+    return d if d >= _VIA_MIN_MM else 0.0
+
 def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     """Fanout : une courte piste depuis chaque broche isolee vers un via.
 
@@ -354,7 +376,23 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             portee, pas
         )
         if sortie is None:
-            renonces += 1
+            # Dernier recours : le via DANS la pastille. Il n a besoin
+            # d aucune piste — pose au centre, il traverse vers le plan de
+            # l autre face, et le probleme du chemin lateral disparait.
+            larg = min(float(b.GetRight() - b.GetLeft()),
+                       float(b.GetBottom() - b.GetTop()))
+            d = _diametre_via_in_pad(larg, via_d)
+            if d <= 0 or any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
+                             for o in obstacles):
+                renonces += 1
+                continue
+            via = pcbnew.PCB_VIA(board)
+            via.SetPosition(pos)
+            via.SetWidth(int(d))
+            via.SetDrill(int(max(d / 2, _VIA_MIN_MM / 2)))
+            via.SetNetCode(pad.GetNetCode())
+            board.Add(via)
+            poses += 1
             continue
         vx, vy = sortie
 
