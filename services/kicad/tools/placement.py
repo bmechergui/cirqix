@@ -946,9 +946,40 @@ _PART_DOMINANTE = 0.12
 
 
 def _encombrement_fp(fp) -> tuple:
-    """Etendue (largeur, hauteur) d un footprint, d apres ses pads."""
-    xs = [p.position[0] for p in getattr(fp, "pads", []) or []]
-    ys = [p.position[1] for p in getattr(fp, "pads", []) or []]
+    """Etendue (largeur, hauteur) d un footprint — COURTYARD d abord.
+
+    ⚠️ Le corps d un boitier deborde largement ses pastilles. Mesure du
+    2026-08-27, ESP32-WROOM :
+
+        etendue des pastilles : 17,5 x 17,8 mm
+        courtyard reel        : 41,3 x 48,1 mm
+
+    En prenant les pastilles, `_ecarter_des_dominants` poussait les passifs hors
+    d une boite DEUX FOIS trop petite : ils retombaient sur le module, et les
+    `courtyards_overlap` subsistaient jusque dans le meilleur de trois tirages.
+
+    Le courtyard est la surface que le fabricant reserve, et c est celle que le
+    DRC compare. On ne retient QUE lui : la serigraphie deborde souvent, et la
+    prendre gonflerait l emprise sans raison.
+
+    Sans courtyard declare, on retombe sur les pastilles — rendre 0 ferait
+    perdre toute protection.
+    """
+    xs, ys = [], []
+    for g in getattr(fp, "graphics", []) or []:
+        if str(getattr(g, "layer", "")) not in ("F.CrtYd", "B.CrtYd"):
+            continue
+        for point in (getattr(g, "start", None), getattr(g, "end", None)):
+            if point is None:
+                continue
+            try:
+                xs.append(float(point[0]))
+                ys.append(float(point[1]))
+            except (TypeError, IndexError, ValueError):
+                continue
+    if not xs:
+        xs = [p.position[0] for p in getattr(fp, "pads", []) or []]
+        ys = [p.position[1] for p in getattr(fp, "pads", []) or []]
     if not xs:
         return 0.0, 0.0
     return max(xs) - min(xs), max(ys) - min(ys)
@@ -994,6 +1025,28 @@ def _boitiers_dominants(pcb) -> list:
 _MARGE_ECARTEMENT_MM = 2.0
 
 
+def _ecarter_dans_le_fichier(pcb_path: Path, dominants: list) -> int:
+    """Recharge le board, ecarte les mobiles des ancres, et resauve.
+
+    Le raffinement CMA-ES et l Inspecteur travaillent sur le FICHIER : il
+    faut donc repasser dessus, pas sur l objet en memoire d avant.
+    """
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        pcb = PCB.load(str(pcb_path))
+        n = _ecarter_des_dominants(pcb, dominants)
+        if n:
+            pcb.save(str(pcb_path))
+            logger.info(
+                "auto_place: %d composant(s) ecarte(s) de l emprise des "
+                "boitiers dominants (apres raffinement)", n)
+        return n
+    except Exception as exc:
+        logger.warning("auto_place: ecartement final impossible (%s)", exc)
+        return 0
+
+
 def _ecarter_des_dominants(pcb, dominants: list) -> int:
     """Pousse les composants MOBILES hors de l emprise des boitiers ancres.
 
@@ -1034,10 +1087,16 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
         if not fp.reference or fp.reference in fixes:
             continue
         x, y = fp.position
-        for cx, cy, dl, dh in boites:
+        l, h = _encombrement_fp(fp)
+        for cx, cy, dl0, dh0 in boites:
+            # ⚠️ Le mobile n est pas un POINT : son propre courtyard s etend
+            # autour de son centre. Un passif dont le centre est juste hors de
+            # l emprise la chevauche quand meme par sa demi-taille — mesure du
+            # 2026-08-27, quatre `courtyards_overlap` residuels apres un
+            # ecartement qui les croyait dehors.
+            dl, dh = dl0 + l / 2.0, dh0 + h / 2.0
             if abs(x - cx) >= dl or abs(y - cy) >= dh:
-                continue  # deja dehors
-            l, h = _encombrement_fp(fp)
+                continue  # deja dehors, son courtyard compris
             # Sortir par le cote le plus proche : c est le trajet le plus court,
             # donc celui qui derange le moins le reste du placement.
             gauche, droite = (x - (cx - dl)), ((cx + dl) - x)
@@ -1426,6 +1485,12 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 "auto_place: %d composant(s) hors carte réparé(s) (%s)",
                 len(repares), ", ".join(repares))
             _resolve_remaining_conflicts(out, conn + repares)
+
+        # ⚠️ Repasser l ecartement APRES le raffinement et l Inspecteur : le
+        # CMA-ES ne connait pas nos ancrages dominants et peut y ramener des
+        # mobiles. Un ecartement fait AVANT eux ne survit pas.
+        if dominants:
+            _ecarter_dans_le_fichier(out, dominants)
 
         n_hors = _outside_outline_refs(out)
         if n_hors:

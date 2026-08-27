@@ -31,7 +31,37 @@ def _b64(raw: bytes) -> str:
     return base64.b64encode(raw).decode("ascii")
 
 
-def _passer(circuit: dict, sortie: Path) -> dict:
+def _passer(circuit: dict, sortie: Path, tirages: int = 1) -> dict:
+    """Enchaine la chaine `tirages` fois et garde le MEILLEUR board.
+
+    ⚠️ Le placement est STOCHASTIQUE — `OptimizationWorkflow` n a pas de seed
+    fixe. Mesure du 2026-08-27 : l ESP32 rend 3 erreurs a un tirage et 10 au
+    suivant, sans qu une ligne de code ait change.
+
+    Un banc a tirage unique mesure donc le HASARD, pas la chaine. Et il la
+    sous-represente : la production re-tire quand le DRC echoue et garde le
+    meilleur (`shouldRetryForDrc` / `keepBestDrc` dans l orchestrateur).
+
+    On classe par (erreurs, connexions manquantes) : une erreur de
+    fabricabilite fait refuser la carte, une connexion manquante se voit au
+    DRC. La premiere prime.
+    """
+    meilleur = None
+    for n in range(max(1, tirages)):
+        r = _un_tirage(circuit, sortie)
+        if "erreur" in r:
+            return r
+        cle = (r["erreurs"], r["manquantes"])
+        if meilleur is None or cle < (meilleur["erreurs"], meilleur["manquantes"]):
+            meilleur = r
+            meilleur["tirage_retenu"] = n + 1
+        if cle == (0, 0):
+            break  # rien de mieux a esperer
+    meilleur["tirages"] = max(1, tirages)
+    return meilleur
+
+
+def _un_tirage(circuit: dict, sortie: Path) -> dict:
     from routers.schematic import SchematicRequest
     from routers.schematic import generate as generer_schema
     from routers.erc import ERCRequest, run_erc
@@ -109,6 +139,11 @@ def main(argv: list[str]) -> int:
     global _EXEMPLES
     if argv[1:] and Path(argv[1]).is_dir():
         _EXEMPLES = Path(argv.pop(1))
+    tirages = 1
+    for arg in list(argv[1:]):
+        if arg.startswith("--tirages="):
+            tirages = int(arg.split("=", 1)[1])
+            argv.remove(arg)
     cas = argv[1:] or [d.name for d in sorted((_EXEMPLES).iterdir())
                        if (d / "input" / "circuit.json").is_file()]
     print(f"{'cas':<18}{'comp':>5}{'couches':>8}{'%':>5}{'manq':>6}"
@@ -120,7 +155,7 @@ def main(argv: list[str]) -> int:
             continue
         circuit = json.loads(f.read_text(encoding="utf-8"))
         try:
-            r = _passer(circuit, _EXEMPLES / nom / "output")
+            r = _passer(circuit, _EXEMPLES / nom / "output", tirages)
         except Exception as exc:
             r = {"etape": "exception", "erreur": str(exc)[:90]}
         resultats[nom] = r
