@@ -32,9 +32,38 @@ def _mcu(famille: str) -> dict:
         return {"ref": "U1", "value": "ESP32-WROOM-32",
                 "symbol": "RF_Module:ESP32-WROOM-32",
                 "footprint": "RF_Module:ESP32-WROOM-32"}
+    if famille == "arduino":
+        return {"ref": "U1", "value": "ATmega328P-AU",
+                "symbol": "MCU_Microchip_ATmega:ATmega328P-AU",
+                "footprint": "Package_QFP:TQFP-32_7x7mm_P0.8mm"}
+    if famille == "nucleo":
+        return {"ref": "U1", "value": "STM32F401RET6",
+                "symbol": "MCU_ST_STM32F4:STM32F401RETx",
+                "footprint": "Package_QFP:LQFP-64_10x10mm_P0.5mm"}
     return {"ref": "U1", "value": "STM32F103C8T6",
             "symbol": "MCU_ST_STM32F1:STM32F103C8Tx",
             "footprint": "Package_QFP:LQFP-48_7x7mm_P0.5mm"}
+
+
+# Connecteurs de carte-mere, par famille. Ils ne sont pas decoratifs : leur
+# ORIGINE est sur la broche 1, tres loin du centre de leur corps — c est
+# exactement le cas qui faisait tomber la couronne sur le module ESP32.
+_CONNECTEURS = {
+    "arduino": [
+        ("J10", "POWER", "Connector_Generic:Conn_01x08",
+         "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical", 8),
+        ("J11", "ANALOG", "Connector_Generic:Conn_01x06",
+         "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical", 6),
+        ("J12", "DIGITAL", "Connector_Generic:Conn_01x10",
+         "Connector_PinHeader_2.54mm:PinHeader_1x10_P2.54mm_Vertical", 10),
+    ],
+    "nucleo": [
+        ("J10", "MORPHO_L", "Connector_Generic:Conn_02x19_Odd_Even",
+         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38),
+        ("J11", "MORPHO_R", "Connector_Generic:Conn_02x19_Odd_Even",
+         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38),
+    ],
+}
 
 
 def circuit(famille: str, cible: int) -> dict:
@@ -70,6 +99,20 @@ def circuit(famille: str, cible: int) -> dict:
     relier("GND", "J1", 2), relier("GND", "U2", 1)
     relier("+3.3V", "U2", 2), relier("+3.3V", "U1", 1)
     relier("GND", "U1", 8)
+
+    # Connecteurs de carte-mere. Broche 1 sur GND, broche 2 sur +3,3 V, le
+    # reste sur des signaux propres — un connecteur non relie ne serait qu un
+    # obstacle, jamais une contrainte de routage.
+    broche_mcu = 30
+    for ref, val, sym, fp, n_broches in _CONNECTEURS.get(famille, []):
+        composants.append({"ref": ref, "value": val,
+                           "symbol": sym, "footprint": fp})
+        relier("GND", ref, 1)
+        relier("+3.3V", ref, 2)
+        for k in range(3, min(n_broches, 10) + 1):
+            relier("%s_%d" % (val, k), ref, k)
+            relier("%s_%d" % (val, k), "U1", broche_mcu)
+            broche_mcu += 1
 
     # Grappes de signal : une LED pilotee par une broche du MCU a travers sa
     # resistance de limitation. Chaque grappe cree DEUX nets a deux pastilles —
@@ -111,6 +154,12 @@ def circuit(famille: str, cible: int) -> dict:
 _ENCOMBREMENT = {
     "RF_Module:ESP32-WROOM-32": (41.3, 48.1),
     "Package_QFP:LQFP-48_7x7mm_P0.5mm": (9.0, 9.0),
+    "Package_QFP:TQFP-32_7x7mm_P0.8mm": (9.0, 9.0),
+    "Package_QFP:LQFP-64_10x10mm_P0.5mm": (12.0, 12.0),
+    "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical": (3.6, 17.0),
+    "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical": (3.6, 22.1),
+    "Connector_PinHeader_2.54mm:PinHeader_1x10_P2.54mm_Vertical": (3.6, 27.2),
+    "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical": (6.2, 50.0),
     "Package_TO_SOT_SMD:SOT-223-3_TabPin2": (8.9, 7.3),
     "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical": (3.6, 9.0),
     _RES: (1.6, 3.0),
@@ -162,6 +211,8 @@ CAS = [
     ("stm32-30", "stm32", 30),
     ("stm32-60", "stm32", 60),
     ("stm32-100", "stm32", 100),
+    ("arduino-uno", "arduino", 35),
+    ("nucleo-f401", "nucleo", 55),
 ]
 
 
