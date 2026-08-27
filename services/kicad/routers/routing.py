@@ -30,6 +30,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 
 from tools import kct_route
+from tools.sexp_quote import unquote_keepout_values
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -758,7 +759,12 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         pcb = Path(tmp) / "b.kicad_pcb"
         rapport = Path(tmp) / "b.json"
-        pcb.write_bytes(pcb_bytes)
+        # ⚠️ Sur une copie REPAREE. Un board ecrit par kicad_tools porte des
+        # valeurs de keepout entre guillemets ; kicad-cli refuse alors le
+        # fichier entier et rend un rapport vide, que chaque appelant lit
+        # « 0 erreur ». Mesure du 2026-08-27 : vingt erreurs invisibles sur
+        # l ESP32 du banc. On ne juge pas un board qu on n a pas pu ouvrir.
+        pcb.write_bytes(_deguillemeter_keepout(pcb_bytes))
         # ⚠️ Le fichier PROJET doit etre a cote du board, sinon kicad-cli
         # applique ses defauts et le verdict porte sur des regles que la
         # carte ne suit pas.
@@ -766,14 +772,22 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
         if projet is not None:
             (Path(tmp) / "b.kicad_pro").write_text(
                 json.dumps(projet), encoding="utf-8")
+        r = None
         try:
-            subprocess.run(
+            r = subprocess.run(
                 [cli, "pcb", "drc", str(pcb), "--format", "json", "-o", str(rapport)],
                 capture_output=True, text=True, timeout=300, check=False,
             )
             return json.loads(rapport.read_text(encoding="utf-8"))
         except Exception as exc:
-            logger.warning("fanout: rapport DRC indisponible (%s)", exc)
+            # ⚠️ ERROR, pas WARNING : les appelants lisent le dict vide comme
+            # « rien a signaler ». Tant qu ils le font, ce journal est le seul
+            # endroit ou l absence de verdict est visible.
+            logger.error(
+                "DRC indisponible (%s) — le rapport vide sera lu « 0 erreur » "
+                "par les gardes de cette requete. kicad-cli: %s",
+                exc, ((r.stdout or r.stderr).strip()[:200]
+                      if r is not None else "non execute"))
             return {}
 
 
@@ -1260,9 +1274,7 @@ def _deguillemeter_keepout(pcb_bytes: bytes) -> bytes:
     ne changeait rien, deguillemeter suffit.
     """
     text = pcb_bytes.decode("utf-8", errors="replace")
-    motif = (chr(92) + "((" + "|".join(_CLES_KEEPOUT) + ") " + chr(34) +
-             "([a-z_]+)" + chr(34) + chr(92) + ")")
-    nouveau, n = re.subn(motif, lambda m: "(%s %s)" % (m.group(1), m.group(2)), text)
+    nouveau, n = unquote_keepout_values(text)
     if not n:
         return pcb_bytes
     logger.info("keepout : %d valeur(s) deguillemetee(s) — KiCad refuse les chaines", n)

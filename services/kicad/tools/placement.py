@@ -37,6 +37,7 @@ from typing import Optional
 # kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
+from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
 
@@ -170,23 +171,111 @@ def _normalize_to_board_frame(pcb_path: Path) -> int:
     return len(outside)
 
 
-def _compter_conflits_erreur(pcb_path: Path) -> int:
-    """Conflits de placement de severite ERROR encore presents.
+class DrcInexecutable(RuntimeError):
+    """`kicad-cli` est present mais n a rendu aucun rapport exploitable.
 
-    Rend 0 si la mesure est impossible : on ne fabrique pas un chiffre, et
-    un compteur en panne ne doit pas faire echouer un placement valide.
+    ⚠️ Cette exception existe parce que l absence de rapport se lisait « 0
+    erreur ». Mesure du 2026-08-27 sur l ESP32 : le board place etait refuse
+    par `kicad-cli` (« Failed to load board »), le rapport revenait VIDE, et
+    `_compter_conflits_erreur` annoncait zero conflit sur un board qui en
+    portait vingt. La boucle de re-tirage s endormait, et la chaine routait
+    vingt-cinq minutes un board condamne d avance.
+
+    Un controle qui n a pas eu lieu ne rend pas un verdict favorable : il ne
+    rend pas de verdict.
+    """
+
+
+def _rendre_lisible(pcb_path: Path) -> None:
+    """Repare, EN PLACE, ce que les lecteurs de KiCad refusent.
+
+    Appelee juste avant de mesurer et de rendre le board — donc avant que
+    `kicad-cli` ne le lise, et avant qu il ne quitte le service. Reparer chez
+    chaque lecteur revient a en oublier un ; ici il n y en a qu un a ne pas
+    oublier.
+    """
+    brut = pcb_path.read_text(encoding="utf-8", errors="replace")
+    corrige, n = unquote_keepout_values(brut)
+    if n:
+        pcb_path.write_text(corrige, encoding="utf-8")
+        logger.info(
+            "auto_place: %d valeur(s) de keepout deguillemetee(s) — sans quoi "
+            "kicad-cli refuse le board et son rapport revient vide", n)
+
+
+def _rapport_drc_placement(pcb_path: Path) -> dict:
+    """Rapport `kicad-cli pcb drc`, ou dict vide s il est indisponible."""
+    import json as _json
+    import shutil as _shutil
+
+    cli = _shutil.which("kicad-cli")
+    if cli is None:
+        # Seule absence toleree : l outil n est pas la. Le service traite deja
+        # ce cas en amont (`skipped`), et l appelant ne peut pas le confondre
+        # avec un board refuse.
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        rapport = Path(tmp) / "drc.json"
+        r = subprocess.run(
+            [cli, "pcb", "drc", str(pcb_path), "--format", "json",
+             "-o", str(rapport)],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        if not rapport.is_file():
+            raise DrcInexecutable(
+                "kicad-cli n a produit aucun rapport (%s)"
+                % ((r.stdout or r.stderr or "").strip()[:200] or "sans message"))
+        return _json.loads(rapport.read_text(encoding="utf-8"))
+
+
+# Nombre de conflits rendu quand le DRC n a PAS pu se prononcer. Volontairement
+# enorme : `auto_place` garde le tirage au plus petit compte, donc un tirage
+# non mesurable ne peut jamais etre retenu comme « le meilleur ».
+_CONFLITS_INDETERMINES = 10 ** 6
+
+
+# Violations de placement au sens du DRC : ce que le verdict final refuse.
+_TYPES_CONFLIT = ("courtyards_overlap", "shorting_items",
+                  "pth_inside_courtyard", "clearance")
+
+
+def _compter_conflits_erreur(pcb_path: Path) -> int:
+    """Conflits de placement, mesures par `kicad-cli` — l instrument qui tranche.
+
+    ⚠️ On interrogeait `PlacementAnalyzer` (kicad-tools, ses propres
+    DesignRules). Mesure du 2026-08-27, ESP32 : il declarait le placement
+    PROPRE au tirage 3, et le board final portait ONZE
+    `courtyards_overlap`. Le re-tirage s arretait donc sur un placement
+    qu il croyait bon, et la chaine routait 25 minutes un board condamne.
+
+    Mesurer avec un autre instrument que celui qui tranche, c est se
+    rassurer sans rien garantir. Le DRC coute 1 a 2 s par tirage contre 2 a
+    4 MINUTES de placement : le bon outil ne change pas l ordre de grandeur.
+
+    Rend 0 si la mesure est impossible : un compteur en panne ne doit ni
+    faire echouer un placement valide, ni declencher des re-tirages inutiles.
     """
     try:
-        from kicad_tools.placement.analyzer import PlacementAnalyzer
-        from kicad_tools.placement.conflict import ConflictSeverity
-
-        conflits = PlacementAnalyzer().find_conflicts(str(pcb_path))
-        return sum(1 for c in conflits
-                   if getattr(c, "severity", None) == ConflictSeverity.ERROR)
+        rapport = _rapport_drc_placement(pcb_path)
+    except DrcInexecutable as exc:
+        # ⚠️ On rendait 0 — « non mesurable » se lisait « propre ». La boucle
+        # de re-tirage acceptait alors un board jamais controle. Un tirage
+        # qu on ne sait pas juger doit etre RE-TIRE, donc compte comme pire
+        # que n importe quel tirage mesure.
+        logger.error(
+            "auto_place: conflits NON MESURABLES (%s) — tirage tenu pour "
+            "invalide plutot que pour propre", exc)
+        return _CONFLITS_INDETERMINES
     except Exception as exc:
-        logger.warning("auto_place: conflits non mesurables (%s)", exc)
-        return 0
-
+        logger.error(
+            "auto_place: rapport DRC illisible (%s) — tirage tenu pour invalide",
+            exc)
+        return _CONFLITS_INDETERMINES
+    return sum(
+        1 for v in (rapport.get("violations") or [])
+        if isinstance(v, dict) and v.get("severity") == "error"
+        and v.get("type") in _TYPES_CONFLIT
+    )
 
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
@@ -1425,6 +1514,7 @@ def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):
             _placer_en_couronne(pcb, dominants)
             pcb.save(str(f))
             _resolve_remaining_conflicts(f, dominants)
+            _rendre_lisible(f)
             n = _compter_conflits_erreur(f)
             if n >= meilleur.get("conflits_restants", 10**6):
                 logger.info(
@@ -1689,6 +1779,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # On ne LEVE pas : un board imparfait vaut mieux qu aucun board, et
         # l orchestrateur sait deja re-tirer. Mais on ne ment plus par
         # omission.
+        _rendre_lisible(out)
         conflits_restants = _compter_conflits_erreur(out)
         if conflits_restants:
             logger.error(
