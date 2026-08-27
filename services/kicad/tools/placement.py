@@ -536,6 +536,20 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
     return {"refined": True, "elapsed_s": elapsed}
 
 
+def _clamp_axe(v: float, b0: float, b1: float, lo: float, hi: float) -> float:
+    """Ramene ``v`` pour que le segment ``[v + b0, v + b1]`` tienne dans ``[lo, hi]``.
+
+    ⚠️ Rend le CENTRAGE si la piece est plus large que le contour : la
+    contrainte est alors insatisfiable, et debordement pour debordement, mieux
+    vaut deborder des deux cotes d autant — un coin choisi au hasard mettrait
+    tout le corps du meme cote.
+    """
+    bas, haut = lo - b0, hi - b1
+    if bas > haut:
+        return (lo + hi) / 2.0 - (b0 + b1) / 2.0
+    return min(max(v, bas), haut)
+
+
 def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0,
                                  exempts: list = None) -> list[str]:
     """Ramène les footprints ``fixed_refs`` à l'intérieur du contour Edge.Cuts.
@@ -561,8 +575,14 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         if fp.reference not in fixed_refs:
             continue
         x, y = fp.position
-        cx = min(max(x, min_x), max_x)
-        cy = min(max(y, min_y), max_y)
+        # ⚠️ On ramene la BOITE dans le contour, pas la POSITION. L origine
+        # d un connecteur est sur sa broche 1, a une extremite : un Morpho
+        # 2x19 mesure 50 mm, et clamper sa position a 2 mm du bord laissait
+        # 48 mm de corps DEHORS — le defaut meme que ce clamp doit empecher,
+        # puisqu un ancrage n est plus jamais deplace ensuite.
+        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        cx = _clamp_axe(x, fx0, fx1, min_x, max_x)
+        cy = _clamp_axe(y, fy0, fy1, min_y, max_y)
         # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
         # connecteurs superposés À L'INTÉRIEUR du contour produisent le même
         # blocage, et n'étaient pas clampés donc pas examinés.

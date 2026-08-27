@@ -184,3 +184,53 @@ class TestEcartement:
         avant = u1.position
         P._ecarter_des_dominants(pcb, ["U1"])
         assert u1.position == avant
+
+
+class TestClampContour:
+    """Le clamp ramenait la POSITION dans le contour, pas la BOITE.
+
+    ⚠️ Un connecteur Morpho 2x19 mesure 6,2 x 50 mm et son origine est sur la
+    broche 1, a une extremite. Ramener sa POSITION a 2 mm du bord laisse donc
+    pres de 48 mm de corps HORS de la carte — le defaut meme que ce clamp
+    existe pour empecher, puisque `OptimizationWorkflow` ne deplace jamais un
+    ancrage et que ses nets deviennent inroutables.
+
+    Le cas n est pas theorique : c est celui des cartes Nucleo du banc.
+    """
+
+    def _carte_avec_connecteur(self):
+        from kicad_tools.schema.pcb import PCB
+
+        # Origine sur la broche 1 : la boite s etend vers le bas, pas autour.
+        connecteur = _module("J1", 96.0, 66.0, -3.1, -2.0, 3.1, 48.0)
+        texte = NL.join([
+            "(kicad_pcb",
+            "\t(version 20240108)",
+            '\t(layers (0 "F.Cu" signal) (44 "Edge.Cuts" user) (47 "F.CrtYd" user))',
+            '\t(net 1 "N")',
+            '\t(gr_rect (start 0 0) (end 100 80) (layer "Edge.Cuts"))',
+            connecteur,
+            ")",
+        ])
+        d = tempfile.mkdtemp()
+        f = Path(d) / "b.kicad_pcb"
+        f.write_text(texte, encoding="utf-8")
+        return PCB.load(str(f))
+
+    def test_le_corps_du_connecteur_finit_dans_la_carte(self):
+        pcb = self._carte_avec_connecteur()
+        P._clamp_fixed_refs_to_outline(pcb, ["J1"])
+        j1 = next(f for f in pcb.footprints if f.reference == "J1")
+        x0, y0, x1, y1 = _boite_absolue(j1)
+        l, h = pcb.board_size
+        assert 0 <= x0 and x1 <= l and 0 <= y0 and y1 <= h, (
+            "corps hors carte : boite=(%.1f, %.1f, %.1f, %.1f) pour une carte "
+            "%.0f x %.0f — ancre, il n en sortira jamais" % (x0, y0, x1, y1, l, h))
+
+    def test_un_connecteur_deja_dedans_ne_bouge_pas(self):
+        pcb = self._carte_avec_connecteur()
+        j1 = next(f for f in pcb.footprints if f.reference == "J1")
+        j1.position = (50.0, 15.0)   # boite y de 13 a 63 : bien au large
+        avant = j1.position
+        P._clamp_fixed_refs_to_outline(pcb, ["J1"])
+        assert j1.position == avant
