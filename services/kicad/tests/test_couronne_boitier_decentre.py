@@ -138,3 +138,49 @@ class TestCouronne:
             if x0 < 0 or y0 < 0 or x1 > l or y1 > h:
                 dehors.append(f.reference)
         assert not dehors, "%s hors contour — un passif dehors est inroutable" % dehors
+
+
+class TestEcartement:
+    """`_ecarter_des_dominants` raisonnait aussi en demi-taille symetrique.
+
+    ⚠️ Meme cause racine que la couronne, autre fonction. L emprise interdite
+    etait `position ± demi-taille` : sur un courtyard decale de 10 mm, elle est
+    trop PETITE du cote long et trop GRANDE du cote court. Un passif pose dans
+    le module, mais hors de cette emprise fausse, n etait donc pas ecarte.
+
+    ⚠️ Le contour etait verifie sur la POSITION du composant, pas sur sa boite :
+    un composant pouvait etre pousse le corps hors de la carte, donc inroutable
+    — exactement le defaut que l ecartement dit vouloir eviter.
+    """
+
+    def _carte_avec_intrus(self):
+        pcb = _carte()
+        u1 = next(f for f in pcb.footprints if f.reference == "U1")
+        # Corps centre verticalement : (-30,74 + 10,51) / 2 = -10,115.
+        u1.position = (46.5, 35.0 + 10.115)
+        # Corps reel : y de 14,4 a 55,6. Ancienne emprise fausse : 24,5 a 65,7.
+        # Un passif a y = 18 est DANS le module et HORS de l ancienne emprise.
+        r1 = next(f for f in pcb.footprints if f.reference == "R1")
+        r1.position = (46.5, 18.0)
+        return pcb, u1, r1
+
+    def test_un_passif_dans_le_corps_est_ecarte(self):
+        pcb, u1, r1 = self._carte_avec_intrus()
+        P._ecarter_des_dominants(pcb, ["U1"])
+        assert not _se_chevauchent(_boite_absolue(r1), _boite_absolue(u1)), (
+            "R1 etait dans le corps du module mais hors de l emprise "
+            "symetrique : l ecartement ne l a pas vu")
+
+    def test_le_passif_ecarte_reste_entierement_dans_la_carte(self):
+        pcb, u1, r1 = self._carte_avec_intrus()
+        P._ecarter_des_dominants(pcb, ["U1"])
+        l, h = pcb.board_size
+        x0, y0, x1, y1 = _boite_absolue(r1)
+        assert 0 <= x0 and x1 <= l and 0 <= y0 and y1 <= h, (
+            "pousse hors du contour : ses nets deviennent inroutables")
+
+    def test_un_ancre_n_est_jamais_deplace(self):
+        pcb, u1, _r1 = self._carte_avec_intrus()
+        avant = u1.position
+        P._ecarter_des_dominants(pcb, ["U1"])
+        assert u1.position == avant

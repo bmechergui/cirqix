@@ -1334,13 +1334,19 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
     except Exception:
         l_carte = h_carte = 0.0
     fixes = set(dominants)
+    # ⚠️ Des BOITES absolues, pas des centres et des demi-tailles. L origine
+    # d un module est sur sa pastille 1 : `position ± demi-taille` rend une
+    # emprise trop PETITE du cote long et trop GRANDE du cote court. Sur le
+    # courtyard de l ESP32, decale de 10 mm, un passif pose en plein dans le
+    # module tombait hors de cette emprise fausse et n etait pas ecarte.
     boites = []
     for ref in dominants:
         fp = next((f for f in pcb.footprints if f.reference == ref), None)
         if fp is None:
             continue
-        l, h = _encombrement_fp(fp)
-        boites.append((fp.position[0], fp.position[1], l / 2.0, h / 2.0))
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        px, py = fp.position
+        boites.append((px + bx0, py + by0, px + bx1, py + by1))
     if not boites:
         return 0
 
@@ -1349,29 +1355,30 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
         if not fp.reference or fp.reference in fixes:
             continue
         x, y = fp.position
-        l, h = _encombrement_fp(fp)
-        for cx, cy, dl0, dh0 in boites:
-            # ⚠️ Le mobile n est pas un POINT : son propre courtyard s etend
-            # autour de son centre. Un passif dont le centre est juste hors de
-            # l emprise la chevauche quand meme par sa demi-taille — mesure du
-            # 2026-08-27, quatre `courtyards_overlap` residuels apres un
-            # ecartement qui les croyait dehors.
-            dl, dh = dl0 + l / 2.0, dh0 + h / 2.0
-            if abs(x - cx) >= dl or abs(y - cy) >= dh:
+        # Le mobile n est pas un POINT non plus : sa propre boite compte.
+        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        for mx0, my0, mx1, my1 in boites:
+            if (x + fx1 <= mx0 or mx1 <= x + fx0
+                    or y + fy1 <= my0 or my1 <= y + fy0):
                 continue  # deja dehors, son courtyard compris
             # Sortir par le cote le plus proche : c est le trajet le plus court,
-            # donc celui qui derange le moins le reste du placement.
-            gauche, droite = (x - (cx - dl)), ((cx + dl) - x)
-            haut, bas = (y - (cy - dh)), ((cy + dh) - y)
+            # donc celui qui derange le moins le reste du placement. On raisonne
+            # en DEPLACEMENT, seul moyen d etre juste sur une boite decalee.
+            m = _MARGE_ECARTEMENT_MM
             sorties = [
-                (gauche, (cx - dl - l / 2.0 - _MARGE_ECARTEMENT_MM, y)),
-                (droite, (cx + dl + l / 2.0 + _MARGE_ECARTEMENT_MM, y)),
-                (haut, (x, cy - dh - h / 2.0 - _MARGE_ECARTEMENT_MM)),
-                (bas, (x, cy + dh + h / 2.0 + _MARGE_ECARTEMENT_MM)),
+                (mx0 - m - (x + fx1), lambda d: (x + d, y)),   # vers la gauche
+                (mx1 + m - (x + fx0), lambda d: (x + d, y)),   # vers la droite
+                (my0 - m - (y + fy1), lambda d: (x, y + d)),   # vers le haut
+                (my1 + m - (y + fy0), lambda d: (x, y + d)),   # vers le bas
             ]
-            sorties.sort(key=lambda s: s[0])
-            for _, (nx, ny) in sorties:
-                if l_carte > 0 and not (0.0 <= nx <= l_carte and 0.0 <= ny <= h_carte):
+            sorties.sort(key=lambda s: abs(s[0]))
+            for delta, deplacer in sorties:
+                nx, ny = deplacer(delta)
+                # ⚠️ Le contour se verifie sur la BOITE, pas sur la position :
+                # un composant pousse le corps dehors est inroutable — le
+                # defaut meme que cet ecartement dit vouloir eviter.
+                if l_carte > 0 and not (0.0 <= nx + fx0 and nx + fx1 <= l_carte
+                                        and 0.0 <= ny + fy0 and ny + fy1 <= h_carte):
                     continue
                 fp.position = (nx, ny)
                 ecartes += 1

@@ -35,10 +35,19 @@ class _Pad:
 
 
 class _Fp:
+    """⚠️ Pastilles en coordonnees LOCALES, comme le vrai `PCB` les donne.
+
+    La fixture les posait en ABSOLU (`x ± demi`). Tant qu on ne lisait que la
+    TAILLE (`max - min`), le decalage s annulait et le mensonge ne coutait
+    rien. Des qu on a lu la BOITE — pour corriger les courtyards decales — la
+    fixture a fait echouer un code juste : elle reproduisait l hypothese de
+    l appelant, pas la realite du modele.
+    """
+
     def __init__(self, ref, x, y, demi_l, demi_h):
         self.reference = ref
         self.position = (x, y)
-        self.pads = [_Pad(x - demi_l, y - demi_h), _Pad(x + demi_l, y + demi_h)]
+        self.pads = [_Pad(-demi_l, -demi_h), _Pad(demi_l, demi_h)]
 
 
 class _Pcb:
