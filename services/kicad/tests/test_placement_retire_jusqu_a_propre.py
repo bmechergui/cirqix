@@ -50,7 +50,12 @@ class TestCablage:
         assert "meilleur" in corps
 
     def test_un_placement_propre_ne_declenche_aucun_re_tirage(self):
-        # Re-tirer sans raison couterait 2 a 4 minutes pour rien.
+        # Re-tirer sans raison couterait DIX minutes pour rien : le budget de
+        # `OptimizationWorkflow` est fixe et il ne journalise qu a la fin.
+        # ⚠️ L ancre etait `_MAX_TIRAGES_PLACEMENT`, qui a quitte `auto_place`
+        # le 2026-08-27 au profit de `_tirages_utiles` — le nombre de tirages
+        # depend desormais de la carte. L intention du test, elle, ne change
+        # pas : sortir des que le placement est propre.
         corps = self.SOURCE[self.SOURCE.index("def auto_place(") :]
-        i = corps.index("_MAX_TIRAGES_PLACEMENT")
+        i = corps.index("for essai in range(tirages)")
         assert "break" in corps[i:i + 2000], "il faut sortir des que c est propre"

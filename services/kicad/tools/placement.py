@@ -1571,6 +1571,58 @@ _CMAES_MAX_DISPLACEMENT_MM: float = 20.0
 _MAX_TIRAGES_PLACEMENT = 4
 
 
+def _dominants_du_b64(kicad_pcb_b64: str) -> list:
+    """Boitiers dominants du board RECU, avant tout placement.
+
+    Sert a decider du nombre de tirages : la reponse doit etre connue AVANT de
+    payer dix minutes de genetique. Rend une liste vide si le board est
+    illisible — on retombe alors sur la serie complete, jamais sur un raccourci
+    decide par une erreur.
+    """
+    import base64 as _b64
+
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "b.kicad_pcb"
+            f.write_bytes(_b64.b64decode(kicad_pcb_b64))
+            return _boitiers_dominants(PCB.load(str(f)))
+    except Exception as exc:
+        logger.debug("dominants non lisibles avant placement (%s)", exc)
+        return []
+
+
+def _tirages_utiles(dominants: list) -> int:
+    """Nombre de tirages du genetique qui vaut la peine d etre paye.
+
+    ⚠️ Chronologie mesuree le 2026-08-27 sur `arduino-uno`, 35 composants :
+
+        19:27:11  tirage 1 demarre
+        19:27:33  tirage 1 fini          22 s de travail journalise
+        19:37:15  tirage 2 demarre       9 min 42 de SILENCE entre les deux
+
+    Le silence est `OptimizationWorkflow`, qui ne journalise qu a la fin. Son
+    budget est FIXE — 100 generations x 50 individus, plus 1000 iterations de
+    raffinement — et ne diminue pas pour une carte simple.
+
+    Or ces tirages ne divergent pas quand un boitier domine : 1 et 1 sur
+    l Arduino, 17/16/16/22 sur l ESP32. L echec est STRUCTUREL, comme le dit
+    deja `_placer_en_couronne` — le genetique optimise une longueur de fil que
+    le boitier ecrase, et les passifs deviennent du bruit dans sa fonction de
+    cout. On payait trente minutes pour quatre fois le meme echec, avant que la
+    couronne deterministe ne reprenne la main en 0,1 s.
+
+    ⚠️ Sans boitier dominant, on garde la serie complete : la variance est
+    alors reelle (8/0/3/0/5 conflits mesures sur le board STM32) et le
+    genetique est le bon outil. On ne reduit que la ou l on a mesure que les
+    tirages n apportent rien.
+
+    Garde : tests/test_tirages_selon_le_cas.py.
+    """
+    return 1 if dominants else _MAX_TIRAGES_PLACEMENT
+
+
 def auto_place(kicad_pcb_b64: str, board_width_mm: float,
                board_height_mm: float) -> dict:
     """Place, et RE-TIRE tant que des conflits subsistent.
@@ -1586,7 +1638,8 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
     """
     meilleur = None
-    for essai in range(_MAX_TIRAGES_PLACEMENT):
+    tirages = _tirages_utiles(_dominants_du_b64(kicad_pcb_b64))
+    for essai in range(tirages):
         r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm)
         n_conflits = r.get("conflits_restants", 0)
         if meilleur is None or n_conflits < meilleur.get("conflits_restants", 10**6):
@@ -1597,7 +1650,7 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
             break
         logger.warning(
             "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot que "
-            "de router un board casse", n_conflits, essai + 1, _MAX_TIRAGES_PLACEMENT)
+            "de router un board casse", n_conflits, essai + 1, tirages)
     if meilleur.get("conflits_restants"):
         # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
         # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
@@ -1612,7 +1665,7 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
             return secours
         logger.error(
             "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
-            meilleur["conflits_restants"], _MAX_TIRAGES_PLACEMENT)
+            meilleur["conflits_restants"], tirages)
     return meilleur
 
 
