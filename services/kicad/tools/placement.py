@@ -1281,7 +1281,49 @@ _CMAES_MAX_ITERATIONS: int = 30
 _CMAES_MAX_DISPLACEMENT_MM: float = 20.0
 
 
-def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
+# Tirages de placement avant de renoncer. Le placement coute 2 a 4 minutes,
+# le routage 25 : re-tirer un placement casse est DIX FOIS moins cher que
+# router un board que le DRC refusera. Borne, pour qu une carte reellement
+# impossible ne bloque pas le pipeline.
+_MAX_TIRAGES_PLACEMENT = 4
+
+
+def auto_place(kicad_pcb_b64: str, board_width_mm: float,
+               board_height_mm: float) -> dict:
+    """Place, et RE-TIRE tant que des conflits subsistent.
+
+    ⚠️ `OptimizationWorkflow` n a pas de seed fixe. Mesure du 2026-08-27 sur
+    le meme board ESP32, sans qu une ligne change :
+
+        tirage A : 0 conflit     tirage B : 13 conflits
+
+    Le second partait quand meme au routage — 25 minutes — pour produire un
+    board que le DRC refusait de toute facon.
+
+    On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
+    """
+    meilleur = None
+    for essai in range(_MAX_TIRAGES_PLACEMENT):
+        r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm)
+        n_conflits = r.get("conflits_restants", 0)
+        if meilleur is None or n_conflits < meilleur.get("conflits_restants", 10**6):
+            meilleur = r
+        if n_conflits == 0:
+            if essai:
+                logger.info("auto_place: placement propre au tirage %d", essai + 1)
+            break
+        logger.warning(
+            "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot que "
+            "de router un board casse", n_conflits, essai + 1, _MAX_TIRAGES_PLACEMENT)
+    if meilleur.get("conflits_restants"):
+        logger.error(
+            "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
+            meilleur["conflits_restants"], _MAX_TIRAGES_PLACEMENT)
+    return meilleur
+
+
+def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
+                         board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
 
     Équivalent de ``kct placement optimize --strategy hybrid --cluster

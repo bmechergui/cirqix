@@ -55,6 +55,11 @@ class TestCablage:
     def test_un_board_en_conflit_est_journalise_en_ERREUR(self):
         # Un avertissement se noie dans le bruit ; c est une erreur de
         # fabricabilite qui attend trois etapes plus loin.
+        #
+        # ⚠️ On cherche dans TOUTE l enveloppe, pas dans une fenetre autour de
+        # la premiere occurrence : le re-tirage borne (2026-08-27) a deplace le
+        # journal sans rien changer a l intention.
         corps = self.SOURCE[self.SOURCE.index("def auto_place("):]
-        i = corps.index("conflits_restants")
-        assert "logger.error" in corps[max(0, i - 1200):i + 400]
+        corps = corps[: corps.index(chr(10) + "def _auto_place_une_fois")]
+        assert "conflits_restants" in corps
+        assert "logger.error" in corps
