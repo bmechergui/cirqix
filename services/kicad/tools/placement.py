@@ -1035,6 +1035,76 @@ def _boitiers_dominants(pcb) -> list:
 _MARGE_ECARTEMENT_MM = 2.0
 
 
+def _placer_en_couronne(pcb, dominants: list) -> int:
+    """Place le boitier dominant au centre et les autres en couronne autour.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 du banc : les QUATRE tirages de
+    `OptimizationWorkflow` produisent des conflits de courtyard. Ce n est pas
+    de la malchance, c est structurel — un genetique optimise une longueur de
+    fil totale qu un boitier de 2000 mm2 domine entierement, et les 19 passifs
+    deviennent du bruit dans sa fonction de cout.
+
+    Un concepteur ne procede pas ainsi : il pose le module, puis dispose les
+    passifs autour. Deterministe, sans tirage, donc REPRODUCTIBLE — c est tout
+    l interet face au genetique.
+
+    ⚠️ Ne remplace PAS l optimiseur. Sur une carte sans boitier dominant, le
+    genetique fait mieux : il groupe les decouplages avec leur IC, ce qu une
+    grille ignore. On ne bascule que sur le cas ou il echoue.
+    """
+    try:
+        l_carte, h_carte = (float(v) for v in pcb.board_size)
+    except Exception:
+        return 0
+    if l_carte <= 0 or h_carte <= 0:
+        return 0
+
+    cx, cy = l_carte / 2.0, h_carte / 2.0
+    modules = [f for f in pcb.footprints if f.reference in set(dominants)]
+    autres = [f for f in pcb.footprints
+              if f.reference and f.reference not in set(dominants)]
+    if not modules:
+        return 0
+
+    principal = modules[0]
+    principal.position = (cx, cy)
+    dl, dh = (v / 2.0 for v in _encombrement_fp(principal))
+
+    # Anneaux successifs autour du module. Le pas vaut la plus grande piece a
+    # loger, pour qu aucune ne deborde sur sa voisine.
+    pas = max([max(_encombrement_fp(f)) for f in autres] or [2.0]) + 1.5
+    places, anneau = 0, 1
+    restants = list(autres)
+    while restants and anneau < 40:
+        rx, ry = dl + anneau * pas, dh + anneau * pas
+        # Positions sur le rectangle de cet anneau, dans un ordre stable.
+        cases = []
+        nx = max(2, int((2 * rx) / pas))
+        ny = max(2, int((2 * ry) / pas))
+        for i in range(nx + 1):
+            x = cx - rx + i * (2 * rx / nx)
+            cases.append((x, cy - ry))
+            cases.append((x, cy + ry))
+        for j in range(1, ny):
+            y = cy - ry + j * (2 * ry / ny)
+            cases.append((cx - rx, y))
+            cases.append((cx + rx, y))
+        for x, y in cases:
+            if not restants:
+                break
+            l, h = _encombrement_fp(restants[0])
+            if not (l / 2 <= x <= l_carte - l / 2 and h / 2 <= y <= h_carte - h / 2):
+                continue  # hors contour : un passif dehors est inroutable
+            restants.pop(0).position = (x, y)
+            places += 1
+        anneau += 1
+
+    if restants:
+        logger.warning(
+            "auto_place: %d composant(s) sans place en couronne — laisses ou ils sont",
+            len(restants))
+    return places
+
 def _ecarter_dans_le_fichier(pcb_path: Path, dominants: list) -> int:
     """Recharge le board, ecarte les mobiles des ancres, et resauve.
 
@@ -1316,10 +1386,69 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
             "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot que "
             "de router un board casse", n_conflits, essai + 1, _MAX_TIRAGES_PLACEMENT)
     if meilleur.get("conflits_restants"):
+        # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
+        # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
+        # quatre tirages, quatre echecs. Un genetique optimise une longueur
+        # de fil qu un boitier dominant ecrase ; les passifs deviennent du
+        # bruit dans sa fonction de cout.
+        #
+        # On bascule alors sur un placement DETERMINISTE — module au centre,
+        # passifs en couronne — qui ne depend d aucun tirage.
+        secours = _couronne_de_secours(kicad_pcb_b64, meilleur)
+        if secours is not None:
+            return secours
         logger.error(
             "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
             meilleur["conflits_restants"], _MAX_TIRAGES_PLACEMENT)
     return meilleur
+
+
+def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):
+    """Placement deterministe, essaye quand l optimiseur a echoue partout.
+
+    ⚠️ Rend None si la couronne ne fait pas MIEUX. Elle ignore les grappes
+    fonctionnelles que le genetique sait grouper — la preferer sans gain
+    serait une regression.
+    """
+    import base64 as _b64
+
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "b.kicad_pcb"
+            f.write_bytes(_b64.b64decode(kicad_pcb_b64))
+            pcb = PCB.load(str(f))
+            dominants = _boitiers_dominants(pcb)
+            if not dominants:
+                return None
+            _placer_en_couronne(pcb, dominants)
+            pcb.save(str(f))
+            _resolve_remaining_conflicts(f, dominants)
+            n = _compter_conflits_erreur(f)
+            if n >= meilleur.get("conflits_restants", 10**6):
+                logger.info(
+                    "auto_place: couronne deterministe %d conflit(s) — pas mieux "
+                    "que l optimiseur (%d), on garde l optimiseur",
+                    n, meilleur.get("conflits_restants"))
+                return None
+            logger.info(
+                "auto_place: couronne deterministe retenue — %d conflit(s) "
+                "contre %d pour l optimiseur", n, meilleur.get("conflits_restants"))
+            fps = PCB.load(str(f)).footprints
+            return {
+                "kicad_pcb_b64": _b64.b64encode(f.read_bytes()).decode(),
+                "placed_count": len(fps),
+                "conflits_restants": n,
+                "positions": [
+                    {"ref": fp.reference, "x_mm": fp.position[0],
+                     "y_mm": fp.position[1]}
+                    for fp in fps if fp.reference
+                ],
+            }
+    except Exception as exc:
+        logger.warning("auto_place: couronne de secours impossible (%s)", exc)
+        return None
 
 
 def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
