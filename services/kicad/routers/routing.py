@@ -485,6 +485,40 @@ _COPPER_LAYER_RE = re.compile(r'"[A-Za-z0-9.]+\.Cu"')
 _MAX_LAYERS: int = 16
 
 
+# Paliers de couches consecutifs sans le moindre gain que l on tolere avant
+# d arreter d escalader.
+#
+# ⚠️ Mesure du 2026-08-27, ESP32 du banc, meme board place :
+#
+#     palier 2 couches    89 s  ->  80 %
+#     palier 4 couches    72 s  ->  80 %
+#     palier 6 couches   421 s  ->  40 %    <- le plus de temps, le pire score
+#     palier 8 couches   126 s  ->  73 %
+#
+# Douze minutes de routage pour finir sur le resultat acquis en 89 secondes.
+#
+# ⚠️ On avait cru a un palier AFFAME : `_remaining_budget_s` rend le temps
+# RESTANT, donc les paliers tardifs en recoivent moins. La structure le dit,
+# les durees le refutent — le palier 6 a recu cinq fois le temps du palier 2.
+# Ajouter des couches rend la recherche de Freerouting plus DURE. Lire le code
+# ne suffisait pas, il fallait lire l horloge.
+#
+# ⚠️ Un palier PLAT peut preceder un palier utile : on n arrete pas au premier
+# essai infructueux. Deux d affilee suffisent a conclure.
+_PALIERS_SANS_GAIN_TOLERES = 1
+
+
+def _escalade_epuisee(sans_gain: int) -> bool:
+    """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
+
+    Ne change JAMAIS le resultat rendu : `route_auto` garde le meilleur palier,
+    pas le dernier. Seul le nombre d essais diminue.
+
+    Garde : tests/test_escalade_sans_gain.py.
+    """
+    return sans_gain > _PALIERS_SANS_GAIN_TOLERES
+
+
 def _layer_ladder(plafond: int) -> list[int]:
     """Paliers d escalade autorises, du plus economique au plus permissif.
 
@@ -2115,7 +2149,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # recalculer sur la sortie fausserait le pourcentage.
     nets_routables = _count_routable_nets(pcb_bytes)
 
+    sans_gain = 0
     for palier in _layer_ladder(req.layers):
+        if _escalade_epuisee(sans_gain):
+            logger.info(
+                "route_auto: escalade arretee avant %d couches — %d palier(s) "
+                "consecutif(s) sans gain, le meilleur est deja acquis",
+                palier, sans_gain)
+            break
         restant = _remaining_budget_s(deadline)
         if meilleur is not None and not _budget_suffisant(restant):
             logger.info(
@@ -2221,6 +2262,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             return res
         if meilleur is None or res.routed_percent > meilleur.routed_percent:
             meilleur = res
+            sans_gain = 0
+        else:
+            sans_gain += 1
 
     # Aucun palier n'a atteint 100 % : on rend le MEILLEUR, jamais le dernier.
     # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
