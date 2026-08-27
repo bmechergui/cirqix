@@ -989,6 +989,75 @@ def _boitiers_dominants(pcb) -> list:
     return dominants
 
 
+# Marge ajoutee quand on pousse un mobile hors d un boitier ancre : de quoi
+# loger sa propre demi-taille plus un degagement de routage.
+_MARGE_ECARTEMENT_MM = 2.0
+
+
+def _ecarter_des_dominants(pcb, dominants: list) -> int:
+    """Pousse les composants MOBILES hors de l emprise des boitiers ancres.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 du banc : apres avoir centre et ancre le
+    module, il restait trois `courtyards_overlap`, tous entre U1 et un passif
+    pose PAR-DESSUS. `PlacementFixer` ne les ecarte pas — sa reparation locale
+    deplace de proche en proche, et un boitier de 2000 mm2 ne lui laisse aucun
+    voisinage libre ou glisser.
+
+    Un composant ancre occupe une surface INTERDITE aux autres. On pousse donc
+    chaque mobile dans la direction qui l en sort le plus vite.
+
+    ⚠️ On ne deplace QUE les mobiles : pousser un ancre annulerait l ancrage,
+    et deux ancres qui se chevauchent relevent de
+    `_position_libre_pour_ancrage`.
+
+    ⚠️ Le composant pousse reste DANS la carte. Le sortir du contour
+    echangerait un chevauchement contre un defaut pire — ses nets seraient
+    inroutables.
+    """
+    try:
+        l_carte, h_carte = (float(v) for v in pcb.board_size)
+    except Exception:
+        l_carte = h_carte = 0.0
+    fixes = set(dominants)
+    boites = []
+    for ref in dominants:
+        fp = next((f for f in pcb.footprints if f.reference == ref), None)
+        if fp is None:
+            continue
+        l, h = _encombrement_fp(fp)
+        boites.append((fp.position[0], fp.position[1], l / 2.0, h / 2.0))
+    if not boites:
+        return 0
+
+    ecartes = 0
+    for fp in pcb.footprints:
+        if not fp.reference or fp.reference in fixes:
+            continue
+        x, y = fp.position
+        for cx, cy, dl, dh in boites:
+            if abs(x - cx) >= dl or abs(y - cy) >= dh:
+                continue  # deja dehors
+            l, h = _encombrement_fp(fp)
+            # Sortir par le cote le plus proche : c est le trajet le plus court,
+            # donc celui qui derange le moins le reste du placement.
+            gauche, droite = (x - (cx - dl)), ((cx + dl) - x)
+            haut, bas = (y - (cy - dh)), ((cy + dh) - y)
+            sorties = [
+                (gauche, (cx - dl - l / 2.0 - _MARGE_ECARTEMENT_MM, y)),
+                (droite, (cx + dl + l / 2.0 + _MARGE_ECARTEMENT_MM, y)),
+                (haut, (x, cy - dh - h / 2.0 - _MARGE_ECARTEMENT_MM)),
+                (bas, (x, cy + dh + h / 2.0 + _MARGE_ECARTEMENT_MM)),
+            ]
+            sorties.sort(key=lambda s: s[0])
+            for _, (nx, ny) in sorties:
+                if l_carte > 0 and not (0.0 <= nx <= l_carte and 0.0 <= ny <= h_carte):
+                    continue
+                fp.position = (nx, ny)
+                ecartes += 1
+                break
+            break
+    return ecartes
+
 def _centrer(pcb, refs: list) -> None:
     """Pose les refs au centre de la carte, en les ecartant les unes des autres.
 
@@ -1208,6 +1277,19 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
         # CMA-ES, halo — travaille sur un board déjà faux.
         n_norm = _normalize_origin_after_write(pcb, skip=conn)
+
+        # ⚠️ Ecarter les MOBILES poses sur un boitier ancre. L optimiseur les
+        # y depose, et `PlacementFixer` ne les en sort pas : sa reparation
+        # locale deplace de proche en proche, et un boitier de 2000 mm2 ne
+        # lui laisse aucun voisinage libre. Mesure du 2026-08-27 : trois
+        # `courtyards_overlap` residuels sur l ESP32, tous contre U1.
+        if dominants:
+            n_ecartes = _ecarter_des_dominants(pcb, dominants)
+            if n_ecartes:
+                logger.info(
+                    "auto_place: %d composant(s) ecarte(s) de l emprise des "
+                    "boitiers dominants", n_ecartes)
+
         logger.info(
             "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
             updated,

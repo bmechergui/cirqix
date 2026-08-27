@@ -617,6 +617,105 @@ def _generate_with_pcbnew(
         return None
 
 
+_PAD_RE = re.compile(chr(92) + "(pad " + chr(92) + "b.*?" + chr(10) + chr(9) + "*" + chr(92) + ")", re.DOTALL)
+_NUM_PAD_RE = re.compile(chr(92) + "(pad " + chr(92) + "s*" + chr(34) + "([^" + chr(34) + "]*)" + chr(34))
+_NET_PAD_RE = re.compile(chr(92) + "(net " + chr(92) + "s*(?:" + chr(92) + "d+ )?" + chr(34) + "[^" + chr(34) + "]*" + chr(34) + chr(92) + ")")
+
+
+def _blocs_pads(texte: str) -> list:
+    """Blocs `(pad ...)` complets, quel que soit leur formatage.
+
+    ⚠️ Balayage de parentheses plutot que motif : une pastille peut tenir
+    sur UNE ligne (notre generateur) ou sur PLUSIEURS (pcbnew, KiCad). Un
+    motif regle sur l une ignore silencieusement l autre — c est le meme
+    piege que la garde anti-empilement de plans, aveugle aux zones
+    multilignes (2026-08-24).
+    """
+    blocs, i = [], texte.find("(pad ")
+    while i != -1:
+        prof, dans, j = 0, False, i
+        while j < len(texte):
+            c = texte[j]
+            if c == chr(34) and texte[j - 1] != chr(92):
+                dans = not dans
+            elif not dans and c == "(":
+                prof += 1
+            elif not dans and c == ")":
+                prof -= 1
+                if prof == 0:
+                    blocs.append(texte[i:j + 1])
+                    break
+            j += 1
+        else:
+            break
+        i = texte.find("(pad ", j)
+    return blocs
+
+
+def propager_nets_pastilles_homonymes(pcb_content: str) -> str:
+    """Donne le meme net a toutes les pastilles portant le MEME NUMERO.
+
+    ⚠️ Des pastilles de meme numero sont le MEME NOEUD — c est la definition
+    de KiCad, et c est ainsi qu il exprime un pave thermique et ses vias.
+
+    Mesure du 2026-08-27, ESP32 du banc : U1 portait 60 pastilles dont 22
+    numerotees « 39 », et 21 d entre elles n avaient AUCUN net. Ce cuivre sans
+    nom, touche par le plan de masse, produisait huit `shorting_items` :
+
+        Pad 39 [+3V3]     of U1 on F.Cu
+        Pad 39 [<no net>] of U1 on F.Cu
+
+    ⚠️ Le defaut n a rien de propre a ce module : tout boitier a pave
+    thermique est concerne — QFN, DFN, modules RF, regulateurs de puissance.
+    La reparation vit donc au niveau du BOARD, pas dans un cas particulier.
+
+    ⚠️ On PROPAGE, on n invente pas : une pastille dont aucune homonyme ne
+    porte de net reste sans net. Une broche non connectee doit le rester.
+
+    ⚠️ La propagation est INTERNE a chaque footprint. Deux boitiers peuvent
+    avoir chacun une pastille « 39 » sur des nets differents ; propager entre
+    eux creerait le court-circuit qu on cherche a supprimer.
+    """
+    morceaux = pcb_content.split("(footprint ")
+    if len(morceaux) < 2:
+        return pcb_content
+
+    total = 0
+    for i in range(1, len(morceaux)):
+        bloc = morceaux[i]
+        pads = _blocs_pads(bloc)
+        if not pads:
+            continue
+        # Net connu pour chaque numero, dans CE footprint seulement.
+        connus = {}
+        for pad in pads:
+            num = _NUM_PAD_RE.search(pad)
+            net = _NET_PAD_RE.search(pad)
+            if num and net:
+                connus.setdefault(num.group(1), net.group(0))
+        if not connus:
+            continue
+        for pad in pads:
+            if _NET_PAD_RE.search(pad):
+                continue
+            num = _NUM_PAD_RE.search(pad)
+            if not num or num.group(1) not in connus:
+                continue
+            # Inserer le net juste avant la parenthese fermante du pad.
+            j = pad.rstrip().rfind(")")
+            repare = pad[:j] + " " + connus[num.group(1)] + pad[j:]
+            bloc = bloc.replace(pad, repare, 1)
+            total += 1
+        morceaux[i] = bloc
+
+    if not total:
+        return pcb_content
+    logger.info(
+        "generate_pcb: %d pastille(s) homonyme(s) ont recu le net de leur "
+        "noeud — sans cela leur cuivre reste sans nom et court-circuite le plan",
+        total)
+    return "(footprint ".join(morceaux)
+
 def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
     """Re-assign single-pad floating nets (Net-(X-Y), unconnected-*) using
     circuit_synth connection data which has the correct pad→net topology.
@@ -735,6 +834,10 @@ def generate_pcb(
                 kicad_net_content=kicad_net_content,
             )
             if content:
+                # ⚠️ Les pastilles HOMONYMES doivent porter le meme net, quel que soit
+                # le niveau qui a genere le board : un pave thermique et ses vias sont
+                # un seul noeud, et le cuivre laisse sans nom court-circuite le plan.
+                content = propager_nets_pastilles_homonymes(content)
                 content, requoted = _quote_bare_property_values(content)
                 if requoted:
                     logger.warning(
@@ -751,6 +854,7 @@ def generate_pcb(
         try:
             content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
+                content = propager_nets_pastilles_homonymes(content)
                 content, _ = _quote_bare_property_values(content)
                 logger.info("generate_pcb: niveau 2 pcbnew OK")
                 return content
