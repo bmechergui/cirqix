@@ -326,6 +326,37 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      Limite ACCEPTÉE (2026-06-18) : caps/quartz à 13-28mm du MCU (routable, pas
         « pro »). PAS de snap déterministe — adjacence serrée = Phase 6 RL_PCB.
      Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
+     ⚠️ **UN RAPPORT DRC VIDE SE LISAIT « 0 ERREUR » (2026-08-27).** Le board
+        sorti du placement portait des valeurs de keepout entre guillemets —
+        l'écriture de `kicad_tools`. KiCad refuse alors le fichier ENTIER. Le
+        défaut était déjà réparé, mais dans le seul CHARGEUR pcbnew : `kicad-cli`
+        est un SECOND lecteur, sans ce filet, et répondait `Failed to load board`
+        **avec rc=0**, sans écrire de rapport. `_rapport_drc_placement` rendait
+        `{}`, et `_compter_conflits_erreur` y lisait zéro conflit.
+        Mesuré sur l'ESP32 du banc, même board, trois étapes :
+
+        | étape | rapport | lu comme |
+        |---|---|---|
+        | board PLACÉ | vide | 0 erreur |
+        | après `_expand_stackup` | vide | 0 erreur |
+        | après coulée + `_fill_zones` | **20 erreurs** (12 `courtyards_overlap`) | 20 |
+
+        Les vingt erreurs étaient dans le board placé **depuis le début**. Le
+        passage par pcbnew ne les CRÉAIT pas — il les RÉVÉLAIT, en réparant à la
+        lecture et en réécrivant un fichier lisible. J'ai accusé la coulée du
+        plan de masse plusieurs heures pour cette raison.
+        Entre les deux, la boucle de re-tirage acceptait au premier tirage un
+        board condamné, et la chaîne routait 25 min dessus. C'est l'explication
+        complète de l'instabilité ESP32 : **la boucle était correcte, on lui
+        mentait.**
+        Corrigé à la SOURCE : la règle vit dans `tools/sexp_quote.py`, aux côtés
+        de son symétrique `quote_bare_property_values`, et le placement répare
+        AVANT de mesurer et de rendre. `_rapport_drc_placement` lève
+        `DrcInexecutable` au lieu de rendre `{}`, et le compteur rend une
+        sentinelle qui force le re-tirage.
+        **NEVER** réparer un défaut de format chez un lecteur : on en oublie
+        toujours un, et sa cécité passe pour un verdict favorable.
+        Gardes : `tests/test_keepout_a_la_source.py`, `tests/test_drc_ne_ment_jamais.py`.
   ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
      POST /route/auto
      ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,

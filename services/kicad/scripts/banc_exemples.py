@@ -12,6 +12,7 @@ annoncee routee et porter des connexions manquantes. On imprime les deux.
 from __future__ import annotations
 
 import base64
+import logging
 import json
 import sys
 import time
@@ -25,6 +26,18 @@ _RACINE = next(
 sys.path.insert(0, str(_RACINE))
 
 _EXEMPLES = _RACINE / "examples"
+
+
+# ⚠️ Sans cette configuration, les `logger.info` du service ne s ecrivent
+# NULLE PART. Le banc devenait alors aveugle a ses propres decisions, et j en
+# ai tire DEUX conclusions fausses le 2026-08-27 : « la detection de boitier
+# dominant ne se declenche jamais » (elle tournait) et « le placement
+# deterministe n a pas ete essaye » (impossible a dire). On ne corrige pas ce
+# qu on ne voit pas.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 def _b64(raw: bytes) -> str:
@@ -152,6 +165,12 @@ def main(argv: list[str]) -> int:
     for nom in cas:
         f = _EXEMPLES / nom / "input" / "circuit.json"
         if not f.is_file():
+            # ⚠️ Ne PAS sauter en silence. Le 2026-08-27, trois lancements de
+            # suite n ont produit que la ligne d en-tete : la racine d exemples
+            # etait la mauvaise, aucun cas ne correspondait, et le banc sortait
+            # en rc=0 comme s il avait travaille. J ai conclu deux fois que le
+            # processus « mourait ».
+            print("cas introuvable : %s" % f, file=sys.stderr)
             continue
         circuit = json.loads(f.read_text(encoding="utf-8"))
         try:
