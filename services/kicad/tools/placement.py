@@ -389,7 +389,8 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
     return {"refined": True, "elapsed_s": elapsed}
 
 
-def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0) -> list[str]:
+def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0,
+                                 exempts: list = None) -> list[str]:
     """Ramène les footprints ``fixed_refs`` à l'intérieur du contour Edge.Cuts.
 
     ``OptimizationWorkflow`` traite ``fixed_refs`` comme des ancrages immobiles :
@@ -418,8 +419,17 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
         # connecteurs superposés À L'INTÉRIEUR du contour produisent le même
         # blocage, et n'étaient pas clampés donc pas examinés.
-        nx, ny = _position_libre_pour_ancrage(pcb, fp.reference, cx, cy,
-                                              min_x, max_x, min_y, max_y)
+        # ⚠️ Un boitier DOMINANT est exempt du deplacement anti-collision.
+        # Il chevauche forcement ses voisins au moment ou on le pose — c est
+        # aux voisins de s ecarter, pas a lui. Sans cette exemption, le
+        # module ESP32 centre a 46,5 mm etait POUSSE a 82 sur une carte de
+        # 93, ou il debordait de 9,6 mm : deux correctifs qui se combattent,
+        # mesure du 2026-08-27.
+        if exempts and fp.reference in exempts:
+            nx, ny = cx, cy
+        else:
+            nx, ny = _position_libre_pour_ancrage(pcb, fp.reference, cx, cy,
+                                                  min_x, max_x, min_y, max_y)
         if (nx, ny) != (x, y):
             logger.warning("ancrage %s (%.2f,%.2f) -> reposé (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)
@@ -1314,7 +1324,7 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                         ", ".join(dominants))
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
-        _clamp_fixed_refs_to_outline(pcb, conn)
+        _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         cfg = WorkflowConfig(

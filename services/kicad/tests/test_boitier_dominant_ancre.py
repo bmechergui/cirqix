@@ -23,12 +23,15 @@ pads) repond a une autre question — le canal d escape — et ne convient pas i
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVICE_ROOT))
 
 from tools import placement as P  # noqa: E402
+
+NL = chr(10)
 
 
 class _Pad:
@@ -73,12 +76,73 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "tools" / "placement.py").read_text(encoding="utf-8")
 
     def test_les_dominants_rejoignent_les_ancrages(self):
-        corps = SOURCE = self.SOURCE[self.SOURCE.index("def auto_place("):]
+        corps = self.SOURCE[self.SOURCE.index("def auto_place(") :]
         i = corps.index("_boitiers_dominants(")
         j = corps.index("fixed_refs=")
         assert i < j, "les dominants doivent etre ancres AVANT l optimisation"
 
     def test_le_dominant_est_centre_avant_d_etre_ancre(self):
         # L ancrer la ou `gen_pcb` l a laisse figerait un mauvais placement.
-        corps = self.SOURCE[self.SOURCE.index("def auto_place("):]
+        corps = self.SOURCE[self.SOURCE.index("def auto_place(") :]
         assert "_centrer(" in corps
+
+
+class TestExemptionAntiCollision:
+    """Un boitier dominant n est pas pousse par la garde anti-superposition.
+
+    Mesure du 2026-08-27 : le module ESP32, centre a 46,5 mm sur une carte de
+    93 mm, se retrouvait a **82** — soit un debordement de 9,6 mm hors du bord
+    droit. Les passifs le chevauchaient parce qu il n etait pas ou on croyait
+    l avoir mis.
+
+    La cause : deux correctifs qui se combattent. `_centrer` le pose au milieu,
+    puis `_position_libre_pour_ancrage` — ecrite pour empecher DEUX CONNECTEURS
+    de se superposer — constate qu un boitier de 41 x 48 mm chevauche a peu pres
+    tout, et le pousse au bord.
+
+    Un dominant chevauche FORCEMENT ses voisins au moment ou on le pose. C est
+    aux voisins de s ecarter.
+    """
+
+    def _pcb_reel(self):
+        from kicad_tools.schema.pcb import PCB
+
+        def fp(ref, x, y, demi):
+            pads = NL.join(
+                '\t\t(pad "%d" smd rect (at %s %s) (size 1 1) '
+                '(layers "F.Cu") (net 3 "GND"))' % (i, s * demi, s * demi)
+                for i, s in enumerate((-1, 1), start=1)
+            )
+            return NL.join([
+                '\t(footprint "F" (layer "F.Cu")',
+                "\t\t(at %s %s)" % (x, y),
+                '\t\t(fp_text reference "%s" (at 0 0) (layer "F.SilkS"))' % ref,
+                pads,
+                "\t)",
+            ])
+
+        texte = NL.join([
+            "(kicad_pcb",
+            "\t(version 20240108)",
+            "\t(layers",
+            '\t\t(0 "F.Cu" signal)',
+            '\t\t(44 "Edge.Cuts" user)',
+            "\t)",
+            '\t(net 3 "GND")',
+            '\t(gr_rect (start 100 100) (end 193 170) (layer "Edge.Cuts"))',
+            fp("U1", 146, 135, 20),
+            fp("R1", 145, 134, 1),
+            ")",
+        ])
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "b.kicad_pcb"
+            f.write_text(texte, encoding="utf-8")
+            return PCB.load(str(f))
+
+    def test_un_dominant_reste_ou_on_l_a_centre(self):
+        pcb = self._pcb_reel()
+        u1 = next(f for f in pcb.footprints if f.reference == "U1")
+        avant = u1.position
+        P._clamp_fixed_refs_to_outline(pcb, ["U1", "R1"], exempts=["U1"])
+        assert u1.position == avant, (
+            "le dominant a ete pousse : %s -> %s" % (avant, u1.position))
