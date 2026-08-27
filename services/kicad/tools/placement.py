@@ -186,6 +186,58 @@ class DrcInexecutable(RuntimeError):
     """
 
 
+# Percage minimum du procede STANDARD de JLCPCB, et defaut de KiCad. En
+# dessous, la carte part en option payante — ou se fait refuser.
+_PERCAGE_MINIMUM_MM = 0.3
+# Anneau minimum de part et d autre du percage (defaut KiCad : 0,10 mm).
+_ANNEAU_MINIMUM_MM = 0.1
+
+_PERCAGE_RE = re.compile(r"\(drill\s+(\d+(?:\.\d+)?)\)")
+_TAILLE_RE = re.compile(r"\(size\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\)")
+
+
+def elargir_percages_trop_fins(texte: str) -> tuple:
+    """Renvoie ``(texte_corrige, nombre_de_percages_elargis)``.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 : les douze dernieres erreurs du board place
+    etaient `drill_out_of_range` sur les vias thermiques du module —
+    `(drill 0.2)`, tels que la bibliotheque KiCad les fournit. Le minimum par
+    defaut de KiCad vaut 0,30 mm, comme le procede standard de JLCPCB.
+
+    ⚠️ On n assouplit PAS la regle dans le `.kicad_pro`. `_projet_kicad` ne le
+    fait que pour les boitiers fine-pitch, en assumant l option payante ;
+    l appliquer ici ferait passer pour fabricable une carte qui ne l est pas au
+    tarif standard. Elargir le percage, lui, ne coute rien.
+
+    ⚠️ La pastille suit : elargir le percage seul remplacerait une erreur de
+    percage par une erreur d anneau.
+
+    Garde : tests/test_percages_fabricables.py.
+    """
+    n = 0
+
+    def sur_un_pad(bloc: str) -> str:
+        nonlocal n
+        m = _PERCAGE_RE.search(bloc)
+        if m is None or float(m.group(1)) >= _PERCAGE_MINIMUM_MM:
+            return bloc
+        n += 1
+        bloc = bloc[:m.start()] + "(drill %s)" % _PERCAGE_MINIMUM_MM + bloc[m.end():]
+        mini = _PERCAGE_MINIMUM_MM + 2 * _ANNEAU_MINIMUM_MM
+        t = _TAILLE_RE.search(bloc)
+        if t is not None and (float(t.group(1)) < mini or float(t.group(2)) < mini):
+            bloc = bloc[:t.start()] + "(size %s %s)" % (
+                max(float(t.group(1)), mini), max(float(t.group(2)), mini)
+            ) + bloc[t.end():]
+        return bloc
+
+    # On decoupe par pastille : le percage et la taille d un MEME pad doivent
+    # etre corriges ensemble, jamais appareilles au hasard du fichier.
+    morceaux = texte.split("(pad ")
+    sortie = [morceaux[0]] + [sur_un_pad(m) for m in morceaux[1:]]
+    return "(pad ".join(sortie), n
+
+
 def _rendre_lisible(pcb_path: Path) -> None:
     """Repare, EN PLACE, ce que les lecteurs de KiCad refusent.
 
@@ -197,10 +249,16 @@ def _rendre_lisible(pcb_path: Path) -> None:
     brut = pcb_path.read_text(encoding="utf-8", errors="replace")
     corrige, n = unquote_keepout_values(brut)
     if n:
-        pcb_path.write_text(corrige, encoding="utf-8")
         logger.info(
             "auto_place: %d valeur(s) de keepout deguillemetee(s) — sans quoi "
             "kicad-cli refuse le board et son rapport revient vide", n)
+    corrige, n_percages = elargir_percages_trop_fins(corrige)
+    if n_percages:
+        logger.info(
+            "auto_place: %d percage(s) elargi(s) a %s mm — en dessous, JLCPCB "
+            "refuse la carte au tarif standard", n_percages, _PERCAGE_MINIMUM_MM)
+    if n or n_percages:
+        pcb_path.write_text(corrige, encoding="utf-8")
 
 
 def _rapport_drc_placement(pcb_path: Path) -> dict:
@@ -1064,6 +1122,30 @@ def _encombrement_fp(fp) -> tuple:
     Sans courtyard declare, on retombe sur les pastilles — rendre 0 ferait
     perdre toute protection.
     """
+    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    return x1 - x0, y1 - y0
+
+
+def _boite_locale_fp(fp) -> tuple:
+    """Boite du footprint DANS SON REPERE : ``(x0, y0, x1, y1)``.
+
+    ⚠️ `_encombrement_fp` n en rendait que la TAILLE, et jetait le decalage.
+    Or c est le decalage qui manquait. Courtyard reel de l ESP32-WROOM, lu
+    dans un board du banc :
+
+        x local : de -24,00 a +24,00      (centre sur l origine)
+        y local : de -30,74 a +10,51      (decale de 10 mm)
+
+    L origine d un module est sur sa pastille 1, pas au milieu de son corps —
+    c est vrai de l ESP32, des en-tetes Arduino et des connecteurs Nucleo.
+    Raisonner en demi-taille de part et d autre de la position fait donc
+    tomber un cote de la couronne EN PLEIN dans le module : cinq
+    `courtyards_overlap` mesures le 2026-08-27.
+
+    ⚠️ Pastilles et courtyard sont l un comme l autre en coordonnees LOCALES
+    (verifie sur un board reel) : la boite se ramene en absolu en ajoutant
+    simplement `fp.position`.
+    """
     xs, ys = [], []
     for g in getattr(fp, "graphics", []) or []:
         if str(getattr(g, "layer", "")) not in ("F.CrtYd", "B.CrtYd"):
@@ -1080,8 +1162,8 @@ def _encombrement_fp(fp) -> tuple:
         xs = [p.position[0] for p in getattr(fp, "pads", []) or []]
         ys = [p.position[1] for p in getattr(fp, "pads", []) or []]
     if not xs:
-        return 0.0, 0.0
-    return max(xs) - min(xs), max(ys) - min(ys)
+        return 0.0, 0.0, 0.0, 0.0
+    return min(xs), min(ys), max(xs), max(ys)
 
 
 def _boitiers_dominants(pcb) -> list:
@@ -1156,34 +1238,45 @@ def _placer_en_couronne(pcb, dominants: list) -> int:
         return 0
 
     principal = modules[0]
-    principal.position = (cx, cy)
-    dl, dh = (v / 2.0 for v in _encombrement_fp(principal))
+    # ⚠️ On centre le CORPS, pas l ORIGINE. L origine d un module est sur sa
+    # pastille 1 ; la poser au milieu de la carte y decale le corps d autant.
+    bx0, by0, bx1, by1 = _boite_locale_fp(principal)
+    principal.position = (cx - (bx0 + bx1) / 2.0, cy - (by0 + by1) / 2.0)
+    px, py = principal.position
+    # Boite ABSOLUE du corps : c est elle que la couronne doit contourner.
+    mx0, my0 = px + bx0, py + by0
+    mx1, my1 = px + bx1, py + by1
 
-    # Anneaux successifs autour du module. Le pas vaut la plus grande piece a
-    # loger, pour qu aucune ne deborde sur sa voisine.
+    # Anneaux successifs autour de cette boite. Le pas vaut la plus grande
+    # piece a loger, pour qu aucune ne deborde sur sa voisine.
     pas = max([max(_encombrement_fp(f)) for f in autres] or [2.0]) + 1.5
     places, anneau = 0, 1
     restants = list(autres)
     while restants and anneau < 40:
-        rx, ry = dl + anneau * pas, dh + anneau * pas
+        marge = anneau * pas
+        gx0, gy0 = mx0 - marge, my0 - marge
+        gx1, gy1 = mx1 + marge, my1 + marge
         # Positions sur le rectangle de cet anneau, dans un ordre stable.
         cases = []
-        nx = max(2, int((2 * rx) / pas))
-        ny = max(2, int((2 * ry) / pas))
+        nx = max(2, int((gx1 - gx0) / pas))
+        ny = max(2, int((gy1 - gy0) / pas))
         for i in range(nx + 1):
-            x = cx - rx + i * (2 * rx / nx)
-            cases.append((x, cy - ry))
-            cases.append((x, cy + ry))
+            x = gx0 + i * (gx1 - gx0) / nx
+            cases.append((x, gy0))
+            cases.append((x, gy1))
         for j in range(1, ny):
-            y = cy - ry + j * (2 * ry / ny)
-            cases.append((cx - rx, y))
-            cases.append((cx + rx, y))
+            y = gy0 + j * (gy1 - gy0) / ny
+            cases.append((gx0, y))
+            cases.append((gx1, y))
         for x, y in cases:
             if not restants:
                 break
-            l, h = _encombrement_fp(restants[0])
-            if not (l / 2 <= x <= l_carte - l / 2 and h / 2 <= y <= h_carte - h / 2):
-                continue  # hors contour : un passif dehors est inroutable
+            fx0, fy0, fx1, fy1 = _boite_locale_fp(restants[0])
+            # Hors contour : un passif dehors est inroutable. La boite du
+            # passif, pas sa demi-taille — meme raison que pour le module.
+            if not (0.0 <= x + fx0 and x + fx1 <= l_carte
+                    and 0.0 <= y + fy0 and y + fy1 <= h_carte):
+                continue
             restants.pop(0).position = (x, y)
             places += 1
         anneau += 1
@@ -1303,9 +1396,13 @@ def _centrer(pcb, refs: list) -> None:
         fp = next((f for f in pcb.footprints if f.reference == ref), None)
         if fp is None:
             continue
-        l, h = _encombrement_fp(fp)
+        # ⚠️ Le CORPS au centre, pas l ORIGINE. L origine d un module est sur
+        # sa pastille 1 : centrer l origine decale le corps de tout le
+        # decalage du courtyard — 10 mm sur l ESP32-WROOM.
+        x0, y0, x1, y1 = _boite_locale_fp(fp)
+        l = x1 - x0
         # Plusieurs dominants : on les decale de leur propre largeur.
-        fp.position = (cx + i * (l + 5.0), cy)
+        fp.position = (cx + i * (l + 5.0) - (x0 + x1) / 2.0, cy - (y0 + y1) / 2.0)
 
 def _dense_part_refs(pcb) -> list[str]:
     """Refs des composants fine-pitch haut-broches (≥ ``_DENSE_PAD_COUNT`` pads).

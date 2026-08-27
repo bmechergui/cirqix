@@ -1,0 +1,140 @@
+"""La couronne doit contourner le CORPS du module, pas son origine.
+
+⚠️ Mesure du 2026-08-27, ESP32 du banc. La couronne deterministe laissait
+CINQ `courtyards_overlap`, tous contre le module dominant :
+
+    Footprint R1 <-> Footprint U1      Footprint C4 <-> Footprint U1
+    Footprint R2 <-> Footprint U1      Footprint D5 <-> Footprint U1
+    Footprint R3 <-> Footprint U1
+
+La geometrie semblait pourtant impossible : R1 etait a y = 3,98 et le module
+mesure 41 mm de haut autour de y = 34,9. Le courtyard reel de l ESP32-WROOM,
+lu dans le fichier, tranche :
+
+    y local du courtyard : de -30,74 a +10,51      (41,25 mm de haut)
+
+Il n est **pas centre sur l origine** du footprint — il deborde 30,7 mm d un
+cote et 10,5 mm de l autre. `_placer_en_couronne` prenait la demi-hauteur
+(20,6 mm) de part et d autre de la POSITION : du cote long, l anneau tombait
+en plein dans le module.
+
+Rien d exotique : un module a son origine sur la pastille 1, pas au milieu de
+son corps. C est le cas de l ESP32, des en-tetes Arduino et des connecteurs
+Nucleo — donc de toutes les cartes a boitier dominant que vise ce banc.
+
+⚠️ La TAILLE ne suffit pas a placer : il faut la BOITE. `_encombrement_fp`
+rendait `max - min` et jetait le decalage, qui est precisement l information
+manquante.
+"""
+from __future__ import annotations
+
+import sys
+import tempfile
+from pathlib import Path
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_SERVICE_ROOT))
+
+from tools import placement as P  # noqa: E402
+
+NL = chr(10)
+
+
+def _ligne_crtyd(x0, y0, x1, y1):
+    return ('\t\t(fp_line (start %s %s) (end %s %s) '
+            '(stroke (width 0.05) (type solid)) (layer "F.CrtYd"))'
+            % (x0, y0, x1, y1))
+
+
+def _module(ref, x, y, x0, y0, x1, y1):
+    """Un boitier dont le courtyard va de (x0,y0) a (x1,y1) EN LOCAL."""
+    return NL.join([
+        '\t(footprint "M" (layer "F.Cu")',
+        "\t\t(at %s %s)" % (x, y),
+        '\t\t(fp_text reference "%s" (at 0 0) (layer "F.SilkS"))' % ref,
+        _ligne_crtyd(x0, y0, x1, y0),
+        _ligne_crtyd(x1, y0, x1, y1),
+        _ligne_crtyd(x1, y1, x0, y1),
+        _ligne_crtyd(x0, y1, x0, y0),
+        '\t\t(pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "N"))',
+        "\t)",
+    ])
+
+
+def _carte():
+    from kicad_tools.schema.pcb import PCB
+
+    corps = [
+        # Module dominant : 48 x 41, courtyard DECALE — comme l ESP32 reel.
+        _module("U1", 46.5, 35.0, -24.0, -30.74, 24.0, 10.51),
+    ]
+    # Dix passifs minuscules, poses n importe ou : la couronne doit les ranger.
+    for i in range(10):
+        corps.append(_module("R%d" % (i + 1), 5.0 + i, 5.0,
+                             -0.93, -0.47, 0.93, 0.47))
+    texte = NL.join([
+        "(kicad_pcb",
+        "\t(version 20240108)",
+        '\t(layers (0 "F.Cu" signal) (44 "Edge.Cuts" user) (47 "F.CrtYd" user))',
+        '\t(net 1 "N")',
+        '\t(gr_rect (start 0 0) (end 93 70) (layer "Edge.Cuts"))',
+        *corps,
+        ")",
+    ])
+    d = tempfile.mkdtemp()
+    f = Path(d) / "b.kicad_pcb"
+    f.write_text(texte, encoding="utf-8")
+    return PCB.load(str(f))
+
+
+def _boite_absolue(fp):
+    x0, y0, x1, y1 = P._boite_locale_fp(fp)
+    px, py = fp.position
+    return px + x0, py + y0, px + x1, py + y1
+
+
+def _se_chevauchent(a, b):
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+class TestBoite:
+    def test_la_boite_conserve_le_decalage(self):
+        pcb = _carte()
+        u1 = next(f for f in pcb.footprints if f.reference == "U1")
+        x0, y0, x1, y1 = P._boite_locale_fp(u1)
+        assert (round(y0, 2), round(y1, 2)) == (-30.74, 10.51), (
+            "le decalage du courtyard est l information qui manquait")
+
+    def test_la_taille_reste_coherente_avec_l_encombrement(self):
+        pcb = _carte()
+        u1 = next(f for f in pcb.footprints if f.reference == "U1")
+        x0, y0, x1, y1 = P._boite_locale_fp(u1)
+        l, h = P._encombrement_fp(u1)
+        assert (round(x1 - x0, 2), round(y1 - y0, 2)) == (round(l, 2), round(h, 2))
+
+
+class TestCouronne:
+    def test_aucun_passif_ne_chevauche_le_corps_du_module(self):
+        pcb = _carte()
+        P._placer_en_couronne(pcb, ["U1"])
+        u1 = next(f for f in pcb.footprints if f.reference == "U1")
+        boite_u1 = _boite_absolue(u1)
+        fautifs = [f.reference for f in pcb.footprints
+                   if f.reference != "U1"
+                   and _se_chevauchent(_boite_absolue(f), boite_u1)]
+        assert not fautifs, (
+            "%s chevauche(nt) le corps du module — la couronne a raisonne "
+            "autour de l origine, pas du corps" % fautifs)
+
+    def test_les_passifs_restent_dans_le_contour(self):
+        pcb = _carte()
+        P._placer_en_couronne(pcb, ["U1"])
+        l, h = pcb.board_size
+        dehors = []
+        for f in pcb.footprints:
+            if f.reference == "U1":
+                continue
+            x0, y0, x1, y1 = _boite_absolue(f)
+            if x0 < 0 or y0 < 0 or x1 > l or y1 > h:
+                dehors.append(f.reference)
+        assert not dehors, "%s hors contour — un passif dehors est inroutable" % dehors
