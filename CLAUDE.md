@@ -740,9 +740,13 @@ jamais s'appliquer — une erreur rouge, réelle, mais SANS RAPPORT avec le 404.
 Elle m'a fait conclure à un serveur mort pendant des heures. Pour changer le
 port, il faut un `freerouting.json` sous `--user_data_path`.
 
-⚠️ `via_count` et `track_length_mm` ressortent à **0** sur le chemin Niveau 4 :
-il ne les calcule pas et laisse les défauts du modèle. Ce sont des indicateurs
-d'affichage, pas un gate, mais ils décrivent un board qui n'existe pas.
+⚠️ `via_count` et `track_length_mm` ressortaient à **0** sur le chemin Niveau 4 :
+il ne les calculait pas et laissait les défauts du modèle. Ce ne sont pas des
+indicateurs manquants mais des chiffres FAUX présentés comme réels — et un zéro
+est plausible, donc rien ne distinguait « mesuré à zéro » de « jamais mesuré ».
+**Corrigé** : les deux sont recalculés sur le board FINAL à la fin de
+`route_auto`, après le fanout, la coulée et les replis. Garde :
+`tests/test_routing_metrics.py`.
 
 ### Banc de routage STM32 — 6 tirages (2026-08-21)
 
@@ -872,8 +876,11 @@ Reste :
   `CIRQIX_ASYNC_PIPELINE` reste à allumer là où Redis + worker tournent.
 - ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
   ci-dessous : c'était notre compteur qui était aveugle.
-- **Budget par niveau** et **`via_count`/`track_length_mm` à 0** — voir les deux
-  avertissements ci-dessus.
+- **Budget par niveau** — voir l'avertissement ci-dessus.
+- ~~`via_count`/`track_length_mm` à 0~~ — **corrigé.** Les deux mesures sont
+  recalculées sur le board FINAL avant de répondre (`routers/routing.py`, fin de
+  `route_auto`), après le fanout, la coulée et les replis. Garde :
+  `tests/test_routing_metrics.py`.
 
 ## Système de crédits
 
