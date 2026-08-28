@@ -249,11 +249,23 @@ def _find_freerouting_api() -> Optional[str]:
 # coup (`_fanout_pads_isolees`), sur un board deja route, quand la place manque ;
 # le routeur sait le faire PENDANT, quand il reste de l espace.
 #
-# ⚠️ On ne touche QUE les clefs dont on peut dire pourquoi. Les autres defauts
-# sont le fruit du reglage de Freerouting, pas des chiffres au hasard.
+# ⚠️ MESURE DU 2026-08-28, Nucleo, meme board place, quatre conditions :
+#
+#     defauts (temoin)      91 %   5 manq   0 err   76 vias
+#     fanout actif          91 %   5 manq   0 err   84 vias   <- aucun gain
+#     via_costs 50->10      ECHEC — expiration en cascade
+#     fanout + via_costs    86 %   9 manq   0 err   85 vias   <- pire
+#
+# Aucun reglage ne bat les defauts. Le fanout n a rien relie de plus et a pose
+# huit vias supplementaires ; le cout de via abaisse fait exploser l espace de
+# recherche — l API expire, le repli sous-processus aussi, et la chaine finit
+# sans board. Le 50 par defaut n est pas arbitraire : il BORNE l exploration.
+#
+# On repasse donc aux defauts. Le mecanisme d injection reste en place : il a
+# permis la mesure, et rien ne dit qu un autre reglage ne la vaudra pas.
 #
 # Garde : tests/test_reglages_freerouting.py.
-_REGLAGES_FREEROUTING: Optional[dict] = {"fanout": {"enabled": True}}
+_REGLAGES_FREEROUTING: Optional[dict] = None
 
 
 def _route_with_freerouting_api(

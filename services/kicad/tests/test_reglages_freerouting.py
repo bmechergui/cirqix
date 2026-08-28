@@ -39,8 +39,21 @@ from routers import routing as R  # noqa: E402
 
 
 class TestReglages:
-    def test_le_fanout_est_actif(self):
-        assert R._REGLAGES_FREEROUTING["fanout"]["enabled"] is True
+    def test_on_s_en_tient_aux_defauts_de_freerouting(self):
+        """⚠️ Ce test affirmait l inverse — le fanout devait etre ACTIF.
+
+        La mesure, arrivee apres, ne l a pas soutenu :
+
+            defauts (temoin)      91 %   5 manq   0 err   76 vias
+            fanout actif          91 %   5 manq   0 err   84 vias
+            via_costs 50->10      ECHEC — expiration en cascade
+            fanout + via_costs    86 %   9 manq   0 err   85 vias
+
+        Le fanout n a rien relie de plus et a pose huit vias supplementaires.
+        Le cout de via abaisse fait exploser l espace de recherche : le 50 par
+        defaut BORNE l exploration, il n est pas arbitraire.
+        """
+        assert R._REGLAGES_FREEROUTING is None
 
     def test_les_reglages_sont_transmis_au_job(self):
         source = (_SERVICE_ROOT / "routers" / "routing.py").read_text(
@@ -50,7 +63,9 @@ class TestReglages:
         assert "router_settings" in corps[max(0, i - 600):i + 200], (
             "un reglage qui n est pas envoye ne sert a rien")
 
-    def test_on_ne_touche_que_ce_qu_on_a_mesure(self):
-        # Les defauts de Freerouting sont le fruit de son propre reglage. On
-        # n en change que les clefs dont on peut dire pourquoi.
-        assert set(R._REGLAGES_FREEROUTING) <= {"fanout", "scoring"}
+    def test_le_mecanisme_d_injection_survit(self):
+        # Il a permis la mesure ; rien ne dit qu un autre reglage ne la vaudra
+        # pas. On retire le reglage, pas le moyen d en essayer un.
+        source = (_SERVICE_ROOT / "routers" / "routing.py").read_text(
+            encoding="utf-8")
+        assert "_REGLAGES_FREEROUTING" in source
