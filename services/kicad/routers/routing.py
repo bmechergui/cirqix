@@ -529,27 +529,49 @@ _COPPER_LAYER_RE = re.compile(r'"[A-Za-z0-9.]+\.Cu"')
 _MAX_LAYERS: int = 16
 
 
-# Paliers de couches consecutifs sans le moindre gain que l on tolere avant
-# d arreter d escalader.
+# Tirages de routage a CHAQUE palier de couches.
 #
-# ⚠️ Mesure du 2026-08-27, ESP32 du banc, meme board place :
+# Methode demandee par l utilisateur le 2026-08-28 : a 2 couches on tire et on
+# re-tire ; si cela ne suffit pas on passe a 4 et on re-tire ; etc., en gardant
+# toujours le meilleur.
 #
-#     palier 2 couches    89 s  ->  80 %
-#     palier 4 couches    72 s  ->  80 %
-#     palier 6 couches   421 s  ->  40 %    <- le plus de temps, le pire score
-#     palier 8 couches   126 s  ->  73 %
+# ⚠️ L escalade ne faisait qu UN tirage par palier. Freerouting est pourtant
+# stochastique : sur le meme board place de la Nucleo, trois executions ont
+# donne 65 %, 77 % et 91 %. Un palier juge insuffisant ne l etait peut-etre que
+# ce tirage-la — et on montait d une couche pour rien, ce qui coute plus cher a
+# fabriquer qu un re-tirage.
 #
-# Douze minutes de routage pour finir sur le resultat acquis en 89 secondes.
-#
-# ⚠️ On avait cru a un palier AFFAME : `_remaining_budget_s` rend le temps
-# RESTANT, donc les paliers tardifs en recoivent moins. La structure le dit,
-# les durees le refutent — le palier 6 a recu cinq fois le temps du palier 2.
-# Ajouter des couches rend la recherche de Freerouting plus DURE. Lire le code
-# ne suffisait pas, il fallait lire l horloge.
-#
-# ⚠️ Un palier PLAT peut preceder un palier utile : on n arrete pas au premier
-# essai infructueux. Deux d affilee suffisent a conclure.
-_PALIERS_SANS_GAIN_TOLERES = 1
+# ⚠️ Valeur PROVISOIRE : la mesure de dispersion sur serveur propre etait encore
+# en cours. Trois tirages est un compromis, pas un resultat. A revoir avec le
+# chiffre.
+_TIRAGES_ROUTAGE_PAR_PALIER = 3
+
+# Tirages consecutifs sans le moindre gain que l on tolere avant de cesser
+# d escalader. Deux paliers entiers a plat : en dessous, deux tirages
+# malchanceux au meme palier couperaient l escalade avant d avoir essaye le
+# palier suivant.
+_TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
+
+
+def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
+    """Repete chaque palier `tirages` fois, dans l ordre.
+
+        [2, 4], 3  ->  [2, 2, 2, 4, 4, 4]
+
+    L ordre compte : on epuise 2 couches AVANT de payer 4, une carte a moins de
+    couches coutant moins cher a fabriquer.
+
+    ⚠️ On repete le palier dans l ECHELLE plutot que de restructurer la boucle,
+    chemin critique de plus de cent lignes. Le corps existant garde deja le
+    meilleur sur le couple (pourcentage, erreurs) et rend la main des qu il
+    tient 100 % sans erreur : les tirages surnumeraires ne sont jamais payes
+    quand le premier suffit.
+
+    Garde : tests/test_tirages_par_palier.py.
+    """
+    if tirages <= 1:
+        return list(echelle)
+    return [palier for palier in echelle for _ in range(tirages)]
 
 
 def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
@@ -563,13 +585,12 @@ def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
         2 couches   93 % route   1 manquante   1 ERREUR
 
     Le defaut existait deja ; il ne se voyait pas tant qu on essayait tous les
-    paliers et qu on tombait par chance sur le bon. L arret anticipe l a rendu
-    visible en s arretant au premier palier a 93 %.
+    paliers et qu on tombait par chance sur le bon.
 
     ⚠️ Le pourcentage PRIME : les erreurs departagent, elles ne renversent pas.
     Une carte incomplete n est pas rattrapee par un DRC propre.
 
-    ⚠️ Un palier identique n est PAS un gain, sans quoi l arret anticipe ne se
+    ⚠️ Un resultat identique n est PAS un gain, sans quoi l arret anticipe ne se
     declencherait jamais.
 
     Garde : tests/test_palier_choisi_sur_les_erreurs.py.
@@ -586,7 +607,7 @@ def _escalade_epuisee(sans_gain: int) -> bool:
 
     Garde : tests/test_escalade_sans_gain.py.
     """
-    return sans_gain > _PALIERS_SANS_GAIN_TOLERES
+    return sans_gain > _TOLERANCE_SANS_GAIN
 
 
 def _layer_ladder(plafond: int) -> list[int]:
@@ -2238,7 +2259,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     sans_gain = 0
     meilleur_note = (-1, 10 ** 6)
-    for palier in _layer_ladder(req.layers):
+    for palier in _paliers_avec_tirages(
+            _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER):
         if _escalade_epuisee(sans_gain):
             logger.info(
                 "route_auto: escalade arretee avant %d couches — %d palier(s) "

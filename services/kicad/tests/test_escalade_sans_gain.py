@@ -31,32 +31,41 @@ from routers import routing as R  # noqa: E402
 
 
 class TestRegle:
-    def test_un_palier_sans_gain_est_tolere(self):
-        # Un palier plat peut preceder un palier utile : on ne coupe pas au
+    def test_un_tirage_sans_gain_est_tolere(self):
+        # Un tirage plat peut preceder un tirage utile : on ne coupe pas au
         # premier essai infructueux.
         assert R._escalade_epuisee(1) is False
 
-    def test_deux_paliers_sans_gain_arretent_l_escalade(self):
-        assert R._escalade_epuisee(2) is True
+    def test_l_escalade_finit_par_s_arreter(self):
+        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN + 1) is True
 
     def test_un_palier_qui_ameliore_remet_le_compteur_a_zero(self):
         assert R._escalade_epuisee(0) is False
 
-    def test_la_tolerance_est_nommee_et_petite(self):
-        # Une tolerance large annulerait l economie : chaque palier inutile
-        # coute de une a sept minutes.
-        assert 1 <= R._PALIERS_SANS_GAIN_TOLERES <= 2
+    def test_la_tolerance_est_nommee_et_bornee(self):
+        """⚠️ Ce test exigeait `1 <= tolerance <= 2`.
+
+        Il datait d avant les TIRAGES PAR PALIER (2026-08-28) : le compteur ne
+        comptait alors que des paliers, un par palier. Il compte desormais des
+        TIRAGES, et deux tirages malchanceux au meme palier couperaient
+        l escalade avant d avoir essaye le palier suivant.
+
+        La borne suit donc le nombre de tirages — deux paliers entiers a plat —
+        et reste bornee : chaque tirage inutile coute de une a quinze minutes.
+        """
+        assert R._TOLERANCE_SANS_GAIN == 2 * R._TIRAGES_ROUTAGE_PAR_PALIER
+        assert R._TOLERANCE_SANS_GAIN <= 12
 
 
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
     def test_la_boucle_consulte_la_regle(self):
-        corps = self.SOURCE[self.SOURCE.index("for palier in _layer_ladder("):]
+        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
         assert "_escalade_epuisee(" in corps[:6000]
 
     def test_le_meilleur_reste_rendu(self):
         # L arret anticipe ne doit pas transformer « on garde le meilleur » en
         # « on garde le dernier ».
-        corps = self.SOURCE[self.SOURCE.index("for palier in _layer_ladder("):]
+        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
         assert "return meilleur" in corps

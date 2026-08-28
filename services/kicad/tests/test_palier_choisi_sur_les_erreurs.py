@@ -51,10 +51,10 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
     def test_la_boucle_classe_sur_le_couple(self):
-        corps = self.SOURCE[self.SOURCE.index("for palier in _layer_ladder("):]
+        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
         assert "_palier_meilleur(" in corps[:8000]
 
     def test_les_erreurs_du_palier_sont_mesurees(self):
-        corps = self.SOURCE[self.SOURCE.index("for palier in _layer_ladder("):]
+        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
         assert "_compte_erreurs(" in corps[:8000], (
             "on ne peut pas classer sur les erreurs sans les compter")
