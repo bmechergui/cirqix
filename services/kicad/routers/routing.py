@@ -241,6 +241,21 @@ def _find_freerouting_api() -> Optional[str]:
         return None
 
 
+# Reglages passes a Freerouting a l enfilement du job.
+#
+# ⚠️ On n envoyait RIEN, donc les defauts du serveur — dont `fanout.enabled =
+# false`. Or le fanout est exactement la sequence voulue : sortir par une courte
+# piste et un via les broches que le plan n atteint pas. Nous le faisions APRES
+# coup (`_fanout_pads_isolees`), sur un board deja route, quand la place manque ;
+# le routeur sait le faire PENDANT, quand il reste de l espace.
+#
+# ⚠️ On ne touche QUE les clefs dont on peut dire pourquoi. Les autres defauts
+# sont le fruit du reglage de Freerouting, pas des chiffres au hasard.
+#
+# Garde : tests/test_reglages_freerouting.py.
+_REGLAGES_FREEROUTING: Optional[dict] = {"fanout": {"enabled": True}}
+
+
 def _route_with_freerouting_api(
     pcb_bytes: bytes,
     timeout_s: int = _DEFAULT_TIMEOUT_S,
@@ -286,7 +301,24 @@ def _route_with_freerouting_api(
         session = _api("POST", f"{pre}/sessions/create", {})
         session_id = session["id"]
 
-        job = _api("POST", f"{pre}/jobs/enqueue", {"session_id": session_id})
+        # ⚠️ On enfilait le job SANS le moindre reglage, donc avec les defauts
+        # de Freerouting. Interroges le 2026-08-28 (`GET /jobs/<id>`), ils
+        # disent beaucoup :
+        #
+        #     fanout.enabled = false      l echappement natif est ETEINT
+        #     scoring.via_costs = 50      un changement de couche coute 50
+        #     scoring.plane_via_costs = 5
+        #
+        # Le second explique la repartition mesuree sur la Nucleo — F.Cu 243
+        # segments, In2.Cu 5 — alors que les couches internes sont libres : le
+        # routeur evite les couches internes parce qu y ALLER coute un via.
+        #
+        # `_REGLAGES_FREEROUTING` vaut None par defaut : aucun changement de
+        # comportement tant qu on n a pas mesure.
+        charge = {"session_id": session_id}
+        if _REGLAGES_FREEROUTING:
+            charge["router_settings"] = _REGLAGES_FREEROUTING
+        job = _api("POST", f"{pre}/jobs/enqueue", charge)
         job_id = job["id"]
 
         _api(
