@@ -508,6 +508,32 @@ _MAX_LAYERS: int = 16
 _PALIERS_SANS_GAIN_TOLERES = 1
 
 
+def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
+    """`candidat` bat-il `reference` ? Chaque tuple vaut ``(percent, erreurs)``.
+
+    ⚠️ On classait sur le seul `routed_percent`. Deux paliers a 93 % etaient
+    donc juges equivalents alors que l un passe le DRC et l autre non. Mesure
+    du 2026-08-28 sur `stm32-baseline` :
+
+        6 couches   93 % route   1 manquante   0 erreur
+        2 couches   93 % route   1 manquante   1 ERREUR
+
+    Le defaut existait deja ; il ne se voyait pas tant qu on essayait tous les
+    paliers et qu on tombait par chance sur le bon. L arret anticipe l a rendu
+    visible en s arretant au premier palier a 93 %.
+
+    ⚠️ Le pourcentage PRIME : les erreurs departagent, elles ne renversent pas.
+    Une carte incomplete n est pas rattrapee par un DRC propre.
+
+    ⚠️ Un palier identique n est PAS un gain, sans quoi l arret anticipe ne se
+    declencherait jamais.
+
+    Garde : tests/test_palier_choisi_sur_les_erreurs.py.
+    """
+    return candidat[0] > reference[0] or (
+        candidat[0] == reference[0] and candidat[1] < reference[1])
+
+
 def _escalade_epuisee(sans_gain: int) -> bool:
     """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
 
@@ -1124,6 +1150,8 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
     Un repli qui echoue ne doit pas detruire le resultat qu il devait ameliorer.
     """
     global _NETS_CONFIES_AU_PLAN
+    if not _NETS_CONFIES_AU_PLAN:
+        return None   # rien a inclure : aucun net n est confie au plan
     memoire = _NETS_CONFIES_AU_PLAN
     try:
         _NETS_CONFIES_AU_PLAN = ()
@@ -1655,6 +1683,21 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 # (0,318 mm) est inférieur à ce qu'un via réclame (0,500 mm), et le trajet
 # vers la zone dégagée doit traverser cette zone saturée. D'où le repli
 # ci-dessous — jamais livrer une carte non connectée.
+# ⚠️ GND est CONFIE AU PLAN, pas route — sequence voulue par l utilisateur et
+# reaffirmee le 2026-08-28 : couler le plan, router les signaux, et sortir en
+# fine-pitch avec des vias les broches que le plan n atteint pas.
+#
+# Mesure du 2026-08-28, deux cartes, meme board place, meme budget :
+#
+#     carte          GND confie au plan        GND route en pistes
+#     arduino-uno    93 % · 1 manq · 0 err     100 % · 0 manq · 0 err
+#     nucleo-f401    81 % · 12 manq · 1 err     81 % · 12 manq · 0 err
+#
+# Router GND rendait la carte complete sur l Arduino. La decision produit est
+# NEANMOINS de garder le plan en charge de GND : le levier a actionner est
+# l echappement (`_fanout_pads_isolees`) et la couture, pas le renoncement au
+# plan. Le chiffre est consigne ici pour que la comparaison reste disponible —
+# il suffit de vider ce tuple pour la refaire.
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ("GND",)
 
 
@@ -2150,6 +2193,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     nets_routables = _count_routable_nets(pcb_bytes)
 
     sans_gain = 0
+    meilleur_note = (-1, 10 ** 6)
     for palier in _layer_ladder(req.layers):
         if _escalade_epuisee(sans_gain):
             logger.info(
@@ -2258,10 +2302,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             palier, res.routed_percent, res.engine or "aucun moteur",
         )
 
-        if res.routed_percent >= 100 and not res.skipped:
+        # ⚠️ Les erreurs du palier, mesurees sur le board LIVRE. Un palier a
+        # 100 % qui ne passe pas le DRC n est pas une reussite : la carte ne
+        # part pas en fabrication.
+        erreurs = (_compte_erreurs(_rapport_drc(final))
+                   if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
+        if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
             return res
-        if meilleur is None or res.routed_percent > meilleur.routed_percent:
-            meilleur = res
+        if meilleur is None or _palier_meilleur(
+                (res.routed_percent, erreurs), meilleur_note):
+            meilleur, meilleur_note = res, (res.routed_percent, erreurs)
             sans_gain = 0
         else:
             sans_gain += 1
