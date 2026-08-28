@@ -541,9 +541,23 @@ _MAX_LAYERS: int = 16
 # ce tirage-la — et on montait d une couche pour rien, ce qui coute plus cher a
 # fabriquer qu un re-tirage.
 #
-# ⚠️ Valeur PROVISOIRE : la mesure de dispersion sur serveur propre etait encore
-# en cours. Trois tirages est un compromis, pas un resultat. A revoir avec le
-# chiffre.
+# ⚠️ TROIS TIRAGES, et la mesure a failli me faire ecrire le contraire.
+# Nucleo, 2026-08-28, un run complet, trois tirages par palier :
+#
+#     palier 2 :  62, 62, 62      identiques
+#     palier 4 :  58, 55, 68      TREIZE points d ecart
+#     palier 6 :  62, 55, 56
+#
+# J avais conclu « Freerouting est deterministe » sur le seul palier 2, ou les
+# trois tirages coincidaient. C etait faux, et c est exactement l erreur que
+# cette base de code documente partout : conclure d un echantillon.
+#
+# Les tirages paient : le meilleur resultat de ce run — 68 % — vient du
+# TROISIEME tirage du palier 4. Sans lui la carte sortait a 62 %.
+#
+# ⚠️ La dispersion mesuree plus tot (81, 74, 79 %) melangeait deux effets, le
+# tirage et le chemin d escalade. Celle-ci, a palier constant, ne mesure que le
+# routeur.
 _TIRAGES_ROUTAGE_PAR_PALIER = 3
 
 # Tirages consecutifs sans le moindre gain que l on tolere avant de cesser
