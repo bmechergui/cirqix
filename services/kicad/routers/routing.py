@@ -1244,6 +1244,42 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
             return pcb_bytes
         return sortie.read_bytes()
 
+# Au-dela de ce nombre d ilots par face, le plan n est plus une reference : il
+# est fragmente par les pistes de signal. Un plan sain fait UN ilot par face ;
+# on tolere 2 pour une decoupe legitime (encoche, zone interdite).
+_PLAN_FRAGMENTE_AU_DELA: int = 2
+
+
+def _compte_ilots_de_plan(pcb_bytes: bytes) -> dict:
+    """Ilots REMPLIS par zone : ``{"GND@F.Cu": 5, ...}``.
+
+    ⚠️ La couture rapporte les vias qu elle POSE, jamais les ilots qui
+    RESTENT. Nos deux filets — couture repetee, garde sur les broches GND
+    orphelines — voient les opens ; ils ne voient pas un plan en peigne dont
+    chaque morceau satisfait le DRC et ne sert pas de retour.
+
+    Chaque ilot rempli est un bloc `filled_polygon` distinct dans le fichier :
+    le compte se lit donc sans pcbnew.
+
+    ⚠️ Mesurer APRES la coulee. Une zone non remplie n est qu un contour et
+    rend 0 — ce qui la ferait passer pour parfaite.
+    """
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    compte: dict = {}
+    for bloc in re.split(r"\(zone\b", texte)[1:]:
+        net = re.search(r'\(net_name "([^"]*)"\)', bloc)
+        couche = (re.search(r'\(layer "([^"]+)"\)', bloc)
+                  or re.search(r'\(layers "([^"]+)"\)', bloc))
+        if not net or not couche:
+            continue
+        cle = f"{net.group(1)}@{couche.group(1)}"
+        compte[cle] = compte.get(cle, 0) + len(re.findall(r"\(filled_polygon", bloc))
+    return compte
+
+
 def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
     """Relie par un via les pastilles qu une piste a detachees du plan.
 
@@ -2617,6 +2653,22 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Puis les ILOTS DE PLAN : les pistes de signal decoupent le
             # cuivre de la face composants, et aucune pastille n est en cause.
             final = _coudre_jusqu_au_bout(final)
+
+            # ⚠️ DIRE ce qui reste, pas seulement ce qu on a repare. La couture
+            # rapporte ses vias ; si elle laisse un plan en quinze morceaux, le
+            # board est « connecte » et sa reference est mauvaise. Personne ne
+            # le verrait — le DRC ne juge pas la fragmentation d un plan.
+            ilots = _compte_ilots_de_plan(final)
+            fragmentes = {k: v for k, v in ilots.items()
+                          if v > _PLAN_FRAGMENTE_AU_DELA}
+            if fragmentes:
+                logger.warning(
+                    "plan de masse FRAGMENTE : %s — connecte mais mauvaise "
+                    "reference de retour",
+                    ", ".join(f"{k} en {v} ilots" for k, v in sorted(fragmentes.items())))
+            elif ilots:
+                logger.info("plan de masse : %s",
+                            ", ".join(f"{k} {v} ilot(s)" for k, v in sorted(ilots.items())))
 
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via
