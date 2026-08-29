@@ -37,6 +37,7 @@ from typing import Optional
 # kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
+from tools.placement_bypass import snap_cluster_members
 from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
@@ -1895,6 +1896,37 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             logger.info(
                 "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
                 "des composants denses (fine-pitch)", n_halo)
+
+        # ── Brique 2 : snap bypass — APRES le Geometre et APRES le halo.
+        #
+        # Le GA laisse les decouplages a 13-28 mm de leur IC (mesure du
+        # 2026-06-18) : sa fonction de cout est une longueur de fil globale
+        # que les rails GND dominent, et aucun reglage ne l en fera devier.
+        # Le CMA-ES en reprend 2-3 mm. Le reste est une REGLE, pas un
+        # optimum : `FunctionalCluster.max_distance_mm`, applique par saut.
+        #
+        # ⚠️ L ordre est contraint des deux cotes. Avant le CMA-ES, le snap
+        # serait defait — l optimiseur renverrait la capa au loin. Avant le
+        # halo, il serait defait aussi — le halo ecarte les voisins des
+        # boitiers fine-pitch. Il vient donc en dernier, et connait le halo :
+        # sur une ancre dense il garde les 5 mm du canal d escape au lieu de
+        # le reboucher.
+        #
+        # ⚠️ La distance se mesure entre les CORPS. L origine d un module est
+        # sur sa pastille 1 (courtyard ESP32-WROOM : y de -30,74 a +10,51) ;
+        # snapper « a 3 mm de l origine » poserait la capa DANS le module.
+        pcb_snap = PCB.load(str(out))
+        n_snap = snap_cluster_members(
+            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap))
+        if n_snap:
+            pcb_snap.save(str(out))
+            _normalize_to_board_frame(out)
+            logger.info(
+                "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
+                "a portee de leur ancre", n_snap)
+            # L Inspecteur est le filet du snap : un saut peut poser la capa
+            # sur un pad de l ancre. Il ecarte, le membre reste pres.
+            _resolve_remaining_conflicts(out, conn)
 
         # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
         # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une
