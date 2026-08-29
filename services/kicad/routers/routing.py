@@ -567,33 +567,6 @@ _TIRAGES_ROUTAGE_PAR_PALIER = 3
 _TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
 
 
-def _part_de_budget(restant_s: int, essais_restants: int) -> int:
-    """Temps a accorder a UN essai, sur `restant_s` et `essais_restants` a venir.
-
-    ⚠️ Chaque essai recevait TOUT le temps disponible. Mesure du 2026-08-29,
-    carte a 100 composants, budget 1800 s :
-
-        palier 2 couches -> 59%
-        escalade interrompue avant 2 couches — budget epuise
-
-    Un seul tirage avait consomme les 1800 secondes : ni re-tirage, ni
-    escalade. Les 59 % etaient le PREMIER essai, garde faute de mieux — et les
-    96 % du passage precedent la chance d un bon premier tirage, pas une
-    propriete de la chaine.
-
-    ⚠️ Le plancher reste indispensable : un essai trop court ne rend qu un
-    routage tronque, et douze essais tronques valent moins qu un essai complet.
-    Quand la part descendrait sous le plancher, on prefere donc faire MOINS
-    d essais mais entiers — l escalade s arrete alors d elle-meme, faute de
-    budget, ce qui est le comportement voulu.
-
-    Garde : tests/test_budget_partage.py.
-    """
-    if essais_restants <= 1:
-        return max(restant_s, _MIN_LEVEL_BUDGET_S)
-    return max(_MIN_LEVEL_BUDGET_S, restant_s // essais_restants)
-
-
 def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
     """Repete chaque palier `tirages` fois, dans l ordre.
 
@@ -2336,7 +2309,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     meilleur_note = (-1, 10 ** 6)
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
-    for rang, palier in enumerate(essais):
+    for palier in essais:
         if _escalade_epuisee(sans_gain):
             logger.info(
                 "route_auto: escalade arretee avant %d couches — %d palier(s) "
@@ -2390,10 +2363,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
             layers=req.layers,
-            # ⚠️ Une PART du budget, pas tout : sinon le premier essai le
-            # consomme et la methode — plusieurs tirages, escalade, on garde le
-            # meilleur — ne peut jamais s exercer.
-            timeout_s=_part_de_budget(restant, len(essais) - rang),
+            # ⚠️ TOUT le restant, et c est voulu. Partager le budget entre
+            # les essais a ete essaye le 2026-08-29 et s est revele
+            # DESASTREUX : 1800 s / 12 essais = 150 s chacun, trop court pour
+            # router une carte de 100 composants — tous les paliers ont rendu
+            # 0 %, contre 96 % avec le budget entier.
+            #
+            # Donner tout le restant s adapte de soi-meme : sur une carte
+            # rapide le premier essai prend 40 s et en laisse neuf autres ; sur
+            # une carte lente il prend tout, et c est le bon choix. Le manque
+            # sur les grandes cartes n est pas la repartition, c est le budget
+            # TOTAL — un parametre de l appelant.
+            timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
         )
         res = _route_auto_once(tentative)
 

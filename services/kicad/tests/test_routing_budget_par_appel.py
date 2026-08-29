@@ -75,13 +75,12 @@ class TestCablage:
         # Et le restant doit bien etre passe au palier, sinon chaque palier
         # repartirait du budget entier.
         #
-        # ⚠️ On exigeait l expression exacte `max(restant, _MIN_LEVEL_BUDGET_S)`.
-        # Depuis le 2026-08-29 le restant est PARTAGE entre les essais a venir
-        # (`_part_de_budget`) : le premier tirage consommait sinon tout le
-        # temps, et sur la carte a 100 composants ni le re-tirage ni l escalade
-        # n avaient lieu. L intention du test ne change pas — le palier part du
-        # RESTANT — seule sa formulation vieillit.
-        assert "_part_de_budget(restant," in self.SOURCE
+        # ⚠️ Partager ce restant entre les essais a ete essaye le 2026-08-29
+        # et s est revele DESASTREUX : 1800 s / 12 essais = 150 s chacun, trop
+        # court pour router une carte de 100 composants — tous les paliers ont
+        # rendu 0 %, contre 96 % avec le budget entier. Donner tout le restant
+        # s adapte de soi-meme, une carte rapide laissant de quoi re-tirer.
+        assert "timeout_s=max(restant, _MIN_LEVEL_BUDGET_S)" in self.SOURCE
 
 
 class TestAucunNiveauNeDemarreSansBudget:

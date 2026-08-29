@@ -50,11 +50,20 @@ class TestClassement:
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
+    def _corps(self):
+        """Le corps de la boucle d escalade, borne par son propre retour."""
+        debut = self.SOURCE.index("essais = _paliers_avec_tirages(")
+        corps = self.SOURCE[debut:]
+        return corps[:corps.index("return meilleur")]
+
     def test_la_boucle_classe_sur_le_couple(self):
-        corps = self.SOURCE[self.SOURCE.index("essais = _paliers_avec_tirages("):]
-        assert "_palier_meilleur(" in corps[:8000]
+        # ⚠️ On bornait la lecture a 8000 caracteres. Les commentaires ajoutes
+        # le 2026-08-29 ont pousse le code au-dela, et le test a echoue sur un
+        # code juste. On borne sur la FIN REELLE de la boucle.
+        corps = self._corps()
+        assert "_palier_meilleur(" in corps
 
     def test_les_erreurs_du_palier_sont_mesurees(self):
-        corps = self.SOURCE[self.SOURCE.index("essais = _paliers_avec_tirages("):]
-        assert "_compte_erreurs(" in corps[:8000], (
+        corps = self._corps()
+        assert "_compte_erreurs(" in corps, (
             "on ne peut pas classer sur les erreurs sans les compter")
