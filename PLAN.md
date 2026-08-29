@@ -88,6 +88,8 @@ Pipeline 8 agents (ordre strict) :
    ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
    ② Freerouting REST API / subprocess (fallback historique, port 37864)
    → renvoie routed_percent réel (plus de hardcode 100)
+   Palier de DÉPART déduit de l'échappement du boîtier fine-pitch le plus chargé
+   (`_couches_pour_echapper`) — le plafond du plan reste maître.
    Séquence par palier : plan de masse coulé et REMPLI d'abord, puis les signaux,
    puis fanout / vias / couture des îlots répétée. Escalade 2 → 4 → 6 …, 3 tirages
    par palier (Freerouting est stochastique), on garde toujours le meilleur ; les

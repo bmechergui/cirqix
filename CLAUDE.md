@@ -419,6 +419,52 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      pas un verdict de routage mais une panne. Monter d'une couche là-dessus
      reviendrait à payer du cuivre pour un défaut d'infrastructure.
 
+     ⚠️ **LE PALIER DE DÉPART SE DÉDUIT DU BOARD** (`_couches_pour_echapper`,
+     2026-08-29). L'échelle ne commence plus toujours à 2. `stm32-100` brûlait
+     45 minutes sur un palier qu'aucun tirage ne pouvait réussir.
+
+     La cause est **LOCALE, pas globale** — et le journal Freerouting la
+     désigne sans ambiguïté. Sur trois jobs, **un seul composant porte 20 à
+     28 % des échecs de connexion**, les 85 autres 2 % chacun : le LQFP-48, et
+     sa part égale sa part des connexions. Ce n'est donc ni la taille de la
+     carte (mon hypothèse, fausse), ni la dispersion du placement, ni un
+     réglage du routeur : c'est l'**échappement d'un boîtier fine-pitch** —
+     36 signaux à sortir d'un 7 × 7 mm au pas de 0,5 mm.
+
+     Capacité calibrée sur nos cartes, `_CAPACITE_ECHAPPEMENT = 3.0` signaux
+     par côté et par couche :
+
+     | carte | signaux | /côté | couches | ok | C requis |
+     |---|---|---|---|---|---|
+     | stm32-baseline | 7 | 1.8 | 2 | oui | 0.88 |
+     | esp32-baseline | 7 | 1.8 | 2 | oui | 0.88 |
+     | stm32-30 | 13 | 3.2 | 4 | oui | 0.81 |
+     | arduino-uno | 2 | 0.5 | 2 | oui | 0.25 |
+     | nucleo-f401 | 37 | 9.2 | 4 | oui | 2.31 |
+     | stm32-60 | 26 | 6.5 | 4 | oui | 1.63 |
+     | **stm32-100** | **36** | **9.0** | **2** | **NON** | **4.50** |
+
+     Les réussites exigent C ≥ 2,31, l'échec C < 4,50. On prend 3,0, qui
+     reproduit **en plus** le besoin réel de 4 couches de `stm32-60`.
+
+     ⚠️ **Les nets confiés au plan ne comptent PAS.** Ils sortent par-dessous,
+     pas latéralement ; les compter ajouterait 58 signaux sur `stm32-100` et
+     ferait démarrer TOUTES les cartes trop haut — on vendrait des couches
+     inutiles. Et le **plafond du plan reste maître** : un compte Free est
+     limité à 2 couches, on ne lui en vend pas 4 parce que ça routerait mieux.
+
+     C'est un **PLANCHER, pas une prédiction** : il dit ce qui est hors
+     d'atteinte, jamais ce qui suffira. L'escalade garde le dernier mot.
+
+     ⚠️ Deux défauts dans la première version, tous deux trouvés en vérifiant
+     sur de VRAIS boards — jamais par les tests unitaires, qui passaient :
+     **une pastille n'est pas une liaison** (chaque pastille porte un net, y
+     compris les orphelines nommées `Net-(U1-Pad3)` : tout LQFP-48 rendait
+     ~45 signaux et `stm32-baseline` se voyait imposer 4 couches) ; et la
+     **calibration était faite sur `circuit.json` quand le code lit le board**
+     — 43 signaux d'un côté, 36 de l'autre, écart suffisant pour laisser
+     `stm32-100` redémarrer à 2. Gardes : `tests/test_palier_plancher.py`.
+
      ⚠️ **NEVER partager le budget entre les essais.** Essayé le 2026-08-28 :
      1800 s / 12 essais = 150 s chacun, trop court pour router 100 composants —
      TOUS les paliers à 0 %, contre 96 % avec le budget entier. Chaque essai
@@ -1308,6 +1354,21 @@ lance dans SON conteneur, monté sur les mêmes sources.
 **NEVER** faire confiance aux tests présents dans l'image Docker : ils datent du
 build. Huit « régressions » lues le 2026-08-29 n'étaient que des tests périmés ;
 après copie de ceux du disque, 31/31 vert. Copier `tests/` avant de conclure.
+
+**NEVER** calibrer une règle sur une source VOISINE de celle qu'elle mesure. Le
+plancher d'échappement a été calibré sur `circuit.json` alors que le code lit le
+board : 43 signaux contre 36, et la règle laissait passer exactement le cas
+qu'elle devait attraper — tests unitaires verts des deux côtés.
+
+**NEVER** confondre une pastille avec une liaison. Sur un board, CHAQUE pastille
+porte un net, y compris celles qui ne vont nulle part (`Net-(U1-Pad3)`). Un net
+présent sur un seul boîtier n'a personne à rejoindre. Sans ce filtre, tout
+LQFP-48 comptait ~45 signaux quel que soit son circuit.
+
+**NEVER** livrer une règle numérique sans l'avoir passée sur les DONNÉES RÉELLES
+du projet. Les deux défauts ci-dessus ont franchi une suite complète de tests
+unitaires ; l'un et l'autre sont tombés au premier passage sur les sept boards
+du banc. Une fixture dit ce qu'on a imaginé, un board dit ce qui est.
 
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
