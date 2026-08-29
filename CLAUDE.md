@@ -323,8 +323,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ⚠️ write_to_pcb() OBLIGATOIRE : run() calcule mais N'ÉCRIT PAS — sans cet
         appel le placement est un no-op (board sauvé = génération). Test garde :
         test_auto_place_actually_moves_movable_components. Commit fix 243b26f.
-     Limite ACCEPTÉE (2026-06-18) : caps/quartz à 13-28mm du MCU (routable, pas
-        « pro »). PAS de snap déterministe — adjacence serrée = Phase 6 RL_PCB.
+     ⚠️ **LA LIMITE « 13-28 mm » EST LEVÉE (2026-08-29).** Elle était acceptée
+        depuis le 2026-06-18 faute de levier ; le levier existait, inutilisé :
+        `FunctionalCluster.max_distance_mm`, que le clustering natif calcule
+        déjà et que PERSONNE ne faisait respecter. Le GA ne peut pas y arriver
+        seul — sa fonction de coût est une longueur de fil globale que les
+        rails GND dominent (ressort ~75 contre ~50 pour un cluster), et aucun
+        réglage n'en dévie. Le snap n'optimise donc rien : il APPLIQUE une
+        règle. Voir « Snap bypass » plus bas.
      Filet : place_unplaced() si footprints hors-carte (vieux PCB à -1000)
      ⚠️ **UN RAPPORT DRC VIDE SE LISAIT « 0 ERREUR » (2026-08-27).** Le board
         sorti du placement portait des valeurs de keepout entre guillemets —
@@ -363,6 +369,74 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         pour les power nets en zones + route les signaux + escalade couches)
      ② Freerouting REST API / subprocess — fallback historique (port 37864)
      → renvoie routed_percent RÉEL (tools/handlers/routing.ts : plus jamais hardcodé 100)
+
+     **SÉQUENCE À L'INTÉRIEUR D'UN PALIER** (demandée par l'utilisateur, livrée
+     le 2026-08-29) — `routers/routing.py::route_auto`, pour chaque palier :
+
+        ① plan de masse COULÉ ET REMPLI, sur les deux faces extérieures
+        ② vias d'échappement réservés (déclarés dans le DSN)
+        ③ routage des signaux (GND est confié au plan, `_NETS_CONFIES_AU_PLAN`)
+        ④ replacement des vias réservés (le round-trip Specctra les efface)
+        ⑤ plans re-coulés + remplis, fanout des pastilles isolées
+        ⑥ couture des îlots de plan, RÉPÉTÉE jusqu'à épuisement
+
+     ⚠️ **LE PLAN EST COULÉ AVANT LE ROUTAGE, PAS APRÈS.** On le coulait après :
+     le routeur ne voyait donc jamais le cuivre de masse et routait comme si la
+     carte était vide. Mesure sur la Nucleo, même placement : 68-71 % (plan
+     après) contre 94 % (plan avant). C'est ce seul changement d'ordre qui a
+     débloqué le 100 % sur six cartes du banc.
+
+     ⚠️ Un plan **non rempli** n'est qu'un contour, dont le routeur ne tient
+     aucun compte — même défaut que le 2026-08-23. `_fill_zones` est obligatoire.
+
+     ⚠️ La couture se RÉPÈTE : joindre deux îlots de plan en révèle un troisième.
+     Une passe unique laissait des îlots. Garde : `tests/test_couture_repetee.py`.
+
+     **ESCALADE DES COUCHES** — méthode demandée : tirages au palier courant,
+     puis +2 couches, en gardant TOUJOURS le meilleur (jamais le dernier).
+
+        `_layer_ladder`            2, 4, 6, 8 … jusqu'au plafond du plan
+        `_TIRAGES_ROUTAGE_PAR_PALIER = 3`   Freerouting est STOCHASTIQUE
+        `_palier_meilleur`         classe sur (pourcentage, erreurs DRC)
+        `_escalade_epuisee`        arrêt après 2 paliers entiers sans gain
+
+     ⚠️ Freerouting est stochastique : 65, 77 et 91 % sur le MÊME board placé de
+     la Nucleo. Un palier jugé insuffisant ne l'était peut-être que ce tirage-là
+     — et on montait d'une couche pour rien, ce qui coûte plus cher à fabriquer.
+     Un seul tirage par palier était donc un pari, pas une mesure.
+
+     ⚠️ **NE PAS RE-TIRER UN PALIER HORS D'ATTEINTE** (`_SEUIL_REDRAW_PCT = 80`,
+     2026-08-29). `stm32-100` (100 composants, 208×156 mm) n'a JAMAIS essayé
+     4 couches : ses trois tirages à 2 couches ont consommé les 3600 s —
+     60 %, 70 %, puis « budget épuisé avant le Niveau 4 ». Verdict rendu : 70 %,
+     27 connexions manquantes. Le budget n'était pas trop court, il a été
+     dépensé au mauvais endroit.
+     Le seuil se DÉDUIT de l'écart mesuré entre tirages (26 points au plus, cf.
+     Nucleo) : `100 - 26 = 74`, on prend 80. À 91 % le rattrapage est mesuré, on
+     ne coupe pas dessus. Garde : `tests/test_escalade_precoce.py`.
+
+     ⚠️ Un **ZÉRO ne déclenche pas l'escalade** : « 0 % (aucun moteur) » n'est
+     pas un verdict de routage mais une panne. Monter d'une couche là-dessus
+     reviendrait à payer du cuivre pour un défaut d'infrastructure.
+
+     ⚠️ **NEVER partager le budget entre les essais.** Essayé le 2026-08-28 :
+     1800 s / 12 essais = 150 s chacun, trop court pour router 100 composants —
+     TOUS les paliers à 0 %, contre 96 % avec le budget entier. Chaque essai
+     reçoit tout le restant ; sur une carte rapide il n'en prend que 40 s.
+
+     **Temps mesuré (2026-08-29)** — le routage n'est lent que sur les grandes
+     cartes, et le nombre de couches n'y est pour rien :
+
+        17 composants, 2 couches    31,7 s   100 %
+        17 composants, 4 couches    33,6 s   100 %
+       100 composants, 2 couches   ~1700 s   60-70 %
+
+     6× plus de composants coûtent 38× plus de temps — l'espace de recherche
+     d'un routeur croît avec la SURFACE × le nombre de nets. `stm32-100` fait
+     324 cm², dix fois les autres. Piste non encore mesurée : le générateur
+     dimensionne la carte au NOMBRE de composants sans lire leur encombrement,
+     donc une carte de 100 passifs est essentiellement vide — et ce vide se paie
+     en cases de grille explorées, sans rien apporter.
      ⚠️ FAIL FAST (2026-07-27) : si le service est injoignable ou renvoie skipped,
         handleRouting retourne `status:'error'` — PAS un `routed_percent: 100` avec
         un simple plan de masse comme avant. L'ancien repli désarmait à la fois
@@ -446,7 +520,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel (100% natif, pipeline 3 étapes — Phase 3 ajoutée 2026-06-18) :**
+**Placement actuel (100% natif, 5 étapes — snap ajouté le 2026-08-29) :**
 gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` enchaîne :
   ① **Architecte** — `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
      enable_clustering=True, fixed_refs=<J*/P*>, generations=100, population=50,
@@ -510,8 +584,43 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
   ③ **Inspecteur** (`_resolve_remaining_conflicts`, kct placement fix natif chaîné) —
      `PlacementFixer.iterative_fix` (réparation locale ~0.05-0.1s, pas de ré-exécution
      GA), appelé après ① (garantie de base) et après ② si le Géomètre a été appliqué.
-  **Pas de snap déterministe** custom — l'adjacence resserrée est un effet du Géomètre,
-  pas garantie : ablation contrôlée (board STM32 réel, CMA-ES seul sur un board déjà
+  ④ **Halo d'escape** (`_reserve_escape_halos`, 5 mm) — écarte les voisins mobiles
+     des boîtiers fine-pitch (≥16 pads) pour dégager leur canal de sortie. No-op
+     sur une carte sans composant dense.
+  ⑤ **Snap bypass** (`tools/placement_bypass.py::snap_cluster_members`) — TÉLÉPORTE
+     chaque membre de cluster à portée de son ancre, puis l'Inspecteur repasse.
+     Détection 100 % native (`detect_functional_clusters`) ; le plafond lu est
+     celui du cluster, jamais une constante : POWER 3 mm · TIMING 5 · DRIVER 6 ·
+     INTERFACE 8. Mesure sur `examples/stm32-validation/output/2_placement` :
+     **8 règles violées sur 9 avant, 0 après** ; écart libre moyen 7,2 → 4,7 mm.
+
+     ⚠️ **L'ORDRE EST CONTRAINT DES DEUX CÔTÉS**, et c'est tout l'intérêt.
+     Avant le Géomètre, le snap serait défait — le CMA-ES reprend sa fonction de
+     coût et renvoie la capa au loin. Avant le halo, défait aussi — le halo
+     écarte précisément ces voisins-là. Le snap vient donc en DERNIER des
+     déplacements, et **connaît le halo** : sur une ancre dense il garde les
+     5 mm du canal d'escape au lieu de le reboucher. Sans cela : deux correctifs
+     qui se combattent, comme le clamp et le centrage des dominants le 2026-08-27.
+
+     ⚠️ La distance se mesure entre les **CORPS**, jamais entre les origines.
+     L'origine d'un module est sur sa pastille 1 — courtyard ESP32-WROOM :
+     y de -30,74 à +10,51. « Coller à 3 mm de l'origine » poserait la capa EN
+     PLEIN DANS le module. `_boite_locale_fp` porte déjà ce décalage, ce qui rend
+     l'« offset courtyard » inutile comme étape distincte.
+
+     ⚠️ **Limite connue, non corrigée.** `FunctionalCluster` n'a qu'UNE ancre :
+     rien ne contraint la distance entre deux MEMBRES. Sur le board STM32 les
+     capas de charge du quartz restent à 5,6 et 10,2 mm de Y1 (et à 15,1 mm
+     l'une de l'autre) alors qu'elles devraient le serrer à 2-3 mm : la règle
+     native est respectée, l'intention électrique ne l'est pas. Prochain levier :
+     ancrer les membres d'un cluster TIMING sur Y1, et utiliser `anchor_pin`
+     (déjà exposé, jamais lu) pour POWER.
+
+     Gardes : `tests/test_placement_bypass_snap.py` (le comportement) et
+     `tests/test_snap_apres_geometre.py` (l'ORDRE dans `auto_place` — un snap
+     correct mais jamais appelé est indistinguable d'un snap absent).
+
+  Historique de la décision inverse, conservé : ablation contrôlée (board STM32 réel, CMA-ES seul sur un board déjà
   placé) = 8/10 paires resserrées (ex. Y1-U2 16.7→7.5mm), 2 légèrement dégradées,
   toujours 0 ERROR final (1 ERROR + 6 WARNING bruts nettoyés par l'Inspecteur à
   0 ERROR / 2 WARNING). Sur le board complet (GA+CMA-ES enchaînés), le filet de
@@ -1162,11 +1271,26 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
 **NEVER** écrire une heuristique de détection (bypass cap, power net, IC) sans avoir vérifié si kicad-tools l'expose.
 **NEVER** implémenter un algo de placement sans avoir testé `kct placement optimize --cluster` d'abord.
 
-### Limite connue de detect_functional_clusters (ACCEPTÉE 2026-06-18) :
+### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
-Décision : **accepté tel quel** (routable). PAS de snap déterministe custom (le
-`_snap_bypass_caps_to_ics` a été retiré). Adjacence serrée éventuelle → Phase 6 RL_PCB.
+
+Décision d'alors : accepté tel quel (routable), adjacence serrée → Phase 6 RL_PCB.
+
+⚠️ **Cette décision reposait sur une prémisse fausse : qu'il n'existait pas de
+levier natif.** Il en existait un, et le clustering le calculait déjà à chaque
+appel — `FunctionalCluster.max_distance_mm`, un plafond PAR TYPE de cluster
+(POWER 3 mm · TIMING 5 · DRIVER 6 · INTERFACE 8). Personne ne le lisait. On a
+donc attendu deux mois d'un GA qu'il produise spontanément un résultat que sa
+fonction de coût lui interdit, alors que la règle était posée à côté.
+
+Le snap (`tools/placement_bypass.py`) ne réintroduit AUCUNE heuristique : la
+détection reste `detect_functional_clusters`, le seuil est celui du cluster.
+Ce n'est pas un optimiseur de placement — c'est l'application d'une règle que la
+lib exprime et n'applique pas. La règle de CLAUDE.md est respectée.
+
+**NEVER** conclure qu'un levier natif n'existe pas sans avoir lu les CHAMPS des
+objets rendus : `max_distance_mm` et `anchor_pin` étaient publics et documentés.
 
 ### Non-déterminisme hybrid+cluster → fix natif chaîné (2026-06-18) :
 `OptimizationWorkflow` n'a pas de seed fixe : benchmark 5 runs sur le board STM32
@@ -1182,8 +1306,9 @@ sans le fix). 100% natif (PlacementAnalyzer + PlacementFixer), zéro algo custom
 ### Phase 3 — Géomètre CMA-ES + filet de sécurité (2026-06-18) :
 Réintroduction du CMA-ES (`kct optimize-placement --strategy cmaes --seed-method
 current`) comme **3e étape optionnelle** après Architecte+Inspecteur, pour répondre
-à la limite ci-dessus (adjacence 13-28mm) — PAS un remplacement de la décision
-« pas de snap déterministe », un raffinement best-effort en plus.
+à la limite ci-dessus (adjacence 13-28mm) — raffinement best-effort, jamais une
+garantie. Depuis le 2026-08-29, c'est le SNAP qui garantit l'adjacence ; le
+Géomètre reste ce qu'il a toujours été, un micro-raffinement qui le précède.
 **Ablation contrôlée** (CMA-ES seul sur un board STM32 déjà placé+fixé, 0 erreur) :
 9.4s, 8/10 paires d'adjacence resserrées (Y1-U2 16.73→7.50mm, C11-Y1 17.47→13.34mm,
 C1-U1 8.37→4.51mm…), 2 légèrement dégradées (C13-U2, C3-U1, +1.1/+1.4mm). Le CMA-ES

@@ -78,13 +78,20 @@ Pipeline 8 agents (ordre strict) :
    PCB 3 niveaux : ① kicad-tools PCBFromSchematic · ② pcbnew direct · ③ TypeScript S-expr
 ⑤ `call_agent_placement` → Ingénieur Placement  [OFFICIEL kicad-tools]
    Le PCB arrive déjà placé (call_agent_gen_pcb ne déplace plus à -1000).
-   `PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>, enable_clustering=True)`
-   + run() + snap_rotations_to_90() + write_to_pcb() — clustering regroupe les grappes
-   (caps/quartz près du MCU). Filet : place_unplaced si footprints hors-carte.
+   `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid", enable_clustering=True,
+   fixed_refs=<J*/P*>)).run()` + **`write_to_pcb()`** (sans lui : no-op silencieux),
+   puis Géomètre CMA-ES, Inspecteur, halo d'escape, et **snap bypass** — ce dernier
+   applique `FunctionalCluster.max_distance_mm` par saut, la seule étape qui GARANTIT
+   l'adjacence (le clustering la suggère, le GA ne la produit pas : 13-28 mm mesurés).
+   Filet : place_unplaced si footprints hors-carte.
 ⑥ `call_agent_routing` → Ingénieur Routage  [OFFICIEL kicad-tools]
    ① kct route --strategy negotiated --auto-layers --auto-fix --seed (zones power + signaux)
    ② Freerouting REST API / subprocess (fallback historique, port 37864)
    → renvoie routed_percent réel (plus de hardcode 100)
+   Séquence par palier : plan de masse coulé et REMPLI d'abord, puis les signaux,
+   puis fanout / vias / couture des îlots répétée. Escalade 2 → 4 → 6 …, 3 tirages
+   par palier (Freerouting est stochastique), on garde toujours le meilleur ; les
+   tirages d'un palier sous 80 % sont abandonnés au profit du palier suivant.
 ⑥b Reasoner IA  [SOUS-ÉTAPE DÉTERMINISTE — déclenchée par orchestrator.ts, PAS par Sonnet]
    Trigger : SI routed_percent < 100 → l'orchestrateur lance call_agent_reason (shouldRescueRouting).
    Retiré de ACTIVE_PCB_TOOLS (Sonnet ne le voit plus → zéro double-appel). Résultat fusionné
