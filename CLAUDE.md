@@ -1346,6 +1346,12 @@ une panne — moteur injoignable, budget épuisé avant le repli. Escalader
 là-dessus revient à payer une couche de cuivre pour un défaut d'infrastructure.
 Distinguer toujours « mesuré à zéro » de « jamais mesuré ».
 
+**NEVER** conclure qu'un processus est bloqué en comparant l'horloge à la date
+d'un journal. La machine de développement se met en veille : le 2026-08-29,
+deux fois, un banc a paru muet pendant 39 minutes alors qu'il avait 8 minutes
+de temps d'exécution réel. La seule mesure fiable est `etime` du processus, ou
+sa consommation CPU — jamais l'écart entre deux horodatages.
+
 **NEVER** faire tourner une mesure longue dans un conteneur qu'une autre session
 peut redémarrer. Deux mesures de `stm32-100` ont été perdues ainsi (redémarrages
 à 07:10 et 07:17, `restarts=0` — donc voulus, pas des plantages). Un banc se
