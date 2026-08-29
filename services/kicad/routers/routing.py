@@ -265,7 +265,44 @@ def _find_freerouting_api() -> Optional[str]:
 # permis la mesure, et rien ne dit qu un autre reglage ne la vaudra pas.
 #
 # Garde : tests/test_reglages_freerouting.py.
-_REGLAGES_FREEROUTING: Optional[dict] = None
+#
+# ⚠️ UN SEUL reglage est desormais impose, et il ne porte pas sur la QUALITE
+# du routage mais sur son ARRET. Freerouting ne s arrete pas au bout d un
+# temps : il s arrete quand il converge — ou jamais.
+#
+# Mesure du 2026-08-29 sur les 495 jobs du journal Freerouting :
+#
+#     226 422 passes au total, dont 191 695 SANS le moindre progres — 84 %
+#
+# Profil constant, ici `stm32-100` a 2 couches :
+#
+#     pass    4  score 772.19  (46 unrouted)     <- tout le travail est ici
+#     pass    5  score 772.19  (46 unrouted)
+#     ...  995 passes rigoureusement identiques ...
+#     pass  999  score 772.19  (46 unrouted)
+#
+# 44 minutes dont une dizaine de secondes utiles. Et `max_passes: 9999` n est
+# meme pas de nous : c est le defaut que Freerouting ecrit lui-meme dans son
+# `freerouting.json` au premier demarrage.
+#
+# ⚠️ Le plafond NE PEUT PAS etre bas, et c est le piege. 19 % des jobs
+# progressent encore apres la passe 30, certains jusqu a la 997e — et ce sont
+# ceux qui finissent a UN seul net non route. Distribution du dernier progres :
+#
+#     <=  10 passes : 72 % des jobs
+#     <=  30 passes : 81 %
+#     <= 100 passes : 89 %
+#
+# 150 laisse une marge au-dessus des 89 % tout en divisant par ~6,7 le cout
+# d un palier condamne.
+#
+# ⚠️ L arret sur STAGNATION serait strictement meilleur — fenetre de 150 passes
+# sans progres, qui ne coupe AUCUN des 461 jobs mesures (plus grand ecart entre
+# deux progres : 144 passes). Il est indisponible : `PUT /jobs/{id}/cancel`
+# repond `501 Not Implemented`, et apres annulation la sortie du job repond
+# `400`. Un job annule ne rend pas son routage partiel.
+_PLAFOND_PASSES: int = 150
+_REGLAGES_FREEROUTING: Optional[dict] = {"max_passes": _PLAFOND_PASSES}
 
 
 def _route_with_freerouting_api(

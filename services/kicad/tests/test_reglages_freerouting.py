@@ -39,7 +39,7 @@ from routers import routing as R  # noqa: E402
 
 
 class TestReglages:
-    def test_on_s_en_tient_aux_defauts_de_freerouting(self):
+    def test_aucun_reglage_de_QUALITE_n_est_impose(self):
         """⚠️ Ce test affirmait l inverse — le fanout devait etre ACTIF.
 
         La mesure, arrivee apres, ne l a pas soutenu :
@@ -52,8 +52,17 @@ class TestReglages:
         Le fanout n a rien relie de plus et a pose huit vias supplementaires.
         Le cout de via abaisse fait exploser l espace de recherche : le 50 par
         defaut BORNE l exploration, il n est pas arbitraire.
+
+        ⚠️ Depuis le 2026-08-29 la charge n est plus vide : `max_passes` y
+        figure. Ce n est PAS un reglage de qualite mais un critere d ARRET —
+        Freerouting ne s arrete pas au bout d un temps, il s arrete quand il
+        converge, et 84 % de ses passes ne produisent rien (495 jobs mesures).
+        L invariant que ce test protege reste donc entier : AUCUN reglage
+        touchant la maniere de router n est impose, les defauts ayant battu
+        toutes nos variantes. Voir tests/test_plafond_passes_freerouting.py.
         """
-        assert R._REGLAGES_FREEROUTING is None
+        qualite = set(R._REGLAGES_FREEROUTING or {}) - {"max_passes"}
+        assert not qualite, f"reglage(s) de qualite non mesure(s) : {qualite}"
 
     def test_les_reglages_sont_transmis_au_job(self):
         source = (_SERVICE_ROOT / "routers" / "routing.py").read_text(
