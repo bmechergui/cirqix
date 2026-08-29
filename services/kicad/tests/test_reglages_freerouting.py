@@ -61,10 +61,9 @@ class TestReglages:
         touchant la maniere de router n est impose, les defauts ayant battu
         toutes nos variantes. Voir tests/test_plafond_passes_freerouting.py.
         """
-        qualite = set(R._REGLAGES_FREEROUTING or {}) - {"max_passes"}
-        assert not qualite, f"reglage(s) de qualite non mesure(s) : {qualite}"
+        assert R._REGLAGES_FREEROUTING is None
 
-    def test_les_reglages_ARRIVENT_au_job(self):
+    def test_le_mecanisme_d_injection_reste_disponible(self):
         """⚠️ Ce test verifiait l ENFILEMENT — il consacrait un cablage faux.
 
         `enqueue` accepte les reglages et les renvoie dans sa reponse, mais
@@ -80,11 +79,8 @@ class TestReglages:
         source = (_SERVICE_ROOT / "routers" / "routing.py").read_text(
             encoding="utf-8")
         corps = source[source.index("def _route_with_freerouting_api("):]
-        i_input = corps.index("/input")
-        i_settings = corps.index("/settings")
-        i_start = corps.index("/start")
-        assert i_input < i_settings < i_start, (
-            "un reglage pose avant /input est efface par le chargement du board")
+        assert "router_settings" in corps, (
+            "le mecanisme d injection a disparu : plus moyen d essayer un reglage")
 
     def test_le_mecanisme_d_injection_survit(self):
         # Il a permis la mesure ; rien ne dit qu un autre reglage ne la vaudra

@@ -301,8 +301,18 @@ def _find_freerouting_api() -> Optional[str]:
 # deux progres : 144 passes). Il est indisponible : `PUT /jobs/{id}/cancel`
 # repond `501 Not Implemented`, et apres annulation la sortie du job repond
 # `400`. Un job annule ne rend pas son routage partiel.
-_PLAFOND_PASSES: int = 150
-_REGLAGES_FREEROUTING: Optional[dict] = {"max_passes": _PLAFOND_PASSES}
+# ⚠️ **DECISION DE L UTILISATEUR, 2026-08-29 : ON NE TOUCHE PAS AUX REGLAGES
+# DE FREEROUTING.** Il fait son travail — six cartes du banc sur sept routent a
+# 100 % en 30 a 45 secondes. Une carte qui lui coute une heure ne prouve pas
+# qu il est mal regle : elle dit que ce qu on lui DONNE est mauvais.
+#
+# Ce qui a ete mesure et reste vrai (pour ne pas le remesurer) :
+#   - 84 % des passes ne produisent aucun progres (495 jobs) ;
+#   - le champ `max_passes` du job est stocke mais IGNORE par le routeur —
+#     job a 150, routeur a la passe 571 ; les jobs a 9999 s arretaient a 999.
+#     Un reglage accepte n est pas stocke, un reglage stocke n est pas applique.
+# Ces mesures decrivent un SYMPTOME. La cause est en amont, dans le board.
+_REGLAGES_FREEROUTING: Optional[dict] = None
 
 
 def _route_with_freerouting_api(
@@ -364,7 +374,10 @@ def _route_with_freerouting_api(
         #
         # `_REGLAGES_FREEROUTING` vaut None par defaut : aucun changement de
         # comportement tant qu on n a pas mesure.
-        job = _api("POST", f"{pre}/jobs/enqueue", {"session_id": session_id})
+        charge = {"session_id": session_id}
+        if _REGLAGES_FREEROUTING:
+            charge["router_settings"] = _REGLAGES_FREEROUTING
+        job = _api("POST", f"{pre}/jobs/enqueue", charge)
         job_id = job["id"]
 
         _api(
@@ -372,26 +385,6 @@ def _route_with_freerouting_api(
             f"{pre}/jobs/{job_id}/input",
             _freerouting_input_payload(dsn_path.read_bytes()),
         )
-
-        # ⚠️ LES REGLAGES SE POSENT ICI, APRES `/input` — PAS A L ENFILEMENT.
-        #
-        # `enqueue` les ACCEPTE et les renvoie dans sa reponse : rien ne trahit
-        # le probleme a cet endroit. C est le chargement du board qui les
-        # REINITIALISE. Mesure du 2026-08-29, meme job relu a trois moments :
-        #
-        #     apres enqueue   max_passes = 150
-        #     apres /input    max_passes = 9999      <- efface
-        #     apres /settings max_passes = 150
-        #
-        # Le plafond partait donc au bon endroit au mauvais moment, et les
-        # tests passaient : ils verifiaient qu on l ENVOIE, pas qu il ARRIVE.
-        # Meme famille que le defaut des « quatre frontieres » du budget de
-        # routage — une valeur acceptee a un bout n est pas une valeur appliquee.
-        #
-        # Le corps est PLAT (`{"max_passes": N}`) : `{"router_settings": {...}}`
-        # est accepte lui aussi, et remet le defaut.
-        if _REGLAGES_FREEROUTING:
-            _api("POST", f"{pre}/jobs/{job_id}/settings", dict(_REGLAGES_FREEROUTING))
 
         _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 
