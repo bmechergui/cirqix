@@ -53,8 +53,10 @@ class TestSequence:
         # Etape 3 de la sequence : echappement, vias, couture — ils reparent ce
         # que le routeur n a pas pu relier, donc ils viennent APRES lui.
         apres = BOUCLE[BOUCLE.index("_route_auto_once("):]
+        # ⚠️ `_recoudre_les_zones` est desormais appelee par
+        # `_coudre_jusqu_au_bout`, qui la repete tant qu elle progresse.
         for etape in ("_fanout_pads_isolees(", "_recoudre_les_ilots(",
-                      "_recoudre_les_zones("):
+                      "_coudre_jusqu_au_bout("):
             assert etape in apres, "%s doit suivre le routage" % etape
 
 

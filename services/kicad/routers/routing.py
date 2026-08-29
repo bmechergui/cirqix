@@ -1164,6 +1164,40 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
         return reel
     return percent_moteur
 
+# Passages de couture au maximum. Recoudre deux ilots peut en reveler un
+# troisieme : le cuivre nouvellement joint change la topologie, et la mesure
+# suivante voit des paires que la premiere ne pouvait pas voir.
+#
+# ⚠️ Borne : une carte pathologique ferait tourner la boucle sans fin, et
+# chaque passage coute un DRC plus un processus pcbnew.
+_PASSES_COUTURE = 5
+
+
+def _coudre_jusqu_au_bout(pcb_bytes: bytes) -> bytes:
+    """Repete la couture des ilots tant qu elle change le board.
+
+    ⚠️ Mesure du 2026-08-29 : quatre cartes du banc sortaient a 100 %, trois
+    restaient a 96-98 % et TOUTES leurs connexions manquantes etaient des GND —
+    trois quarts d entre elles des paires `Zone [GND] <-> Zone [GND]`, le plan
+    coupe en ilots par les pistes de signal.
+
+    La couture s executait bien — 1 a 4 vias poses a chaque passage — mais ne
+    passait QU UNE FOIS.
+
+    ⚠️ On s arrete des qu un passage ne change plus rien : `_recoudre_les_zones`
+    rend le board recu tel quel quand elle ne pose aucun via, ou quand elle
+    refuse un resultat qui ajouterait des erreurs. Insister serait vain.
+
+    Garde : tests/test_couture_repetee.py.
+    """
+    for _ in range(_PASSES_COUTURE):
+        recousu = _recoudre_les_zones(pcb_bytes)
+        if recousu == pcb_bytes:
+            return pcb_bytes
+        pcb_bytes = recousu
+    return pcb_bytes
+
+
 def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     """Relie par un via les ilots d un meme plan, decoupes par les pistes.
 
@@ -2361,7 +2395,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             final = _recoudre_les_ilots(final)
             # Puis les ILOTS DE PLAN : les pistes de signal decoupent le
             # cuivre de la face composants, et aucune pastille n est en cause.
-            final = _recoudre_les_zones(final)
+            final = _coudre_jusqu_au_bout(final)
 
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via
