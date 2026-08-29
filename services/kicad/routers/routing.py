@@ -613,6 +613,45 @@ def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
         candidat[0] == reference[0] and candidat[1] < reference[1])
 
 
+# Sous ce pourcentage, re-tirer le meme palier est un pari perdu : on monte.
+#
+# ⚠️ Mesure du 2026-08-29, stm32-100 (100 composants, 208x156 mm). Trois
+# tirages a 2 couches ont consomme les 3600 s du budget :
+#
+#     tirage 1  ->  60 %      28 min
+#     tirage 2  ->  70 %      27 min
+#     tirage 3  ->   0 %      « budget epuise avant le Niveau 4 »
+#
+# La carte n a JAMAIS essaye 4 couches — le seul levier qui lui manquait.
+# Le budget n etait pas trop court : il a ete depense au mauvais endroit.
+#
+# Le seuil se DEDUIT de l ecart mesure entre tirages, il n est pas choisi.
+# Sur le meme board place de la Nucleo, trois executions de Freerouting ont
+# donne 65, 77 et 91 % : 26 points au plus. Un palier a 70 % ne peut donc pas
+# atteindre 100 % par re-tirage, quel qu en soit le nombre. A 91 %, si — et
+# ce rattrapage-la est mesure, on ne coupe pas dessus.
+#
+#     100 - 26 = 74      ->  80 garde une marge sans couper un rattrapage reel
+#
+# ⚠️ Ceci ne remplace PAS les re-tirages, contrairement au partage de budget
+# essaye le 2026-08-28 (tous les paliers a 0 %, revert). Les tirages restent
+# entiers ; seuls ceux d un palier hors d atteinte sont abandonnes.
+_SEUIL_REDRAW_PCT: int = 80
+
+
+def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
+    """Faut-il abandonner les tirages restants de ce palier et monter ?
+
+    Un ZERO ne declenche rien : « 0 % (aucun moteur) » n est pas un verdict de
+    routage mais une panne — Freerouting injoignable, budget epuise avant le
+    repli. Monter d une couche sur une panne serait payer une couche pour un
+    defaut d infrastructure. On re-tire au meme palier.
+
+    Garde : tests/test_escalade_precoce.py.
+    """
+    return 0 < meilleur_pct < _SEUIL_REDRAW_PCT
+
+
 def _escalade_epuisee(sans_gain: int) -> bool:
     """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
 
@@ -2309,7 +2348,21 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     meilleur_note = (-1, 10 ** 6)
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
+    palier_courant: Optional[int] = None
+    meilleur_du_palier = 0
     for palier in essais:
+        if palier != palier_courant:
+            palier_courant, meilleur_du_palier = palier, 0
+        # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
+        # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
+        # carte n a jamais essaye 4 couches (mesure du 2026-08-29).
+        elif _tirages_epuises_au_palier(meilleur_du_palier):
+            logger.info(
+                "route_auto: tirages restants a %d couches abandonnes — %d%% "
+                "est trop loin de 100%% pour qu un re-tirage le rattrape "
+                "(ecart mesure : 26 points au plus)",
+                palier, meilleur_du_palier)
+            continue
         if _escalade_epuisee(sans_gain):
             logger.info(
                 "route_auto: escalade arretee avant %d couches — %d palier(s) "
@@ -2455,6 +2508,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                    if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
         if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
             return res
+        meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
         if meilleur is None or _palier_meilleur(
                 (res.routed_percent, erreurs), meilleur_note):
             meilleur, meilleur_note = res, (res.routed_percent, erreurs)
