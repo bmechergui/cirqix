@@ -74,7 +74,14 @@ class TestCablage:
         assert self.SOURCE.count("deadline = _now() + req.timeout_s") == 2
         # Et le restant doit bien etre passe au palier, sinon chaque palier
         # repartirait du budget entier.
-        assert "timeout_s=max(restant, _MIN_LEVEL_BUDGET_S)" in self.SOURCE
+        #
+        # ⚠️ On exigeait l expression exacte `max(restant, _MIN_LEVEL_BUDGET_S)`.
+        # Depuis le 2026-08-29 le restant est PARTAGE entre les essais a venir
+        # (`_part_de_budget`) : le premier tirage consommait sinon tout le
+        # temps, et sur la carte a 100 composants ni le re-tirage ni l escalade
+        # n avaient lieu. L intention du test ne change pas — le palier part du
+        # RESTANT — seule sa formulation vieillit.
+        assert "_part_de_budget(restant," in self.SOURCE
 
 
 class TestAucunNiveauNeDemarreSansBudget:

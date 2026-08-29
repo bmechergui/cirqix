@@ -31,7 +31,7 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVICE_ROOT))
 
 SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
-BOUCLE = SOURCE[SOURCE.index("for palier in _paliers_avec_tirages("):]
+BOUCLE = SOURCE[SOURCE.index("essais = _paliers_avec_tirages("):]
 BOUCLE = BOUCLE[:BOUCLE.index("return meilleur")]
 
 

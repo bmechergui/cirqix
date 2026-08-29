@@ -81,5 +81,5 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
     def test_la_boucle_est_utilisee_dans_le_routage(self):
-        i = self.SOURCE.index("for palier in _paliers_avec_tirages(")
+        i = self.SOURCE.index("essais = _paliers_avec_tirages(")
         assert "_coudre_jusqu_au_bout(" in self.SOURCE[i:]

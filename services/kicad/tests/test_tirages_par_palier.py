@@ -68,12 +68,12 @@ class TestCablage:
     def test_la_boucle_parcourt_l_echelle_avec_tirages(self):
         # ⚠️ On ancre sur la boucle REELLE : `for palier in ` apparait d abord
         # dans la comprehension de `_paliers_avec_tirages` elle-meme.
-        assert "for palier in _paliers_avec_tirages(" in self.SOURCE
+        assert "essais = _paliers_avec_tirages(" in self.SOURCE
         assert "_layer_ladder(req.layers)" in self.SOURCE
 
     def test_la_sortie_anticipee_survit(self):
         # 100 % ET zero erreur doit toujours rendre la main immediatement :
         # sans quoi les tirages surnumeraires seraient payes pour rien.
-        i = self.SOURCE.index("for palier in _paliers_avec_tirages(")
+        i = self.SOURCE.index("essais = _paliers_avec_tirages(")
         corps = self.SOURCE[i:]
         assert "res.routed_percent >= 100 and not res.skipped and erreurs == 0" in corps

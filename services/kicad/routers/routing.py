@@ -567,6 +567,33 @@ _TIRAGES_ROUTAGE_PAR_PALIER = 3
 _TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
 
 
+def _part_de_budget(restant_s: int, essais_restants: int) -> int:
+    """Temps a accorder a UN essai, sur `restant_s` et `essais_restants` a venir.
+
+    ⚠️ Chaque essai recevait TOUT le temps disponible. Mesure du 2026-08-29,
+    carte a 100 composants, budget 1800 s :
+
+        palier 2 couches -> 59%
+        escalade interrompue avant 2 couches — budget epuise
+
+    Un seul tirage avait consomme les 1800 secondes : ni re-tirage, ni
+    escalade. Les 59 % etaient le PREMIER essai, garde faute de mieux — et les
+    96 % du passage precedent la chance d un bon premier tirage, pas une
+    propriete de la chaine.
+
+    ⚠️ Le plancher reste indispensable : un essai trop court ne rend qu un
+    routage tronque, et douze essais tronques valent moins qu un essai complet.
+    Quand la part descendrait sous le plancher, on prefere donc faire MOINS
+    d essais mais entiers — l escalade s arrete alors d elle-meme, faute de
+    budget, ce qui est le comportement voulu.
+
+    Garde : tests/test_budget_partage.py.
+    """
+    if essais_restants <= 1:
+        return max(restant_s, _MIN_LEVEL_BUDGET_S)
+    return max(_MIN_LEVEL_BUDGET_S, restant_s // essais_restants)
+
+
 def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
     """Repete chaque palier `tirages` fois, dans l ordre.
 
@@ -2307,8 +2334,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     sans_gain = 0
     meilleur_note = (-1, 10 ** 6)
-    for palier in _paliers_avec_tirages(
-            _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER):
+    essais = _paliers_avec_tirages(
+        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
+    for rang, palier in enumerate(essais):
         if _escalade_epuisee(sans_gain):
             logger.info(
                 "route_auto: escalade arretee avant %d couches — %d palier(s) "
@@ -2362,7 +2390,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
             layers=req.layers,
-            timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
+            # ⚠️ Une PART du budget, pas tout : sinon le premier essai le
+            # consomme et la methode — plusieurs tirages, escalade, on garde le
+            # meilleur — ne peut jamais s exercer.
+            timeout_s=_part_de_budget(restant, len(essais) - rang),
         )
         res = _route_auto_once(tentative)
 

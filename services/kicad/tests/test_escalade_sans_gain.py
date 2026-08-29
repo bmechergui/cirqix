@@ -61,11 +61,11 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
     def test_la_boucle_consulte_la_regle(self):
-        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
+        corps = self.SOURCE[self.SOURCE.index("essais = _paliers_avec_tirages("):]
         assert "_escalade_epuisee(" in corps[:6000]
 
     def test_le_meilleur_reste_rendu(self):
         # L arret anticipe ne doit pas transformer « on garde le meilleur » en
         # « on garde le dernier ».
-        corps = self.SOURCE[self.SOURCE.index("for palier in _paliers_avec_tirages("):]
+        corps = self.SOURCE[self.SOURCE.index("essais = _paliers_avec_tirages("):]
         assert "return meilleur" in corps
