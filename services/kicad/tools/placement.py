@@ -1919,14 +1919,44 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         n_snap = snap_cluster_members(
             pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap))
         if n_snap:
+            # ⚠️ FILET OBLIGATOIRE, meme forme que celui du Geometre. Le snap
+            # a ete livre le 2026-08-29 SANS filet, sur l hypothese que
+            # « l Inspecteur nettoie ». C etait une hypothese, pas une mesure :
+            #
+            #     board STM32   0 ERROR avant  ->  1 ERROR apres (8 deplaces)
+            #     Arduino                          202 ERROR    (44 deplaces)
+            #
+            # L Inspecteur en resorbait presque tout, mais les 4 residuels
+            # declenchaient un RE-TIRAGE COMPLET du placement — seize minutes,
+            # trois fois sur la meme carte. Un embellissement de placement ne
+            # peut pas coûter une heure ni risquer un court-circuit.
+            #
+            # On tente, on repare avec l outil natif, et on REVIENT au board
+            # d avant si 0 ERROR n est pas atteint. Le board livre est donc
+            # toujours au moins aussi bon que sans snap.
+            # ⚠️ REPARER AVANT DE MESURER, des deux cotes de la comparaison.
+            # Un board illisible rend un rapport DRC vide, que le compteur lit
+            # « 0 erreur » (defaut du 2026-08-27). Comparer deux zeros fantomes
+            # ferait accepter n importe quel snap.
+            _rendre_lisible(out)
+            avant_snap = out.read_bytes()
+            n_err_avant = _compter_conflits_erreur(out)
             pcb_snap.save(str(out))
             _normalize_to_board_frame(out)
-            logger.info(
-                "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
-                "a portee de leur ancre", n_snap)
-            # L Inspecteur est le filet du snap : un saut peut poser la capa
-            # sur un pad de l ancre. Il ecarte, le membre reste pres.
             _resolve_remaining_conflicts(out, conn)
+            _rendre_lisible(out)
+            n_err_apres = _compter_conflits_erreur(out)
+            if n_err_apres > n_err_avant:
+                logger.warning(
+                    "auto_place: snap bypass a laisse %d conflit(s) ERROR "
+                    "contre %d avant — board pre-snap restaure",
+                    n_err_apres, n_err_avant)
+                out.write_bytes(avant_snap)
+            else:
+                logger.info(
+                    "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
+                    "a portee de leur ancre, %d conflit(s) ERROR",
+                    n_snap, n_err_apres)
 
         # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
         # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une

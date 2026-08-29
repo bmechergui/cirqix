@@ -46,3 +46,32 @@ def test_le_snap_recoit_les_ancrages_et_les_denses():
     assert "figes=" in appel, "connecteurs non proteges du snap"
     assert "denses=" in appel, (
         "halo ignore : le snap reboucherait le canal d escape fine-pitch")
+
+
+# ---------------------------------------------------------------------------
+# Filet — le snap ne peut pas livrer un board pire qu il ne l a recu.
+# ---------------------------------------------------------------------------
+
+def test_le_board_pre_snap_est_conserve_et_restaurable():
+    """Meme forme de filet que le Geometre.
+
+    Le snap a ete livre SANS filet le 2026-08-29, sur l hypothese que
+    « l Inspecteur nettoie » : 0 ERROR -> 1 sur le board STM32, 202 sur
+    l Arduino, et un re-tirage complet du placement de seize minutes.
+    """
+    src = _src()
+    i = src.index("snap_cluster_members(")
+    apres = src[i:]
+    assert "avant_snap = out.read_bytes()" in src[:i] or "avant_snap" in apres, (
+        "aucun instantane du board pre-snap : rien a restaurer")
+    assert "out.write_bytes(avant_snap)" in apres, (
+        "instantane pris mais jamais restaure")
+
+
+def test_la_restauration_est_conditionnee_a_une_DEGRADATION():
+    src = _src()
+    i = src.index("snap_cluster_members(")
+    apres = src[i:]
+    assert "n_err_apres > n_err_avant" in apres, (
+        "le filet doit comparer AVANT et APRES, pas tester un seuil absolu : "
+        "un board deja imparfait ne doit pas interdire une amelioration")
