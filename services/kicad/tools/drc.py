@@ -64,6 +64,15 @@ def _micro_via_policy() -> tuple[float, float]:
     return size, drill
 
 
+# Pont de masque minimum, en millimetres.
+#
+# Valeur PUBLIEE par JLCPCB (page capabilities) pour du cuivre 1 oz et un
+# vernis vert : 0,10 mm. 0,13 en noir ou blanc, 0,20 en 2 oz — on retient la
+# plus courante de nos cartes. Elle vient du fabricant, pas de nous : le
+# profil `kicad-tools` ne porte aucune limite de masque.
+_PONT_DE_MASQUE_MM: float = 0.10
+
+
 def write_mfr_project_sidecar(
     pcb_path: str | Path, tier: str, layers: int,
     pcb_text: str | None = None,
@@ -116,6 +125,18 @@ def write_mfr_project_sidecar(
         min_hole_diameter_mm=rules.min_hole_diameter_mm,
         min_copper_to_edge_mm=rules.min_copper_to_edge_mm,
     )
+    # ⚠️ Le PONT de masque n etait pas juge — `solder_mask_min_width` restait
+    # a 0, faute de figurer dans le profil `kicad-tools`. C est le risque
+    # numero un d un LQFP-48 au pas de 0,5 mm : deux ouvertures voisines qui
+    # fusionnent court-circuitent a l assemblage, et le board passait le DRC.
+    #
+    # ⚠️ NE PAS confondre avec `solder_mask_clearance`, lui aussi a 0 mais
+    # a JUSTE TITRE : JLCPCB travaille en 1:1, l ouverture egale la pastille.
+    # Deux zeros, deux sens opposes.
+    rules_dict = data.setdefault("board", {}).setdefault(
+        "design_settings", {}).setdefault("rules", {})
+    rules_dict["solder_mask_min_width"] = _PONT_DE_MASQUE_MM
+
     micro_size, micro_drill = _micro_via_policy()
     for netclass in get_netclass_definitions(data):
         if netclass.get("name") == "Default":
