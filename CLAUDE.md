@@ -1271,6 +1271,44 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
 **NEVER** écrire une heuristique de détection (bypass cap, power net, IC) sans avoir vérifié si kicad-tools l'expose.
 **NEVER** implémenter un algo de placement sans avoir testé `kct placement optimize --cluster` d'abord.
 
+### Leçons inscrites le 2026-08-29 — chacune payée par une mesure
+
+**NEVER** conclure qu'un levier natif n'existe pas sans avoir lu les CHAMPS des
+objets rendus. `FunctionalCluster.max_distance_mm` et `anchor_pin` étaient
+publics, calculés à chaque appel, jamais lus — et leur absence supposée a fondé
+deux mois de renoncement (« adjacence serrée = Phase 6 »). Lire la signature
+d'une fonction ne suffit pas : ce qu'elle REND porte souvent la réponse.
+
+**NEVER** ajouter un correctif qui déplace des composants sans vérifier ce que
+font ceux qui l'entourent. Le snap posé avant le Géomètre est défait par le
+CMA-ES ; posé avant le halo d'escape, défait par le halo. Deux correctifs
+justes peuvent s'annuler — c'était déjà arrivé le 2026-08-27 entre le clamp et
+le centrage des dominants. L'ordre fait partie du correctif, pas de son emballage.
+
+**NEVER** mesurer une distance entre footprints depuis leurs ORIGINES. L'origine
+d'un module est sur sa pastille 1 : le courtyard de l'ESP32-WROOM va de -30,74 à
++10,51 en y. « À 3 mm de l'origine » place le voisin DANS le module.
+`_boite_locale_fp` porte ce décalage — s'en servir, toujours.
+
+**NEVER** livrer une règle sans une garde qui prouve qu'elle est APPELÉE. Une
+règle correcte jamais invoquée est indistinguable d'une règle absente : c'est
+exactement ce qui a masqué pendant des semaines le fait que le Géomètre ne
+tournait jamais en production. Tester le comportement ET le câblage.
+
+**NEVER** lire un `0 %` comme un verdict de routage. « 0 % (aucun moteur) » est
+une panne — moteur injoignable, budget épuisé avant le repli. Escalader
+là-dessus revient à payer une couche de cuivre pour un défaut d'infrastructure.
+Distinguer toujours « mesuré à zéro » de « jamais mesuré ».
+
+**NEVER** faire tourner une mesure longue dans un conteneur qu'une autre session
+peut redémarrer. Deux mesures de `stm32-100` ont été perdues ainsi (redémarrages
+à 07:10 et 07:17, `restarts=0` — donc voulus, pas des plantages). Un banc se
+lance dans SON conteneur, monté sur les mêmes sources.
+
+**NEVER** faire confiance aux tests présents dans l'image Docker : ils datent du
+build. Huit « régressions » lues le 2026-08-29 n'étaient que des tests périmés ;
+après copie de ceux du disque, 31/31 vert. Copier `tests/` avant de conclure.
+
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
@@ -1289,8 +1327,7 @@ détection reste `detect_functional_clusters`, le seuil est celui du cluster.
 Ce n'est pas un optimiseur de placement — c'est l'application d'une règle que la
 lib exprime et n'applique pas. La règle de CLAUDE.md est respectée.
 
-**NEVER** conclure qu'un levier natif n'existe pas sans avoir lu les CHAMPS des
-objets rendus : `max_distance_mm` et `anchor_pin` étaient publics et documentés.
+
 
 ### Non-déterminisme hybrid+cluster → fix natif chaîné (2026-06-18) :
 `OptimizationWorkflow` n'a pas de seed fixe : benchmark 5 runs sur le board STM32
