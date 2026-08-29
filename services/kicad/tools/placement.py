@@ -1520,9 +1520,26 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 # ---------------------------------------------------------------------------
 
 # Paramètres de la commande native `kct placement optimize --strategy hybrid`
-_WF_ITERATIONS: int = 1000   # raffinement physique force-directed
-_WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
-_WF_POPULATION: int = 50
+# ⚠️ BUDGET REDUIT LE 2026-08-29, sur mesure — quatre tirages de chaque,
+# board STM32 17 composants, placement complet :
+#
+#                  temps                       fil (hors GND)
+#     100x50+1000  266 311 399 392       365 390 407 386     342 s / 387 mm
+#      30x25+ 300  101  91 172 128       359 441 372 565     123 s / 434 mm
+#
+# 2,8x plus rapide, toujours. Le cout n est PAS dans la moyenne (+12 %, qui
+# ment) mais dans la DISPERSION : l etendue passe de 42 a 206 mm, avec un
+# tirage a 565 — « parfois un placement absurde », pas « un peu plus de fil ».
+#
+# ⚠️ Le remede n est pas de remonter le budget. Trois tirages reduits sur
+# quatre atteignent la region du complet : le budget SUFFIT, c est le depart
+# qui varie. Remonter a 100 generations paierait le pire cas partout pour
+# corriger un tirage sur quatre. Le remede est le FILTRE — deux tirages
+# reduits coutent moins qu un complet (246 s contre 342) et on garde le
+# meilleur. Voir `_TIRAGES_MINIMUM`.
+_WF_ITERATIONS: int = 300    # raffinement physique force-directed
+_WF_GENERATIONS: int = 30    # phase évolutionnaire (groupement)
+_WF_POPULATION: int = 25
 
 # Budget temps du micro-raffinement CMA-ES (Géomètre) — borné pour rester
 # compatible avec l'appel synchrone POST /place/auto (le GA hybrid+cluster
@@ -1570,6 +1587,76 @@ _CMAES_MAX_DISPLACEMENT_MM: float = 20.0
 # router un board que le DRC refusera. Borne, pour qu une carte reellement
 # impossible ne bloque pas le pipeline.
 _MAX_TIRAGES_PLACEMENT = 4
+
+# Tirages TOUJOURS effectues, meme quand le premier est propre. C est le filtre
+# anti-aberration qui rend le budget reduit acceptable : sans lui on garderait
+# le placement a 565 mm par simple ordre d arrivee, ses 0 conflit ne le
+# distinguant pas des autres.
+#
+# ⚠️ Deux, pas trois : best-of-3 reduit coute 369 s et ne bat plus un tirage
+# complet a 342 s. Le gain disparait exactement la.
+_TIRAGES_MINIMUM = 2
+
+# Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
+# compter dans la longueur de fil fausserait la comparaison.
+_NETS_DE_PLAN = frozenset({"GND", "AGND", "DGND", "GNDA"})
+
+
+def _longueur_de_fil_mm(pcb_path) -> Optional[float]:
+    """Somme des distances pastille -> pastille par net, hors nets de plan.
+
+    Proxy de la qualite d un placement LEGAL — c est ce que le GA optimise, et
+    c est assez peu couteux pour departager deux tirages. Ce n est PAS un
+    predicteur de routabilite : un board a 360 mm qui route a 100 % vaut mieux
+    qu un a 350 mm qui laisse cinq broches orphelines au QFP. On s en sert donc
+    pour choisir entre placements DEJA legaux, jamais pour juger une carte.
+
+    Rend ``None`` si la mesure echoue : un fil inconnu ne doit pas gagner.
+    """
+    try:
+        pcb = PCB.load(str(pcb_path))
+    except Exception:
+        return None
+    par_net: dict = {}
+    for fp in pcb.footprints:
+        px, py = fp.position
+        for pad in (getattr(fp, "pads", None) or []):
+            nom = str(getattr(pad, "net_name", "") or "")
+            if not nom or nom in _NETS_DE_PLAN:
+                continue
+            par_net.setdefault(nom, []).append(
+                (px + pad.position[0], py + pad.position[1]))
+    total = 0.0
+    for points in par_net.values():
+        ancre = points[0]
+        for autre in points[1:]:
+            total += math.hypot(autre[0] - ancre[0], autre[1] - ancre[1])
+    return total
+
+
+def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
+    """`candidat` bat-il `reference` ? Conflits d abord, longueur de fil ensuite.
+
+    ⚠️ Le seul compte de conflits NE DEPARTAGE RIEN quand tous les tirages
+    sont propres — c est le cas mesure le 2026-08-29, huit placements a
+    0 ERROR dont un a 565 mm de fil contre 372 pour son voisin. Sans second
+    critere, on garde le premier arrive.
+
+    Un fil inconnu ne gagne jamais par defaut : sans mesure, on ne prefere pas.
+    """
+    if reference is None:
+        return True
+    c_conf = candidat.get("conflits_restants", 10 ** 6)
+    r_conf = reference.get("conflits_restants", 10 ** 6)
+    if c_conf != r_conf:
+        return c_conf < r_conf
+    c_fil = candidat.get("fil_mm")
+    r_fil = reference.get("fil_mm")
+    if c_fil is None:
+        return False
+    if r_fil is None:
+        return True
+    return c_fil < r_fil
 
 
 def _dominants_du_b64(kicad_pcb_b64: str) -> list:
@@ -1639,19 +1726,30 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
     """
     meilleur = None
-    tirages = _tirages_utiles(_dominants_du_b64(kicad_pcb_b64))
+    tirages = max(_TIRAGES_MINIMUM,
+                  _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
     for essai in range(tirages):
         r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm)
         n_conflits = r.get("conflits_restants", 0)
-        if meilleur is None or n_conflits < meilleur.get("conflits_restants", 10**6):
+        if _placement_meilleur(r, meilleur):
             meilleur = r
-        if n_conflits == 0:
-            if essai:
-                logger.info("auto_place: placement propre au tirage %d", essai + 1)
+        # ⚠️ ON NE S ARRETE PLUS AU PREMIER PLACEMENT PROPRE. Le budget du GA
+        # a ete divise par ~3 le 2026-08-29 ; son prix est la DISPERSION, pas
+        # la moyenne — un tirage sur quatre rend un placement absurde (565 mm
+        # de fil contre 372) avec 0 conflit, donc indiscernable sans second
+        # tirage. Le filtre EST la contrepartie du budget reduit : deux
+        # tirages reduits coutent moins qu un seul complet (246 s contre 342).
+        if n_conflits == 0 and essai + 1 >= _TIRAGES_MINIMUM:
+            logger.info(
+                "auto_place: %d tirage(s) propres — retenu %s",
+                essai + 1,
+                f"{meilleur.get('fil_mm', 0):.0f} mm de fil"
+                if meilleur.get("fil_mm") else "le premier")
             break
-        logger.warning(
-            "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot que "
-            "de router un board casse", n_conflits, essai + 1, tirages)
+        if n_conflits:
+            logger.warning(
+                "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot "
+                "que de router un board casse", n_conflits, essai + 1, tirages)
     if meilleur.get("conflits_restants"):
         # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
         # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
@@ -2031,6 +2129,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
             "conflits_restants": conflits_restants,
+            # Second critere de choix entre tirages LEGAUX — sans lui, deux
+            # placements a 0 conflit ne se departagent pas et on garde le
+            # premier arrive, fut-il a 565 mm de fil contre 372.
+            "fil_mm": _longueur_de_fil_mm(out),
             # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
             # attendu par le client TS (`placement-service.ts::isValidPosition`).
             # Le code émettait `x`/`y`, contredisant son propre modèle : le client

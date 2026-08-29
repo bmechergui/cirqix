@@ -629,6 +629,13 @@ def test_auto_place_reverts_cmaes_if_displacement_exceeds_threshold(tmp_path, mo
     # Couverture propre : tests/test_placement_inside_outline.py.
     monkeypatch.setattr(placement_module, "_repair_off_board", lambda path, anchored: [])
     monkeypatch.setattr(placement_module, "_outside_outline_refs", lambda path: 0)
+    # ⚠️ UN SEUL TIRAGE. Depuis le 2026-08-29, `auto_place` en fait toujours
+    # deux et garde le meilleur (filtre anti-aberration du budget GA reduit).
+    # `captured["pre_x"]` serait alors ecrase par le SECOND tirage tandis que
+    # le board rendu peut venir du PREMIER : le test comparerait deux tirages
+    # differents et echouerait sans qu aucun filet ne soit en panne. On isole
+    # le filet CMA-ES, comme on neutralise deja la reparation hors-carte.
+    monkeypatch.setattr(placement_module, "_TIRAGES_MINIMUM", 1)
 
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
