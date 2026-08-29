@@ -71,3 +71,46 @@ class TestException:
 
     def test_sans_nets_l_estimation_est_nulle_pas_fausse(self):
         assert RoutageFige(unrouted=5, nets=0).routed_percent == 0
+
+
+# ---------------------------------------------------------------------------
+# Fenetre ADAPTATIVE — le compteur de passes seul ne suffit pas.
+#
+# Avis de Grok, verifie sur 299 jobs reels : « fenetre courte seulement si
+# unrouted reste HAUT et plat ; fenetre 150 si unrouted est petit ».
+#
+# Calibration, jobs d au moins 20 passes :
+#
+#     progressent APRES la passe 20 : 101 jobs, unrouted@20 va jusqu a 22
+#     morts avant la passe 20       : 198 jobs, unrouted@20 des 1
+#
+# ⚠️ La separation n est PAS parfaite en bas : un job a 1 net non route peut
+# etre mort comme il peut progresser 900 passes plus tard. Un seuil bas
+# tuerait des jobs vivants. En HAUT en revanche elle est nette : au-dela de
+# 22, aucun des 101 progresseurs tardifs. On prend 25, avec sa marge.
+# ---------------------------------------------------------------------------
+
+from routers.routing import _fenetre_stagnation, _MORT_AU_DELA_DE
+
+
+class TestFenetreAdaptative:
+    def test_un_job_tres_incomplet_est_juge_vite(self):
+        """stm32-100 : 46 nets non routes — condamne, on ne l attend pas."""
+        assert _fenetre_stagnation(46) < _STAGNATION_PASSES
+
+    def test_un_job_presque_fini_garde_la_fenetre_longue(self):
+        """1 net restant : peut encore aboutir a la passe 997."""
+        assert _fenetre_stagnation(1) == _STAGNATION_PASSES
+
+    def test_le_seuil_est_au_dessus_du_maximum_mesure(self):
+        """22 est le plus haut unrouted@20 d un job qui progressait encore."""
+        assert _MORT_AU_DELA_DE > 22
+
+    def test_la_zone_grise_reste_protegee(self):
+        for n in range(0, 23):
+            assert _fenetre_stagnation(n) == _STAGNATION_PASSES, (
+                f"{n} nets non routes : un job vivant a deja ete mesure ici")
+
+    def test_unrouted_inconnu_ne_raccourcit_rien(self):
+        """Sans mesure, on ATTEND — jamais d abandon a l aveugle."""
+        assert _fenetre_stagnation(0) == _STAGNATION_PASSES

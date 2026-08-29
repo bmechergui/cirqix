@@ -322,6 +322,36 @@ _REGLAGES_FREEROUTING: Optional[dict] = None
 # 2026-08-29) : le palier suivant demarre pendant que le cadavre finit seul.
 _STAGNATION_PASSES: int = 150
 
+# Au-dela de ce nombre de nets non routes, un palier est CONDAMNE : on le juge
+# sur une fenetre courte au lieu d attendre 150 passes.
+#
+# ⚠️ Calibration sur 299 jobs reels, a la passe 20 :
+#
+#     progressent APRES la passe 20 : 101 jobs, unrouted@20 va jusqu a 22
+#     morts avant la passe 20       : 198 jobs, unrouted@20 des 1
+#
+# La separation n est PAS parfaite EN BAS — un job a 1 net non route peut etre
+# mort comme il peut aboutir 900 passes plus tard, et c est pourquoi un seuil
+# bas tuerait des jobs vivants. EN HAUT elle est nette : au-dela de 22, aucun
+# des 101 progresseurs tardifs. 25 laisse la marge.
+_MORT_AU_DELA_DE: int = 25
+
+# Fenetre appliquee a un palier condamne. 30 passes ~ 75 s a 2,5 s la passe,
+# contre ~375 s pour la fenetre longue.
+_STAGNATION_PASSES_CONDAMNE: int = 30
+
+
+def _fenetre_stagnation(unrouted: int) -> int:
+    """Passes plates a tolerer, selon ce qu il reste a router.
+
+    Avis de Grok, verifie : le compteur de passes seul ne suffit pas — c est
+    le NOMBRE de nets non routes qui distingue un cadavre d un job qui
+    progresse encore. Un `unrouted` inconnu (0) ne raccourcit rien : sans
+    mesure on attend, on n abandonne pas a l aveugle.
+    """
+    return (_STAGNATION_PASSES_CONDAMNE if unrouted > _MORT_AU_DELA_DE
+            else _STAGNATION_PASSES)
+
 # Ou vit le journal de Freerouting. Meme conteneur que la JVM ; le chemin suit
 # `--user_data_path`, fixe par notre entrypoint.
 _FREEROUTING_LOG = Path(os.environ.get(
@@ -473,12 +503,12 @@ def _route_with_freerouting_api(
                         short_name)
                 except Exception:
                     plat = 0
-                if plat >= _STAGNATION_PASSES:
-                    derniere = _LIGNE_PASSE_RE.findall(
-                        _FREEROUTING_LOG.read_text(encoding="utf-8",
-                                                   errors="replace"))
-                    unrouted = next((int(u) for j, _, _, u in reversed(derniere)
-                                     if j == short_name), 0)
+                derniere = _LIGNE_PASSE_RE.findall(
+                    _FREEROUTING_LOG.read_text(encoding="utf-8",
+                                               errors="replace"))
+                unrouted = next((int(u) for j, _, _, u in reversed(derniere)
+                                 if j == short_name), 0)
+                if plat >= _fenetre_stagnation(unrouted):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
                         "routes) — attente abandonnee, le job finit seul",
