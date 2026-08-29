@@ -710,7 +710,81 @@ def _escalade_epuisee(sans_gain: int) -> bool:
     return sans_gain > _TOLERANCE_SANS_GAIN
 
 
-def _layer_ladder(plafond: int) -> list[int]:
+# Capacite d echappement : signaux qu un COTE de boitier peut sortir, par couche.
+#
+# ⚠️ Ce nombre n est pas choisi, il est ENCADRE par nos propres cartes. Mesure
+# du 2026-08-29, signaux a echapper du boitier le plus charge, par cote :
+#
+#     carte            boitier      signaux  /cote  couches  ok   C requis
+#     stm32-baseline   LQFP-48            7    1.8      2    oui    0.88
+#     esp32-baseline   ESP32-WROOM        8    2.0      2    oui    1.00
+#     stm32-30         LQFP-48           13    3.2      4    oui    0.81
+#     arduino-uno      TQFP-32           31    7.8      2    oui    3.88
+#     nucleo-f401      LQFP-64           38    9.5      4    oui    2.38
+#     stm32-60         LQFP-48           25    6.2      4    oui    1.56
+#     stm32-100        LQFP-48           43   10.8      2    NON    5.38
+#
+# Les six reussites tiennent sous 3,88 ; le seul echec en reclamait 5,38.
+# Toute valeur de l intervalle reproduit les sept observations ; on prend le
+# milieu. Recalibrer si une carte dement ce tableau — pas avant.
+#
+# ⚠️ Le goulot est LOCAL, pas global. Sur trois jobs Freerouting de stm32-100,
+# UN SEUL composant porte 20 a 28 % des echecs de connexion, les 85 autres 2 %
+# chacun : c est le LQFP-48, et sa part egale sa part des connexions. Ce n est
+# donc ni la taille de la carte ni la dispersion du placement — c est
+# l echappement d un boitier fine-pitch.
+_CAPACITE_ECHAPPEMENT: float = 4.5
+
+# Cotes d un boitier. Un QFP en a quatre ; on ne distingue pas les SOIC, dont
+# le nombre de signaux ne fait jamais plancher.
+_COTES_BOITIER: int = 4
+
+
+def _signaux_a_echapper(pcb_bytes: bytes, nets_plan: set) -> int:
+    """Nets SIGNAL distincts du boitier le plus charge de la carte.
+
+    ⚠️ Les nets confies au plan ne comptent PAS : ils sortent par-dessous, pas
+    lateralement. Les compter ajouterait 58 signaux sur stm32-100 et ferait
+    demarrer toutes les cartes trop haut — on vendrait des couches inutiles.
+
+    ⚠️ Un net porte par plusieurs pastilles du meme boitier compte UNE fois :
+    il sort par une piste, pas par autant qu il a de pastilles.
+
+    Un board illisible rend 0 : on ne devine pas un plancher, on n en pose pas.
+    """
+    try:
+        blocs = re.split(r"\(footprint ", pcb_bytes.decode("utf-8", "replace"))
+    except Exception:
+        return 0
+    pire = 0
+    for bloc in blocs[1:]:
+        nets = {m for m in re.findall(r'\(net \d+ "([^"]*)"\)', bloc)}
+        nets |= {m for m in re.findall(r'\(net "([^"]*)"\)', bloc)}
+        nets = {n for n in nets if n and n not in nets_plan}
+        pire = max(pire, len(nets))
+    return pire
+
+
+def _couches_pour_echapper(signaux: int) -> int:
+    """Couches cuivre minimales pour sortir `signaux` d un seul boitier.
+
+    Les signaux se repartissent sur les quatre cotes ; chaque cote sort
+    `_CAPACITE_ECHAPPEMENT` signaux par couche. Arrondi au nombre PAIR
+    superieur — un empilage impair ne se fabrique pas — plancher a 2.
+
+    ⚠️ C est un PLANCHER, pas une prediction. Il dit ce qui est hors
+    d atteinte, pas ce qui suffira : l escalade garde le dernier mot.
+
+    Garde : tests/test_palier_plancher.py.
+    """
+    if signaux <= 0:
+        return 2
+    par_cote = signaux / _COTES_BOITIER
+    couches = math.ceil(par_cote / _CAPACITE_ECHAPPEMENT)
+    return max(2, couches + (couches % 2))
+
+
+def _layer_ladder(plafond: int, plancher: int = 2) -> list[int]:
     """Paliers d escalade autorises, du plus economique au plus permissif.
 
     2, 4, 6, 8, 10 ... jusqu au plafond. Pas de maximum code en dur : un
@@ -724,7 +798,12 @@ def _layer_ladder(plafond: int) -> list[int]:
     n ouvre aucun droit : on retombe sur le minimum.
     """
     borne = min(int(plafond), _MAX_LAYERS)
-    paliers = [n for n in range(2, borne + 1, 2)]
+    # ⚠️ Le plancher ne peut PAS forcer au-dela du plafond du plan : un compte
+    # Free est limite a 2 couches, et on ne lui vend pas une carte a 4 au
+    # motif qu elle routerait mieux. Le plafond commercial prime.
+    depart = max(2, min(int(plancher), borne))
+    depart -= depart % 2
+    paliers = [n for n in range(max(2, depart), borne + 1, 2)]
     return paliers or [2]
 
 def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
@@ -2393,8 +2472,20 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     sans_gain = 0
     meilleur_note = (-1, 10 ** 6)
+    # ⚠️ Le palier de DEPART se deduit du board, il n est plus toujours 2.
+    # `stm32-100` a brule 45 minutes a 2 couches — un palier qu aucun tirage
+    # ne pouvait reussir, son LQFP-48 ayant 43 signaux a sortir. Le plafond du
+    # plan reste maitre : on ne vend pas 4 couches a un compte limite a 2.
+    plancher = _couches_pour_echapper(
+        _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN)))
+    if plancher > 2:
+        logger.info(
+            "route_auto: depart a %d couches — le boitier le plus charge a %d "
+            "signaux a echapper, hors de portee en dessous",
+            min(plancher, req.layers),
+            _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN)))
     essais = _paliers_avec_tirages(
-        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
+        _layer_ladder(req.layers, plancher=plancher), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
     for palier in essais:

@@ -69,7 +69,10 @@ class TestCablage:
         # ⚠️ On ancre sur la boucle REELLE : `for palier in ` apparait d abord
         # dans la comprehension de `_paliers_avec_tirages` elle-meme.
         assert "essais = _paliers_avec_tirages(" in self.SOURCE
-        assert "_layer_ladder(req.layers)" in self.SOURCE
+        # ⚠️ L echelle ne demarre plus toujours a 2 : depuis le 2026-08-29
+        # elle recoit un PLANCHER deduit de l echappement du boitier le plus
+        # charge. On ancre donc sur l appel, pas sur sa forme d hier.
+        assert "_layer_ladder(req.layers, plancher=" in self.SOURCE
 
     def test_la_sortie_anticipee_survit(self):
         # 100 % ET zero erreur doit toujours rendre la main immediatement :
