@@ -130,10 +130,21 @@ def test_un_board_illisible_n_impose_aucun_plancher():
     assert _signaux_a_echapper(b"pas un board", {"GND"}) == 0
 
 
-def test_le_plancher_est_calcule_dans_route_auto():
+def test_le_plancher_est_calcule_et_journalise_mais_ne_commande_plus():
+    """⚠️ DECISION UTILISATEUR (2026-08-29) : on part TOUJOURS de 2 couches.
+
+    Le plancher reste calcule — il dit ce qui est hors d atteinte — mais ne
+    fixe plus le depart. Raison commerciale : on ne facture pas 4 couches sur
+    une PREVISION, meme etayee. On escalade sur PREUVE.
+
+    Prix mesure et assume : ~44 min de tirage perdu sur stm32-100 avant que
+    `_tirages_epuises_au_palier` n abandonne le palier 2.
+    """
     src = inspect.getsource(route_auto)
-    assert "_signaux_a_echapper(" in src, "plancher jamais calcule"
-    assert "plancher=" in src, "plancher jamais transmis a l echelle"
+    assert "_signaux_a_echapper(" in src, "plancher plus calcule du tout"
+    assert "_couches_pour_echapper(" in src, "verdict du plancher perdu"
+    assert "_layer_ladder(req.layers)" in src, (
+        "l echelle ne doit plus recevoir de plancher : depart toujours a 2")
 
 
 # ---------------------------------------------------------------------------

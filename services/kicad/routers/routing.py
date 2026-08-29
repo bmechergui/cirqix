@@ -315,9 +315,72 @@ def _find_freerouting_api() -> Optional[str]:
 _REGLAGES_FREEROUTING: Optional[dict] = None
 
 
+# Passes consecutives sans progres au-dela desquelles on cesse d ATTENDRE un
+# job. Sur 461 jobs mesures, le plus grand ecart entre deux progres est de 144
+# passes : 150 ne coupe aucun job vivant. On coupe l ATTENTE, jamais le job —
+# `cancel` repond 501 et la JVM execute deux jobs en parallele (verifie le
+# 2026-08-29) : le palier suivant demarre pendant que le cadavre finit seul.
+_STAGNATION_PASSES: int = 150
+
+# Ou vit le journal de Freerouting. Meme conteneur que la JVM ; le chemin suit
+# `--user_data_path`, fixe par notre entrypoint.
+_FREEROUTING_LOG = Path(os.environ.get(
+    "FREEROUTING_LOG", "/tmp/freerouting/freerouting.log"))
+
+
+class RoutageFige(RuntimeError):
+    """Le routeur repete des passes identiques : le palier est prouve mort.
+
+    Porte l estimation du pourcentage atteint, lue dans le journal — c est la
+    PREUVE d echec du palier que la regle utilisateur exige avant d escalader.
+    """
+
+    def __init__(self, unrouted: int, nets: int):
+        self.unrouted = unrouted
+        self.nets = nets
+        self.routed_percent = (
+            max(0, round(100 * (nets - unrouted) / nets)) if nets > 0 else 0)
+        super().__init__(
+            f"routage fige : {unrouted} net(s) non route(s) apres "
+            f"{_STAGNATION_PASSES} passes sans progres")
+
+
+_LIGNE_PASSE_RE = re.compile(
+    r"\[([0-9A-F]{6})\].*pass #(\d+).*score of ([\d.]+) \((\d+) unrouted\)")
+
+
+def _passes_sans_progres(log_text: str, short_name: str) -> int:
+    """Passes consecutives du job `short_name` sans le moindre progres.
+
+    Progres = baisse des nets non routes OU changement de score. Un journal
+    illisible ou muet rend 0 : sans mesure on ATTEND, on n abandonne pas a
+    l aveugle.
+
+    ⚠️ Filtrer par job est OBLIGATOIRE : la JVM execute deux jobs en
+    parallele, et compter les passes d un autre condamnerait un job vivant.
+    """
+    serie = []
+    for m in _LIGNE_PASSE_RE.finditer(log_text):
+        if m.group(1) != short_name:
+            continue
+        serie.append((int(m.group(2)), float(m.group(3)), int(m.group(4))))
+    if len(serie) < 2:
+        return 0
+    serie.sort()
+    plat = 0
+    for i in range(1, len(serie)):
+        if (serie[i][2] < serie[i - 1][2]
+                or abs(serie[i][1] - serie[i - 1][1]) > 1e-9):
+            plat = 0
+        else:
+            plat += 1
+    return plat
+
+
 def _route_with_freerouting_api(
     pcb_bytes: bytes,
     timeout_s: int = _DEFAULT_TIMEOUT_S,
+    nets_routables: int = 0,
 ) -> bytes:
     """Route via Freerouting persistent REST API server (1 JVM for all users).
 
@@ -389,6 +452,7 @@ def _route_with_freerouting_api(
         _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 
         deadline = time.time() + timeout_s
+        short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
             status = _api("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
@@ -396,6 +460,31 @@ def _route_with_freerouting_api(
                 break
             if _freerouting_job_failed(state):
                 raise RuntimeError(f"Freerouting API job {state}")
+            # ⚠️ COUPER L ATTENTE d un job fige — pas le job, qu on ne peut
+            # pas tuer (`cancel` 501). Sur stm32-100, tout le travail est fait
+            # a la passe 4 et 995 passes identiques suivent : 44 minutes de
+            # politesse. Le journal est la seule fenetre sur l interieur ; s il
+            # est illisible, on retombe sur l attente classique.
+            if short_name and _FREEROUTING_LOG.is_file():
+                try:
+                    plat = _passes_sans_progres(
+                        _FREEROUTING_LOG.read_text(encoding="utf-8",
+                                                   errors="replace"),
+                        short_name)
+                except Exception:
+                    plat = 0
+                if plat >= _STAGNATION_PASSES:
+                    derniere = _LIGNE_PASSE_RE.findall(
+                        _FREEROUTING_LOG.read_text(encoding="utf-8",
+                                                   errors="replace"))
+                    unrouted = next((int(u) for j, _, _, u in reversed(derniere)
+                                     if j == short_name), 0)
+                    logger.warning(
+                        "Freerouting fige (%d passes sans progres, %d non "
+                        "routes) — attente abandonnee, le job finit seul",
+                        plat, unrouted)
+                    raise RoutageFige(unrouted=unrouted,
+                                      nets=nets_routables)
             time.sleep(2)
         else:
             raise RuntimeError("Freerouting API timeout")
@@ -2341,7 +2430,8 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     if api_url is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
             new_pcb = _route_with_freerouting_api(
-                pcb_bytes, _remaining_budget_s(deadline)
+                pcb_bytes, _remaining_budget_s(deadline),
+                nets_routables=net_count,
             )
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-api")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
@@ -2355,6 +2445,12 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
             )
+        except RoutageFige:
+            # ⚠️ NE PAS retomber sur le sous-processus : il referait 44 min
+            # sur le meme board condamne. La stagnation est un VERDICT de
+            # palier, pas une panne de moteur — elle remonte a la boucle
+            # d escalade, qui monte d une couche.
+            raise
         except Exception as exc:
             freerouting_a_echoue = True
             logger.warning("Freerouting API échoué (%s) — subprocess fallback", exc)
@@ -2530,16 +2626,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # `stm32-100` a brule 45 minutes a 2 couches — un palier qu aucun tirage
     # ne pouvait reussir, son LQFP-48 ayant 43 signaux a sortir. Le plafond du
     # plan reste maitre : on ne vend pas 4 couches a un compte limite a 2.
-    plancher = _couches_pour_echapper(
-        _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN)))
+    # ⚠️ DECISION UTILISATEUR (2026-08-29) : ON PART TOUJOURS DE 2 COUCHES.
+    #
+    # Le plancher d echappement reste CALCULE et JOURNALISE — il dit ce qui est
+    # hors d atteinte — mais il ne commande plus le depart. La raison est
+    # commerciale : une carte 2 couches coute moins cher a fabriquer, et on ne
+    # facture pas 4 couches a un client sur une PREVISION, meme etayee. On
+    # escalade sur PREUVE.
+    #
+    # Le prix est mesure et assume : sur stm32-100, un tirage a 2 couches coute
+    # ~44 min avant que `_tirages_epuises_au_palier` ne l abandonne. C est le
+    # cout d une preuve plutot que d une supposition.
+    signaux = _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN))
+    plancher = _couches_pour_echapper(signaux)
     if plancher > 2:
         logger.info(
-            "route_auto: depart a %d couches — le boitier le plus charge a %d "
-            "signaux a echapper, hors de portee en dessous",
-            min(plancher, req.layers),
-            _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN)))
+            "route_auto: le boitier le plus charge a %d signaux a echapper — "
+            "%d couches seraient necessaires ; on tente 2 d abord (decision "
+            "produit), l escalade tranchera sur mesure", signaux, plancher)
     essais = _paliers_avec_tirages(
-        _layer_ladder(req.layers, plancher=plancher), _TIRAGES_ROUTAGE_PAR_PALIER)
+        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
     for palier in essais:
@@ -2621,7 +2727,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # TOTAL — un parametre de l appelant.
             timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
         )
-        res = _route_auto_once(tentative)
+        try:
+            res = _route_auto_once(tentative)
+        except RoutageFige as fige:
+            # ⚠️ LA STAGNATION EST LA PREUVE QUE LE PALIER A ECHOUE — la regle
+            # utilisateur « partir de 2, escalader sur preuve » est respectee,
+            # seule l ATTENTE de la preuve raccourcit : ~2 min au lieu de 44.
+            # Le job fige finit seul dans la JVM (deux jobs en parallele,
+            # verifie le 2026-08-29) ; le palier suivant demarre sans lui.
+            #
+            # max(1, ...) : un pourcentage nul viendrait d un compte de nets
+            # inconnu, et 0 est reserve aux PANNES — qui, elles, ne font pas
+            # escalader. Une stagnation mesuree doit toujours faire abandonner
+            # les tirages restants du palier.
+            logger.warning(
+                "route_auto: palier %d couches fige a ~%d%% — tirages restants "
+                "abandonnes, escalade immediate", palier, fige.routed_percent)
+            meilleur_du_palier = max(meilleur_du_palier,
+                                     max(1, fige.routed_percent))
+            sans_gain += 1
+            continue
 
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.

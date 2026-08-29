@@ -39,7 +39,11 @@ def _board(*, two_pad_nets: int, single_pad_nets: int = 0) -> bytes:
 def _run_freerouting_api(monkeypatch, board: bytes, measurement: tuple[int, int]):
     monkeypatch.setattr(routing_router, "_count_footprints", lambda _pcb: 31)
     monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: "http://freerouting")
-    monkeypatch.setattr(routing_router, "_route_with_freerouting_api", lambda *_a: board)
+    # ⚠️ `**_k` obligatoire : l appel reel passe `nets_routables=` en nomme
+    # (detection de stagnation, 2026-08-29). Sans lui le mock leve TypeError,
+    # la cascade retombe sur kicad-tools, et le test mesure le mauvais moteur.
+    monkeypatch.setattr(routing_router, "_route_with_freerouting_api",
+                        lambda *_a, **_k: board)
     monkeypatch.setattr(routing_router, "_measure_routing", lambda _pcb: measurement)
     req = routing_router.RouteAutoRequest(
         kicad_pcb_b64=base64.b64encode(board).decode("ascii"), layers=2
