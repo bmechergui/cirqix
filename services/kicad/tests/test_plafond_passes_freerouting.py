@@ -54,3 +54,37 @@ def test_seul_le_plafond_est_impose():
     """
     assert set(_REGLAGES_FREEROUTING) == {"max_passes"}, (
         "un reglage non mesure s est glisse dans la charge")
+
+
+# ---------------------------------------------------------------------------
+# Cablage — le plafond doit ARRIVER, pas seulement partir.
+# ---------------------------------------------------------------------------
+
+def test_les_reglages_sont_poses_APRES_l_envoi_du_board():
+    """`/input` reinitialise les reglages du job.
+
+    Mesure du 2026-08-29, meme job relu a trois moments :
+
+        apres enqueue   max_passes = 150
+        apres /input    max_passes = 9999      <- efface
+        apres /settings max_passes = 150
+
+    `enqueue` accepte pourtant les reglages ET les renvoie dans sa reponse :
+    rien ne trahit le probleme a cet endroit. Poser le plafond a l enfilement
+    revient donc a ne pas le poser du tout.
+    """
+    src = inspect.getsource(_route_with_freerouting_api)
+    i_input = src.index("/input")
+    i_settings = src.index("/settings")
+    i_start = src.index("/start")
+    assert i_input < i_settings, (
+        "reglages poses avant /input : le chargement du board les efface")
+    assert i_settings < i_start, (
+        "reglages poses apres /start : le routeur a deja demarre")
+
+
+def test_l_enqueue_ne_porte_plus_les_reglages():
+    """Les y laisser donnerait une fausse impression de redondance utile."""
+    src = inspect.getsource(_route_with_freerouting_api)
+    enfilement = src[src.index("/jobs/enqueue"):src.index("/input")]
+    assert "router_settings" not in enfilement

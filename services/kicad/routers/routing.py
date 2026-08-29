@@ -364,10 +364,7 @@ def _route_with_freerouting_api(
         #
         # `_REGLAGES_FREEROUTING` vaut None par defaut : aucun changement de
         # comportement tant qu on n a pas mesure.
-        charge = {"session_id": session_id}
-        if _REGLAGES_FREEROUTING:
-            charge["router_settings"] = _REGLAGES_FREEROUTING
-        job = _api("POST", f"{pre}/jobs/enqueue", charge)
+        job = _api("POST", f"{pre}/jobs/enqueue", {"session_id": session_id})
         job_id = job["id"]
 
         _api(
@@ -375,6 +372,26 @@ def _route_with_freerouting_api(
             f"{pre}/jobs/{job_id}/input",
             _freerouting_input_payload(dsn_path.read_bytes()),
         )
+
+        # ⚠️ LES REGLAGES SE POSENT ICI, APRES `/input` — PAS A L ENFILEMENT.
+        #
+        # `enqueue` les ACCEPTE et les renvoie dans sa reponse : rien ne trahit
+        # le probleme a cet endroit. C est le chargement du board qui les
+        # REINITIALISE. Mesure du 2026-08-29, meme job relu a trois moments :
+        #
+        #     apres enqueue   max_passes = 150
+        #     apres /input    max_passes = 9999      <- efface
+        #     apres /settings max_passes = 150
+        #
+        # Le plafond partait donc au bon endroit au mauvais moment, et les
+        # tests passaient : ils verifiaient qu on l ENVOIE, pas qu il ARRIVE.
+        # Meme famille que le defaut des « quatre frontieres » du budget de
+        # routage — une valeur acceptee a un bout n est pas une valeur appliquee.
+        #
+        # Le corps est PLAT (`{"max_passes": N}`) : `{"router_settings": {...}}`
+        # est accepte lui aussi, et remet le defaut.
+        if _REGLAGES_FREEROUTING:
+            _api("POST", f"{pre}/jobs/{job_id}/settings", dict(_REGLAGES_FREEROUTING))
 
         _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 

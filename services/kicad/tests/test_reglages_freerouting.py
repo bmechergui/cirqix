@@ -64,13 +64,27 @@ class TestReglages:
         qualite = set(R._REGLAGES_FREEROUTING or {}) - {"max_passes"}
         assert not qualite, f"reglage(s) de qualite non mesure(s) : {qualite}"
 
-    def test_les_reglages_sont_transmis_au_job(self):
+    def test_les_reglages_ARRIVENT_au_job(self):
+        """⚠️ Ce test verifiait l ENFILEMENT — il consacrait un cablage faux.
+
+        `enqueue` accepte les reglages et les renvoie dans sa reponse, mais
+        `/input` les REINITIALISE. Mesure du 2026-08-29, meme job relu :
+
+            apres enqueue   max_passes = 150
+            apres /input    max_passes = 9999      <- efface
+            apres /settings max_passes = 150
+
+        Un reglage envoye n est pas un reglage applique. On verifie donc
+        l ORDRE : les reglages se posent APRES le board et AVANT le depart.
+        """
         source = (_SERVICE_ROOT / "routers" / "routing.py").read_text(
             encoding="utf-8")
         corps = source[source.index("def _route_with_freerouting_api("):]
-        i = corps.index("jobs/enqueue")
-        assert "router_settings" in corps[max(0, i - 600):i + 200], (
-            "un reglage qui n est pas envoye ne sert a rien")
+        i_input = corps.index("/input")
+        i_settings = corps.index("/settings")
+        i_start = corps.index("/start")
+        assert i_input < i_settings < i_start, (
+            "un reglage pose avant /input est efface par le chargement du board")
 
     def test_le_mecanisme_d_injection_survit(self):
         # Il a permis la mesure ; rien ne dit qu un autre reglage ne la vaudra
