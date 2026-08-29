@@ -30,7 +30,7 @@ from routers.routing import (_CAPACITE_ECHAPPEMENT, _couches_pour_echapper,
 
 class TestCapacite:
     def test_la_capacite_est_encadree_par_les_mesures(self):
-        assert 3.88 < _CAPACITE_ECHAPPEMENT < 5.38, (
+        assert 2.31 <= _CAPACITE_ECHAPPEMENT < 4.50, (
             "capacite hors de l intervalle mesure : soit on refuse une carte "
             "qui routait, soit on laisse passer celle qui echouait")
 
@@ -38,9 +38,10 @@ class TestCapacite:
 class TestCouchesPourEchapper:
     @pytest.mark.parametrize("signaux,attendu", [
         (7, 2),    # stm32-baseline — routait a 2
-        (31, 2),   # arduino-uno    — routait a 2, le cas le plus charge
-        (43, 4),   # stm32-100      — echouait a 2
-        (38, 4),   # nucleo-f401    — routait a 4
+        (13, 2),   # stm32-30       — routait a 2 au moins
+        (26, 4),   # stm32-60       — a REELLEMENT besoin de 4
+        (36, 4),   # stm32-100      — echouait a 2
+        (37, 4),   # nucleo-f401    — routait a 4
     ])
     def test_le_plancher_reproduit_les_mesures(self, signaux, attendu):
         assert _couches_pour_echapper(signaux) == attendu
@@ -95,6 +96,15 @@ def test_les_nets_confies_au_plan_ne_comptent_pas():
     (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
     (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 3 "SIG2"))
   )
+  (footprint "Resistor_SMD:R_0402_1005Metric" (at 20 20)
+    (property "Reference" "R1" (at 0 0 0))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
+    (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
+  )
+  (footprint "Resistor_SMD:R_0402_1005Metric" (at 30 30)
+    (property "Reference" "R2" (at 0 0 0))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "SIG2"))
+  )
 )'''
     assert _signaux_a_echapper(board, {"GND"}) == 2
 
@@ -106,6 +116,10 @@ def test_un_net_repete_sur_plusieurs_pastilles_compte_une_fois():
     (property "Reference" "U1" (at 0 0 0))
     (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
     (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
+  )
+  (footprint "Resistor_SMD:R_0402_1005Metric" (at 20 20)
+    (property "Reference" "R1" (at 0 0 0))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
   )
 )'''
     assert _signaux_a_echapper(board, {"GND"}) == 1
@@ -120,3 +134,52 @@ def test_le_plancher_est_calcule_dans_route_auto():
     src = inspect.getsource(route_auto)
     assert "_signaux_a_echapper(" in src, "plancher jamais calcule"
     assert "plancher=" in src, "plancher jamais transmis a l echelle"
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ Une pastille n est pas une liaison.
+#
+# Premiere version de `_signaux_a_echapper` : elle comptait les nets DISTINCTS
+# des pastilles d un boitier. Sur un board, chaque pastille porte un net — y
+# compris celles qui ne vont nulle part, que le generateur nomme
+# `Net-(U1-Pad3)`. Tout LQFP-48 rendait donc ~45 signaux, quel que soit le
+# circuit, et `stm32-baseline` — qui route a 2 couches — se voyait imposer 4.
+#
+# Mesure sur boards reels, AVANT correction :
+#
+#     carte            signaux lus   plancher   couches reelles
+#     stm32-baseline            45          4   2      <- faux
+#     arduino-uno                9          2   2
+#     stm32-100                 45          4   4
+#
+# Un net qui ne touche qu UN seul boitier n a personne a rejoindre : il n a
+# rien a echapper. Les tests unitaires ne l ont pas vu — leurs fixtures
+# n avaient pas de pastilles orphelines.
+# ---------------------------------------------------------------------------
+
+def test_un_net_qui_ne_touche_qu_un_boitier_n_est_pas_une_liaison():
+    board = b'''(kicad_pcb
+  (footprint "Package_QFP:LQFP-48_7x7mm_P0.5mm" (at 10 10)
+    (property "Reference" "U1" (at 0 0 0))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
+    (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 9 "Net-(U1-Pad2)"))
+    (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 8 "Net-(U1-Pad3)"))
+  )
+  (footprint "Resistor_SMD:R_0402_1005Metric" (at 20 20)
+    (property "Reference" "R1" (at 0 0 0))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG1"))
+  )
+)'''
+    assert _signaux_a_echapper(board, {"GND"}) == 1
+
+
+def test_les_pastilles_orphelines_ne_gonflent_pas_le_plancher():
+    """48 pastilles orphelines ne valent pas 4 couches."""
+    pads = "\n".join(
+        f'    (pad "{i}" smd rect (at {i} 0) (size 1 1) (layers "F.Cu") '
+        f'(net {i} "Net-(U1-Pad{i})"))' for i in range(1, 49))
+    board = (b'(kicad_pcb\n  (footprint "Package_QFP:LQFP-48_7x7mm_P0.5mm" (at 10 10)\n'
+             b'    (property "Reference" "U1" (at 0 0 0))\n'
+             + pads.encode() + b"\n  )\n)")
+    assert _signaux_a_echapper(board, {"GND"}) == 0
+    assert _couches_pour_echapper(_signaux_a_echapper(board, {"GND"})) == 2

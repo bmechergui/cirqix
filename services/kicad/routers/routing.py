@@ -715,25 +715,32 @@ def _escalade_epuisee(sans_gain: int) -> bool:
 # ⚠️ Ce nombre n est pas choisi, il est ENCADRE par nos propres cartes. Mesure
 # du 2026-08-29, signaux a echapper du boitier le plus charge, par cote :
 #
-#     carte            boitier      signaux  /cote  couches  ok   C requis
-#     stm32-baseline   LQFP-48            7    1.8      2    oui    0.88
-#     esp32-baseline   ESP32-WROOM        8    2.0      2    oui    1.00
-#     stm32-30         LQFP-48           13    3.2      4    oui    0.81
-#     arduino-uno      TQFP-32           31    7.8      2    oui    3.88
-#     nucleo-f401      LQFP-64           38    9.5      4    oui    2.38
-#     stm32-60         LQFP-48           25    6.2      4    oui    1.56
-#     stm32-100        LQFP-48           43   10.8      2    NON    5.38
+#     carte            signaux  /cote  couches  ok   C requis
+#     stm32-baseline         7    1.8      2    oui    0.88
+#     esp32-baseline         7    1.8      2    oui    0.88
+#     stm32-30              13    3.2      4    oui    0.81
+#     arduino-uno            2    0.5      2    oui    0.25
+#     nucleo-f401           37    9.2      4    oui    2.31
+#     stm32-60              26    6.5      4    oui    1.63
+#     stm32-100             36    9.0      2    NON    4.50
 #
-# Les six reussites tiennent sous 3,88 ; le seul echec en reclamait 5,38.
-# Toute valeur de l intervalle reproduit les sept observations ; on prend le
-# milieu. Recalibrer si une carte dement ce tableau — pas avant.
+# Les six reussites exigent C >= 2,31 ; le seul echec exige C < 4,50. On prend
+# 3,0, qui reproduit AUSSI le besoin reel de 4 couches de stm32-60 — ce que
+# 3,5 et au-dela manquent. Recalibrer si une carte dement ce tableau.
+#
+# ⚠️ CES CHIFFRES SONT LUS SUR LE BOARD, pas sur le circuit d entree, parce
+# que c est le board que le code mesure. Une premiere calibration faite sur
+# `circuit.json` donnait 43 signaux a stm32-100 la ou le board en montre 36 :
+# la regle passait les tests et laissait quand meme demarrer a 2 couches, soit
+# exactement le cas qu elle devait attraper. Une regle se calibre sur ce
+# qu elle MESURE, jamais sur une source voisine.
 #
 # ⚠️ Le goulot est LOCAL, pas global. Sur trois jobs Freerouting de stm32-100,
 # UN SEUL composant porte 20 a 28 % des echecs de connexion, les 85 autres 2 %
 # chacun : c est le LQFP-48, et sa part egale sa part des connexions. Ce n est
 # donc ni la taille de la carte ni la dispersion du placement — c est
 # l echappement d un boitier fine-pitch.
-_CAPACITE_ECHAPPEMENT: float = 4.5
+_CAPACITE_ECHAPPEMENT: float = 3.0
 
 # Cotes d un boitier. Un QFP en a quatre ; on ne distingue pas les SOIC, dont
 # le nombre de signaux ne fait jamais plancher.
@@ -756,13 +763,24 @@ def _signaux_a_echapper(pcb_bytes: bytes, nets_plan: set) -> int:
         blocs = re.split(r"\(footprint ", pcb_bytes.decode("utf-8", "replace"))
     except Exception:
         return 0
-    pire = 0
-    for bloc in blocs[1:]:
-        nets = {m for m in re.findall(r'\(net \d+ "([^"]*)"\)', bloc)}
-        nets |= {m for m in re.findall(r'\(net "([^"]*)"\)', bloc)}
-        nets = {n for n in nets if n and n not in nets_plan}
-        pire = max(pire, len(nets))
-    return pire
+    def _nets(bloc):
+        trouves = {m for m in re.findall(r'\(net \d+ "([^"]*)"\)', bloc)}
+        trouves |= {m for m in re.findall(r'\(net "([^"]*)"\)', bloc)}
+        return {x for x in trouves if x and x not in nets_plan}
+
+    par_boitier = [_nets(b) for b in blocs[1:]]
+    # ⚠️ UNE PASTILLE N EST PAS UNE LIAISON. Sur un board, chaque pastille
+    # porte un net — y compris celles qui ne vont nulle part, que le
+    # generateur nomme `Net-(U1-Pad3)`. Sans ce filtre, tout LQFP-48 rendait
+    # ~45 signaux quel que soit le circuit, et `stm32-baseline` — qui route a
+    # 2 couches — se voyait imposer 4. Un net present sur un SEUL boitier n a
+    # personne a rejoindre : il n a rien a echapper.
+    occurrences = {}
+    for nets in par_boitier:
+        for x in nets:
+            occurrences[x] = occurrences.get(x, 0) + 1
+    liaisons = {x for x, k in occurrences.items() if k >= 2}
+    return max((len(nets & liaisons) for nets in par_boitier), default=0)
 
 
 def _couches_pour_echapper(signaux: int) -> int:
