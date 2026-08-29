@@ -52,10 +52,21 @@ def _boite_absolue(fp) -> tuple[float, float, float, float]:
     return px + x0, py + y0, px + x1, py + y1
 
 
+# Demi-extension plancher. `_boite_locale_fp` derive la boite des POSITIONS de
+# pastilles quand aucun courtyard n est declare — pas de leur taille. La boite
+# d un 0402 dont les deux pastilles sont alignees a donc une hauteur NULLE, et
+# deux boites plates ne se recouvrent jamais : l evitement devient aveugle et
+# le snap empile. Un plancher rend la detection sure sans surestimer un vrai
+# courtyard, toujours plus grand que cela.
+_DEMI_MINIMUM_MM: float = 0.35
+
+
 def _centre_et_demi(fp) -> tuple[float, float, float, float]:
     """Centre du CORPS (absolu) et demi-extensions ``(cx, cy, hw, hh)``."""
     x0, y0, x1, y1 = _boite_absolue(fp)
-    return (x0 + x1) / 2.0, (y0 + y1) / 2.0, (x1 - x0) / 2.0, (y1 - y0) / 2.0
+    return ((x0 + x1) / 2.0, (y0 + y1) / 2.0,
+            max((x1 - x0) / 2.0, _DEMI_MINIMUM_MM),
+            max((y1 - y0) / 2.0, _DEMI_MINIMUM_MM))
 
 
 def _portee(hw: float, hh: float, ux: float, uy: float) -> float:
@@ -98,6 +109,112 @@ def _composants(pcb) -> list:
     return comps
 
 
+# Balayage d evitement : on essaie la direction voulue, puis on s en ecarte par
+# pas de 12 degres jusqu a un demi-tour de part et d autre, en elargissant le
+# rayon si aucun angle ne convient. Bornes volontairement courtes — le but est
+# de rester PRES de l ancre, pas de trouver une place a tout prix.
+_PAS_ANGULAIRE_DEG: float = 12.0
+_ESSAIS_ANGULAIRES: int = 15
+_ESSAIS_RADIAUX: int = 4
+_PAS_RADIAL_MM: float = 1.5
+
+
+def _boites_absolues(pcb, sauf: str) -> list:
+    """Boites des autres footprints, en coordonnees board."""
+    boites = []
+    for fp in pcb.footprints:
+        if not fp.reference or fp.reference == sauf:
+            continue
+        cx, cy, hw, hh = _centre_et_demi(fp)
+        boites.append((cx - hw, cy - hh, cx + hw, cy + hh))
+    return boites
+
+
+def _libre(boite: tuple, obstacles: list, marge: float) -> bool:
+    x0, y0, x1, y1 = boite
+    for o0, p0, o1, p1 in obstacles:
+        if x0 - marge < o1 and o0 < x1 + marge and y0 - marge < p1 and p0 < y1 + marge:
+            return False
+    return True
+
+
+def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
+                 direction: tuple, marge: float, ref: str):
+    """Premier point libre pour le CENTRE du corps de `fp`, ou ``None``.
+
+    ⚠️ Sans cette recherche, deux membres de directions voisines atterrissent
+    au MEME point. Mesure du 2026-08-29, board STM32 : 0 conflit avant le
+    snap, 1 ERROR / 3 conflits apres 8 deplacements ; 202 ERROR sur l Arduino
+    et ses 44 deplacements — assez pour forcer un re-tirage complet du
+    placement, seize minutes a chaque fois.
+
+    On garde la direction du GA comme PREMIER choix : elle porte l information
+    de placement qu on ne veut pas jeter. On ne s en ecarte que si la place
+    est prise, et par le plus petit ecart qui convient.
+    """
+    acx, acy = centre_ancre
+    ahw, ahh = demi_ancre
+    ux, uy = direction
+    _, _, mhw, mhh = _centre_et_demi(fp)
+    obstacles = _boites_absolues(pcb, ref)
+    angle0 = math.atan2(uy, ux)
+    pas = math.radians(_PAS_ANGULAIRE_DEG)
+    for k_r in range(_ESSAIS_RADIAUX):
+        supplement = k_r * _PAS_RADIAL_MM
+        for k_a in range(_ESSAIS_ANGULAIRES):
+            for signe in ((1,) if k_a == 0 else (1, -1)):
+                a = angle0 + signe * k_a * pas
+                vx, vy = math.cos(a), math.sin(a)
+                rayon = (_portee(ahw, ahh, vx, vy) + _portee(mhw, mhh, vx, vy)
+                         + marge + supplement)
+                cx, cy = acx + vx * rayon, acy + vy * rayon
+                boite = (cx - mhw, cy - mhh, cx + mhw, cy + mhh)
+                # ⚠️ Le degagement exige est la MARGE, pas zero. Deux boites
+                # qui se touchent passent un test de recouvrement et echouent
+                # l analyseur, dont les regles portent sur un ecart reel.
+                if _libre(boite, obstacles, marge):
+                    return cx, cy
+    return None
+
+
+def _ecart_libre(centre_a: tuple, demi_a: tuple, centre_m: tuple,
+                 demi_m: tuple) -> float:
+    """Espace LIBRE entre deux corps, le long de la droite qui les joint."""
+    dx, dy = centre_m[0] - centre_a[0], centre_m[1] - centre_a[1]
+    d = math.hypot(dx, dy)
+    if d < 1e-9:
+        return 0.0
+    u = (dx / d, dy / d)
+    return d - _portee(*demi_a, *u) - _portee(*demi_m, *u)
+
+
+def _degrade_une_autre_attache(par_ref: dict, attaches: dict, ref: str,
+                               ancre_traitee: str, avant: tuple,
+                               apres: tuple) -> bool:
+    """Le deplacement eloigne-t-il `ref` d une AUTRE de ses ancres ?
+
+    Sans ce controle, la garantie « ne peut qu ameliorer » ne vaut que pour le
+    cluster en cours de traitement — et un membre partage se fait eloigner de
+    son autre ancre sans que rien ne le signale.
+    """
+    fp = par_ref.get(ref)
+    if fp is None:
+        return False
+    _, _, mhw, mhh = _centre_et_demi(fp)
+    for autre in attaches.get(ref, ()):
+        if autre == ancre_traitee:
+            continue
+        fa = par_ref.get(autre)
+        if fa is None:
+            continue
+        acx, acy, ahw, ahh = _centre_et_demi(fa)
+        av = _ecart_libre((acx, acy), (ahw, ahh), avant, (mhw, mhh))
+        ap = _ecart_libre((acx, acy), (ahw, ahh), apres, (mhw, mhh))
+        if ap > av:
+            return True
+    return False
+
+
 def snap_cluster_members(
     pcb,
     *,
@@ -122,6 +239,15 @@ def snap_cluster_members(
         return 0
 
     par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    # ⚠️ Un membre appartient parfois a PLUSIEURS clusters — R2 est a la fois
+    # dans `J1 INTERFACE` et dans `U2 DRIVER`. Une garantie « ne peut
+    # qu ameliorer » verifiee sur le seul cluster traite est donc trompeuse :
+    # mesure du 2026-08-29, rapprocher R2 de U2 (7,1 -> 6,5 mm) l eloignait de
+    # J1 de 12,6 a 17,6. On tient la liste de TOUTES ses attaches.
+    attaches: dict = {}
+    for c in clusters:
+        for m in c.members:
+            attaches.setdefault(m, []).append(c.anchor)
     immobiles = set(figes or ())
     # Une ancre ne se deplace pas : elle est le repere de son propre cluster.
     immobiles |= {c.anchor for c in clusters}
@@ -153,12 +279,40 @@ def snap_cluster_members(
             if dist - portee <= cluster.max_distance_mm:
                 continue
 
-            cible = portee + marge
-            ncx, ncy = acx + ux * cible, acy + uy * cible
+            place = _cible_libre(pcb, fp, (acx, acy), (ahw, ahh), (ux, uy),
+                                 marge, ref)
+            if place is None:
+                # ⚠️ Mieux vaut laisser un membre LOIN que le poser sur un
+                # voisin : un court-circuit coute plus cher qu un decouplage
+                # mal place, et l Inspecteur ne repare pas toujours.
+                logger.debug("snap %s -> %s : aucune place libre, non deplace",
+                             ref, cluster.anchor)
+                continue
+            ncx, ncy = place
+            # ⚠️ LE SNAP NE PEUT QU AMELIORER — meme garde que le reasoner de
+            # routage. La recherche de place libre s ecarte de la direction
+            # voulue et elargit le rayon : elle peut donc poser un membre PLUS
+            # LOIN qu il n etait. Mesure du 2026-08-29 sur le board STM32 :
+            # J1-R2 passait de 12,6 a 17,6 mm et U2-D1 de 6,4 a 8,0. Un
+            # correctif qui degrade ce qu il pretend corriger est pire que pas
+            # de correctif : on ne bouge que si l ecart LIBRE diminue.
+            ndx, ndy = ncx - acx, ncy - acy
+            ndist = math.hypot(ndx, ndy)
+            nu = (ndx / ndist, ndy / ndist) if ndist > 1e-9 else (ux, uy)
+            necart = ndist - _portee(ahw, ahh, *nu) - _portee(mhw, mhh, *nu)
+            if necart >= dist - portee:
+                logger.debug("snap %s -> %s : place libre plus lointaine, ignoree",
+                             ref, cluster.anchor)
+                continue
+            if _degrade_une_autre_attache(par_ref, attaches, ref, cluster.anchor,
+                                          (mcx, mcy), (ncx, ncy)):
+                logger.debug("snap %s -> %s : eloignerait une autre ancre, ignore",
+                             ref, cluster.anchor)
+                continue
             fp.position = (fp.position[0] + (ncx - mcx),
                            fp.position[1] + (ncy - mcy))
             deplaces += 1
-            logger.debug("snap %s -> %s : %.1fmm libre -> %.1fmm",
-                         ref, cluster.anchor, dist - portee, marge)
+            logger.debug("snap %s -> %s : %.1fmm -> %.1fmm libre",
+                         ref, cluster.anchor, dist - portee, necart)
 
     return deplaces
