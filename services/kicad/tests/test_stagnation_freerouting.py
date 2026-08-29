@@ -98,19 +98,131 @@ class TestFenetreAdaptative:
         """stm32-100 : 46 nets non routes — condamne, on ne l attend pas."""
         assert _fenetre_stagnation(46) < _STAGNATION_PASSES
 
-    def test_un_job_presque_fini_garde_la_fenetre_longue(self):
-        """1 net restant : peut encore aboutir a la passe 997."""
-        assert _fenetre_stagnation(1) == _STAGNATION_PASSES
+    def test_un_job_presque_fini_n_est_PLUS_COUPE_DU_TOUT(self):
+        """⚠️ Ce test exigeait la fenetre LONGUE a 1 net restant.
+
+        Elle ne suffisait pas : `arduino-uno` a ete coupee apres 162 passes
+        plates avec 1 net non route, puis poussee a 4 couches — alors qu elle
+        routait 100 % A 2 COUCHES dans les deux bancs precedents. Le routeur
+        finit ce dernier net APRES la fenetre. On n abandonne donc plus.
+        """
+        assert _fenetre_stagnation(1) == 0
 
     def test_le_seuil_est_au_dessus_du_maximum_mesure(self):
         """22 est le plus haut unrouted@20 d un job qui progressait encore."""
         assert _MORT_AU_DELA_DE > 22
 
-    def test_la_zone_grise_reste_protegee(self):
-        for n in range(0, 23):
+    def test_la_zone_grise_garde_la_fenetre_longue(self):
+        """⚠️ Ce test exigeait la fenetre longue DES 0 net non route.
+
+        Il consacrait la regression `arduino-uno` : a 1 net restant, couper
+        apres 150 passes fait monter d une couche une carte qui routait a 100 %
+        en 2. En dessous de `_PRESQUE_FINI` on n abandonne plus du tout.
+        """
+        for n in range(_PRESQUE_FINI + 1, 23):
             assert _fenetre_stagnation(n) == _STAGNATION_PASSES, (
                 f"{n} nets non routes : un job vivant a deja ete mesure ici")
 
     def test_unrouted_inconnu_ne_raccourcit_rien(self):
-        """Sans mesure, on ATTEND — jamais d abandon a l aveugle."""
-        assert _fenetre_stagnation(0) == _STAGNATION_PASSES
+        """Sans mesure, on ATTEND — jamais d abandon a l aveugle.
+
+        0 signifie « pas de ligne lue », pas « zero net non route ».
+        """
+        assert _fenetre_stagnation(0) == 0
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ NE JAMAIS COUPER UN ROUTAGE PRESQUE FINI.
+#
+# Regression mesuree en production le 2026-08-29, carte arduino-uno :
+#
+#     Freerouting fige (162 passes sans progres, 1 non route)
+#     palier 2 couches fige a ~93% — escalade immediate
+#
+# Or cette carte routait 100 % A 2 COUCHES dans les deux bancs precedents : le
+# routeur finissait par router ce dernier net APRES la fenetre de 150 passes.
+# Ma detection la faisait donc monter a 4 couches sans necessite — plus cher a
+# fabriquer, pour rien.
+#
+# Grok l avait dit et je l ai mal implemente : « unrouted deja bas (1-5), meme
+# si le score stagne un moment, laisser vivre ». La fenetre longue ne suffit
+# pas ; il faut ne PAS couper du tout.
+#
+# Le cout d attendre est BORNE — le job s arrete de lui-meme a 999 passes, soit
+# ~2,5 min sur une carte ou une passe dure 0,15 s. Le gain est un palier de
+# couches en moins sur la carte livree.
+# ---------------------------------------------------------------------------
+
+from routers.routing import _PRESQUE_FINI, _STAGNATION_PASSES_CONDAMNE
+
+
+class TestPresqueFini:
+    def test_un_seul_net_restant_n_est_jamais_coupe(self):
+        """Le cas exact de la regression arduino-uno."""
+        assert _fenetre_stagnation(1) == 0
+
+    def test_le_seuil_reste_etroit(self):
+        """⚠️ J avais mis 5, sur la phrase de Grok « unrouted deja bas (1-5) ».
+
+        Il l a lui-meme resserre en voyant le cas : sur une carte a 15 nets,
+        5 restants font 33 % — ce n est pas « presque fini », c est peut-etre
+        un vrai mur a 2 couches. Les rattrapages tardifs MESURES finissent a
+        UN net. Entre 3 et 25, la fenetre longue suffit.
+        """
+        assert 1 <= _PRESQUE_FINI <= 3
+        for n in range(0, _PRESQUE_FINI + 1):
+            assert _fenetre_stagnation(n) == 0
+
+    def test_au_dela_la_fenetre_longue_reprend(self):
+        assert _fenetre_stagnation(_PRESQUE_FINI + 1) == _STAGNATION_PASSES
+
+    def test_un_board_condamne_reste_coupe_vite(self):
+        assert _fenetre_stagnation(46) == _STAGNATION_PASSES_CONDAMNE
+
+    def test_zero_ne_coupe_jamais(self):
+        """`unrouted` inconnu vaut 0 : sans mesure on attend."""
+        assert _fenetre_stagnation(0) == 0
+
+
+# ---------------------------------------------------------------------------
+# Plafond de temps — « ne jamais couper » n est vrai que sur les PASSES.
+#
+# Diagnostic de Grok, et il a raison : a 2,5 s la passe (stm32-100), 999 passes
+# valent 40 minutes. Un « never » sans horloge recreerait exactement le plafond
+# qu on vient d abattre. Les rattrapages tardifs mesures tiennent largement
+# dessous — 999 passes a 0,15 s font 2,5 min sur arduino-uno.
+# ---------------------------------------------------------------------------
+
+from routers.routing import _PLAFOND_ATTENTE_S
+
+
+class TestPlafondDeTemps:
+    def test_le_plafond_existe(self):
+        assert _PLAFOND_ATTENTE_S > 0
+
+    def test_il_laisse_finir_un_rattrapage_tardif_rapide(self):
+        """999 passes a 0,15 s = 150 s ; le plafond doit etre au-dessus."""
+        assert _PLAFOND_ATTENTE_S > 999 * 0.15
+
+    def test_il_coupe_avant_de_recreer_les_quarante_minutes(self):
+        assert _PLAFOND_ATTENTE_S < 999 * 2.5
+
+    def test_il_est_cable_dans_la_boucle_de_sondage(self):
+        import inspect
+        from routers.routing import _route_with_freerouting_api
+        src = inspect.getsource(_route_with_freerouting_api)
+        assert "_PLAFOND_ATTENTE_S" in src, "plafond jamais applique"
+        assert "trop_long" in src
+
+
+class TestSeuilResserre:
+    def test_deux_nets_restants_ne_sont_jamais_coupes_sur_les_passes(self):
+        assert _fenetre_stagnation(2) == 0
+
+    def test_cinq_nets_retombent_dans_la_fenetre_longue(self):
+        """⚠️ Seuil ramene de 5 a 2 : sur 15 nets, 5 restants font 33 %.
+
+        Ce n est pas « presque fini », c est peut-etre un vrai mur a 2 couches.
+        Les rattrapages tardifs mesures finissent a UN net.
+        """
+        assert _fenetre_stagnation(5) == _STAGNATION_PASSES

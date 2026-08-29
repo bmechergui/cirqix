@@ -341,6 +341,35 @@ _MORT_AU_DELA_DE: int = 25
 _STAGNATION_PASSES_CONDAMNE: int = 30
 
 
+# En dessous de ce nombre de nets non routes, ON N ABANDONNE JAMAIS L ATTENTE.
+#
+# ⚠️ Regression mesuree en production le 2026-08-29 sur `arduino-uno` :
+#
+#     Freerouting fige (162 passes sans progres, 1 non route)
+#     palier 2 couches fige a ~93% — escalade immediate
+#
+# Cette carte routait 100 % A 2 COUCHES dans les deux bancs precedents : le
+# routeur finit par router ce dernier net APRES la fenetre de 150 passes. La
+# detection la faisait monter a 4 couches sans necessite — une couche de plus
+# a fabriquer, pour rien.
+#
+# Le cout d attendre est BORNE par `_PLAFOND_ATTENTE_S`, jamais par le nombre
+# de passes : le gain est un palier de couches en moins sur la carte LIVREE.
+#
+# ⚠️ Seuil ramene de 5 a 2 sur avis de Grok, et il a raison : sur une carte a
+# 15 nets, 5 restants font 33 % — ce n est pas « presque fini », c est
+# peut-etre un vrai mur a 2 couches. Les rattrapages tardifs mesures finissent
+# a UN net. Entre 3 et 25, la fenetre longue s applique ; elle suffit la.
+_PRESQUE_FINI: int = 2
+
+# ⚠️ Plafond de temps, INDEPENDANT du recit de Freerouting. « Ne jamais
+# couper » est juste sur le critere des PASSES, faux sur l horloge : a 2,5 s la
+# passe (stm32-100), 999 passes valent 40 minutes — on recreerait le plafond
+# qu on vient d abattre. Les rattrapages tardifs mesures tiennent largement
+# dessous : 999 passes a 0,15 s font 2,5 min sur arduino-uno.
+_PLAFOND_ATTENTE_S: float = 300.0
+
+
 def _fenetre_stagnation(unrouted: int) -> int:
     """Passes plates a tolerer, selon ce qu il reste a router.
 
@@ -349,6 +378,9 @@ def _fenetre_stagnation(unrouted: int) -> int:
     progresse encore. Un `unrouted` inconnu (0) ne raccourcit rien : sans
     mesure on attend, on n abandonne pas a l aveugle.
     """
+    if unrouted <= _PRESQUE_FINI:
+        # 0 inclus : `unrouted` inconnu, on ne coupe pas a l aveugle.
+        return 0
     return (_STAGNATION_PASSES_CONDAMNE if unrouted > _MORT_AU_DELA_DE
             else _STAGNATION_PASSES)
 
@@ -482,6 +514,7 @@ def _route_with_freerouting_api(
         _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 
         deadline = time.time() + timeout_s
+        depart_attente = time.time()
         short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
             status = _api("GET", f"{pre}/jobs/{job_id}")
@@ -508,11 +541,25 @@ def _route_with_freerouting_api(
                                                errors="replace"))
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
                                  if j == short_name), 0)
-                if plat >= _fenetre_stagnation(unrouted):
+                fenetre = _fenetre_stagnation(unrouted)
+                # ⚠️ DEUX DECISIONS DISTINCTES, ET C EST LA CAUSE DE MES TROIS
+                # ERREURS SUCCESSIVES sur ce mecanisme (diagnostic de Grok) :
+                # « cesser d esperer ce tirage » n est pas « prouver que le
+                # palier de couches ne suffit pas ». Un plateau a 93 % avec UN
+                # net restant n est pas une preuve d empilement insuffisant —
+                # c est un routeur qui n a pas fini.
+                #
+                # Le critere des PASSES ne coupe donc plus quand il ne reste
+                # presque rien ; seul l HORLOGE tranche alors, et elle tranche
+                # toujours. Sans elle, « ne jamais couper » recreerait les
+                # 40 minutes sur une carte a 2,5 s la passe.
+                trop_long = time.time() - depart_attente > _PLAFOND_ATTENTE_S
+                if (fenetre and plat >= fenetre) or (trop_long and plat):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
-                        "routes) — attente abandonnee, le job finit seul",
-                        plat, unrouted)
+                        "routes%s) — attente abandonnee, le job finit seul",
+                        plat, unrouted,
+                        ", plafond de temps atteint" if trop_long else "")
                     raise RoutageFige(unrouted=unrouted,
                                       nets=nets_routables)
             time.sleep(2)
