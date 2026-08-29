@@ -2296,6 +2296,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # 3 connexions manquantes, qu aucun levier ne resorbait.
         etendu = _expand_stackup(pcb_bytes, palier)
 
+        # ⚠️ LE PLAN EST COULE ICI, AVANT LE ROUTAGE — sequence demandee par
+        # l utilisateur et reaffirmee le 2026-08-29 : couler le plan de masse
+        # et raccorder les pattes qu il atteint, PUIS router les signaux, PUIS
+        # affiner (echappement fine-pitch, vias, couture).
+        #
+        # On le coulait APRES. Le routeur ne voyait donc jamais le cuivre de
+        # masse : il routait comme si la carte etait vide, et on posait le plan
+        # par-dessus. Mesure sur la Nucleo, meme placement :
+        #
+        #     plan coule APRES  (production)   68-71 % route
+        #     plan coule AVANT  (4 couches)    94 % route, 4 manquantes
+        #
+        # ⚠️ Cette comparaison melangeait l ordre du plan ET le nombre de
+        # couches force : elle indique une direction, elle ne la prouve pas
+        # seule. La decision est celle de l utilisateur.
+        #
+        # ⚠️ Un plan non REMPLI n est qu un contour, dont le routeur ne tient
+        # aucun compte — meme defaut que celui du 2026-08-23.
+        etendu = _fill_zones(_add_ground_planes(etendu))
+
         # ⚠️ Reserver AVANT de router : apres, il n y a plus de place. Mesure
         # du 2026-08-23 — 504 candidats essayes autour des pattes orphelines
         # du LQFP-48, aucun ne passe, le voisinage comptant 182 obstacles

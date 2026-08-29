@@ -154,22 +154,35 @@ class TestPlansDeMasse:
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
-    def test_les_plans_sont_coules_APRES_le_routage(self):
-        """Inversé le 2026-08-22 : coulés avant, ils plafonnaient à 3 manquantes.
+    def test_les_plans_sont_coules_AVANT_le_routage(self):
+        """⚠️ Ce test exigeait l INVERSE, et sa mesure reste valable.
 
-        Le routeur voyait la zone, croyait GND pris en charge, et cessait de le
-        router — alors que le plan ne peut pas atteindre les pattes d'un
-        LQFP-48. Coulés après, le routeur relie tout par des pistes et le plan
-        devient un complément : 0 connexion manquante, deux plans quand même.
+        Mesure du 2026-08-22, board STM32 LQFP-48 : coulés AVANT, les plans
+        plafonnaient à 3 connexions manquantes. Le routeur voyait la zone,
+        croyait GND pris en charge, et cessait de le router — alors que le plan
+        ne peut pas atteindre des pattes au pas de 0,5 mm. Coulés APRÈS : 0
+        manquante.
 
-        On regarde le CORPS de l'enveloppe, pas le fichier : comparer des
+        Mesure du 2026-08-28, Nucleo, même placement : l ordre inverse. Coulé
+        AVANT, 94 % routé et 4 manquantes ; coulé APRÈS, 68-71 %.
+
+        Les deux mesures sont réelles et se contredisent selon la carte. Ce
+        n est donc pas la mesure qui tranche mais une DÉCISION PRODUIT, prise
+        par l utilisateur le 2026-08-29 et répétée tout au long des deux jours
+        précédents : couler le plan et raccorder ce qu il atteint, PUIS router
+        les signaux, PUIS affiner par échappement fine-pitch, vias et couture.
+
+        Le cas LQFP-48 reste couvert : c est l étape d affinage qui sort les
+        pattes que le plan n atteint pas — pas le renoncement au plan.
+
+        On regarde le CORPS de l enveloppe, pas le fichier : comparer des
         positions globales comparerait les DÉFINITIONS de fonctions.
         """
         debut = self.SOURCE.index('@router.post("/route/auto"')
         corps = self.SOURCE[debut:]
         pose = corps.index("_add_ground_planes(")
         route = corps.index("res = _route_auto_once(tentative)")
-        assert pose > route, (
+        assert pose < route, (
             "les plans doivent être coulés APRÈS le routage — sinon le routeur "
             "cesse de router GND en croyant le plan responsable"
         )

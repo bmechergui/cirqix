@@ -89,6 +89,10 @@ class TestCablage:
         # des positions globales comparerait les DEFINITIONS de fonctions.
         debut = self.SOURCE.index('@router.post("/route/auto"')
         corps = self.SOURCE[debut:]
-        coule = corps.index("_add_ground_planes(")
-        rempli = corps.index("_fill_zones(")
-        assert rempli > coule, "il faut remplir APRES avoir coule"
+        # ⚠️ On comparait deux positions de TEXTE. Depuis que la coulee est
+        # imbriquee — `_fill_zones(_add_ground_planes(...))` — le remplissage
+        # s ecrit AVANT dans la ligne tout en s executant APRES. Le test
+        # echouait sur un code juste. On verifie l imbrication elle-meme.
+        assert "_fill_zones(_add_ground_planes(" in corps, (
+            "le remplissage doit envelopper la coulee : une zone non remplie "
+            "n est qu un contour, dont le routeur ne tient aucun compte")
