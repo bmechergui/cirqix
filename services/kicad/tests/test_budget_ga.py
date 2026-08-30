@@ -31,30 +31,32 @@ from tools.placement import (_WF_GENERATIONS, _WF_POPULATION, _WF_ITERATIONS,
 
 
 class TestBudget:
-    def test_le_budget_est_reduit(self):
-        assert _WF_GENERATIONS <= 40
-        assert _WF_POPULATION <= 30
-        assert _WF_ITERATIONS <= 400
+    def test_le_budget_est_complet(self):
+        """⚠️ Ce test exigeait un budget REDUIT. La mesure l a dementi.
 
-    def test_le_budget_reste_suffisant_pour_atteindre_la_bonne_region(self):
-        """3 tirages reduits sur 4 sont a 359-441 mm, comme le complet.
+        La coupe 30/25/300 tenait sur un board de 17 composants. Sur
+        `arduino-uno`, 35 composants avec connecteurs :
 
-        Descendre trop bas deplacerait TOUTE la serie vers le haut, ce qui
-        serait de la sous-convergence — un autre defaut, qu aucun filtre ne
-        repare.
+            budget complet   0 conflit,  1228-1308 s,  0 erreur DRC
+            budget reduit    1 conflit APRES 4 TIRAGES,  1410 s,  1 ERREUR
+
+        Plus lent ET une carte non fabricable. Le gain par tirage est mange
+        par leur nombre, et la qualite ne suffit plus a produire un placement
+        legal.
         """
-        assert _WF_GENERATIONS >= 20
-        assert _WF_POPULATION >= 20
+        assert _WF_GENERATIONS >= 100
+        assert _WF_POPULATION >= 50
+        assert _WF_ITERATIONS >= 1000
 
 
 class TestTiragesMinimum:
-    def test_au_moins_deux_tirages(self):
-        """Le filtre anti-aberration EST la raison d etre du budget reduit."""
-        assert _TIRAGES_MINIMUM >= 2
+    def test_un_seul_tirage_suffit_a_budget_complet(self):
+        """Le best-of-2 etait la CONTREPARTIE du budget reduit.
 
-    def test_pas_plus_de_deux_par_defaut(self):
-        """Best-of-3 reduit (369 s) ne bat plus un complet (342 s)."""
-        assert _TIRAGES_MINIMUM <= 2
+        A budget complet la dispersion disparait (etendue du fil 42 mm contre
+        206) : forcer un second tirage ne ferait que doubler le cout.
+        """
+        assert _TIRAGES_MINIMUM == 1
 
 
 class TestChoixDuMeilleur:

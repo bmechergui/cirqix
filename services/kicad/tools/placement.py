@@ -1537,9 +1537,24 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 # corriger un tirage sur quatre. Le remede est le FILTRE — deux tirages
 # reduits coutent moins qu un complet (246 s contre 342) et on garde le
 # meilleur. Voir `_TIRAGES_MINIMUM`.
-_WF_ITERATIONS: int = 300    # raffinement physique force-directed
-_WF_GENERATIONS: int = 30    # phase évolutionnaire (groupement)
-_WF_POPULATION: int = 25
+# ⚠️ BUDGET REDUIT PUIS RESTAURE LE 2026-08-30. La coupe (30/25/300) tenait
+# sur un board de 17 composants — 2,8x plus vite, meme longueur de fil. Elle
+# ECHOUE des que la carte se densifie. Mesure sur `arduino-uno`, 35 composants
+# avec connecteurs :
+#
+#     budget complet   0 conflit,  1228-1308 s,  0 erreur DRC
+#     budget reduit    1 conflit APRES 4 TIRAGES,  1410 s,  1 ERREUR DRC
+#
+# Plus lent ET une carte non fabricable : le gain par tirage est mange par le
+# nombre de tirages, et la qualite ne suffit plus a produire un placement
+# legal. J avais generalise depuis un seul board — l erreur que je m etais
+# promis d eviter le matin meme.
+#
+# Ce qui SURVIT de l experience : `_placement_meilleur`, qui departage deux
+# tirages legaux par la longueur de fil. Il ne coute rien et reste juste.
+_WF_ITERATIONS: int = 1000   # raffinement physique force-directed
+_WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
+_WF_POPULATION: int = 50
 
 # Budget temps du micro-raffinement CMA-ES (Géomètre) — borné pour rester
 # compatible avec l'appel synchrone POST /place/auto (le GA hybrid+cluster
@@ -1595,7 +1610,11 @@ _MAX_TIRAGES_PLACEMENT = 4
 #
 # ⚠️ Deux, pas trois : best-of-3 reduit coute 369 s et ne bat plus un tirage
 # complet a 342 s. Le gain disparait exactement la.
-_TIRAGES_MINIMUM = 2
+# ⚠️ Ramene a 1 avec la restauration du budget. Le best-of-2 etait la
+# CONTREPARTIE du budget reduit — un filtre contre ses placements aberrants
+# (etendue du fil 206 mm contre 42). A budget complet cette dispersion
+# disparait, et forcer un second tirage ne ferait que doubler le cout.
+_TIRAGES_MINIMUM = 1
 
 # Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
 # compter dans la longueur de fil fausserait la comparaison.
