@@ -407,6 +407,34 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ⚠️ La couture se RÉPÈTE : joindre deux îlots de plan en révèle un troisième.
      Une passe unique laissait des îlots. Garde : `tests/test_couture_repetee.py`.
 
+     ⚠️ **LE NOMBRE D'ÎLOTS N'EST PAS UN CRITÈRE DE CONNECTIVITÉ** (2026-08-30).
+     `_PLAN_FRAGMENTE_AU_DELA = 2` et l'avertissement « plan de masse FRAGMENTÉ »
+     mesurent la qualité de la RÉFÉRENCE DE RETOUR, jamais la connectivité — et
+     rien ne l'écrivait. Analyse géométrique du board `stm32-100` **livré à
+     100 %, 0 connexion manquante, 0 erreur** :
+
+         GND  F.Cu  6 îlots   ·   B.Cu  1 îlot
+         151 vias  →  25 GND, dont **0 borgne**, 126 hors plan
+
+     (« borgne » = via posé dans un îlot mais ne touchant le cuivre de son net
+     que sur UNE couche — il ne relie rien. Il n'y en a aucun.)
+
+     Une carte parfaitement connectée et fabricable porte donc **six** îlots.
+     Le tirage à 99 % de la même carte en avait 5 à 9 : **le compte ne
+     distingue pas le succès de l'échec.** Ce qui les distingue est le rapport
+     DRC — « 1 net incomplet ; net(s) : GND » — et c'est le seul critère
+     recevable.
+
+     J'ai moi-même lu cet avertissement comme un diagnostic et cherché la panne
+     dans la couture pendant une heure ; un agent délégué a proposé « coudre
+     jusqu'à ≤ 1 îlot » sur la même lecture. C'est la faute déjà inscrite plus
+     haut : **NEVER** relayer le message d'une garde comme un diagnostic.
+
+     ⚠️ Défaut latent voisin, non corrigé : `_router_en_incluant_gnd` remplace
+     le board **sans jamais comparer**. C'est le seul mécanisme de la chaîne
+     dépourvu de garde « ne peut qu'améliorer » — un secours moins bon
+     écraserait un meilleur résultat. Il ne s'est encore jamais déclenché.
+
      **ESCALADE DES COUCHES** — méthode demandée : tirages au palier courant,
      puis +2 couches, en gardant TOUJOURS le meilleur (jamais le dernier).
 
@@ -688,6 +716,20 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
   sécurité s'est déclenché une fois (17 conflits non résorbés → revert), confirmé
   zéro régression sur l'invariant 0-ERROR par 11/11 tests (`test_placement.py`).
   Routage rapide (gros boards) = backend C++ `kct build-native` (Docker).
+  ⚠️ **CE BACKEND N'EST PAS LE CHEMIN EMPRUNTÉ** (mesuré le 2026-08-30). Il
+  appartient à `kct route`, c'est-à-dire au Niveau 1 de la cascade — et la
+  cascade bascule sur Freerouting dès que le Niveau 1 rend moins de
+  `_MIN_ROUTED_PCT`. Comptage sur trois journaux (remesure en cours, run qui a
+  livré `stm32-100` à 100 %, banc des 7 cartes) :
+
+      16 routages effectués :  16 × (freerouting-api)  ·  0 × (kicad-tools)
+
+  Le compiler ou non ne change donc RIEN aux résultats actuels. Deux agents
+  délégués ont proposé `kct build-native` comme correctif prioritaire, en
+  s'appuyant sur cette ligne : elle décrivait une capacité, ils l'ont lue comme
+  une description du chemin réel.
+  **NEVER** conclure qu'un moteur est en cause sans avoir compté, dans les
+  journaux, lequel a effectivement routé.
   Voir `services/kicad/DEPENDENCIES.md`.
 **Placement futur (Phase 6+) : RL_PCB** — hybride LLM + Reinforcement Learning :
   - Sonnet analyse le schéma et suggère une stratégie (groupes fonctionnels, zones sensibles)
