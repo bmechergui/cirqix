@@ -226,3 +226,33 @@ class TestSeuilResserre:
         Les rattrapages tardifs mesures finissent a UN net.
         """
         assert _fenetre_stagnation(5) == _STAGNATION_PASSES
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ UN TIRAGE FIGE N EST PAS UN PALIER MORT — quatrieme correction du meme
+# defaut conceptuel, et toujours la cause nommee par Grok : une seule grandeur
+# pour deux decisions.
+#
+# Mesure du 2026-08-29 :
+#
+#     arduino-uno, palier 2 couches : tirage 1 -> 93 %, tirage 2 -> 100 %
+#     esp32-baseline, palier 2 couches : tirage 1 fige a 73 %, tirages
+#         restants ABANDONNES -> escalade a 4 couches, alors que cette carte
+#         sortait 100 % A 2 COUCHES dans les deux bancs precedents.
+#
+# Freerouting est stochastique : 65, 77 et 91 % mesures sur le MEME board
+# place. Un tirage fige dit que CE tirage est fini, jamais que le palier l est.
+# ---------------------------------------------------------------------------
+
+def test_un_tirage_fige_ne_condamne_pas_le_palier():
+    import inspect
+    from routers.routing import route_auto
+    src = inspect.getsource(route_auto)
+    i = src.index("except RoutageFige")
+    # Jusqu au `continue` du bloc, pas au-dela : le chemin normal alimente
+    # legitimement `meilleur_du_palier` quelques lignes plus bas.
+    bloc = src[i:src.index("continue", i) + len("continue")]
+    assert "meilleur_du_palier = max" not in bloc, (
+        "un tirage fige alimente le compteur qui abandonne les tirages "
+        "restants : il condamne le palier au lieu du seul tirage")
+    assert "continue" in bloc, "le tirage suivant doit etre tente"

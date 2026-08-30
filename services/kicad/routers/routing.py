@@ -2817,11 +2817,20 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # inconnu, et 0 est reserve aux PANNES — qui, elles, ne font pas
             # escalader. Une stagnation mesuree doit toujours faire abandonner
             # les tirages restants du palier.
+            # ⚠️ UN TIRAGE FIGE N EST PAS UN PALIER MORT — et c est la
+            # QUATRIEME fois que je confonds les deux sur ce mecanisme.
+            # Freerouting est stochastique : 65, 77 et 91 % mesures sur le
+            # MEME board place. Mesure du 2026-08-29 sur arduino-uno, palier
+            # 2 couches : tirage 1 -> 93 %, tirage 2 -> 100 %. Abandonner le
+            # palier au premier tirage fige aurait coute une couche.
+            #
+            # `meilleur_du_palier` n est donc PAS alimente ici : il sert a
+            # decider si le PALIER merite ses tirages restants, et seul un
+            # tirage ALLE A SON TERME repond a cette question. On abandonne ce
+            # tirage-la, pas les autres.
             logger.warning(
-                "route_auto: palier %d couches fige a ~%d%% — tirages restants "
-                "abandonnes, escalade immediate", palier, fige.routed_percent)
-            meilleur_du_palier = max(meilleur_du_palier,
-                                     max(1, fige.routed_percent))
+                "route_auto: tirage fige a ~%d%% au palier %d couches — "
+                "on passe au tirage suivant", fige.routed_percent, palier)
             sans_gain += 1
             continue
 
