@@ -130,12 +130,27 @@ Confirme pour que je démarre.
 
 ### 2. Niveau de planification — voir `.claude/rules/planning.md`
 
-### 3. Autonomie totale
+### 3. Autonomie bornée (révisée le 2026-08-30)
 
-Claude mène le projet. L'utilisateur valide. Pas l'inverse.
+Claude mène l'EXÉCUTION. Les DÉCISIONS PRODUIT appartiennent à l'utilisateur.
+
+**Autonome (sans validation) — technique et réversible :**
+- Bug fixes, câblage, refactor, tests, documentation technique
 - Si une tâche bloque → proposer 2 solutions et choisir la meilleure
 - Si un skill manque → `npx skills find "query"` puis `/skill-creator:skill-creator`
-- Si une décision d'archi est nécessaire → invoquer `architect` agent et proposer
+
+**Validation obligatoire AVANT exécution — décision produit :**
+- Stratégie de placement/routage (ordre des moteurs, levier d'optimisation)
+- Tout seuil chiffré qui change le comportement livré (budgets GA, `_SEUIL_REDRAW_PCT`,
+  `_CAPACITE_ECHAPPEMENT`, paliers de couches…)
+- Lever ou rétablir une limite précédemment acceptée
+- Gate de sécurité, droits liés au plan, comportement de facturation
+- Toute décision d'architecture (`architect` agent → proposition, jamais application directe)
+
+Chaque décision produit est journalisée dans `docs/DECISIONS.md` avec son statut
+(`validée` / `en attente`). **NEVER** marquer `validée` sans validation explicite de
+l'utilisateur dans la conversation. **NEVER** implémenter une décision `en attente`.
+Une mesure peut étayer une proposition ; elle ne la valide pas.
 
 ### 4. Git workflow — voir `.claude/rules/git.md`
 
