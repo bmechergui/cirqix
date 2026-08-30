@@ -1595,12 +1595,34 @@ def _compte_ilots_de_plan(pcb_bytes: bytes) -> dict:
         return {}
     compte: dict = {}
     for bloc in re.split(r"\(zone\b", texte)[1:]:
-        net = re.search(r'\(net_name "([^"]*)"\)', bloc)
+        # ⚠️ DEUX ECRITURES d une zone, selon QUI a ecrit le board :
+        #     (zone (net 3) (net_name "GND") ...)   notre generateur
+        #     (zone (net 3) ...)                    pcbnew, SANS net_name
+        # N accepter que la premiere rendait `{}` sur tout board passe par
+        # pcbnew — c est-a-dire sur tous les boards LIVRES. Le plan de masse de
+        # `stm32-100` etait en NEUF ilots sur F.Cu, visible dans le fichier
+        # depuis le debut, et ce parseur le cachait.
+        # ⚠️ TROIS ecritures du net d une zone, selon la version KiCad et
+        # selon QUI a ecrit le board :
+        #     (net 3) (net_name "GND")   notre generateur
+        #     (net "GND")                pcbnew de KiCad 10
+        #     (net 3)                    forme ancienne, nom a resoudre
+        # C est la MEME variation que celle documentee pour le comptage des
+        # nets (2026-08-20) — et je ne l ai pas appliquee ici.
+        nom = (re.search(r'\(net_name "([^"]*)"\)', bloc)
+               or re.search(r'\(net "([^"]+)"\)', bloc))
+        numero = re.search(r'\(net (\d+)\)', bloc)
         couche = (re.search(r'\(layer "([^"]+)"\)', bloc)
                   or re.search(r'\(layers "([^"]+)"\)', bloc))
-        if not net or not couche:
+        if couche is None or (nom is None and numero is None):
             continue
-        cle = f"{net.group(1)}@{couche.group(1)}"
+        if nom is not None:
+            etiquette = nom.group(1)
+        else:
+            # Le nom se lit dans la declaration globale du net.
+            decl = re.search(r'\(net %s "([^"]*)"\)' % numero.group(1), texte)
+            etiquette = decl.group(1) if decl else "net%s" % numero.group(1)
+        cle = f"{etiquette}@{couche.group(1)}"
         compte[cle] = compte.get(cle, 0) + len(re.findall(r"\(filled_polygon", bloc))
     return compte
 

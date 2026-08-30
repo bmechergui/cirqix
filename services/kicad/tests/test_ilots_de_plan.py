@@ -67,3 +67,55 @@ def test_un_board_sans_zone_ne_rend_rien():
 def test_le_seuil_de_fragmentation_reste_exigeant():
     """Un plan sain fait 1 ilot par face ; 2 tolere une decoupe legitime."""
     assert 1 <= _PLAN_FRAGMENTE_AU_DELA <= 3
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ TROIS ECRITURES du net d une zone — et n en accepter qu une rendait le
+# compteur AVEUGLE sur tout board livre.
+#
+#     (net 3) (net_name "GND")   notre generateur
+#     (net "GND")                pcbnew de KiCad 10
+#     (net 3)                    forme ancienne, nom a resoudre
+#
+# Mesure du 2026-08-30 sur le board LIVRE de `stm32-100` : le compteur rendait
+# `{}` alors que le fichier contenait 9 polygones remplis sur F.Cu. Le plan de
+# masse etait en NEUF ilots — la cause exacte du « 1 net incomplet : GND » qui
+# ramenait la carte de 100 % a 99 %.
+#
+# Le defaut etait VISIBLE dans le fichier depuis le debut ; c est le parseur
+# qui le cachait. Et cette variation KiCad 10 est deja documentee dans
+# CLAUDE.md pour le comptage des nets — je ne l avais pas appliquee ici.
+# ---------------------------------------------------------------------------
+
+_ZONE_KICAD10 = '''\t(zone
+\t\t(net "GND")
+\t\t(layer "%s")
+\t\t(uuid "ad12570c-c4b7-43c8-8d87-d202319fc7ae")
+\t\t(hatch edge 0.508)
+%s\t)
+'''
+_POLY_REEL = '\t\t(filled_polygon\n\t\t\t(layer "%s")\n\t\t\t(pts (xy 0 0))\n\t\t)\n'
+
+
+def test_la_forme_kicad10_est_reconnue():
+    """`(net "GND")` sans numero — ce que pcbnew ecrit."""
+    board = ("(kicad_pcb\n"
+             + _ZONE_KICAD10 % ("F.Cu", _POLY_REEL % "F.Cu" * 9)
+             + _ZONE_KICAD10 % ("B.Cu", _POLY_REEL % "B.Cu")
+             + ")\n").encode()
+    assert _compte_ilots_de_plan(board) == {"GND@F.Cu": 9, "GND@B.Cu": 1}
+
+
+def test_une_zone_keepout_sans_net_est_ignoree():
+    """Le board livre en porte une : elle n a ni net ni polygone rempli."""
+    keepout = '\t(zone\n\t\t(layer "F.Cu")\n\t\t(keepout (tracks not_allowed))\n\t)\n'
+    board = ("(kicad_pcb\n" + keepout
+             + _ZONE_KICAD10 % ("B.Cu", _POLY_REEL % "B.Cu") + ")\n").encode()
+    assert _compte_ilots_de_plan(board) == {"GND@B.Cu": 1}
+
+
+def test_un_plan_en_neuf_ilots_est_signale_comme_fragmente():
+    board = ("(kicad_pcb\n"
+             + _ZONE_KICAD10 % ("F.Cu", _POLY_REEL % "F.Cu" * 9) + ")\n").encode()
+    ilots = _compte_ilots_de_plan(board)
+    assert ilots["GND@F.Cu"] > _PLAN_FRAGMENTE_AU_DELA
