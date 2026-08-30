@@ -1484,11 +1484,13 @@ def _vias_signaux_a_reserver(pcb_bytes: bytes) -> list:
                 "escape_mm": str(_ESCAPE_TRACE_MM),
             })
             vias = json.loads(resultat.read_text(encoding="utf-8")).get("vias") or []
-        if vias:
-            logger.info(
-                "fanout signal : %d via(s) d echappement reserves sous le(s) "
-                "boitier(s) fine-pitch, sur %d pastille(s) visees",
-                len(vias), len(cibles))
+        # ⚠️ JOURNALISER LA TENTATIVE, pas seulement le succes. Ne tracer que
+        # `if vias` rend indistinguables « aucune cible » et « des cibles mais
+        # aucune place » — c est exactement ce qui a masque une premiere
+        # version inerte du fanout pendant une heure de mesure.
+        logger.info(
+            "fanout signal : %d via(s) reserves sur %d pastille(s) visees "
+            "sous le(s) boitier(s) fine-pitch", len(vias), len(cibles))
         return vias
     except Exception as exc:
         logger.warning("fanout signal impossible (%s) — routage sans lui", exc)
@@ -1699,10 +1701,16 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
         return percent_moteur
     reel = int(round(100 * max(0, routables - len(nets)) / routables))
     if reel < percent_moteur:
+        # ⚠️ NOMMER les nets, pas seulement les compter. Sans leur nom on ne
+        # peut pas savoir si le manque vient d un SIGNAL que le routeur a rate
+        # ou d un net confie au PLAN que la coulee n a pas rejoint — deux
+        # defauts opposes, dans deux parties du code. J ai passe une heure a
+        # chercher du cote du routeur alors qu il annoncait 100 %.
         logger.warning(
             "routage : %d %% annonce par le moteur, mais le DRC voit %d net(s) "
-            "incomplet(s) sur %d — pourcentage ramene a %d %%",
-            percent_moteur, len(nets), routables, reel)
+            "incomplet(s) sur %d — pourcentage ramene a %d %% ; net(s) : %s",
+            percent_moteur, len(nets), routables, reel,
+            ", ".join(sorted(nets)[:12]))
         return reel
     return percent_moteur
 
