@@ -407,8 +407,32 @@ class RoutageFige(RuntimeError):
             f"{_STAGNATION_PASSES} passes sans progres")
 
 
+# ⚠️ L IDENTIFIANT DE LIGNE A DEUX FORMES, et n avoir verifie que la premiere
+# a rendu la detection inerte sur toute une categorie de cartes :
+#
+#     [AC4604]           job seul
+#     [E8A788\BAD9AA]    session ANTISLASH job
+#
+# Mesure du 2026-08-30 : sur `nucleo-f401`, les 27 lignes de passe portaient
+# la forme composee. Aucune coupure n a eu lieu, les tirages ont dure 17 a
+# 24 minutes, le budget s est epuise et la carte est sortie a 80 % avec
+# 16 connexions manquantes — contre 100 % au banc de reference.
+#
+# Le job est le DERNIER segment : on l ancre sur la fin, jamais sur la
+# longueur totale du crochet.
+#
+# ⚠️ ET LE SUFFIXE DU SCORE A LUI AUSSI DEUX FORMES :
+#
+#     (46 unrouted)
+#     (51 unrouted and 1 violation)
+#
+# Exiger la parenthese fermante juste apres « unrouted » ne reconnaissait
+# aucune ligne du journal reel de la Nucleo. Troisieme variation de format
+# trouvee sur CE MEME journal : la regle est de valider le parseur contre le
+# fichier reel a chaque fois, jamais contre une fixture ecrite de memoire.
 _LIGNE_PASSE_RE = re.compile(
-    r"\[([0-9A-F]{6})\].*pass #(\d+).*score of ([\d.]+) \((\d+) unrouted\)")
+    r"\[[^\]]*?([0-9A-F]{6})\].*pass #(\d+)"
+    r".*score of ([\d.]+) \((\d+) unrouted")
 
 
 def _passes_sans_progres(log_text: str, short_name: str) -> int:

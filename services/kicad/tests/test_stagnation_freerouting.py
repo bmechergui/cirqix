@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from routers.routing import (_passes_sans_progres, _STAGNATION_PASSES,
-                             RoutageFige)
+                             RoutageFige, _LIGNE_PASSE_RE)
 
 
 def _log(job: str, seq: list) -> str:
@@ -287,3 +287,93 @@ def test_le_plafond_compte_le_temps_SANS_PROGRES():
         "le compteur n est jamais remis a zero : le plafond mesure le temps "
         "TOTAL et coupe un routage legitimement long")
     assert "dernier_unrouted" in avant, "aucun suivi du progres"
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ L IDENTIFIANT DE LIGNE A DEUX FORMES.
+#
+# N avoir verifie que la premiere a rendu la detection INERTE sur toute une
+# categorie de cartes :
+#
+#     [AC4604]           job seul
+#     [E8A788\BAD9AA]    session ANTISLASH job
+#
+# Mesure du 2026-08-30 sur `nucleo-f401` : les 27 lignes de passe portaient la
+# forme composee. Aucune coupure n a eu lieu, les tirages ont dure 17 a
+# 24 minutes, le budget s est epuise, et la carte est sortie a 80 % avec
+# 16 connexions manquantes et 2 erreurs — contre 100 % / 0 / 0 au banc de
+# reference.
+#
+# Le job est le DERNIER segment du crochet : on l ancre sur la FIN, jamais sur
+# la longueur totale.
+# ---------------------------------------------------------------------------
+
+_LIGNE = ("2026-08-30 05:00:00.000 INFO   [{ident}] Auto-router pass #{n} on "
+          "board 'x' was completed in 2.00 seconds with the score of "
+          "{score}.00 ({u} unrouted), using 1.0 CPU seconds and 1 MB memory.")
+
+
+class TestFormesDIdentifiant:
+    def test_la_forme_simple_est_reconnue(self):
+        log = "\n".join(_LIGNE.format(ident="AC4604", n=i, score=100, u=9)
+                        for i in range(1, 12))
+        assert _passes_sans_progres(log, "AC4604") == 10
+
+    def test_la_forme_composee_est_reconnue(self):
+        """`session\job` — la forme qui a rendu la detection inerte."""
+        compose = "E8A788" + chr(92) + "BAD9AA"
+        log = "\n".join(_LIGNE.format(ident=compose, n=i, score=100, u=9)
+                        for i in range(1, 12))
+        assert _passes_sans_progres(log, "BAD9AA") == 10
+
+    def test_les_deux_formes_cohabitent_sans_se_melanger(self):
+        """Deux jobs en parallele, l un simple et l autre compose."""
+        compose = "E8A788" + chr(92) + "BAD9AA"
+        fige = "\n".join(_LIGNE.format(ident=compose, n=i, score=100, u=9)
+                         for i in range(1, 12))
+        vivant = "\n".join(_LIGNE.format(ident="AC4604", n=i, score=100 + i,
+                                         u=9 - i) for i in range(1, 9))
+        log = fige + "\n" + vivant
+        assert _passes_sans_progres(log, "BAD9AA") == 10
+        assert _passes_sans_progres(log, "AC4604") == 0
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ LE SUFFIXE DU SCORE A LUI AUSSI DEUX FORMES.
+#
+#     (46 unrouted)
+#     (51 unrouted and 1 violation)
+#
+# Exiger la parenthese fermante juste apres « unrouted » ne reconnaissait
+# AUCUNE ligne du journal reel de la Nucleo — 27 lignes, 0 reconnue, detection
+# inerte, tirages de 17 a 24 minutes, carte livree a 80 %.
+#
+# Troisieme variation de format trouvee sur CE MEME journal, apres le chemin du
+# fichier et la forme de l identifiant. Mes fixtures passaient a chaque fois :
+# elles etaient ecrites de memoire, pas relevees sur le fichier.
+#
+# La regle qui en sort : un parseur de format externe se valide contre le
+# FICHIER REEL, jamais contre une fixture.
+# ---------------------------------------------------------------------------
+
+_LIGNE_REELLE = (
+    "2026-08-30 05:41:02.596 INFO   [E8A788" + chr(92) + "BAD9AA] Auto-router "
+    "pass #1 on board 'f78fd931bfb067704455632d72055be8' was completed in "
+    "20.56 seconds with the score of 641.95 (51 unrouted and 1 violation), "
+    "using 1234.00 CPU seconds and 567 MB memory."
+)
+
+
+def test_la_ligne_relevee_sur_le_journal_reel_est_reconnue():
+    """Copiee telle quelle depuis /tmp/freerouting/freerouting.log."""
+    m = _LIGNE_PASSE_RE.search(_LIGNE_REELLE)
+    assert m is not None, "la ligne REELLE n est pas reconnue"
+    assert m.group(1) == "BAD9AA"
+    assert m.group(2) == "1"
+    assert m.group(4) == "51"
+
+
+def test_le_suffixe_sans_violation_reste_reconnu():
+    sans = _LIGNE_REELLE.replace(" and 1 violation", "")
+    m = _LIGNE_PASSE_RE.search(sans)
+    assert m is not None and m.group(4) == "51"
