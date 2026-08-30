@@ -900,6 +900,53 @@ def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
     return 0 < meilleur_pct < _SEUIL_REDRAW_PCT
 
 
+# Au-dessus de ce pourcentage, QUITTER le palier est le pari perdant : on
+# accorde des tirages supplementaires avant d escalader.
+#
+# ⚠️ Symetrique exact de `_SEUIL_REDRAW_PCT` (80), qui refuse de RE-TIRER un
+# palier hors d atteinte. Il lui manquait son jumeau — refuser de QUITTER un
+# palier a portee — et cela s est paye, mesure du 2026-08-30 sur `stm32-100`,
+# meme board place, meme code, deux runs :
+#
+#     run gagnant   2 couches : fige, 99 %, puis 100 %              1810 s
+#     run perdant   2 couches : fige, 96 %, 99 %
+#                   puis 4 couches : 87 %, puis 0 %, budget mort    4290 s
+#
+# Le run gagnant a gagne au TROISIEME tirage du MEME palier. Le perdant avait
+# le meme 99 % en main, a quitte le palier, est redescendu a 87 % en payant une
+# couche de plus, puis a tue son budget :
+#
+#     monter d une couche  ->  2400 s pour DEGRADER de 12 points
+#     un tirage de plus    ->   600 s, et le seul 100 % obtenu
+#
+# ⚠️ Le seuil n est pas choisi : la preuve porte sur 99 %, on l etend a 97 %,
+# soit deux nets sur les 79 de cette carte. Rien de mesure ne soutient plus
+# bas — entre 80 et 97 le comportement reste celui d avant.
+#
+# ⚠️ Et une couche de plus n est pas neutre : une carte 4 couches coute plus
+# cher a fabriquer. On ne la vend que sur preuve, jamais sur impatience.
+_SEUIL_PALIER_A_PORTEE: int = 97
+
+# ⚠️ BORNE OBLIGATOIRE. Sans elle, une carte qui plafonne a 99 % re-tirerait
+# sans fin et ne verrait jamais 4 couches — on recreerait a l autre extremite
+# le defaut du 2026-08-29, ou stm32-100 brulait tout son budget a 2 couches.
+_TIRAGES_BONUS_A_PORTEE: int = 2
+
+
+def _tirages_bonus(meilleur_pct: int) -> int:
+    """Tirages supplementaires a accorder AVANT de quitter ce palier.
+
+    Un ZERO n en recoit aucun : « 0 % (aucun moteur) » est une panne, pas un
+    verdict de routage. Un palier hors d atteinte non plus — il est deja
+    abandonne par `_tirages_epuises_au_palier`.
+
+    Garde : tests/test_palier_a_portee.py.
+    """
+    if meilleur_pct >= _SEUIL_PALIER_A_PORTEE:
+        return _TIRAGES_BONUS_A_PORTEE
+    return 0
+
+
 def _escalade_epuisee(sans_gain: int) -> bool:
     """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
 
@@ -2912,8 +2959,33 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
-    for palier in essais:
+    # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
+    # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
+    bonus_accorde: set[int] = set()
+    # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
+    # dans la file au moment ou l on s appreterait a quitter le palier.
+    i_essai = 0
+    while i_essai < len(essais):
+        palier = essais[i_essai]
+        i_essai += 1
         if palier != palier_courant:
+            # ⚠️ On s apprete a QUITTER le palier precedent. S il est a portee
+            # de 100 %, le quitter est le pari perdant — mesure du 2026-08-30
+            # sur stm32-100 : 99 % a 2 couches, puis 87 % a 4 couches pour
+            # 2400 s, tandis qu un tirage de plus au meme palier en coutait
+            # 600 et a produit le seul 100 % obtenu sur cette carte.
+            if palier_courant is not None and palier_courant not in bonus_accorde:
+                bonus = _tirages_bonus(meilleur_du_palier)
+                if bonus:
+                    bonus_accorde.add(palier_courant)
+                    logger.info(
+                        "route_auto: %d tirage(s) de plus a %d couches avant "
+                        "d escalader — %d%% est a portee de 100%%, et monter "
+                        "d une couche coute plus cher qu un re-tirage",
+                        bonus, palier_courant, meilleur_du_palier)
+                    essais[i_essai - 1:i_essai - 1] = [palier_courant] * bonus
+                    i_essai -= 1
+                    continue
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
