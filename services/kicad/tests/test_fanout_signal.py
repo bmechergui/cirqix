@@ -155,3 +155,69 @@ class TestCablage:
     def test_aucune_cible_ne_declenche_aucun_travail(self):
         """No-op sur une carte sans boitier fine-pitch."""
         assert _vias_signaux_a_reserver(b"(kicad_pcb)") == []
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ LE FORMAT REEL D UN BOARD, releve sur `examples/` — pas ecrit de memoire.
+#
+# La premiere version de `_pads_signal_fine_pitch` retenait ZERO pastille sur
+# TOUS les boards du depot, et le fanout etait donc inerte. Trois hypotheses
+# de format, toutes fausses, toutes validees par mes fixtures :
+#
+#   1. pastille et net sur la MEME ligne — ils sont sur plusieurs ;
+#   2. `[^)]*` entre les deux — le bloc contient `(at -3.15 2.3 180)`, dont
+#      la parenthese arretait le motif ;
+#   3. `(property "Reference" "U1")` — les boards du depot ecrivent
+#      `(fp_text reference "U1"`, la forme KiCad anterieure.
+#
+# Une fixture ecrite de memoire ne peut pas contredire l hypothese qui l a
+# produite. Ces blocs-ci sont COPIES d un board reel.
+# ---------------------------------------------------------------------------
+
+_BLOC_REEL_ANCIEN = '''\t(footprint "Package_QFP:LQFP-48_7x7mm_P0.5mm"
+\t\t(layer "F.Cu")
+\t\t(fp_text reference "U2"
+\t\t\t(at 0 -5.5)
+\t\t\t(layer "F.SilkS")
+\t\t)
+%s\t)
+'''
+
+_PAD_REEL = '''\t\t(pad "%d" smd rect
+\t\t\t(at -3.15 %d.3 180)
+\t\t\t(size 2 1.5)
+\t\t\t(layers "F.Cu" "F.Paste" "F.Mask")
+\t\t\t(net %d "%s")
+\t\t)
+'''
+
+
+def _board_format_reel(n: int) -> bytes:
+    """Deux boitiers au format REEL, dont un fine-pitch."""
+    pads_u2 = "".join(_PAD_REEL % (i + 1, i % 9, i + 1, "SIG%d" % (i + 1))
+                      for i in range(n))
+    pads_j1 = "".join(_PAD_REEL % (i + 1, i % 9, i + 1, "SIG%d" % (i + 1))
+                      for i in range(n))
+    return ("(kicad_pcb\n"
+            + _BLOC_REEL_ANCIEN % pads_u2
+            + _BLOC_REEL_ANCIEN.replace('"U2"', '"J1"') % pads_j1
+            + ")\n").encode()
+
+
+def test_le_format_reel_multi_ligne_est_reconnu():
+    """Pastille et net sur des lignes differentes, avec `(at ...)` entre eux."""
+    pads = _pads_signal_fine_pitch(_board_format_reel(20))
+    assert len(_de(pads, "U2")) == 20, "aucune pastille retenue sur un format reel"
+
+
+def test_la_reference_ancienne_forme_est_reconnue():
+    """`(fp_text reference "U2"` — la forme des boards du depot."""
+    pads = _pads_signal_fine_pitch(_board_format_reel(20))
+    assert {r for r, _ in pads} == {"U2", "J1"}
+
+
+def test_les_parentheses_internes_ne_coupent_pas_la_lecture():
+    """`(at -3.15 2.3 180)` figure entre le nom de la pastille et son net."""
+    board = _board_format_reel(18)
+    assert b"(at -3.15" in board
+    assert len(_de(_pads_signal_fine_pitch(board), "U2")) == 18

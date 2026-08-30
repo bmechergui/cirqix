@@ -1413,13 +1413,34 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
         return []
 
     def _pads(bloc):
-        return re.findall(r'\(pad "([^"]+)"[^)]*.*?\(net \d+ "([^"]*)"\)', bloc)
+        """(nom, net) de chaque pastille. Decoupage, pas regex globale.
+
+        ⚠️ Une regex « du nom au net » a echoue sur les VRAIS boards et n a
+        rien retenu : le bloc d une pastille tient sur PLUSIEURS lignes et
+        contient des parentheses internes (`(at -3.15 2.3 180)`) que le motif
+        `[^)]*` arretait net. Ma fixture, elle, tenait sur une seule ligne.
+        On decoupe donc par pastille et on lit son premier `(net ...)`.
+        """
+        trouves = []
+        for morceau in bloc.split('(pad "')[1:]:
+            nom = morceau.split('"', 1)[0]
+            m = re.search(r'\(net \d+ "([^"]*)"\)', morceau)
+            if m:
+                trouves.append((nom, m.group(1)))
+        return trouves
 
     # Nets presents sur au moins DEUX boitiers : les seuls a router.
     occurrences: dict = {}
     par_bloc = []
     for bloc in blocs:
-        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc)
+        # ⚠️ DEUX FORMES de reference selon la version KiCad, verifiees sur
+        # des boards reels du depot :
+        #     (property "Reference" "U1")   KiCad 8+
+        #     (fp_text reference "U1"       forme anterieure
+        # N accepter que la premiere rendait `None` sur tous les boards de
+        # `examples/`, donc AUCUNE pastille retenue et un fanout inerte.
+        ref = (re.search(r'\(property "Reference" "([^"]+)"', bloc)
+               or re.search(r'\(fp_text reference "([^"]+)"', bloc))
         pads = _pads(bloc)
         par_bloc.append((ref.group(1) if ref else "", pads))
         for net in {n for _, n in pads}:
