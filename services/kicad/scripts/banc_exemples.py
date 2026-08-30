@@ -12,8 +12,11 @@ annoncee routee et porter des connexions manquantes. On imprime les deux.
 from __future__ import annotations
 
 import base64
+import getpass
 import logging
 import json
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -26,6 +29,11 @@ _RACINE = next(
 sys.path.insert(0, str(_RACINE))
 
 _EXEMPLES = _RACINE / "examples"
+
+# ⚠️ La JVM peut mettre quelques secondes a rendre la main apres un SIGKILL
+# (2,4 Go a liberer). En dessous on declarerait vivante une JVM qui meurt ;
+# au-dela on ferait attendre le banc pour rien.
+_ATTENTE_MORT_JVM_S: float = 15.0
 
 
 # ⚠️ Sans cette configuration, les `logger.info` du service ne s ecrivent
@@ -170,46 +178,91 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
     }
 
 
+def _ps_brut() -> str:
+    """La table des processus, brute. Isole pour etre falsifiable en test."""
+    out = subprocess.run(["ps", "-eo", "pid,args"], check=True,
+                         capture_output=True, text=True, timeout=20)
+    return out.stdout
+
+
+def _jvm_freerouting_survivantes() -> list[str]:
+    """PID des JVM Freerouting encore VIVANTES.
+
+    ⚠️ Les zombies sont exclus : un `[java] <defunct>` ne consomme ni CPU ni
+    RAM, et il y en avait 41 dans le conteneur. Les compter ferait echouer le
+    banc pour rien.
+
+    ⚠️ Ne rattrape AUCUNE exception : `ps` injoignable veut dire « je n ai pas
+    pu regarder », pas « il n y a rien ». Rendre une liste vide ici serait le
+    rapport DRC vide lu « 0 erreur », une fois de plus.
+    """
+    vivantes = []
+    for ligne in _ps_brut().splitlines():
+        if "freerouting.jar" not in ligne or "<defunct>" in ligne:
+            continue
+        champs = ligne.split(None, 1)
+        if champs and champs[0].isdigit():
+            vivantes.append(champs[0])
+    return vivantes
+
+
 def _redemarrer_freerouting() -> None:
-    """Redemarre la JVM Freerouting AVANT chaque carte.
+    """Redemarre la JVM Freerouting AVANT chaque carte, et le VERIFIE.
 
     ⚠️ Elle se degrade, et c est MESURE. Meme carte `stm32-100`, meme code :
 
         JVM neuve, run isole        97 %, 96 %, 99 %  ->  100 % livre
         JVM de 2 h, 4e carte        38 %, 30 %, 11 %  ->  aucun board
 
-    La fuite est documentee — 400 Mo nominal, jusqu a 2,3 Go apres une journee
+    La fuite est documentee — 400 Mo nominal, jusqu a 2,4 Go apres une journee
     de jobs. Une passe qui durait 0,15 s en prend plusieurs minutes, et la
     detection de stagnation, qui compte le temps SANS PROGRES, coupe alors des
     tirages parfaitement vivants.
 
-    Sans ce redemarrage, un banc de sept cartes mesure surtout l usure de sa
-    propre JVM : les premieres cartes reussissent, les dernieres echouent, et
-    on impute au code ce qui appartient a l environnement.
+    ⚠️ CE REDEMARRAGE N A JAMAIS EU LIEU jusqu au 2026-08-30 :
 
-    Silencieux en cas d echec : le banc doit tourner meme sans droits.
+        pkill: killing pid 56869 failed: Operation not permitted
+
+    Le banc tourne en `cirqix`, la JVM tournait en `root`. L erreur etait avalee
+    par `check=False, capture_output=True`, et le message de succes s imprimait
+    quand meme — donc a chaque carte le banc AJOUTAIT une JVM. Etat trouve apres
+    sept cartes : une orpheline root a 550 % de CPU et 2,4 Go, swap sature. Le
+    banc de reference a mesure exactement l usure qu il devait supprimer.
+
+    ⚠️ Le silence etait DELIBERE (« doit tourner meme sans droits ») et c est
+    lui qui a cache le defaut une journee entiere. Une survivante leve
+    desormais : mieux vaut un banc arrete qu un banc qui mesure la JVM d hier.
+    Aucun `except Exception` ici — c est le silence qu on retire.
     """
-    import shutil
-    import subprocess
-    import time
-
     if not shutil.which("java"):
         return
-    try:
-        subprocess.run(["pkill", "-9", "-f", "freerouting.jar"],
-                       check=False, capture_output=True, timeout=20)
-        time.sleep(3)
-        Path("/tmp/freerouting").mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            ["java", "-jar", "/opt/freerouting/freerouting.jar",
-             "--api_server.enabled=true", "--user_data_path=/tmp/freerouting"],
-            cwd="/tmp/freerouting",
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True)
-        time.sleep(30)
-        print("  (JVM Freerouting redemarree)", flush=True)
-    except Exception as exc:
-        print("  (redemarrage JVM impossible : %s)" % exc, flush=True)
+
+    subprocess.run(["pkill", "-9", "-f", "freerouting.jar"],
+                   check=False, capture_output=True, timeout=20)
+
+    limite = time.time() + _ATTENTE_MORT_JVM_S
+    survivantes = _jvm_freerouting_survivantes()
+    while survivantes and time.time() < limite:
+        time.sleep(1.0)
+        survivantes = _jvm_freerouting_survivantes()
+
+    if survivantes:
+        raise RuntimeError(
+            "JVM Freerouting survivante(s) apres le pkill : PID %s. Le banc "
+            "tourne en %s et ne peut pas tuer un processus d un autre "
+            "utilisateur. Mesurer maintenant, c est mesurer l usure de la JVM "
+            "precedente — on arrete." % (", ".join(survivantes),
+                                         getpass.getuser()))
+
+    Path("/tmp/freerouting").mkdir(parents=True, exist_ok=True)
+    subprocess.Popen(
+        ["java", "-jar", "/opt/freerouting/freerouting.jar",
+         "--api_server.enabled=true", "--user_data_path=/tmp/freerouting"],
+        cwd="/tmp/freerouting",
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
+    time.sleep(30)
+    print("  (JVM Freerouting redemarree)", flush=True)
 
 
 def main(argv: list[str]) -> int:
