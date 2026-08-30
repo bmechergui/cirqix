@@ -256,3 +256,34 @@ def test_un_tirage_fige_ne_condamne_pas_le_palier():
         "un tirage fige alimente le compteur qui abandonne les tirages "
         "restants : il condamne le palier au lieu du seul tirage")
     assert "continue" in bloc, "le tirage suivant doit etre tente"
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ Le plafond de temps compte le temps SANS PROGRES, pas le temps total.
+#
+# Mesure du 2026-08-30, nucleo-f401 (61 nets, 55 composants), palier 4 couches :
+#
+#     tirage 1 -> 87 %
+#     tirage 2 -> 39 %
+#     tirage 3 -> 3 %   « 1 passe sans progres, 59 non routes,
+#                         plafond de temps atteint »
+#
+# UNE seule passe en 18 minutes : sur ce board une passe dure plusieurs
+# minutes, et mon plafond — compte depuis le DEBUT de l attente — a coupe un
+# routage qui n avait meme pas fini son premier passage. 3 % n est pas un
+# verdict, c est un abandon premature.
+#
+# Le compteur se remet donc a zero a chaque baisse du nombre de nets non
+# routes. Mon propre commentaire disait deja « sans progres » ; le code, non.
+# ---------------------------------------------------------------------------
+
+def test_le_plafond_compte_le_temps_SANS_PROGRES():
+    import inspect
+    from routers.routing import _route_with_freerouting_api
+    src = inspect.getsource(_route_with_freerouting_api)
+    i = src.index("trop_long = ")
+    avant = src[:i]
+    assert "depart_attente = time.time()" in avant.split("while", 1)[-1], (
+        "le compteur n est jamais remis a zero : le plafond mesure le temps "
+        "TOTAL et coupe un routage legitimement long")
+    assert "dernier_unrouted" in avant, "aucun suivi du progres"

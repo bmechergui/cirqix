@@ -515,6 +515,7 @@ def _route_with_freerouting_api(
 
         deadline = time.time() + timeout_s
         depart_attente = time.time()
+        dernier_unrouted = 0
         short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
             status = _api("GET", f"{pre}/jobs/{job_id}")
@@ -553,6 +554,16 @@ def _route_with_freerouting_api(
                 # presque rien ; seul l HORLOGE tranche alors, et elle tranche
                 # toujours. Sans elle, « ne jamais couper » recreerait les
                 # 40 minutes sur une carte a 2,5 s la passe.
+                # ⚠️ Le plafond compte le temps SANS PROGRES, pas le temps
+                # total. Compte depuis le debut, il coupe un routage
+                # legitimement long — et il l a fait : un tirage de la Nucleo a
+                # ete abandonne apres UNE passe, sur un board de 61 nets ou une
+                # passe dure plusieurs minutes. « 3 % » n etait pas un verdict,
+                # c etait un abandon premature. Mon propre commentaire disait
+                # deja « sans progres » ; le code, non.
+                if unrouted and unrouted != dernier_unrouted:
+                    dernier_unrouted = unrouted
+                    depart_attente = time.time()
                 trop_long = time.time() - depart_attente > _PLAFOND_ATTENTE_S
                 if (fenetre and plat >= fenetre) or (trop_long and plat):
                     logger.warning(
