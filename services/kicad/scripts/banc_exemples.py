@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 _RACINE = next(
     (p for p in [Path(__file__).resolve().parents[1], Path("/app"), Path.cwd()]
@@ -273,6 +274,47 @@ def _redemarrer_freerouting() -> None:
     print("  (JVM Freerouting redemarree)", flush=True)
 
 
+def _fichier_de_cas(dossier: Path) -> Optional[Path]:
+    """Le fichier d entree d un cas, quel que soit son nom.
+
+    ⚠️ Deux noms coexistent dans `examples/`, et ils portent la MEME chose :
+
+        input/circuit.json   nets = [{name, pins}]
+        input/schema.json    nets = ["VCC", ...]  +  connections = [{name, pins}]
+
+    Le second est deja la forme que ce banc CONSTRUIT pour appeler le service.
+    Ne reconnaitre que le premier ecartait `led-blinker-full-pipeline` — le cas
+    de reference du pipeline complet selon CLAUDE.md — sans rien dire.
+    """
+    for nom in ("circuit.json", "schema.json"):
+        f = dossier / "input" / nom
+        if f.is_file():
+            return f
+    return None
+
+
+def _pourquoi_ecarte(dossier: Path) -> str:
+    """Motif LISIBLE d un cas non mesurable — jamais un silence."""
+    entree = dossier / "input"
+    if not entree.is_dir():
+        return "pas de dossier input/"
+    presents = sorted(f.name for f in entree.iterdir() if f.is_file())
+    if not presents:
+        return "input/ vide"
+    return "input/ ne contient que : %s" % ", ".join(presents[:4])
+
+
+def _normaliser(brut: dict) -> dict:
+    """Ramene les deux formats d entree a une seule forme : nets = [{name, pins}].
+
+    `schema.json` separe deja les noms (`nets`) des liaisons (`connections`) ;
+    `circuit.json` met tout dans `nets`. On rend la forme detaillee.
+    """
+    if isinstance(brut.get("connections"), list):
+        return {**brut, "nets": brut["connections"]}
+    return brut
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `examples/` n est PAS monte dans le conteneur : il est cuit dans
     # l image. On accepte donc une racine d exemples explicite, sinon le banc
@@ -285,22 +327,42 @@ def main(argv: list[str]) -> int:
         if arg.startswith("--tirages="):
             tirages = int(arg.split("=", 1)[1])
             argv.remove(arg)
-    cas = argv[1:] or [d.name for d in sorted((_EXEMPLES).iterdir())
-                       if (d / "input" / "circuit.json").is_file()]
+    if argv[1:]:
+        cas = argv[1:]
+    else:
+        cas, ecartes = [], []
+        for d in sorted(_EXEMPLES.iterdir()):
+            if not d.is_dir():
+                continue
+            if _fichier_de_cas(d):
+                cas.append(d.name)
+            else:
+                ecartes.append((d.name, _pourquoi_ecarte(d)))
+        # ⚠️ DIRE ce qu on n a pas mesure. La decouverte filtrait EN SILENCE
+        # sur `input/circuit.json` : `led-blinker-full-pipeline` fournit un
+        # `input/schema.json` — deja au bon format, seulement sous un autre nom
+        # — et n a donc JAMAIS ete mesure par ce banc, alors que CLAUDE.md le
+        # presente comme le cas de reference du pipeline complet. Personne ne
+        # pouvait le voir : un banc qui omet une carte rend exactement la meme
+        # sortie qu un banc qui n en a que six.
+        for nom, raison in ecartes:
+            print("  (ecarte : %-26s %s)" % (nom, raison), flush=True)
     print(f"{'cas':<18}{'comp':>5}{'couches':>8}{'%':>5}{'manq':>6}"
           f"{'err':>5}{'warn':>6}{'seg':>6}{'GND':>5}{'duree':>8}")
     resultats = {}
     for nom in cas:
-        f = _EXEMPLES / nom / "input" / "circuit.json"
-        if not f.is_file():
+        f = _fichier_de_cas(_EXEMPLES / nom)
+        if f is None:
             # ⚠️ Ne PAS sauter en silence. Le 2026-08-27, trois lancements de
             # suite n ont produit que la ligne d en-tete : la racine d exemples
             # etait la mauvaise, aucun cas ne correspondait, et le banc sortait
             # en rc=0 comme s il avait travaille. J ai conclu deux fois que le
             # processus « mourait ».
-            print("cas introuvable : %s" % f, file=sys.stderr)
+            print("cas introuvable : %s (%s)"
+                  % (_EXEMPLES / nom, _pourquoi_ecarte(_EXEMPLES / nom)),
+                  file=sys.stderr)
             continue
-        circuit = json.loads(f.read_text(encoding="utf-8"))
+        circuit = _normaliser(json.loads(f.read_text(encoding="utf-8")))
         _redemarrer_freerouting()
         try:
             r = _passer(circuit, _EXEMPLES / nom / "output", tirages)
