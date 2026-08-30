@@ -3145,5 +3145,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
     # et livrer le dernier essai plutot que le meilleur serait une regression
     # silencieuse.
+    # ⚠️ NE JAMAIS FABRIQUER DE BOARD ICI. `meilleur` peut etre une reponse
+    # SANS board — un palier « aucun moteur » rend `kicad_pcb_b64 = None`, et
+    # s il est le seul alle a son terme, c est lui qui devient le meilleur.
+    #
+    # J ai voulu rendre le board d ENTREE dans ce cas, pour eviter le plantage
+    # de `banc_exemples.py` sur `base64.b64decode(None)` (2026-08-30). C etait
+    # une ERREUR, et `test_aucun_routeur_utilisable_reste_un_echec_franc` l a
+    # refusee a juste titre : un appelant qui ignore `skipped` expedierait une
+    # carte NON ROUTEE en fabrication, en silence. Un plantage, lui, s entend.
+    #
+    # L echec reste donc franc. C est a l APPELANT de traiter `skipped`.
     assert meilleur is not None  # `_layer_ladder` rend toujours au moins [2]
     return meilleur

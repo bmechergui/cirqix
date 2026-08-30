@@ -377,3 +377,29 @@ def test_le_suffixe_sans_violation_reste_reconnu():
     sans = _LIGNE_REELLE.replace(" and 1 violation", "")
     m = _LIGNE_PASSE_RE.search(sans)
     assert m is not None and m.group(4) == "51"
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ L ECHEC RESTE FRANC — et c est une garde EXISTANTE qui m a corrige.
+#
+# Quand tous les paliers stagnent, `route_auto` rend une reponse SANS board.
+# `banc_exemples.py` plantait alors sur `base64.b64decode(None)`, et j ai
+# voulu rendre le board d ENTREE pour eviter le plantage.
+#
+# `test_aucun_routeur_utilisable_reste_un_echec_franc` l a refuse, et il avait
+# raison : un appelant qui ignore `skipped` expedierait une carte NON ROUTEE
+# en fabrication, en SILENCE. Un plantage, lui, s entend. Entre les deux
+# defaillances, la bruyante est la bonne.
+#
+# Le defaut etait donc dans le BANC, qui supposait un board sans le verifier.
+# ---------------------------------------------------------------------------
+
+
+def test_l_echec_reste_franc_sans_board_fabrique():
+    import inspect
+    from routers.routing import route_auto
+    src = inspect.getsource(route_auto)
+    fin = src[src.rindex("assert meilleur is not None"):]
+    assert "base64.b64encode(pcb_bytes)" not in fin, (
+        "un board d entree rendu ici passerait pour un routage aupres d un "
+        "appelant qui ignore `skipped`")

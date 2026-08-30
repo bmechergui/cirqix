@@ -114,7 +114,32 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
     # toujours de 2 et s arrete au premier palier qui route a 100 %. Passer 2
     # ici donnait une echelle a UN barreau et interdisait toute escalade —
     # c est ce qui bloquait l ESP32 a 25 % de routage.
-    route = route_auto(RouteAutoRequest(kicad_pcb_b64=_b64(board), layers=8, timeout_s=1800))
+    # ⚠️ Le budget suit la TAILLE de la carte. Il valait 1800 s pour toutes.
+    # Mesure du 2026-08-29 : dix-sept composants routent en 300 s et laissent
+    # de quoi faire neuf tirages ; cent composants consomment les 1800 s au
+    # PREMIER tirage, donc sans re-tirage ni escalade — la carte sortait a
+    # 59 %, contre 100 % pour les six autres.
+    #
+    # Partager le budget entre les essais a ete essaye et s est revele
+    # desastreux (tous les paliers a 0 %) : un essai tronque ne route rien.
+    # C est le TOTAL qu il faut donner, pas le decouper.
+    # ⚠️ Plafonne a 3600 s, borne de `RouteAutoRequest.timeout_s` — elle-meme
+    # alignee sur `_ROUTE_TIMEOUT_S` du routeur. Un budget de 6000 s a ete
+    # refuse par 422 : la frontiere HTTP ne doit jamais etre plus large que ce
+    # que le routeur sait consommer, et la deplacer desynchroniserait la
+    # chaine (defaut « quatre frontieres » documente dans CLAUDE.md).
+    budget = min(3600, max(1800, 60 * len(circuit["components"])))
+    route = route_auto(RouteAutoRequest(kicad_pcb_b64=_b64(board), layers=8,
+                                        timeout_s=budget))
+    # ⚠️ `route_auto` peut ne rendre AUCUN board — c est son contrat quand tous
+    # les paliers ont stagne ou echoue, et c est VOULU : rendre le board
+    # d entree ferait passer une carte non routee pour un routage aupres d un
+    # appelant distrait. Le banc plantait ici sur `b64decode(None)`, ce qui
+    # sortait « ECHEC [exception] argument should be a bytes-like object ».
+    # Un echec attendu doit se lire comme un echec, pas comme un bug.
+    if not route.kicad_pcb_b64:
+        return {"etape": "routage",
+                "erreur": route.warning or "aucun board rendu (tous paliers en echec)"}
     board = base64.b64decode(route.kicad_pcb_b64)
 
     sortie.mkdir(parents=True, exist_ok=True)
@@ -145,6 +170,48 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
     }
 
 
+def _redemarrer_freerouting() -> None:
+    """Redemarre la JVM Freerouting AVANT chaque carte.
+
+    ⚠️ Elle se degrade, et c est MESURE. Meme carte `stm32-100`, meme code :
+
+        JVM neuve, run isole        97 %, 96 %, 99 %  ->  100 % livre
+        JVM de 2 h, 4e carte        38 %, 30 %, 11 %  ->  aucun board
+
+    La fuite est documentee — 400 Mo nominal, jusqu a 2,3 Go apres une journee
+    de jobs. Une passe qui durait 0,15 s en prend plusieurs minutes, et la
+    detection de stagnation, qui compte le temps SANS PROGRES, coupe alors des
+    tirages parfaitement vivants.
+
+    Sans ce redemarrage, un banc de sept cartes mesure surtout l usure de sa
+    propre JVM : les premieres cartes reussissent, les dernieres echouent, et
+    on impute au code ce qui appartient a l environnement.
+
+    Silencieux en cas d echec : le banc doit tourner meme sans droits.
+    """
+    import shutil
+    import subprocess
+    import time
+
+    if not shutil.which("java"):
+        return
+    try:
+        subprocess.run(["pkill", "-9", "-f", "freerouting.jar"],
+                       check=False, capture_output=True, timeout=20)
+        time.sleep(3)
+        Path("/tmp/freerouting").mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            ["java", "-jar", "/opt/freerouting/freerouting.jar",
+             "--api_server.enabled=true", "--user_data_path=/tmp/freerouting"],
+            cwd="/tmp/freerouting",
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        time.sleep(30)
+        print("  (JVM Freerouting redemarree)", flush=True)
+    except Exception as exc:
+        print("  (redemarrage JVM impossible : %s)" % exc, flush=True)
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `examples/` n est PAS monte dans le conteneur : il est cuit dans
     # l image. On accepte donc une racine d exemples explicite, sinon le banc
@@ -173,6 +240,7 @@ def main(argv: list[str]) -> int:
             print("cas introuvable : %s" % f, file=sys.stderr)
             continue
         circuit = json.loads(f.read_text(encoding="utf-8"))
+        _redemarrer_freerouting()
         try:
             r = _passer(circuit, _EXEMPLES / nom / "output", tirages)
         except Exception as exc:
