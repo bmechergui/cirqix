@@ -118,6 +118,14 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
     board = base64.b64decode(place_auto(
         AutoPlacementRequest(kicad_pcb_b64=_b64(board))).kicad_pcb_b64)
 
+    # ⚠️ CONSERVER le board PLACE, pas seulement le route. Sans lui, toute
+    # experience comparant deux facons de router compare en realite deux
+    # PLACEMENTS — or le placement est stochastique (mesure : 6, 8 et 12
+    # connexions manquantes selon le tirage sur la meme carte). On ne pourrait
+    # imputer aucun ecart a la variable etudiee.
+    sortie.mkdir(parents=True, exist_ok=True)
+    (sortie / "2_placement.kicad_pcb").write_bytes(board)
+
     # ⚠️ `layers` est le PLAFOND, pas le palier vise : le service part
     # toujours de 2 et s arrete au premier palier qui route a 100 %. Passer 2
     # ici donnait une echelle a UN barreau et interdisait toute escalade —
