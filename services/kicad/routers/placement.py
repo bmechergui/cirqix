@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -110,6 +110,26 @@ class AutoPlacementResponse(BaseModel):
     # Defaut a 0 : un chemin qui ne sait pas compter ne doit pas faire
     # echouer la validation.
     conflits_restants: int = 0
+
+    # ⚠️ Longueur de fil du placement retenu, hors nets de plan — CALCULEE
+    # depuis toujours (`_longueur_de_fil_mm`), jamais EXPOSEE : pydantic
+    # l ignorait faute de champ declare, et l appelant ne pouvait donc pas
+    # savoir quel placement il venait de recevoir.
+    #
+    # C est la seule mesure de QUALITE du placement dont on dispose, et son
+    # absence rendait invisible l asymetrie du pipeline :
+    #
+    #     routage    3 tirages, on garde le MEILLEUR des trois
+    #     placement  on s arrete au PREMIER tirage sans conflit
+    #
+    # Or « sans conflit » ne veut pas dire « routable » : les six executions
+    # de `stm32-100` avaient toutes un placement propre et ont route a 48, 70,
+    # 99 et 100 %. Exposer `fil_mm` permet de CORRELER la qualite du placement
+    # au resultat du routage, au lieu de supposer. On mesure avant de changer.
+    #
+    # Defaut None : un chemin qui n a pas su la calculer ne doit pas faire
+    # croire a une longueur nulle — « pas mesure » n est pas « zero ».
+    fil_mm: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
