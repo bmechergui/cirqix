@@ -1,0 +1,120 @@
+"""Fanout d echappement des pastilles SIGNAL d un boitier fine-pitch.
+
+⚠️ Diagnostic convergent de TROIS sources independantes, 2026-08-30 :
+
+  - le JOURNAL du routeur : sur trois jobs de `stm32-100`, UN SEUL composant
+    porte 20 a 28 % des echecs de connexion, les 85 autres 2 % chacun. C est
+    U1, le LQFP-48, et sa part egale sa part des connexions ;
+  - GROK : « 36 signaux d un pas de 0,5 mm sont laisses a Freerouting sans
+    echappement impose ; reparez ca avant de retoucher la surface » ;
+  - OPENCODE : au pas de 0,5 mm avec des pastilles de 0,3, il reste 0,2 mm
+    entre deux pastilles — avec le degagement JLCPCB, AUCUNE piste n y passe.
+
+Et la mesure tranche contre l hypothese des couches : `stm32-100` rend 99 % a
+2 couches et 87 % a 4. Ajouter du cuivre n aide pas — le goulot est LOCAL,
+sous le boitier.
+
+⚠️ La reservation existante ne sert QUE le plan de masse (`_vias_a_reserver`,
+broches GND que le plan n atteint pas). Grok l a souligne : reserver des vias
+pour le PLAN n est pas echapper les SIGNAUX, et cela peut meme occuper les
+sites dont les signaux ont besoin.
+"""
+from __future__ import annotations
+
+from routers.routing import (_bloc_wiring, _pads_signal_fine_pitch,
+                             _PADS_FINE_PITCH)
+
+
+def _board(n_signal: int, n_gnd: int = 4, n_orphelins: int = 0) -> bytes:
+    """U1 fine-pitch, et un connecteur J1 qui FERME chaque net signal.
+
+    ⚠️ Sans J1, chaque SIGn ne toucherait qu UN boitier : ce seraient des
+    orphelins, et le code aurait raison de les ecarter. Ma premiere fixture
+    faisait cette erreur et accusait le code.
+    """
+    u1, j1 = [], []
+    k = 1
+    for i in range(n_signal):
+        u1.append('    (pad "%d" smd rect (at %d 0) (size 1 1) '
+                  '(layers "F.Cu") (net %d "SIG%d"))' % (k, k, i + 1, i + 1))
+        j1.append('    (pad "%d" thru_hole circle (at %d 0) (size 1 1) '
+                  '(layers "F.Cu") (net %d "SIG%d"))' % (k, k, i + 1, i + 1))
+        k += 1
+    for _ in range(n_gnd):
+        u1.append('    (pad "%d" smd rect (at %d 0) (size 1 1) '
+                  '(layers "F.Cu") (net 99 "GND"))' % (k, k))
+        j1.append('    (pad "%d" thru_hole circle (at %d 0) (size 1 1) '
+                  '(layers "F.Cu") (net 99 "GND"))' % (k, k))
+        k += 1
+    for i in range(n_orphelins):
+        u1.append('    (pad "%d" smd rect (at %d 0) (size 1 1) '
+                  '(layers "F.Cu") (net %d "Net-(U1-Pad%d)"))'
+                  % (k, k, 500 + i, k))
+        k += 1
+    return (
+        "(kicad_pcb\n"
+        '  (footprint "Package_QFP:LQFP-48_7x7mm_P0.5mm" (at 50 50)\n'
+        '    (property "Reference" "U1" (at 0 0 0))\n'
+        + "\n".join(u1) + "\n  )\n"
+        '  (footprint "Connector:PinHeader_2x20" (at 10 10)\n'
+        '    (property "Reference" "J1" (at 0 0 0))\n'
+        + "\n".join(j1) + "\n  )\n)"
+    ).encode()
+
+
+def _de(pads, ref):
+    return [p for r, p in pads if r == ref]
+
+
+class TestSelection:
+    def test_les_pastilles_signal_du_boitier_dense_sont_retenues(self):
+        assert len(_de(_pads_signal_fine_pitch(_board(20)), "U1")) == 20
+
+    def test_les_nets_confies_au_plan_sont_exclus(self):
+        """GND sort par le plan, pas par un via d echappement de signal."""
+        pads = _pads_signal_fine_pitch(_board(n_signal=20, n_gnd=6))
+        assert len(_de(pads, "U1")) == 20
+
+    def test_les_pastilles_orphelines_sont_exclues(self):
+        """`Net-(U1-Pad7)` ne mene nulle part : rien a echapper.
+
+        Meme piege que pour le plancher de couches — une pastille n est pas
+        une liaison.
+        """
+        pads = _pads_signal_fine_pitch(_board(n_signal=20, n_orphelins=5))
+        assert len(_de(pads, "U1")) == 20
+
+    def test_un_boitier_peu_dense_ne_declenche_rien(self):
+        assert _pads_signal_fine_pitch(_board(n_signal=3, n_gnd=1)) == []
+
+    def test_le_seuil_suit_celui_du_placement(self):
+        """Meme critere que `_dense_part_refs` : un connecteur a large pas n a
+        pas de probleme d echappement."""
+        assert _PADS_FINE_PITCH == 16
+
+    def test_un_board_illisible_ne_leve_pas(self):
+        assert _pads_signal_fine_pitch(b"pas un board") == []
+
+
+class TestWiringParNet:
+    def test_chaque_via_porte_son_propre_net(self):
+        """⚠️ Le bloc DSN n acceptait qu UN net — celui du plan.
+
+        Pour un fanout de signaux, chaque via appartient a un net different :
+        les declarer tous sur GND creerait autant de courts-circuits.
+        """
+        vias = [{"via_x": 1_000_000, "via_y": 2_000_000, "net": "SIG1"},
+                {"via_x": 3_000_000, "via_y": 4_000_000, "net": "SIG2"}]
+        bloc = _bloc_wiring(vias, "GND")
+        assert "(net SIG1)" in bloc
+        assert "(net SIG2)" in bloc
+        assert "(net GND)" not in bloc
+
+    def test_le_net_global_reste_le_repli(self):
+        """Les vias du plan n ont pas de net propre : ils gardent GND."""
+        assert "(net GND)" in _bloc_wiring([(1_000_000, 2_000_000)], "GND")
+
+    def test_le_via_reste_protege(self):
+        """Sans `type protect`, le routeur deplace ou supprime le via."""
+        bloc = _bloc_wiring([{"via_x": 0, "via_y": 0, "net": "SIG1"}], "GND")
+        assert "(type protect)" in bloc

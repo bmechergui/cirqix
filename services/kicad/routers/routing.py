@@ -1341,10 +1341,21 @@ def _bloc_wiring(vias: list, net: str) -> str:
     if not vias:
         return ""
     lignes = []
-    for x_nm, y_nm in vias:
+    for via in vias:
+        # ⚠️ Un via peut porter SON PROPRE net. Le bloc n en acceptait qu un —
+        # celui du plan — ce qui convenait tant qu on ne reservait que des
+        # sorties GND. Un fanout de SIGNAUX declare des vias appartenant chacun
+        # a un net different : les mettre tous sur GND creerait autant de
+        # courts-circuits.
+        if isinstance(via, dict):
+            x_nm, y_nm = via["via_x"], via["via_y"]
+            net_via = via.get("net") or net
+        else:
+            x_nm, y_nm = via
+            net_via = net
         lignes.append(
             '    (via "%s" %.1f %.1f (net %s) (type protect))'
-            % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0, net)
+            % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0, net_via)
         )
     return chr(10).join(lignes)
 
@@ -1372,6 +1383,59 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str) -> str:
         logger.warning("DSN au bloc (wiring) non ferme — reservation abandonnee")
         return dsn_text
     return dsn_text[:i] + "(wiring" + chr(10) + bloc + chr(10) + "  " + dsn_text[j:]
+
+# Pastilles minimales pour qu un boitier compte comme fine-pitch. Meme
+# critere que `_dense_part_refs` cote placement : un connecteur a large pas n a
+# pas de probleme d echappement.
+_PADS_FINE_PITCH: int = 16
+
+
+def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
+    """Pastilles SIGNAL a echapper, des boitiers fine-pitch : ``[(ref, pad)]``.
+
+    ⚠️ La reservation existante ne sert QUE le plan de masse — les broches GND
+    que le plan n atteint pas. Grok l a souligne : reserver des vias pour le
+    PLAN n est pas echapper les SIGNAUX, et cela peut meme occuper les sites
+    dont les signaux ont besoin.
+
+    ⚠️ Sont exclus : les nets confies au plan (ils sortent par-dessous) et les
+    pastilles ORPHELINES, dont le net ne touche qu un seul boitier — une
+    pastille n est pas une liaison, meme piege que pour le plancher de couches.
+
+    Rend [] au moindre doute : le fanout est un BONUS, jamais un passage oblige.
+    """
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return []
+    blocs = re.split(r"\(footprint\b", texte)[1:]
+    if not blocs:
+        return []
+
+    def _pads(bloc):
+        return re.findall(r'\(pad "([^"]+)"[^)]*.*?\(net \d+ "([^"]*)"\)', bloc)
+
+    # Nets presents sur au moins DEUX boitiers : les seuls a router.
+    occurrences: dict = {}
+    par_bloc = []
+    for bloc in blocs:
+        ref = re.search(r'\(property "Reference" "([^"]+)"', bloc)
+        pads = _pads(bloc)
+        par_bloc.append((ref.group(1) if ref else "", pads))
+        for net in {n for _, n in pads}:
+            occurrences[net] = occurrences.get(net, 0) + 1
+    liaisons = {n for n, k in occurrences.items() if k >= 2 and n}
+
+    cibles = []
+    for ref, pads in par_bloc:
+        if not ref or len(pads) < _PADS_FINE_PITCH:
+            continue
+        for nom, net in pads:
+            if net in _NETS_CONFIES_AU_PLAN or net not in liaisons:
+                continue
+            cibles.append((ref, nom))
+    return cibles
+
 
 def _vias_a_reserver(pcb_bytes: bytes) -> list:
     """Positions de via a reserver, calculees sur le board PLACE.
