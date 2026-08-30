@@ -3156,5 +3156,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # carte NON ROUTEE en fabrication, en silence. Un plantage, lui, s entend.
     #
     # L echec reste donc franc. C est a l APPELANT de traiter `skipped`.
-    assert meilleur is not None  # `_layer_ladder` rend toujours au moins [2]
+    # ⚠️ Un `assert` vivait ici, avec ce commentaire : « `_layer_ladder` rend
+    # toujours au moins [2] ». C est vrai des PALIERS, faux des RESULTATS — un
+    # tirage fige n en produit aucun. Quand TOUS stagnent, `meilleur` reste
+    # None et l assertion levait une `AssertionError` AU MESSAGE VIDE.
+    #
+    # Mesure du 2026-08-30, `nucleo-f401` : « escalade arretee — 7 paliers sans
+    # gain », puis « ECHEC [exception] » et rien d autre. Une assertion qui
+    # protege un invariant faux ne protege rien : elle transforme un echec
+    # previsible en panne muette.
+    #
+    # On rend donc l echec FRANC que reclame
+    # `test_aucun_routeur_utilisable_reste_un_echec_franc` : pas de board,
+    # `skipped`, 0 %. L appelant sait le traiter.
+    if meilleur is None:
+        logger.error(
+            "route_auto: aucun palier n a rendu de resultat — tous les tirages "
+            "ont stagne ou echoue")
+        return RouteAutoResponse(
+            routed_percent=0, layers=req.layers, skipped=True,
+            warning="tous les tirages ont stagne ou echoue — aucun routage")
     return meilleur

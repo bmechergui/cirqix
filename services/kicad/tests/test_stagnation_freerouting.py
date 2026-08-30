@@ -399,7 +399,39 @@ def test_l_echec_reste_franc_sans_board_fabrique():
     import inspect
     from routers.routing import route_auto
     src = inspect.getsource(route_auto)
-    fin = src[src.rindex("assert meilleur is not None"):]
+    fin = src[src.rindex("if meilleur is None:"):]
     assert "base64.b64encode(pcb_bytes)" not in fin, (
         "un board d entree rendu ici passerait pour un routage aupres d un "
         "appelant qui ignore `skipped`")
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ Une assertion qui protege un invariant FAUX ne protege rien.
+#
+# `assert meilleur is not None  # _layer_ladder rend toujours au moins [2]` :
+# vrai des PALIERS, faux des RESULTATS — un tirage fige n en produit aucun.
+#
+# Mesure du 2026-08-30 sur `nucleo-f401` : tous les tirages ont stagne,
+# « escalade arretee — 7 paliers sans gain », puis « ECHEC [exception] » et
+# RIEN d autre — une `AssertionError` au message vide, impossible a
+# diagnostiquer. L assertion transformait un echec previsible en panne muette.
+# ---------------------------------------------------------------------------
+
+def test_aucune_assertion_ne_garde_le_resultat_du_routage():
+    import inspect
+    from routers.routing import route_auto
+    src = inspect.getsource(route_auto)
+    assert "assert meilleur is not None" not in src, (
+        "un tirage fige ne produit aucun resultat : l assertion levera une "
+        "AssertionError au message vide au lieu d un echec lisible")
+
+
+def test_tous_les_tirages_figes_donnent_un_echec_lisible():
+    import inspect
+    from routers.routing import route_auto
+    src = inspect.getsource(route_auto)
+    i = src.index("if meilleur is None:")
+    bloc = src[i:i + 700]
+    assert "skipped=True" in bloc
+    assert "routed_percent=0" in bloc
+    assert "warning=" in bloc, "un echec muet ne se diagnostique pas"

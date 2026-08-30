@@ -244,7 +244,19 @@ def main(argv: list[str]) -> int:
         try:
             r = _passer(circuit, _EXEMPLES / nom / "output", tirages)
         except Exception as exc:
-            r = {"etape": "exception", "erreur": str(exc)[:90]}
+            # ⚠️ Le TYPE et la PILE, pas seulement le message. Une exception au
+            # message vide sortait « ECHEC [exception] » et rien d autre —
+            # mesure du 2026-08-30 sur `nucleo-f401`, impossible a diagnostiquer.
+            # Un rapport d echec qui ne dit pas ce qui a echoue ne vaut rien.
+            import traceback
+            trace = traceback.format_exc().strip().splitlines()
+            derniere = next((l.strip() for l in reversed(trace)
+                             if l.strip() and not l.strip().startswith("File ")), "")
+            r = {"etape": "exception",
+                 "erreur": "%s: %s" % (type(exc).__name__,
+                                       str(exc)[:70] or derniere[:70])}
+            print("  trace : " + " | ".join(l.strip() for l in trace[-4:]),
+                  file=sys.stderr, flush=True)
         resultats[nom] = r
         if "erreur" in r:
             print(f"{nom:<18} ECHEC [{r.get('etape')}] {r['erreur'][:60]}", flush=True)
