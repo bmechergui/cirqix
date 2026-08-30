@@ -1437,6 +1437,43 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
     return cibles
 
 
+def _vias_signaux_a_reserver(pcb_bytes: bytes) -> list:
+    """Vias d echappement pour les pastilles SIGNAL des boitiers fine-pitch.
+
+    Meme mecanique que la reservation du plan — `plan_escape` calcule les
+    positions sur le board PLACE, avant routage, tant que la place existe
+    encore — mais sur d autres pastilles et avec un net PAR VIA.
+
+    Rend [] au moindre echec : le fanout est un BONUS, jamais un passage
+    oblige. Sans lui le routage se deroule comme avant.
+    """
+    cibles = _pads_signal_fine_pitch(pcb_bytes)
+    if not cibles:
+        return []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree = Path(tmp) / "in.kicad_pcb"
+            resultat = Path(tmp) / "r.json"
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "plan_escape",
+                "pcb": str(entree),
+                "result": str(resultat),
+                "pads": json.dumps(cibles),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+            vias = json.loads(resultat.read_text(encoding="utf-8")).get("vias") or []
+        if vias:
+            logger.info(
+                "fanout signal : %d via(s) d echappement reserves sous le(s) "
+                "boitier(s) fine-pitch, sur %d pastille(s) visees",
+                len(vias), len(cibles))
+        return vias
+    except Exception as exc:
+        logger.warning("fanout signal impossible (%s) — routage sans lui", exc)
+        return []
+
+
 def _vias_a_reserver(pcb_bytes: bytes) -> list:
     """Positions de via a reserver, calculees sur le board PLACE.
 
@@ -2886,6 +2923,25 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # Specctra, qui efface tout ce qui le precede.
         global _VIAS_RESERVES
         _VIAS_RESERVES = _vias_a_reserver(etendu) if _NETS_CONFIES_AU_PLAN else []
+
+        # ⚠️ FANOUT DES SIGNAUX — distinct de la reservation ci-dessus,
+        # qui ne sert QUE le plan de masse. Grok l a souligne : reserver
+        # des vias pour le PLAN n est pas echapper les SIGNAUX, et cela
+        # peut meme occuper les sites dont les signaux ont besoin.
+        #
+        # Au pas de 0,5 mm avec des pastilles de 0,3, il reste 0,2 mm
+        # entre deux pastilles : avec le degagement JLCPCB, AUCUNE piste
+        # n y passe (analyse OpenCode). Les 36 signaux du LQFP-48 doivent
+        # donc sortir PAR-DESSOUS. On pose le via avant le routage et le
+        # routeur travaille de via a via — ce qu il sait bien mieux faire.
+        #
+        # ⚠️ Le journal designe ce boitier sans ambiguite : un seul
+        # composant porte 20 a 28 % des echecs de connexion, les 85
+        # autres 2 % chacun, et sa part egale sa part des connexions.
+        #
+        # ⚠️ Ce n est PAS un manque de couches : `stm32-100` rend 99 % a
+        # 2 couches et 87 % a 4. Le goulot est LOCAL.
+        _VIAS_RESERVES = _VIAS_RESERVES + _vias_signaux_a_reserver(etendu)
 
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),

@@ -118,3 +118,40 @@ class TestWiringParNet:
         """Sans `type protect`, le routeur deplace ou supprime le via."""
         bloc = _bloc_wiring([{"via_x": 0, "via_y": 0, "net": "SIG1"}], "GND")
         assert "(type protect)" in bloc
+
+
+# ---------------------------------------------------------------------------
+# Cablage — le fanout doit s AJOUTER a la reservation du plan, pas la remplacer.
+# ---------------------------------------------------------------------------
+
+import inspect
+
+from routers.routing import route_auto, _vias_signaux_a_reserver
+
+
+class TestCablage:
+    def test_le_fanout_est_appele_dans_la_boucle(self):
+        assert "_vias_signaux_a_reserver(" in inspect.getsource(route_auto)
+
+    def test_il_s_ajoute_a_la_reservation_du_plan(self):
+        """⚠️ Les deux servent des besoins DIFFERENTS.
+
+        La reservation existante sort les broches GND que le plan n atteint
+        pas ; le fanout sort les SIGNAUX d un boitier fine-pitch. Remplacer
+        l une par l autre reintroduirait le defaut que chacune corrige.
+        """
+        src = inspect.getsource(route_auto)
+        i = src.index("_vias_signaux_a_reserver(")
+        ligne = src[src.rindex("\n", 0, i):src.index("\n", i)]
+        assert "_VIAS_RESERVES +" in ligne, (
+            "le fanout ECRASE la reservation du plan au lieu de s y ajouter")
+
+    def test_un_echec_du_fanout_ne_fait_pas_echouer_le_routage(self):
+        """Le fanout est un BONUS : sans lui le routage se deroule comme avant."""
+        src = inspect.getsource(_vias_signaux_a_reserver)
+        assert "except Exception" in src
+        assert "return []" in src
+
+    def test_aucune_cible_ne_declenche_aucun_travail(self):
+        """No-op sur une carte sans boitier fine-pitch."""
+        assert _vias_signaux_a_reserver(b"(kicad_pcb)") == []
