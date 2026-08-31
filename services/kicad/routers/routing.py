@@ -721,6 +721,16 @@ def _route_with_freerouting_api(
                         plat, unrouted,
                         ", routeur muet (%.0fs sans passe, cadence %.1fs)"
                         % (time.time() - depart_silence, cadence) if muet else "")
+                    # ⚠️ MEMORISER avant de lacher : le job continue dans la
+                    # JVM et finira seul. Sans cette trace, son cuivre est
+                    # perdu — c est ce qui a fait sortir `stm32-100` en ECHEC
+                    # alors qu un tirage avait atteint 72 %.
+                    _JOBS_ABANDONNES.append({
+                        "job_id": job_id, "pre": pre,
+                        "percent": max(0, round(
+                            100 * (nets_routables - unrouted) / nets_routables))
+                        if nets_routables > 0 else 0,
+                    })
                     raise RoutageFige(unrouted=unrouted,
                                       nets=nets_routables)
             time.sleep(2)
@@ -737,6 +747,59 @@ def _route_with_freerouting_api(
         ses_path.write_bytes(base64.b64decode(ses_b64))
 
         return _specctra_roundtrip(pcb_bytes, ses_path)
+
+
+# Jobs de routage abandonnes par la detection de stagnation. Ils CONTINUENT de
+# tourner dans la JVM — `PUT /jobs/{id}/cancel` repond 501, on ne peut pas les
+# tuer — et finissent seuls. Leur cuivre existe donc, et personne n allait le
+# chercher.
+_JOBS_ABANDONNES: list[dict] = []
+
+
+def _recuperer_jobs_abandonnes(pcb_bytes: bytes) -> Optional[bytes]:
+    """Board du meilleur job abandonne ayant fini seul, ou None.
+
+    ⚠️ Mesure du 2026-08-31, `stm32-100` : trois tirages figes a 68, 54 et
+    72 %, tous jetes, et la carte sort en ECHEC total. Le board a 72 % existait.
+
+    ⚠️ La « derniere chance » livree le matin meme n a PAS joue : elle est
+    conditionnee par `_budget_suffisant(...)`, or quand tous les tirages ont
+    fige le budget est DEJA consomme. Un filet de securite qui exige les
+    ressources que la situation vient d epuiser ne sert a rien.
+
+    Ici le cout est nul : on ne relance aucun routage, on demande sa sortie a
+    un job qui a fini de son cote. Une requete HTTP.
+
+    ⚠️ Tout echec est avale et rend None : le job peut avoir disparu, la JVM
+    avoir redemarre, la sortie etre vide. Aucun de ces cas ne doit remplacer un
+    echec franc par une exception.
+    """
+    meilleur_board = None
+    meilleur_pct = -1
+    for job in _JOBS_ABANDONNES:
+        try:
+            statut = _api("GET", "%s/jobs/%s" % (job["pre"], job["job_id"]))
+            if not _freerouting_job_done(str(statut.get("state", ""))):
+                continue
+            sortie = _api("GET", "%s/jobs/%s/output" % (job["pre"], job["job_id"]))
+            ses_b64 = (sortie.get("data") or sortie.get("output_file")
+                       or sortie.get("ses") or "")
+            if not ses_b64:
+                continue
+            with tempfile.TemporaryDirectory() as tmp:
+                ses = Path(tmp) / "b.ses"
+                ses.write_bytes(base64.b64decode(ses_b64))
+                board = _specctra_roundtrip(pcb_bytes, ses)
+            if board and job.get("percent", 0) > meilleur_pct:
+                meilleur_board, meilleur_pct = board, job.get("percent", 0)
+        except Exception as exc:
+            logger.debug("job abandonne %s irrecuperable (%s)",
+                         job.get("job_id"), exc)
+    if meilleur_board is not None:
+        logger.warning(
+            "route_auto: aucun tirage n a abouti — board RECUPERE d un job "
+            "abandonne a ~%d%%, qui avait fini seul dans la JVM", meilleur_pct)
+    return meilleur_board
 
 
 def _find_freerouting() -> Optional[tuple[str, str]]:
@@ -2212,8 +2275,30 @@ def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
             return pcb_bytes
         if not sortie.is_file():
             return pcb_bytes
-        n = json.loads(resultat.read_text(encoding="utf-8")).get("escaped", 0)
+        bilan = json.loads(resultat.read_text(encoding="utf-8"))
+        n = bilan.get("escaped", 0)
+        renonces = bilan.get("renonces", 0)
         logger.info("fanout: %d broche(s) sortie(s) vers le plan", n)
+        # ⚠️ DIRE les renoncements. Ce compteur existait, etait rendu dans le
+        # resultat, et etait JETE : on abandonnait des broches en silence.
+        #
+        # Or c est le dernier verrou du projet. Banc du 2026-08-31, huit
+        # cartes : le net incomplet est GND sur SEPT messages sur sept. Le seul
+        # chiffre qui mesure combien de broches GND restent orphelines n etait
+        # ecrit nulle part.
+        #
+        # Un renoncement silencieux est indistinguable d un travail complet —
+        # la faute traquee toute la session.
+        #
+        # ⚠️ On ne FORCE pas ces broches : sans sortie degagee, le via cree des
+        # courts-circuits (6 erreurs dont 2 `shorting_items` mesurees le
+        # 2026-08-23). Une broche orpheline bloque la commande au DRC ; une
+        # broche court-circuitee peut partir en fabrication. On les compte.
+        if renonces:
+            logger.warning(
+                "fanout: %d broche(s) RENONCEE(S) — aucune sortie degagee, "
+                "elles resteront orphelines du plan (forcer un via y creerait "
+                "un court-circuit)", renonces)
         return sortie.read_bytes()
 
 
@@ -2223,15 +2308,20 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     ⚠️ APRES le routage, jamais avant : le round-trip Specctra supprime toutes
     les pistes, vias compris (17 vias poses avant routage, 4 apres).
 
-    ⚠️ Le via est pose A L AVEUGLE — la direction de sortie pointe a l oppose
-    du centre du boitier, sans regarder ce qui se trouve sur le trajet. Mesure
-    du 2026-08-23, board STM32 : le fanout ajoute 6 ERREURS dont DEUX
-    `shorting_items` entre GND et +3.3V. Sans lui, zero erreur.
+    ⚠️ Cette docstring a decrit pendant des semaines un via pose « A L AVEUGLE ».
+    C etait vrai le 2026-08-23 — le fanout ajoutait alors 6 ERREURS dont deux
+    `shorting_items` entre GND et +3.3V — et c est FAUX depuis : `_escape_pads`
+    consulte son environnement (`_choisir_sortie`) et RENONCE quand aucune
+    sortie n est degagee.
 
-    D ou la garde : on compare les erreurs AVANT et APRES, et on rend
-    l original des qu elles augmentent. Echanger une connexion manquante
-    contre un court-circuit est un mauvais marche — la premiere bloque la
-    commande au DRC, le second peut partir en fabrication.
+    Le 2026-08-31, cette description perimee m a fait diagnostiquer un defaut
+    qui n existait plus, et proposer un correctif deja en place. Une
+    documentation fausse coute plus cher qu une documentation absente.
+
+    La garde, elle, reste : on compare les erreurs AVANT et APRES et on rend
+    l original des qu elles augmentent. Echanger une connexion manquante contre
+    un court-circuit est un mauvais marche — la premiere bloque la commande au
+    DRC, le second peut partir en fabrication.
 
     Garde : tests/test_fanout_jamais_regression.py.
     """
@@ -3226,6 +3316,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # carte qui n a rien a voir.
     global _PISTES_A_PROTEGER
     _PISTES_A_PROTEGER = None
+    # ⚠️ Etat de module : sans remise a zero on recupererait le job d une AUTRE
+    # carte, routee dans la requete precedente du meme worker.
+    _JOBS_ABANDONNES.clear()
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
@@ -3597,6 +3690,25 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         logger.error(
             "route_auto: aucun palier n a rendu de resultat — tous les tirages "
             "ont stagne ou echoue")
+        # ⚠️ DERNIER RECOURS, et il ne coute AUCUN budget : les jobs abandonnes
+        # continuent dans la JVM et finissent seuls. Mesure du 2026-08-31,
+        # `stm32-100` : trois tirages figes a 68, 54 et 72 %, tous jetes, carte
+        # sortie en ECHEC — alors que le board a 72 % existait.
+        #
+        # La « derniere chance » ne joue pas ici : elle exige du budget, et il
+        # est justement epuise quand tous les tirages ont fige.
+        recupere = _recuperer_jobs_abandonnes(pcb_bytes)
+        if recupere is not None:
+            pct = _measured_routed_percent(recupere, nets_routables)
+            return RouteAutoResponse(
+                kicad_pcb_b64=base64.b64encode(recupere).decode("ascii"),
+                routed_percent=_percent_verifie(recupere, pct, nets_routables),
+                layers=_count_copper_layers(recupere),
+                engine="freerouting-recupere",
+                via_count=_count_vias(recupere),
+                track_length_mm=_track_length_mm(recupere),
+                warning="tous les tirages ont stagne — board recupere d un job "
+                        "abandonne, incomplet mais reel")
         return RouteAutoResponse(
             routed_percent=0, layers=req.layers, skipped=True,
             warning="tous les tirages ont stagne ou echoue — aucun routage")
