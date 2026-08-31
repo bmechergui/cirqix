@@ -250,6 +250,24 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
     return True
 
 
+def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
+                            marge_piste=None) -> bool:
+    """La sortie reservee avant le routage tient-elle encore sur ce board ?
+
+    Memes deux criteres que `_choisir_sortie`, appliques a UNE position au lieu
+    d en chercher une : trajet degage a la marge de la PISTE, point de chute
+    degage a la marge du VIA. Les deux marges different — 0,25 mm de large
+    contre 0,60 — et les confondre faisait renoncer toute broche fine-pitch.
+
+    ⚠️ Rejouer sans verifier ramenerait les 6 erreurs du 2026-08-23, dont deux
+    courts-circuits GND/+3,3 V : entre le calcul et la repose, le routeur a pose
+    des pistes que la reservation ne pouvait pas connaitre.
+    """
+    if not _trajet_libre(x0, y0, x1, y1, obstacles, marge_piste or marge, exempt):
+        return False
+    return not any(_dist_point_boite(x1, y1, o) < marge for o in obstacles)
+
+
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                     marge_piste=None, portee=None, pas=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
@@ -420,7 +438,15 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
 
     poses = 0
     renonces = 0
-    for ref, nom_pad in cibles:
+    # ⚠️ Positions REPRISES de la reservation d avant-routage. Les compter :
+    # un rejeu qui ne se compte pas est indistinguable d un rejeu absent.
+    reprises = 0
+    for cible in cibles:
+        # Deux formes : `[ref, pad]` (fanout post-routage, aucune reservation)
+        # et `[ref, pad, via_x, via_y]` (repose d une sortie deja calculee,
+        # quand la place existait encore).
+        ref, nom_pad = cible[0], cible[1]
+        reserve = (int(cible[2]), int(cible[3])) if len(cible) >= 4 else None
         fp = board.FindFootprintByReference(str(ref))
         if fp is None:
             continue
@@ -438,10 +464,22 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         portee, pas = _portee_d_echappement(fp, via_d)
-        sortie = _choisir_sortie(
-            pos.x, pos.y, dx, dy, distance, obstacles, marge, propre, marge_piste,
-            portee, pas
-        )
+        # ⚠️ REJOUER AVANT DE RECHERCHER. La position reservee a ete calculee
+        # sur le board PLACE, ou le couloir d echappement etait libre ; la
+        # recherche, elle, s execute sur le board ROUTE, ou les pistes de
+        # signal l ont referme. Chercher a nouveau, c est jeter la seule
+        # mesure faite au bon moment.
+        sortie = None
+        if reserve is not None and _sortie_reservee_valide(
+                pos.x, pos.y, reserve[0], reserve[1], obstacles, marge,
+                propre, marge_piste):
+            sortie = reserve
+            reprises += 1
+        if sortie is None:
+            sortie = _choisir_sortie(
+                pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
+                marge_piste, portee, pas
+            )
         if sortie is None:
             # Dernier recours : le via DANS la pastille. Il n a besoin
             # d aucune piste — pose au centre, il traverse vers le plan de
@@ -481,7 +519,8 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
 
     pcbnew.SaveBoard(args["output"], board)
     Path(args["result"]).write_text(
-        json.dumps({"escaped": poses, "renonces": renonces}), encoding="utf-8"
+        json.dumps({"escaped": poses, "renonces": renonces,
+                    "reprises": reprises}), encoding="utf-8"
     )
 
 

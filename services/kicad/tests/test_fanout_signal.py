@@ -103,12 +103,23 @@ class TestWiringParNet:
         Pour un fanout de signaux, chaque via appartient a un net different :
         les declarer tous sur GND creerait autant de courts-circuits.
         """
-        vias = [{"via_x": 1_000_000, "via_y": 2_000_000, "net": "SIG1"},
-                {"via_x": 3_000_000, "via_y": 4_000_000, "net": "SIG2"}]
+        # ⚠️ Cette fixture ecrivait le NOM du net sous la cle `net`. Le runner
+        # pcbnew y met un CODE ENTIER (`int(pad.GetNetCode())`) : la fixture
+        # decrivait donc un monde qui n existe pas, et le seul appelant a
+        # atteindre cette branche etait ce test. En production les deux
+        # appelants aplatissaient les dicts et tout repartait sous GND.
+        # `_nommer_les_nets` traduit desormais le code en nom, sous `net_nom`.
+        vias = [{"via_x": 1_000_000, "via_y": 2_000_000, "net": 3,
+                 "net_nom": "SIG1"},
+                {"via_x": 3_000_000, "via_y": 4_000_000, "net": 4,
+                 "net_nom": "SIG2"}]
         bloc = _bloc_wiring(vias, "GND")
         assert "(net SIG1)" in bloc
         assert "(net SIG2)" in bloc
         assert "(net GND)" not in bloc
+        # Le CODE ne doit jamais servir de nom : `(net 3)` dans un DSN qui
+        # nomme ses nets ne resout rien.
+        assert "(net 3)" not in bloc and "(net 4)" not in bloc
 
     def test_le_net_global_reste_le_repli(self):
         """Les vias du plan n ont pas de net propre : ils gardent GND."""

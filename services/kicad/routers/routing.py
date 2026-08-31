@@ -614,7 +614,7 @@ def _route_with_freerouting_api(
         if _VIAS_RESERVES or _PISTES_A_PROTEGER:
             dsn_path.write_text(_injecter_wiring(
                 dsn_path.read_text(encoding="utf-8", errors="replace"),
-                [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
+                _VIAS_RESERVES,
                 _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
@@ -1635,7 +1635,7 @@ def _bloc_wiring(vias: list, net: str) -> str:
         # courts-circuits.
         if isinstance(via, dict):
             x_nm, y_nm = via["via_x"], via["via_y"]
-            net_via = via.get("net") or net
+            net_via = via.get("net_nom") or net
         else:
             x_nm, y_nm = via
             net_via = net
@@ -1670,7 +1670,69 @@ _SEGMENT_COMPLET_RE = re.compile(
 _NET_NOM_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
 
 
-def _bloc_wiring_pistes(pcb_bytes: bytes) -> str:
+_CHAMP_START_RE = re.compile(r"\(start\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
+_CHAMP_END_RE = re.compile(r"\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
+_CHAMP_WIDTH_RE = re.compile(r"\(width\s+([\d.]+)\)")
+_CHAMP_LAYER_RE = re.compile(r'\(layer\s+"([^"]+)"\)')
+_CHAMP_NET_RE = re.compile(r'\(net\s+(?:(\d+)|"([^"]*)")\s*\)')
+
+
+def _blocs_equilibres(txt: str, ouvrant: str):
+    """Rend chaque bloc `ouvrant ... )` du texte, parentheses equilibrees."""
+    i = 0
+    while True:
+        i = txt.find(ouvrant, i)
+        if i == -1:
+            return
+        prof, j = 0, i
+        while j < len(txt):
+            if txt[j] == "(":
+                prof += 1
+            elif txt[j] == ")":
+                prof -= 1
+                if prof == 0:
+                    break
+            j += 1
+        else:
+            return  # parentheses desequilibrees : on s arrete la
+        yield txt[i:j + 1]
+        i = j + 1
+
+
+def _champs_de_segment(bloc: str):
+    """Champs d un `(segment ...)`, dans N IMPORTE QUEL ordre. None si incomplet.
+
+    ⚠️ DIXIEME PIEGE DE FORME, et le plus couteux. On lisait le segment avec
+    UNE regex exigeant `(layer "X")` immediatement suivi de `(net N)`. Or KiCad
+    intercale `(uuid "...")` entre les deux :
+
+        (segment (start ...) (end ...) (width 0.2) (layer "F.Cu")
+                 (uuid "0534a101-...") (net 3))
+
+    Mesure sur `examples/led-blinker-full-pipeline/output/6_routed.kicad_pcb` :
+    231 segments dans le board, **0 reconnu**. La protection des pistes n a
+    donc JAMAIS protege une seule piste, et chaque palier de l escalade
+    repartait du board place — exactement ce que le message « N piste(s)
+    PROTEGEES » affirmait le contraire. La garde qui compte les fils existait
+    (elle avait attrape le meme genre de defaut le matin meme) mais ne
+    s execute qu au CHANGEMENT de palier : aucune carte du banc n ayant
+    escalade, elle n a jamais eu l occasion de crier.
+
+    On ne suppose donc plus d ordre : chaque champ est cherche dans le bloc,
+    delimite par ses propres parentheses.
+    """
+    d = _CHAMP_START_RE.search(bloc)
+    f = _CHAMP_END_RE.search(bloc)
+    w = _CHAMP_WIDTH_RE.search(bloc)
+    c = _CHAMP_LAYER_RE.search(bloc)
+    n = _CHAMP_NET_RE.search(bloc)
+    if not (d and f and w and c and n):
+        return None
+    return (d.group(1), d.group(2), f.group(1), f.group(2),
+            w.group(1), c.group(1), n.group(1) or "", n.group(2) or "")
+
+
+def _bloc_wiring_pistes(pcb_bytes) -> str:
     """Pistes du board, au format Specctra, marquees `(type protect)`.
 
     ⚠️ RAISON D ETRE : le DSN produit par pcbnew porte un bloc `(wiring)` VIDE
@@ -1693,10 +1755,20 @@ def _bloc_wiring_pistes(pcb_bytes: bytes) -> str:
     """
     if not pcb_bytes:
         return ""
+    # ⚠️ Plusieurs boards peuvent devoir etre proteges EN MEME TEMPS : le
+    # meilleur du palier precedent, et les liaisons GND posees juste avant le
+    # routage. Les traiter l un OU l autre perdait l un des deux.
+    if isinstance(pcb_bytes, (list, tuple)):
+        return chr(10).join(
+            x for x in (_bloc_wiring_pistes(b) for b in pcb_bytes) if x)
     txt = pcb_bytes.decode("utf-8", "replace")
     noms = {int(n): nom for n, nom in _NET_NOM_RE.findall(txt)}
     lignes = []
-    for x1, y1, x2, y2, largeur, couche, num, nomme in _SEGMENT_COMPLET_RE.findall(txt):
+    for bloc in _blocs_equilibres(txt, "(segment"):
+        champs = _champs_de_segment(bloc)
+        if champs is None:
+            continue
+        x1, y1, x2, y2, largeur, couche, num, nomme = champs
         # Forme nommee : le nom est la. Forme numerotee : on cherche la
         # declaration ; absente, on ECARTE — jamais on ne devine un net.
         if nomme:
@@ -1715,6 +1787,100 @@ def _bloc_wiring_pistes(pcb_bytes: bytes) -> str:
     return chr(10).join(lignes)
 
 
+# Nets declares dans la section `(network ...)` du DSN. La forme est
+# `(net <nom> (pins ...))` — le nom n est pas guillemete.
+_NET_DSN_RE = re.compile(r"\(net\s+([^\s()]+)\s*\(pins")
+
+
+_NET_D_UNE_LIGNE_RE = re.compile(r"\(net\s+([^\s()]+)\)")
+
+
+def _garder_les_nets_declares(bloc: str, declares: set, quoi: str) -> str:
+    """Ne garde du bloc que les lignes dont le net est declare dans le DSN.
+
+    ⚠️ On ECARTE, on ne renomme pas : rattacher un cuivre au mauvais net est un
+    court-circuit, pas une approximation. Et on le DIT — un ecart silencieux
+    ici est exactement ce qui a rendu la reservation inerte sans que rien ne
+    paraisse anormal dans le journal.
+    """
+    if not bloc:
+        return ""
+    gardees, ecartes = [], {}
+    for ligne in bloc.split(chr(10)):
+        m = _NET_D_UNE_LIGNE_RE.search(ligne)
+        nom = m.group(1) if m else None
+        if nom is not None and nom not in declares:
+            ecartes[nom] = ecartes.get(nom, 0) + 1
+            continue
+        gardees.append(ligne)
+    if ecartes:
+        logger.warning(
+            "reservation : %d %s(s) ecartee(s), leur net n est pas declare "
+            "dans le DSN (%s) — le routeur ne pourrait pas les resoudre",
+            sum(ecartes.values()), quoi,
+            ", ".join("%s x%d" % (k, v) for k, v in sorted(ecartes.items())))
+    return chr(10).join(gardees)
+
+
+def _nommer_les_nets(vias: list, pcb_bytes: bytes) -> list:
+    """Ajoute `net_nom` a chaque via, depuis la table de nets du board.
+
+    ⚠️ Le runner pcbnew rend `net` sous forme de CODE entier ; Specctra
+    reference les nets par NOM. Sans cette traduction, chaque via reserve
+    repartait sous le net du plan — y compris ceux des SIGNAUX, ce qui les
+    annoncait tous sur GND. Un via annonce sur le mauvais net est un
+    court-circuit en puissance, pas une approximation.
+    """
+    if not vias:
+        return vias
+    noms = {int(n): nom
+            for n, nom in _NET_NOM_RE.findall(pcb_bytes.decode("utf-8", "replace"))}
+    sortie, sans_nom = [], 0
+    for via in vias:
+        nom = noms.get(int(via.get("net", 0) or 0))
+        if nom is None:
+            sans_nom += 1
+        # Immutable : on rend une COPIE, on ne touche pas au dict recu.
+        sortie.append(dict(via, net_nom=nom) if nom else dict(via))
+    if sans_nom:
+        logger.warning(
+            "reservation : %d via(s) dont le net est introuvable dans le "
+            "board — ils repartiront sous le net du plan", sans_nom)
+    return sortie
+
+
+def _ajouter_aux_pistes_protegees(board: bytes) -> None:
+    """AJOUTE un board a proteger, sans effacer ceux qui y sont deja.
+
+    ⚠️ On ecrivait `_PISTES_A_PROTEGER = etendu`, ce qui EFFACAIT le meilleur
+    board du palier precedent — quinze lignes apres que le journal eut annonce
+    « N piste(s) PROTEGEES ». L escalade cumulative demandee ne gardait donc
+    rien : chaque palier repartait du board place.
+    """
+    global _PISTES_A_PROTEGER
+    if not board:
+        return
+    deja = _PISTES_A_PROTEGER
+    if not deja:
+        _PISTES_A_PROTEGER = [board]
+    elif isinstance(deja, (list, tuple)):
+        _PISTES_A_PROTEGER = list(deja) + [board]
+    else:
+        _PISTES_A_PROTEGER = [deja, board]
+
+
+def _nets_declares_dsn(dsn_text: str) -> set:
+    """Noms de nets que le DSN declare. Tout autre net y est INCONNU.
+
+    ⚠️ `_confier_au_plan` RETIRE du DSN les nets pris en charge par le plan —
+    GND en tete. On ecrivait pourtant, deux lignes plus bas, des vias
+    `(net GND) (type protect)` dans le bloc `(wiring)`. Toute la reservation
+    etait donc annoncee sous un net ABSENT du fichier : ce n est pas une
+    reservation, c est du bruit que le routeur ne peut pas resoudre.
+    """
+    return set(_NET_DSN_RE.findall(dsn_text))
+
+
 def _injecter_wiring(dsn_text: str, vias: list, net: str,
                      pistes: Optional[bytes] = None) -> str:
     """Ecrit les vias reserves dans le bloc `(wiring)` du DSN.
@@ -1727,11 +1893,26 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
     vaut un routage sans reservation qu un DSN corrompu, que Freerouting
     rejetterait en bloc.
     """
+    # ⚠️ ECARTER ce que le DSN ne peut pas resoudre. Un `(net X)` inconnu du
+    # bloc `(network ...)` ne reserve rien et expose le fichier au rejet.
+    declares = _nets_declares_dsn(dsn_text)
+    if not declares:
+        # ⚠️ Aucun net lu : on ne RECONNAIT pas la structure de ce DSN. Tout
+        # ecarter reviendrait a transformer une lecture ratee en verdict — le
+        # defaut meme que cette garde combat. Meme doctrine que le reste de la
+        # fonction : un DSN incompris est rendu tel quel.
+        logger.warning(
+            "reservation : section (network) illisible — aucun net declare, "
+            "la resolubilite ne peut pas etre verifiee")
     bloc = _bloc_wiring(vias, net)
+    if declares:
+        bloc = _garder_les_nets_declares(bloc, declares, "via")
     # Les pistes deja routees du meilleur board, protegees pour le palier
     # suivant : c est ce qui rend l escalade CUMULATIVE au lieu de repartir de
     # zero a chaque fois.
     fils = _bloc_wiring_pistes(pistes) if pistes else ""
+    if declares:
+        fils = _garder_les_nets_declares(fils, declares, "piste")
     bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
@@ -2078,7 +2259,14 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
                 "pcb": str(entree),
                 "output": str(sortie),
                 "result": str(resultat),
-                "pads": json.dumps([[v["ref"], v["pad"]] for v in vias]),
+                # ⚠️ TRANSMETTRE LA POSITION, pas seulement la broche. Sans
+                # les coordonnees, le runner refaisait la recherche sur le
+                # board ROUTE — la ou la place n existe plus — et jetait la
+                # seule mesure faite au bon moment, avant le routage.
+                "pads": json.dumps(
+                    [[v["ref"], v["pad"], v["via_x"], v["via_y"]]
+                     if v.get("via_x") is not None else [v["ref"], v["pad"]]
+                     for v in vias]),
                 "escape_mm": str(_ESCAPE_TRACE_MM),
             })
         except Exception as exc:
@@ -3350,7 +3538,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 if _VIAS_RESERVES or _PISTES_A_PROTEGER:
                     dsn.write_text(_injecter_wiring(
                         dsn.read_text(encoding="utf-8", errors="replace"),
-                        [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
+                        _VIAS_RESERVES,
                         _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
@@ -3470,7 +3658,6 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     )
 
 
-@router.post("/route/auto", response_model=RouteAutoResponse)
 def _armer_abandon(actif: bool) -> None:
     """Arme ou desarme l abandon sur stagnation, pour tout le processus.
 
@@ -3482,6 +3669,7 @@ def _armer_abandon(actif: bool) -> None:
     _ABANDON_AUTORISE = actif
 
 
+@router.post("/route/auto", response_model=RouteAutoResponse)
 def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     """Route en escaladant les couches jusqu'a obtenir 100 %.
 
@@ -3638,7 +3826,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # `--preserve-existing` de `kct route` : un moteur que la cascade
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
             if meilleur is not None and meilleur.kicad_pcb_b64:
-                _PISTES_A_PROTEGER = base64.b64decode(meilleur.kicad_pcb_b64)
+                _PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]
                 # ⚠️ COMPTER les fils, ne pas se contenter d annoncer. Le
                 # 2026-08-31 au matin, ce meme mecanisme en injectait ZERO
                 # (le net nomme de KiCad 10) tout en affichant un message
@@ -3746,10 +3934,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # le via sont poses maintenant, tant que la place existe, puis
         # PROTEGES dans le DSN — sans quoi l aller-retour Specctra les
         # effacerait, comme il efface tout ce qui le precede.
+        # ⚠️ Traduire les codes de net en NOMS avant de quitter le domaine
+        # KiCad : le DSN ne connait que les noms.
+        _VIAS_RESERVES = _nommer_les_nets(_VIAS_RESERVES, etendu)
+
         avant_liaison = etendu
         etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
         if etendu is not avant_liaison:
-            _PISTES_A_PROTEGER = etendu
+            _ajouter_aux_pistes_protegees(etendu)
 
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),

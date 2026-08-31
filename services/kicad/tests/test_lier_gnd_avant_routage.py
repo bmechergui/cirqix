@@ -83,7 +83,9 @@ class TestCablage:
         avant routage, 4 apres (mesure du 2026-08-23)."""
         corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
         i = corps.index("_relier_gnd_avant_routage(")
-        assert "_PISTES_A_PROTEGER" in corps[i:i + 900], (
+        # ⚠️ On ecrivait `_PISTES_A_PROTEGER = etendu`, ce qui EFFACAIT le
+        # meilleur board du palier precedent. La protection s AJOUTE desormais.
+        assert "_ajouter_aux_pistes_protegees(" in corps[i:i + 900], (
             "la liaison posee ne survivra pas au round-trip Specctra")
 
 

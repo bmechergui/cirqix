@@ -172,13 +172,15 @@ class TestJournal:
 
     def test_le_nombre_de_fils_est_COMPTE_avant_d_etre_annonce(self):
         corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
-        i = corps.index("_PISTES_A_PROTEGER = base64.b64decode")
-        bloc = corps[i:i + 1200]
+        # ⚠️ S ancrer sur le MESSAGE, pas sur la forme de l affectation :
+        # celle-ci est passee de `= board` a `= [board]` le 2026-08-31 et la
+        # garde s est mise a lever `ValueError` au lieu de mesurer.
+        i = corps.index("AUCUNE piste")
+        bloc = corps[max(0, i - 1200):i]
         assert "_bloc_wiring_pistes(" in bloc, (
             "on annonce la protection sans avoir compte les fils")
 
     def test_zero_fil_est_un_AVERTISSEMENT_pas_une_bonne_nouvelle(self):
         corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
-        i = corps.index("_PISTES_A_PROTEGER = base64.b64decode")
-        bloc = corps[i:i + 1200]
-        assert "AUCUNE piste" in bloc and "logger.warning" in bloc
+        i = corps.index("AUCUNE piste")
+        assert "logger.warning" in corps[max(0, i - 400):i]
