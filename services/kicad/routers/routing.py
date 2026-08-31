@@ -450,6 +450,31 @@ def _routeur_muet(silence_s: float, cadence_s: float, passes_vues: int) -> bool:
     return silence_s > max(_PLAFOND_ATTENTE_S, _MARGE_CADENCE * cadence_s)
 
 
+# Autorise-t-on la detection de stagnation a ABANDONNER un tirage ?
+#
+# ⚠️ Vrai en temps normal, et c est ce qui rend l escalade rapide : sans elle,
+# un job condamne coute 44 minutes de politesse. Mis a Faux pour une DERNIERE
+# CHANCE, quand tous les tirages ont fige et qu il ne reste RIEN a livrer.
+#
+# Mesure du 2026-08-31, `nucleo-f401` : six tirages figes d affilee
+# (43, 79, ?, 77, 77, 62 %), aucun conserve — `RoutageFige` ne transporte que
+# des compteurs, jamais le board. Meme scenario la veille sur `stm32-100` :
+# « Tous les routeurs ont echoue » alors que des tirages avaient touche 96 %.
+#
+# Mieux vaut attendre un tirage jusqu au bout que rendre une carte vide.
+_ABANDON_AUTORISE: bool = True
+
+
+def _fenetre_effective(fenetre: int, autorise: bool) -> int:
+    """La fenetre de passes, ou 0 quand l abandon est desarme.
+
+    Zero signifie « ne coupe pas sur les passes ». Le detecteur de SILENCE
+    reste actif en toutes circonstances : un routeur muet est une panne, pas
+    une lenteur, et il ne doit jamais tenir le budget.
+    """
+    return fenetre if autorise else 0
+
+
 def _faut_couper(plat: int, fenetre: int, muet: bool) -> bool:
     """Faut-il cesser d attendre ce tirage ?
 
@@ -652,7 +677,8 @@ def _route_with_freerouting_api(
                                                errors="replace"))
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
                                  if j == short_name), 0)
-                fenetre = _fenetre_stagnation(unrouted)
+                fenetre = _fenetre_effective(
+                    _fenetre_stagnation(unrouted), _ABANDON_AUTORISE)
                 # ⚠️ DEUX DECISIONS DISTINCTES, ET C EST LA CAUSE DE MES TROIS
                 # ERREURS SUCCESSIVES sur ce mecanisme (diagnostic de Grok) :
                 # « cesser d esperer ce tirage » n est pas « prouver que le
@@ -3000,6 +3026,17 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
 
 
 @router.post("/route/auto", response_model=RouteAutoResponse)
+def _armer_abandon(actif: bool) -> None:
+    """Arme ou desarme l abandon sur stagnation, pour tout le processus.
+
+    ⚠️ Etat de MODULE : il doit etre restaure sans faute, sinon la detection
+    resterait desarmee pour toutes les requetes suivantes du meme worker — un
+    desarmement invisible et durable.
+    """
+    global _ABANDON_AUTORISE
+    _ABANDON_AUTORISE = actif
+
+
 def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     """Route en escaladant les couches jusqu'a obtenir 100 %.
 
@@ -3057,6 +3094,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             "route_auto: le boitier le plus charge a %d signaux a echapper — "
             "%d couches seraient necessaires ; on tente 2 d abord (decision "
             "produit), l escalade tranchera sur mesure", signaux, plancher)
+    # ⚠️ ARMER A L ENTREE, et non restaurer a la sortie. `_ABANDON_AUTORISE`
+    # est un etat de MODULE : un `finally` ne protegerait que le chemin qui
+    # l a desarme, alors qu armer ici REPARE aussi une fuite laissee par un
+    # appel precedent — un desarmement invisible et durable serait le pire des
+    # defauts silencieux, la detection de stagnation cessant d exister sans que
+    # rien ne le dise.
+    _armer_abandon(True)
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
@@ -3067,7 +3111,34 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
-    while i_essai < len(essais):
+    derniere_chance_donnee = False
+    while True:
+        if i_essai >= len(essais):
+            # ⚠️ DERNIERE CHANCE. Tous les tirages ont fige et il ne reste
+            # RIEN a livrer — or le job abandonne CONTINUE dans la JVM
+            # (`cancel` repond 501) et finit seul : le cuivre existe, personne
+            # ne va le chercher. Mesure du 2026-08-31 sur `nucleo-f401` : six
+            # tirages figes (43, 79, ?, 77, 77, 62 %), zero board rendu. Meme
+            # scenario la veille sur `stm32-100`, ou des tirages touchaient
+            # 96 %.
+            #
+            # On ne desarme PAS le detecteur de stagnation — c est lui qui rend
+            # l escalade rapide. On lui ajoute le cas limite : quand il a tout
+            # abandonne, un tirage mene a son terme vaut mieux qu une carte
+            # vide. Le detecteur de SILENCE reste actif.
+            #
+            # UNE SEULE FOIS : sinon une carte reellement impossible bouclerait
+            # sans fin.
+            if (meilleur is not None or derniere_chance_donnee
+                    or not _budget_suffisant(_remaining_budget_s(deadline))):
+                break
+            derniere_chance_donnee = True
+            _armer_abandon(False)
+            essais.append(_layer_ladder(req.layers)[0])
+            logger.warning(
+                "route_auto: tous les tirages ont fige et aucun board n a ete "
+                "garde — derniere chance a %d couches, SANS abandon sur "
+                "stagnation (le routeur ira au bout)", essais[-1])
         palier = essais[i_essai]
         i_essai += 1
         if palier != palier_courant:
