@@ -69,17 +69,46 @@ def _passer(circuit: dict, sortie: Path, tirages: int = 1) -> dict:
     DRC. La premiere prime.
     """
     meilleur = None
+    premier_echec = None
+    rates = 0
     for n in range(max(1, tirages)):
         r = _un_tirage(circuit, sortie)
+        # ⚠️ UN TIRAGE RATE NE JETTE PAS LES REUSSIS. On sortait ici en rendant
+        # l erreur, ce qui abandonnait tout ce qui precedait. Mesure du
+        # 2026-08-31 sur `stm32-100` :
+        #
+        #     tirage 1  ->  99 %, 1 manquante, 0 erreur DRC
+        #     tirage 2  ->  99 %, 1 manquante, 0 erreur DRC
+        #     tirage 3  ->  ECHEC (tirages de routage tous stagnes)
+        #     rendu     ->  ECHEC
+        #
+        # Deux boards livrables mesures, et le banc concluait a l echec de la
+        # chaine. Le board etait sur le disque, intact : 2 couches, 0 erreur,
+        # 647 segments, 141 vias. Le defaut etait dans l INSTRUMENT, ce qui le
+        # rend pire — il fait conclure a l echec d une chaine qui a reussi.
+        #
+        # On retient le PREMIER echec : il porte la cause d origine, les
+        # suivants en decoulent souvent (JVM degradee, budget entame).
         if "erreur" in r:
-            return r
+            rates += 1
+            if premier_echec is None:
+                premier_echec = r
+            continue
         cle = (r["erreurs"], r["manquantes"])
         if meilleur is None or cle < (meilleur["erreurs"], meilleur["manquantes"]):
             meilleur = r
             meilleur["tirage_retenu"] = n + 1
         if cle == (0, 0):
             break  # rien de mieux a esperer
+    if meilleur is None:
+        # Rien a sauver : l echec prime, et il est rendu tel quel. Ne JAMAIS
+        # fabriquer un succes — c est l autre moitie de la regle.
+        return premier_echec if premier_echec is not None else {
+            "etape": "banc", "erreur": "aucun tirage effectue"}
     meilleur["tirages"] = max(1, tirages)
+    # ⚠️ Les rates restent DITS : les taire ferait croire a une chaine plus
+    # stable qu elle n est, alors que la dispersion est le sujet meme.
+    meilleur["tirages_rates"] = rates
     return meilleur
 
 
