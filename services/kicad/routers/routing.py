@@ -1845,6 +1845,38 @@ def _garder_les_nets_declares(bloc: str, declares: set, quoi: str) -> str:
     return chr(10).join(gardees)
 
 
+def _sans_doublons(vias: list) -> list:
+    """Une pastille, une reservation. Garde la PREMIERE occurrence.
+
+    ⚠️ `_VIAS_RESERVES` concatene trois reservations calculees separement, et
+    deux d entre elles se recouvrent : `_vias_a_reserver` prend les pastilles
+    que le DRC declare isolees du plan, `_vias_gnd_preventifs` prend TOUTES les
+    pastilles GND des boitiers fine-pitch. Une pastille GND isolee d un LQFP-48
+    figure donc dans les deux, et `escape_pads` y posait deux fois la meme
+    piste et le meme via, superposes.
+
+    Ce n est pas un exces de cuivre anodin : deux vias au meme point font une
+    violation `hole_to_hole`, et `_reposer_vias_reserves` est TOUT-OU-RIEN —
+    une seule erreur ajoutee et les vingt et un vias sont abandonnes d un coup,
+    GND compris. Le doublon pouvait donc annuler toute la repose.
+
+    L ordre porte la priorite : en tete viennent les pastilles que le DRC a
+    VUES isolees, c est-a-dire le besoin avere avant le besoin preventif.
+    """
+    vus, sortie = set(), []
+    for via in vias:
+        cle = (str(via.get("ref")), str(via.get("pad")))
+        if cle in vus:
+            continue
+        vus.add(cle)
+        sortie.append(via)
+    if len(sortie) != len(vias):
+        logger.info(
+            "reservation : %d doublon(s) de pastille ecarte(s) — sans quoi la "
+            "repose y superposerait deux vias", len(vias) - len(sortie))
+    return sortie
+
+
 def _nommer_les_nets(vias: list, pcb_bytes: bytes) -> list:
     """Ajoute `net_nom` a chaque via, depuis la table de nets du board.
 
@@ -3960,7 +3992,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # effacerait, comme il efface tout ce qui le precede.
         # ⚠️ Traduire les codes de net en NOMS avant de quitter le domaine
         # KiCad : le DSN ne connait que les noms.
-        _VIAS_RESERVES = _nommer_les_nets(_VIAS_RESERVES, etendu)
+        _VIAS_RESERVES = _nommer_les_nets(
+            _sans_doublons(_VIAS_RESERVES), etendu)
 
         avant_liaison = etendu
         etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
