@@ -1073,6 +1073,31 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     return 0
 
 
+def _escalade_peut_aider(percent_moteur: int, erreurs: int) -> bool:
+    """Ajouter des couches peut-il encore servir a quelque chose ?
+
+    ⚠️ Non quand le ROUTEUR annonce 100 % sur un board propre. Il a tout relie
+    par des pistes ; l ecart restant vient de NOTRE verification, qui regarde
+    le board livre et compte un net confie au PLAN — GND, qui n est pas route
+    mais COULE. Du cuivre supplementaire n y change rien, par construction.
+
+    Mesure du 2026-08-31, `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a
+    100 % et un seul net incomplet (GND) a chaque palier. Douze minutes
+    d escalade pour zero gain — et une carte 6 couches proposee la ou 2
+    suffisent, alors qu elle coute sensiblement plus cher a fabriquer.
+
+    L escalade existe pour donner de la place a un routeur qui n y arrive pas.
+    Elle n a aucun sens face a un routeur qui a fini.
+
+    ⚠️ On continue en revanche si le board porte des ERREURS : une violation de
+    fabricabilite (clearance, largeur) peut, elle, se resoudre avec plus
+    d espace — contrairement a une pastille de plan orpheline.
+
+    Garde : tests/test_escalade_inutile.py.
+    """
+    return percent_moteur < 100 or erreurs > 0
+
+
 def _escalade_epuisee(sans_gain: int) -> bool:
     """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
 
@@ -3192,6 +3217,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
     # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
     bonus_accorde: set[int] = set()
+    # ⚠️ Le routeur a-t-il DEJA fini, sur un board propre ? Si oui, escalader
+    # est inutile par construction : l ecart restant vient d un net confie au
+    # PLAN, que du cuivre supplementaire ne relie pas.
+    escalade_inutile = False
     # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
@@ -3231,6 +3260,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # sur stm32-100 : 99 % a 2 couches, puis 87 % a 4 couches pour
             # 2400 s, tandis qu un tirage de plus au meme palier en coutait
             # 600 et a produit le seul 100 % obtenu sur cette carte.
+            # ⚠️ Le routeur a fini et le board est propre : monter d une
+            # couche ne peut rien apporter, et coute plus cher a fabriquer.
+            if escalade_inutile:
+                logger.info(
+                    "route_auto: escalade arretee avant %d couches — le routeur "
+                    "annonce 100%% sur un board sans erreur ; ce qui manque est "
+                    "confie au PLAN, que du cuivre en plus ne relie pas",
+                    palier)
+                break
             if palier_courant is not None and palier_courant not in bonus_accorde:
                 bonus = _tirages_bonus(meilleur_du_palier)
                 if bonus:
@@ -3387,6 +3425,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             sans_gain += 1
             continue
 
+        # ⚠️ Initialise AVANT le bloc : lire cette variable par `locals()`
+        # serait fragile, et un tirage sans board la laisserait indefinie.
+        # Zero veut dire « le routeur n a rien annonce », donc on escalade.
+        percent_moteur = 0
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
         if res.kicad_pcb_b64 and not res.skipped:
@@ -3464,6 +3506,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # ⚠️ Dernier mot au DRC, qui voit le board LIVRE — plans coules,
             # reparations faites. La mesure du moteur, elle, regarde le board
             # juste apres le routeur et ignore les nets confies au plan.
+            # ⚠️ CONSERVER le chiffre du MOTEUR avant de l ecraser : c est lui
+            # qui dit si le routeur a fini, et donc si escalader a encore un
+            # sens. Le chiffre corrige, lui, melange le routage et l etat du
+            # plan de masse.
+            percent_moteur = res.routed_percent
             res.routed_percent = _percent_verifie(
                 final, res.routed_percent, nets_routables
             )
@@ -3478,6 +3525,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # part pas en fabrication.
         erreurs = (_compte_erreurs(_rapport_drc(final))
                    if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
+        if not _escalade_peut_aider(percent_moteur, erreurs):
+            escalade_inutile = True
         if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
             return res
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
