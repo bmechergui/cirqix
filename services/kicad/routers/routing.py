@@ -2215,6 +2215,26 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
         return 0
 
 
+def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
+    """Le board de secours vaut-il mieux que celui qu il remplacerait ?
+
+    Les couples sont `(erreurs DRC, connexions manquantes)`. On classe sur
+    l erreur d abord : une erreur de fabricabilite fait REFUSER la carte,
+    une connexion manquante se voit au DRC et bloque la commande. Meme ordre
+    que partout ailleurs dans le projet.
+
+    ⚠️ A EGALITE on REFUSE. Le repli route GND par des pistes au lieu de le
+    couler : il coute du cuivre en plus. Sans gain mesure, on garde l existant.
+
+    ⚠️ Ce mecanisme etait le SEUL de la chaine a remplacer le board sans
+    comparer. Mesure du 2026-08-31 : `stm32-60` repris hors du banc passe de
+    98 % a 100 % par ce repli, alors qu au banc, sur le meme board, le repli
+    s est declenche AUSSI et la carte est sortie a 98 %. Un repli qui reussit
+    moins bien ecrasait un meilleur resultat sans que rien ne le dise.
+    """
+    return apres < avant
+
+
 def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
                             budget_s: float):
     """Refait le routage SANS confier GND au plan, puis recoule les plans.
@@ -3649,7 +3669,27 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "repli sur un routage incluant GND", _gnd_orphelines(final))
                 secours = _router_en_incluant_gnd(etendu, req, restant)
                 if secours is not None:
-                    final = secours
+                    # ⚠️ COMPARER avant de remplacer. Ce mecanisme etait le
+                    # seul de la chaine a ecraser le board sans verifier qu il
+                    # l ameliore — ses quatre voisines ont toutes cette garde.
+                    rap_a = _rapport_drc(final)
+                    rap_b = _rapport_drc(secours)
+                    avant = (_compte_erreurs(rap_a),
+                             len(rap_a.get("unconnected_items") or []))
+                    apres = (_compte_erreurs(rap_b),
+                             len(rap_b.get("unconnected_items") or []))
+                    if _secours_est_meilleur(avant, apres):
+                        logger.info(
+                            "repli GND retenu : (%d erreur, %d manquante) -> "
+                            "(%d erreur, %d manquante)",
+                            avant[0], avant[1], apres[0], apres[1])
+                        final = secours
+                    else:
+                        logger.warning(
+                            "repli GND REFUSE : (%d erreur, %d manquante) ne "
+                            "fait pas mieux que (%d erreur, %d manquante) — "
+                            "board conserve",
+                            apres[0], apres[1], avant[0], avant[1])
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)

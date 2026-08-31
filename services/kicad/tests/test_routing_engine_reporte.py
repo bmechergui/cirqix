@@ -51,11 +51,24 @@ class TestCablage:
             ligne for ligne in self.SOURCE.splitlines()
             if not ligne.lstrip().startswith("#")
         )
-        boards = code.count("kicad_pcb_b64=base64.b64encode(new_pcb)")
-        moteurs = code.count("engine=")
-        assert moteurs == boards, (
-            f"{boards} réponses livrent un board, {moteurs} nomment leur moteur"
-        )
+        # ⚠️ On compte les REPONSES, pas un motif de texte. Compter
+        # `base64.b64encode(new_pcb)` dependait d un NOM DE VARIABLE : la
+        # reponse qui recupere le cuivre d un job abandonne encode
+        # `recupere` et echappait au comptage, alors qu elle nomme bien son
+        # moteur. La garde signalait un defaut inexistant.
+        # ⚠️ Decoupage, pas expression reguliere : « RouteAutoResponse( »
+        # contient une parenthese, qui ouvre un groupe non ferme et fait lever
+        # `re.error`. Une garde qui plante ne garde rien.
+        livrant = []
+        for morceau in code.split("RouteAutoResponse" + chr(40))[1:]:
+            fin = morceau.find(chr(10) + chr(10))
+            bloc = morceau if fin == -1 else morceau[:fin]
+            if "kicad_pcb_b64=" in bloc and "kicad_pcb_b64=None" not in bloc:
+                livrant.append(bloc)
+        muettes = [b for b in livrant if "engine=" not in b]
+        assert not muettes, (
+            "%d reponse(s) livrent un board sans nommer leur moteur"
+            % len(muettes))
 
     def test_les_quatre_niveaux_sont_distinguables(self):
         # Un nom par niveau : sans quoi « qui a routé ? » reste sans réponse.

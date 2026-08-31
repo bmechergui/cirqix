@@ -17,6 +17,7 @@ mesuré ». D'où la mesure réelle plutôt que l'omission.
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,26 @@ def _board(segments: list[tuple[float, float, float, float]], vias: int = 0) -> 
         lignes.append(f'\t(via (at {i} {i}) (size 0.6) (drill 0.3) (net 1))')
     lignes.append(")")
     return "\n".join(lignes).encode("utf-8")
+
+
+def _reponses_livrant_un_board(source: str) -> list:
+    """Blocs `RouteAutoResponse(...)` qui portent un board.
+
+    ⚠️ Compter `base64.b64encode(` dans tout le fichier est FAUX : deux de ces
+    appels construisent une `RouteAutoRequest`, pas une reponse. Et compter un
+    nom de variable (`new_pcb`) est fragile : la reponse qui recupere le cuivre
+    d un job abandonne encode `recupere` et echappait au comptage.
+
+    On decoupe donc sur la construction elle-meme.
+    """
+    blocs = []
+    for morceau in source.split("RouteAutoResponse" + chr(40))[1:]:
+        fin = morceau.find(chr(10) + chr(10))
+        blocs.append(morceau if fin == -1 else morceau[:fin])
+    # ⚠️ `kicad_pcb_b64=None` ne LIVRE PAS de board : c est la reponse
+    # d echec franc, qui n a rien a mesurer.
+    return [b for b in blocs
+            if "kicad_pcb_b64=" in b and "kicad_pcb_b64=None" not in b]
 
 
 class TestComptageDesVias:
@@ -65,10 +86,14 @@ class TestCablage:
     def test_chaque_reponse_livrant_un_board_porte_les_mesures(self):
         # Une `RouteAutoResponse` avec un board mais sans mesures rendrait le
         # zéro par défaut — c'est-à-dire un chiffre faux.
-        code = self.SOURCE
-        blocs = code.count("kicad_pcb_b64=base64.b64encode(new_pcb)")
-        mesures = code.count("via_count=_count_vias(")
-        assert mesures == blocs, (
-            f"{blocs} réponses livrent un board, {mesures} portent les mesures"
-        )
-        assert code.count("track_length_mm=_track_length_mm(") == blocs
+        # ⚠️ On compte les REPONSES, pas des motifs de texte. Deux versions
+        # fausses avant celle-ci : `base64.b64encode(new_pcb)` dependait d un
+        # nom de variable (la reponse qui recupere un job abandonne encode
+        # `recupere`), et `base64.b64encode(` tout court comptait aussi deux
+        # constructions de RouteAutoRequest.
+        livrant = _reponses_livrant_un_board(self.SOURCE)
+        sans_mesure = [b for b in livrant if "via_count=" not in b]
+        assert not sans_mesure, (
+            "%d reponse(s) livrent un board sans porter les mesures"
+            % len(sans_mesure))
+        assert not [b for b in livrant if "track_length_mm=" not in b]

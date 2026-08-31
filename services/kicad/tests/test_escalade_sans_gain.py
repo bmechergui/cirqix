@@ -62,7 +62,10 @@ class TestCablage:
 
     def test_la_boucle_consulte_la_regle(self):
         corps = self.SOURCE[self.SOURCE.index("essais = _paliers_avec_tirages("):]
-        assert "_escalade_epuisee(" in corps[:6000]
+        # ⚠️ Fenetre supprimee : la boucle des paliers s est allongee (bonus a
+        # portee, derniere chance, protection des pistes, regle par net). Une
+        # garde calee sur une longueur mesure la mise en page, pas le cablage.
+        assert "_escalade_epuisee(" in corps
 
     def test_le_meilleur_reste_rendu(self):
         # L arret anticipe ne doit pas transformer « on garde le meilleur » en

@@ -453,8 +453,15 @@ def test_tous_les_tirages_figes_donnent_un_echec_lisible():
     import inspect
     from routers.routing import route_auto
     src = inspect.getsource(route_auto)
+    # ⚠️ Fenetre elargie : depuis le 2026-08-31, une TENTATIVE DE RECUPERATION
+    # precede l echec. Les jobs abandonnes continuent dans la JVM et finissent
+    # seuls ; on va chercher leur cuivre avant de rendre les mains vides.
+    # L echec franc reste le dernier mot quand il n y a rien a recuperer — la
+    # fenetre de 700 caracteres ne l atteignait plus.
     i = src.index("if meilleur is None:")
-    bloc = src[i:i + 700]
+    bloc = src[i:i + 2000]
+    assert "_recuperer_jobs_abandonnes(" in bloc, (
+        "on rend un echec sans avoir tente de recuperer le cuivre existant")
     assert "skipped=True" in bloc
     assert "routed_percent=0" in bloc
     assert "warning=" in bloc, "un echec muet ne se diagnostique pas"
