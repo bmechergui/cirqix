@@ -604,11 +604,14 @@ def _route_with_freerouting_api(
 
         _export_specctra(pcb_bytes, dsn_path)
         _confier_au_plan(dsn_path)
-        if _VIAS_RESERVES:
+        # ⚠️ La garde portait sur les seuls vias reserves : sans via, les
+        # pistes a proteger n auraient jamais ete injectees.
+        if _VIAS_RESERVES or _PISTES_A_PROTEGER:
             dsn_path.write_text(_injecter_wiring(
                 dsn_path.read_text(encoding="utf-8", errors="replace"),
                 [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
                 _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
         session = _api("POST", f"{pre}/sessions/create", {})
@@ -1530,7 +1533,68 @@ def _bloc_wiring(vias: list, net: str) -> str:
     return chr(10).join(lignes)
 
 
-def _injecter_wiring(dsn_text: str, vias: list, net: str) -> str:
+
+# Board dont les pistes doivent etre PROTEGEES au palier suivant. Etat de
+# module, comme `_VIAS_RESERVES` : le DSN est construit plusieurs frames plus
+# bas, et le faire descendre par signature traverserait toute la cascade.
+_PISTES_A_PROTEGER: Optional[bytes] = None
+
+# ⚠️ NOM DISTINCT de `_SEGMENT_RE` (ligne ~847), qui sert a `_track_length_mm`
+# et ne capture que quatre groupes. Reutiliser le nom l ecrasait EN SILENCE :
+# la mesure de longueur recevait sept groupes au lieu de quatre. Attrape par
+# `tests/test_routing_metrics.py`, pas par la relecture.
+_SEGMENT_COMPLET_RE = re.compile(
+    r"\(segment\s+\(start\s+(-?[\d.]+)\s+(-?[\d.]+)\)\s*"
+    r"\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)\s*"
+    r"\(width\s+([\d.]+)\)\s*"
+    r'\(layer\s+"([^"]+)"\)\s*'
+    r"\(net\s+(\d+)\)")
+
+_NET_NOM_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
+
+
+def _bloc_wiring_pistes(pcb_bytes: bytes) -> str:
+    """Pistes du board, au format Specctra, marquees `(type protect)`.
+
+    ⚠️ RAISON D ETRE : le DSN produit par pcbnew porte un bloc `(wiring)` VIDE
+    meme sur un board entierement route — verifie sur un export reel. Le
+    routeur ne DETRUIT donc pas le cuivre recu : il ne le voit jamais. C est
+    pourquoi chaque palier repartait de zero, et pourquoi mon objection
+    initiale (« le routage incrementiel ne sert a rien ») etait fausse : elle
+    citait une mesure faite sur `kct route`, un moteur que la cascade
+    n emprunte jamais (16 routages sur 16 par l API Freerouting).
+
+    ⚠️ Unites verifiees sur l export : `(resolution um 10)`, couches `F.Cu` /
+    `B.Cu` SANS guillemets, nets NOMMES en clair, coordonnees en micrometres a
+    une decimale, et **Y NEGATIF** — Specctra oriente Y vers le haut, KiCad
+    vers le bas. Meme transformation que `_bloc_wiring`, deja validee en
+    production par les vias reserves.
+
+    ⚠️ Un segment dont le net est INCONNU du board est ECARTE, jamais devine :
+    une piste rattachee au mauvais net est un court-circuit, pas une
+    approximation. Le net 0 (« pas de net ») l est aussi.
+    """
+    if not pcb_bytes:
+        return ""
+    txt = pcb_bytes.decode("utf-8", "replace")
+    noms = {int(n): nom for n, nom in _NET_NOM_RE.findall(txt)}
+    lignes = []
+    for x1, y1, x2, y2, largeur, couche, net in _SEGMENT_COMPLET_RE.findall(txt):
+        code = int(net)
+        nom = noms.get(code)
+        if not code or not nom:
+            continue
+        lignes.append(
+            "    (wire (path %s %.1f %.1f %.1f %.1f %.1f)"
+            " (net %s) (type protect))"
+            % (couche, float(largeur) * 1000.0,
+               float(x1) * 1000.0, -float(y1) * 1000.0,
+               float(x2) * 1000.0, -float(y2) * 1000.0, nom))
+    return chr(10).join(lignes)
+
+
+def _injecter_wiring(dsn_text: str, vias: list, net: str,
+                     pistes: Optional[bytes] = None) -> str:
     """Ecrit les vias reserves dans le bloc `(wiring)` du DSN.
 
     ⚠️ pcbnew laisse ce bloc VIDE meme sur un board portant 160 segments —
@@ -1542,6 +1606,11 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str) -> str:
     rejetterait en bloc.
     """
     bloc = _bloc_wiring(vias, net)
+    # Les pistes deja routees du meilleur board, protegees pour le palier
+    # suivant : c est ce qui rend l escalade CUMULATIVE au lieu de repartir de
+    # zero a chaque fois.
+    fils = _bloc_wiring_pistes(pistes) if pistes else ""
+    bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
     i = dsn_text.find("(wiring")
@@ -2903,11 +2972,12 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 ses = Path(tmp) / "board.ses"
                 _export_specctra(pcb_bytes, dsn)
                 _confier_au_plan(dsn)
-                if _VIAS_RESERVES:
+                if _VIAS_RESERVES or _PISTES_A_PROTEGER:
                     dsn.write_text(_injecter_wiring(
                         dsn.read_text(encoding="utf-8", errors="replace"),
                         [(v["via_x"], v["via_y"]) for v in _VIAS_RESERVES],
                         _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                        pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
                 new_pcb = _specctra_roundtrip(pcb_bytes, ses)
@@ -3101,6 +3171,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # defauts silencieux, la detection de stagnation cessant d exister sans que
     # rien ne le dise.
     _armer_abandon(True)
+    # ⚠️ Etat de MODULE, arme a l entree comme `_ABANDON_AUTORISE` : le laisser
+    # traîner ferait proteger, dans une requete suivante, les pistes d une
+    # carte qui n a rien a voir.
+    global _PISTES_A_PROTEGER
+    _PISTES_A_PROTEGER = None
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
     palier_courant: Optional[int] = None
@@ -3159,6 +3234,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     essais[i_essai - 1:i_essai - 1] = [palier_courant] * bonus
                     i_essai -= 1
                     continue
+            # ⚠️ ESCALADE CUMULATIVE (demande utilisateur, 2026-08-31). En
+            # montant d un palier, on PROTEGE les pistes du meilleur board
+            # obtenu jusqu ici : le routeur complete au lieu de tout refaire.
+            #
+            # Ce n est possible que parce que le DSN exporte par pcbnew porte
+            # un bloc `(wiring)` VIDE — verifie sur un export reel — donc le
+            # routeur ne DETRUISAIT pas le cuivre recu, il ne le voyait jamais.
+            # On le lui montre, marque `(type protect)`.
+            #
+            # Mon objection initiale citait la mesure du 2026-08-01 sur
+            # `--preserve-existing` de `kct route` : un moteur que la cascade
+            # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
+            if meilleur is not None and meilleur.kicad_pcb_b64:
+                _PISTES_A_PROTEGER = base64.b64decode(meilleur.kicad_pcb_b64)
+                logger.info(
+                    "route_auto: passage a %d couches — les pistes du meilleur "
+                    "board (%d%%) sont PROTEGEES, le routeur complete au lieu "
+                    "de repartir de zero", palier, meilleur.routed_percent)
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
