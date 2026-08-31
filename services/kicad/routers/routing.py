@@ -2236,7 +2236,8 @@ def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
 
 
 def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
-                            budget_s: float):
+                            budget_s: float,
+                            deja_route: Optional[bytes] = None):
     """Refait le routage SANS confier GND au plan, puis recoule les plans.
 
     Repli de la sequence demandee par l utilisateur. Il n intervient que si des
@@ -2246,12 +2247,24 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
     ⚠️ Rend None sur echec — l appelant garde alors le board de la sequence.
     Un repli qui echoue ne doit pas detruire le resultat qu il devait ameliorer.
     """
-    global _NETS_CONFIES_AU_PLAN
+    global _NETS_CONFIES_AU_PLAN, _PISTES_A_PROTEGER
     if not _NETS_CONFIES_AU_PLAN:
         return None   # rien a inclure : aucun net n est confie au plan
     memoire = _NETS_CONFIES_AU_PLAN
+    memoire_pistes = _PISTES_A_PROTEGER
     try:
         _NETS_CONFIES_AU_PLAN = ()
+        # ⚠️ COMPLETER, PAS RECOMMENCER (question de l utilisateur, 2026-08-31).
+        # Le repli repartait du board PLACE : il jetait un routage correct a
+        # 98 % pour tout refaire, a cause d UNE broche GND que le plan
+        # n atteint pas. Mesure sur `stm32-60` : 440 segments en entree, 384 en
+        # sortie — un routage entierement neuf, pas un complement.
+        #
+        # Les pistes deja routees sont donc protegees : le routeur n a plus
+        # qu a tirer les liaisons GND manquantes. Mecanisme valide sur un vrai
+        # board le matin meme — 426 fils proteges, 88 % -> 98 %.
+        if deja_route:
+            _PISTES_A_PROTEGER = deja_route
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(pcb_bytes).decode("ascii"),
             layers=req.layers,
@@ -2267,6 +2280,10 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
         return None
     finally:
         _NETS_CONFIES_AU_PLAN = memoire
+        # ⚠️ RESTAURER : `_PISTES_A_PROTEGER` sert AUSSI a l escalade. Le
+        # laisser pointer sur le board du repli ferait proteger, au palier
+        # suivant, un routage qui n est pas celui qu on a garde.
+        _PISTES_A_PROTEGER = memoire_pistes
 
 
 def _fill_zones(pcb_bytes: bytes) -> bytes:
@@ -3667,7 +3684,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 logger.warning(
                     "plan de masse : %d broche(s) GND non reliée(s) — "
                     "repli sur un routage incluant GND", _gnd_orphelines(final))
-                secours = _router_en_incluant_gnd(etendu, req, restant)
+                # `final` = le board ROUTE : ses pistes seront protegees, le
+                # routeur ne fera qu ajouter les liaisons GND manquantes.
+                secours = _router_en_incluant_gnd(etendu, req, restant,
+                                                  deja_route=final)
                 if secours is not None:
                     # ⚠️ COMPARER avant de remplacer. Ce mecanisme etait le
                     # seul de la chaine a ecraser le board sans verifier qu il
