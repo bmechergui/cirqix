@@ -1871,6 +1871,71 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
     return cibles
 
 
+def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
+    """RELIE les broches GND des boitiers denses au plan, AVANT le routage.
+
+    ⚠️ ETAPE ③ DE LA SEQUENCE DEMANDEE, dans sa formulation definitive :
+    « lier les GND qui ne sont pas colles au plan, avec une piste routee ou
+    avec un via — AVANT le routage des signaux ».
+
+    ⚠️ RESERVER N EST PAS RELIER. `_vias_gnd_preventifs` calcule une POSITION
+    de via et la declare dans le DSN ; la broche n est reliee qu apres coup, si
+    la repose aboutit — et la garde de repose est TOUT OU RIEN : une seule
+    erreur ajoutee fait perdre les 21 vias, GND compris. Ici on POSE la
+    liaison : `escape_pads` trace la piste et perce le via.
+
+    ⚠️ Pourquoi ce n etait pas possible avant : l aller-retour Specctra EFFACE
+    tout ce qui le precede — 17 vias poses avant routage, 4 apres (mesure du
+    2026-08-23). C est ce qui imposait la « reservation ».
+    Ce n est plus une fatalite depuis l injection de pistes protegees
+    (`_bloc_wiring_pistes`, validee le 2026-08-31 : 426 fils, 88 % -> 98 %).
+    L appelant protege donc le board rendu, et la liaison survit.
+
+    ⚠️ NE PEUT PAS DEGRADER : si la poser ajoute des erreurs, on rend le board
+    recu. Une broche orpheline bloque la commande au DRC ; un court-circuit
+    peut partir en fabrication — mesure du 2026-08-23, le fanout force ajoutait
+    6 erreurs dont deux courts GND/+3.3V.
+    """
+    cibles = _pads_gnd_fine_pitch(pcb_bytes, nets_plan)
+    if not cibles:
+        return pcb_bytes
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree = Path(tmp) / "in.kicad_pcb"
+            sortie = Path(tmp) / "out.kicad_pcb"
+            resultat = Path(tmp) / "r.json"
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "escape_pads",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps(cibles),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+            if not sortie.is_file():
+                return pcb_bytes
+            bilan = json.loads(resultat.read_text(encoding="utf-8"))
+            relie = sortie.read_bytes()
+    except Exception as exc:
+        logger.warning("liaison GND avant routage impossible (%s)", exc)
+        return pcb_bytes
+
+    # ⚠️ JOURNALISER LA TENTATIVE, pas seulement le succes : ne tracer que le
+    # cas positif rendrait indistinguables « aucune cible » et « des cibles
+    # mais aucune place ».
+    logger.info(
+        "liaison GND avant routage : %d broche(s) reliee(s) au plan sur %d "
+        "visee(s), %d renoncee(s) — pose AVANT que les signaux n occupent la "
+        "place", bilan.get("escaped", 0), len(cibles), bilan.get("renonces", 0))
+
+    if _compte_erreurs(_rapport_drc(relie)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+        logger.warning(
+            "liaison GND avant routage : erreurs ajoutees — board recu conserve")
+        return pcb_bytes
+    return relie
+
+
 def _vias_gnd_preventifs(pcb_bytes: bytes, nets_plan: set) -> list:
     """Vias de sortie reserves pour les GND des boitiers denses, AVANT routage.
 
@@ -3668,6 +3733,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # leur reserve donc leur sortie tant que la place existe.
         _VIAS_RESERVES = _VIAS_RESERVES + _vias_gnd_preventifs(
             etendu, set(_NETS_CONFIES_AU_PLAN))
+
+        # ⚠️ ETAPE ③ : on ne se contente pas de RESERVER, on RELIE. La piste et
+        # le via sont poses maintenant, tant que la place existe, puis
+        # PROTEGES dans le DSN — sans quoi l aller-retour Specctra les
+        # effacerait, comme il efface tout ce qui le precede.
+        avant_liaison = etendu
+        etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
+        if etendu is not avant_liaison:
+            _PISTES_A_PROTEGER = etendu
 
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
