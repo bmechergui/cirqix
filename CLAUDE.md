@@ -1433,6 +1433,38 @@ du projet. Les deux défauts ci-dessus ont franchi une suite complète de tests
 unitaires ; l'un et l'autre sont tombés au premier passage sur les sept boards
 du banc. Une fixture dit ce qu'on a imaginé, un board dit ce qui est.
 
+### Leçons inscrites le 2026-08-31 — la réservation d'échappement
+
+**NEVER** insérer une fonction entre un décorateur et sa cible. `@router.post(
+"/route/auto")` a décoré `_armer_abandon` pendant toute sa vie : FastAPI
+exposait cette fonction et `route_auto` était injoignable par HTTP. Le banc ne
+pouvait pas le voir — il importe `route_auto` directement en Python. Une garde
+qui interroge la TABLE DE ROUTES (`router.routes`) répond à la vraie question ;
+une garde qui lit le fichier source, non.
+
+**NEVER** écrire une regex qui suppose que deux champs se suivent dans un
+board. KiCad intercale `(uuid "…")` entre `(layer)` et `(net)` d'un segment :
+231 segments d'un board réel, **0 reconnu**. C'est le dixième piège de forme du
+projet. Chercher chaque champ dans son bloc, jamais en une seule expression.
+
+**NEVER** faire confiance à une branche de code qu'aucun appelant de production
+n'atteint. La branche qui portait le net de chaque via existait, son commentaire
+avertissait du court-circuit, et seule une **fixture de test** y allait — une
+fixture qui mettait d'ailleurs un NOM là où le runner met un entier. Compter les
+appelants réels fait partie de la revue.
+
+**NEVER** annoncer dans un fichier une référence que le fichier ne déclare pas.
+`_confier_au_plan` retire `(net GND …)` du DSN ; on écrivait `(net GND)` dans le
+`(wiring)` deux lignes plus bas. Écarter et le DIRE ; et ne jamais transformer
+une lecture ratée en verdict — une section `(network)` illisible n'écarte rien.
+
+**NEVER** recalculer ce qui a déjà été mesuré au bon moment. La sortie
+d'échappement était calculée avant le routage, quand la place existait, puis
+**jetée** : seuls `ref` et `pad` traversaient, et la recherche repartait de zéro
+sur le board routé. Rejouer la position — après l'avoir vérifiée — au lieu de la
+rechercher. Gardes : `tests/test_wiring_reservation_resoluble.py`,
+`tests/test_reprise_des_sorties_reservees.py`.
+
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
