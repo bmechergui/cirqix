@@ -85,3 +85,53 @@ class TestCablage:
         i = corps.index("_relier_gnd_avant_routage(")
         assert "_PISTES_A_PROTEGER" in corps[i:i + 900], (
             "la liaison posee ne survivra pas au round-trip Specctra")
+
+
+# ⚠️ LA FORME REELLE d un board, relevee le 2026-08-31 sur `nucleo-f401` : la
+# propriete `Reference` s etale sur PLUSIEURS LIGNES —
+#
+#     (property "Reference" "U1"
+#         (at 0 -7.4 0)
+#         (layer "F.SilkS")
+#         ...
+#     )
+#
+# Ma premiere fixture tenait sur une seule ligne, `(property "Reference" "U1")`,
+# et la regex exigeait la parenthese fermante. Sur le vrai board elle ne
+# reconnaissait AUCUN boitier : zero cible, etape ③ totalement inerte, tests
+# verts. Neuvieme piege de format de la session, et toujours le meme
+# mecanisme — une fixture dit ce qu on a imagine, un board dit ce qui est.
+_BOARD_MULTILIGNE = b'''(kicad_pcb
+	(footprint "LQFP-64_10x10mm_P0.5mm"
+		(layer "F.Cu")
+		(property "Reference" "U1"
+			(at 0 -7.4 0)
+			(layer "F.SilkS")
+		)
+		(pad "1" smd rect (at 0 0) (net 1 "SIG1"))
+		(pad "2" smd rect (at 0 0) (net 2 "SIG2"))
+		(pad "3" smd rect (at 0 0) (net 3 "SIG3"))
+		(pad "4" smd rect (at 0 0) (net 4 "SIG4"))
+		(pad "5" smd rect (at 0 0) (net 5 "SIG5"))
+		(pad "6" smd rect (at 0 0) (net 6 "SIG6"))
+		(pad "7" smd rect (at 0 0) (net 7 "SIG7"))
+		(pad "8" smd rect (at 0 0) (net 8 "SIG8"))
+		(pad "9" smd rect (at 0 0) (net 9 "SIG9"))
+		(pad "10" smd rect (at 0 0) (net 10 "SIG10"))
+		(pad "11" smd rect (at 0 0) (net 11 "SIG11"))
+		(pad "12" smd rect (at 0 0) (net 12 "SIG12"))
+		(pad "13" smd rect (at 0 0) (net 13 "SIG13"))
+		(pad "14" smd rect (at 0 0) (net 14 "SIG14"))
+		(pad "15" smd rect (at 0 0) (net 15 "SIG15"))
+		(pad "16" smd rect (at 0 0) (net 16 "SIG16"))
+		(pad "17" smd rect (at 0 0) (net 90 "GND"))
+	)
+)'''
+
+
+class TestFormeReelleDuBoard:
+    def test_la_reference_MULTILIGNE_est_reconnue(self):
+        cibles = R._pads_gnd_fine_pitch(_BOARD_MULTILIGNE, {"GND"})
+        assert cibles == [("U1", "17")], (
+            "la reference sur plusieurs lignes n est pas reconnue : "
+            "l etape 3 serait inerte sur un vrai board")

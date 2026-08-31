@@ -1854,7 +1854,15 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
         return []
     cibles = []
     for bloc_fp in re.split(r"\(footprint", texte)[1:]:
-        ref = (re.search(r'\(property "Reference" "([^"]+)"\)', bloc_fp)
+        # ⚠️ PAS de parenthese fermante apres le nom : sur un VRAI board la
+        # propriete s etale sur plusieurs lignes —
+        #     (property "Reference" "U1"
+        #         (at 0 -7.4 0)
+        #         ...
+        # Ma fixture tenait sur une ligne, la regex exigeait `")`, et la
+        # fonction ne reconnaissait AUCUN boitier : zero cible, mecanisme
+        # inerte. `_pads_signal_fine_pitch` avait deja la bonne forme.
+        ref = (re.search(r'\(property "Reference" "([^"]+)"', bloc_fp)
                or re.search(r'\(fp_text reference "?([^"\s\)]+)', bloc_fp))
         if not ref:
             continue
