@@ -168,6 +168,42 @@ class TestResolubilite:
             dsn, [{"via_x": 1, "via_y": 2, "net_nom": "GND"}], "GND") == dsn
 
 
+class TestNomsGuillemetes:
+    r"""⚠️ ONZIEME PIEGE DE FORME, releve sur un DSN reel du pipeline.
+
+    Le nom d un net est NU la plupart du temps, mais GUILLEMETE des qu il
+    contient une parenthese — ce qui est le cas de tous les nets auto-generes
+    de KiCad :
+
+        (net GPIO3        (pins R3-1 U1-12))
+        (net "Net-(U2-2)" (pins U2-2 U2-2@1))
+
+    Mesure sur ce DSN : 140 nets declares, dont une majorite de
+    `Net-(Uxx-yy)`. Une capture `[^\s()]+` s arrete au `(` et rend `"Net-` :
+    ces nets paraitraient non declares et leur protection serait ecartee a
+    tort. Symetriquement, les ECRIRE nus casserait la structure du fichier.
+    """
+
+    def test_un_nom_guillemete_est_LU(self):
+        dsn = ('(pcb b' + chr(10) + '  (network' + chr(10)
+               + '    (net "Net-(U2-2)" (pins U2-2 U2-2@1))' + chr(10)
+               + '    (net GPIO3 (pins R3-1))' + chr(10)
+               + '  )' + chr(10) + '  (wiring' + chr(10) + '  )' + chr(10) + ')')
+        assert R._nets_declares_dsn(dsn) == {"Net-(U2-2)", "GPIO3"}
+
+    def test_un_nom_a_parenthese_est_REECRIT_guillemete(self):
+        assert R._nom_pour_dsn("GPIO3") == "GPIO3"
+        assert R._nom_pour_dsn("Net-(U2-2)") == '"Net-(U2-2)"'
+
+    def test_un_via_sur_un_net_a_parenthese_traverse_le_filtre(self):
+        dsn = ('(pcb b' + chr(10) + '  (network' + chr(10)
+               + '    (net "Net-(U2-2)" (pins U2-2 U2-2@1))' + chr(10)
+               + '  )' + chr(10) + '  (wiring' + chr(10) + '  )' + chr(10) + ')')
+        sortie = R._injecter_wiring(
+            dsn, [{"via_x": 1000, "via_y": 2000, "net_nom": "Net-(U2-2)"}], "GND")
+        assert '(net "Net-(U2-2)")' in sortie
+
+
 class TestProtectionCumulative:
     def test_plusieurs_boards_peuvent_etre_proteges(self):
         # Le meilleur board du palier precedent ET les liaisons GND posees

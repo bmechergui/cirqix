@@ -1641,7 +1641,8 @@ def _bloc_wiring(vias: list, net: str) -> str:
             net_via = net
         lignes.append(
             '    (via "%s" %.1f %.1f (net %s) (type protect))'
-            % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0, net_via)
+            % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0,
+               _nom_pour_dsn(str(net_via)))
         )
     return chr(10).join(lignes)
 
@@ -1783,16 +1784,36 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
             " (net %s) (type protect))"
             % (couche, float(largeur) * 1000.0,
                float(x1) * 1000.0, -float(y1) * 1000.0,
-               float(x2) * 1000.0, -float(y2) * 1000.0, nom))
+               float(x2) * 1000.0, -float(y2) * 1000.0,
+               _nom_pour_dsn(nom)))
     return chr(10).join(lignes)
 
 
-# Nets declares dans la section `(network ...)` du DSN. La forme est
-# `(net <nom> (pins ...))` — le nom n est pas guillemete.
-_NET_DSN_RE = re.compile(r"\(net\s+([^\s()]+)\s*\(pins")
+# Nets declares dans la section `(network ...)` du DSN.
+#
+# ⚠️ ONZIEME PIEGE DE FORME. Le nom est nu la plupart du temps — `(net GPIO3` —
+# mais GUILLEMETE des qu il contient une parenthese, ce qui est le cas de tous
+# les nets auto-generes de KiCad :
+#
+#     (net GPIO3        (pins R3-1 U1-12))
+#     (net "Net-(U2-2)" (pins U2-2 U2-2@1))
+#
+# Releve sur un DSN reel produit par pcbnew (60 nets). Une capture `[^\s()]+`
+# s arrete au `(` et rend `"Net-` : le net paraitrait non declare et sa
+# protection serait ecartee a tort.
+_NET_DSN_RE = re.compile(r'\(net\s+("[^"]*"|[^\s()]+)\s*\(pins')
+
+# Un nom qui sort de ce jeu doit etre guillemete dans le DSN, sinon la
+# parenthese qu il contient casse la structure du fichier.
+_NOM_NU_OK_RE = re.compile(r"^[A-Za-z0-9_+.$/-]+$")
 
 
-_NET_D_UNE_LIGNE_RE = re.compile(r"\(net\s+([^\s()]+)\)")
+def _nom_pour_dsn(nom: str) -> str:
+    """Le nom tel qu il doit s ecrire dans le DSN — guillemete si necessaire."""
+    return nom if _NOM_NU_OK_RE.match(nom) else '"%s"' % nom
+
+
+_NET_D_UNE_LIGNE_RE = re.compile(r'\(net\s+("[^"]*"|[^\s()]+)\)')
 
 
 def _garder_les_nets_declares(bloc: str, declares: set, quoi: str) -> str:
@@ -1809,6 +1830,8 @@ def _garder_les_nets_declares(bloc: str, declares: set, quoi: str) -> str:
     for ligne in bloc.split(chr(10)):
         m = _NET_D_UNE_LIGNE_RE.search(ligne)
         nom = m.group(1) if m else None
+        if nom and nom.startswith('"'):
+            nom = nom[1:-1]
         if nom is not None and nom not in declares:
             ecartes[nom] = ecartes.get(nom, 0) + 1
             continue
@@ -1878,7 +1901,8 @@ def _nets_declares_dsn(dsn_text: str) -> set:
     etait donc annoncee sous un net ABSENT du fichier : ce n est pas une
     reservation, c est du bruit que le routeur ne peut pas resoudre.
     """
-    return set(_NET_DSN_RE.findall(dsn_text))
+    return {n[1:-1] if n.startswith('"') else n
+            for n in _NET_DSN_RE.findall(dsn_text)}
 
 
 def _injecter_wiring(dsn_text: str, vias: list, net: str,
