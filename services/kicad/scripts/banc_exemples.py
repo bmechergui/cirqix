@@ -36,6 +36,24 @@ _EXEMPLES = _RACINE / "examples"
 # au-dela on ferait attendre le banc pour rien.
 _ATTENTE_MORT_JVM_S: float = 15.0
 
+# Reutiliser le board PLACE conserve, au lieu d en regenerer un.
+#
+# ⚠️ Refaire le placement a chaque run rend toute comparaison ININTERPRETABLE :
+# elle melange DEUX variables. Mesure du 2026-08-31, `nucleo-f401`, deux runs
+# consecutifs du MEME code :
+#
+#     banc precedent   tirages a 97 %, 98 %, 98 %
+#     banc suivant     tirages a 67 %, 77 %, 43 %
+#
+# Le routage n avait pas change. Le PLACEMENT, si. C est le defaut que je
+# reproche a tous les autres mecanismes depuis deux jours, et il vivait dans
+# mon propre instrument de mesure.
+#
+# ⚠️ PAS le defaut : un banc de reference doit exercer la chaine ENTIERE,
+# placement compris — c est lui qui mesure le produit. Le placement fige sert a
+# etudier une etape AVAL, et il se demande (`--placement-fige`).
+_PLACEMENT_FIGE: bool = False
+
 
 # ⚠️ Sans cette configuration, les `logger.info` du service ne s ecrivent
 # NULLE PART. Le banc devenait alors aveugle a ses propres decisions, et j en
@@ -145,8 +163,21 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
         return {"etape": "pcb", "erreur": pcb.error}
     board = pcb.kicad_pcb_content.encode()
 
-    board = base64.b64decode(place_auto(
-        AutoPlacementRequest(kicad_pcb_b64=_b64(board))).kicad_pcb_b64)
+    # ⚠️ PLACEMENT FIGE : on relit le board conserve au lieu d en calculer un
+    # neuf. Une seule variable bouge alors — celle qu on etudie. Un placement
+    # absent est DIT, jamais contourne en silence : on croirait mesurer a
+    # placement constant alors qu on en aurait regenere un.
+    fige = sortie / "2_placement.kicad_pcb"
+    if _PLACEMENT_FIGE and fige.is_file():
+        print("  (placement FIGE : %s)" % fige, flush=True)
+        board = fige.read_bytes()
+    else:
+        if _PLACEMENT_FIGE:
+            print("  (placement fige demande mais ABSENT (%s) — on en calcule "
+                  "un ; la mesure n est PAS a placement constant)" % fige,
+                  file=sys.stderr, flush=True)
+        board = base64.b64decode(place_auto(
+            AutoPlacementRequest(kicad_pcb_b64=_b64(board))).kicad_pcb_b64)
 
     # ⚠️ CONSERVER le board PLACE, pas seulement le route. Sans lui, toute
     # experience comparant deux facons de router compare en realite deux
@@ -352,6 +383,12 @@ def main(argv: list[str]) -> int:
     if argv[1:] and Path(argv[1]).is_dir():
         _EXEMPLES = Path(argv.pop(1))
     tirages = 1
+    global _PLACEMENT_FIGE
+    if "--placement-fige" in argv:
+        argv.remove("--placement-fige")
+        _PLACEMENT_FIGE = True
+        print("  (mode PLACEMENT FIGE — on reutilise les boards places "
+              "conserves ; une seule variable bouge)", flush=True)
     for arg in list(argv[1:]):
         if arg.startswith("--tirages="):
             tirages = int(arg.split("=", 1)[1])
