@@ -157,3 +157,28 @@ class TestFormeReelle:
 
     def test_le_uuid_qui_suit_le_net_ne_gene_pas(self):
         assert R._bloc_wiring_pistes(_BOARD_KICAD10).count("(type protect)") == 1
+
+
+class TestJournal:
+    """⚠️ Un message qui n a pas compte peut mentir.
+
+    Le 2026-08-31 au matin, ce mecanisme injectait ZERO fil — le net nomme de
+    KiCad 10 — tout en affichant « les pistes du meilleur board sont
+    PROTEGEES ». Le message etait rassurant et faux. C est la faute traquee
+    toute la session : ne jamais annoncer un travail sans l avoir mesure.
+    """
+
+    SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
+
+    def test_le_nombre_de_fils_est_COMPTE_avant_d_etre_annonce(self):
+        corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
+        i = corps.index("_PISTES_A_PROTEGER = base64.b64decode")
+        bloc = corps[i:i + 1200]
+        assert "_bloc_wiring_pistes(" in bloc, (
+            "on annonce la protection sans avoir compte les fils")
+
+    def test_zero_fil_est_un_AVERTISSEMENT_pas_une_bonne_nouvelle(self):
+        corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
+        i = corps.index("_PISTES_A_PROTEGER = base64.b64decode")
+        bloc = corps[i:i + 1200]
+        assert "AUCUNE piste" in bloc and "logger.warning" in bloc

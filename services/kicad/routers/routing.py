@@ -3295,10 +3295,22 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
             if meilleur is not None and meilleur.kicad_pcb_b64:
                 _PISTES_A_PROTEGER = base64.b64decode(meilleur.kicad_pcb_b64)
-                logger.info(
-                    "route_auto: passage a %d couches — les pistes du meilleur "
-                    "board (%d%%) sont PROTEGEES, le routeur complete au lieu "
-                    "de repartir de zero", palier, meilleur.routed_percent)
+                # ⚠️ COMPTER les fils, ne pas se contenter d annoncer. Le
+                # 2026-08-31 au matin, ce meme mecanisme en injectait ZERO
+                # (le net nomme de KiCad 10) tout en affichant un message
+                # rassurant. Un message qui ne compte pas peut mentir.
+                n_fils = _bloc_wiring_pistes(_PISTES_A_PROTEGER).count("(wire")
+                if not n_fils:
+                    logger.warning(
+                        "route_auto: passage a %d couches — AUCUNE piste "
+                        "protegee alors que le board a %d%% : le routeur va "
+                        "repartir de zero", palier, meilleur.routed_percent)
+                else:
+                    logger.info(
+                        "route_auto: passage a %d couches — %d piste(s) du "
+                        "meilleur board (%d%%) PROTEGEES, le routeur complete "
+                        "au lieu de repartir de zero",
+                        palier, n_fils, meilleur.routed_percent)
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
