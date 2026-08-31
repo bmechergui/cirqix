@@ -50,7 +50,33 @@ _DEFAULT_TIMEOUT_S: int = 300
 # validation du milieu ne rallonge rien — ça coupe. Constaté sur un run réel le
 # 2026-08-20. Garde : tests/test_route_budget.py.
 _MAX_TIMEOUT_S: int = 3600
-_PCBNEW_RUNNER_TIMEOUT_S: int = 60
+# Delai du sous-processus pcbnew. Il ne mesure PAS la duree du travail — il
+# attrape un pcbnew bloque.
+#
+# ⚠️ A 60 s, il coupait un travail d UNE SECONDE. Mesure du 2026-08-31 sur les
+# boards de l A/B, machine au repos :
+#
+#     stitch_zones  0,7-0,8 s        fill_zones  1,3-1,4 s
+#
+# Et pourtant, pendant l A/B lui-meme, TROIS expirations :
+#
+#     couture des ilots impossible (pcbnew child timed out after 60s)
+#
+# La cause n est pas la duree mais la FAMINE DE CPU : un tirage de routage
+# abandonne continue de tourner dans la JVM — `cancel` repond 501, on ne peut
+# pas le tuer — a 400-500 % de CPU pendant que le post-traitement s execute.
+# Nos propres tirages abandonnes sabotent les etapes qui les suivent, et la
+# JVM execute deux jobs en parallele (verifie le 2026-08-29).
+#
+# Consequence mesuree : la couture n a JAMAIS tourne sur la plus grosse carte
+# du banc. Le plan restait fragmente, des broches GND non reliees, et rien ne
+# le disait hormis un avertissement noye — l echec est silencieux precisement
+# quand la carte est grosse, c est-a-dire quand la couture est necessaire.
+#
+# Ralentissement observe : plus de 75x. On prend 600 s, qui absorbe largement
+# cette contention tout en restant BORNE — sans borne, un pcbnew reellement
+# bloque tiendrait le pipeline entier.
+_PCBNEW_RUNNER_TIMEOUT_S: int = 600
 _PCBNEW_RUNNER = Path(__file__).resolve().parent.parent / "tools" / "routing_pcbnew_runner.py"
 
 
@@ -2438,8 +2464,13 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
+        # ⚠️ NOMMER l operation. « pcbnew child timed out » ne dit pas ce qui a
+        # expire : trois expirations dans un meme journal peuvent venir de la
+        # couture, du remplissage ou de l echappement, et sans le nom on ne
+        # peut ni imputer ni corriger. C est ce qui a rendu ce defaut invisible.
         raise RuntimeError(
-            f"pcbnew child timed out after {_PCBNEW_RUNNER_TIMEOUT_S}s"
+            f"pcbnew child timed out after {_PCBNEW_RUNNER_TIMEOUT_S}s "
+            f"(operation {payload.get('operation', '?')})"
         ) from exc
     if proc.returncode != 0:
         raise RuntimeError(
