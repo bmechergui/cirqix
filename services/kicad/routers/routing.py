@@ -462,6 +462,11 @@ def _routeur_muet(silence_s: float, cadence_s: float, passes_vues: int) -> bool:
 # « Tous les routeurs ont echoue » alors que des tirages avaient touche 96 %.
 #
 # Mieux vaut attendre un tirage jusqu au bout que rendre une carte vide.
+# ⚠️ Repli quand `_NETS_CONFIES_AU_PLAN` est momentanement vide — il l est a
+# l interieur de `_router_en_incluant_gnd`. Sans ce repli, la regle « ce qui
+# manque est confie au plan » deviendrait inerte au pire moment.
+_NETS_DE_PLAN_CONNUS: frozenset = frozenset({"GND", "AGND", "DGND", "GNDA"})
+
 _ABANDON_AUTORISE: bool = True
 
 
@@ -1136,7 +1141,8 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     return 0
 
 
-def _escalade_peut_aider(percent_moteur: int, erreurs: int) -> bool:
+def _escalade_peut_aider(percent_moteur: int, erreurs: int,
+                         manquants: Optional[set] = None) -> bool:
     """Ajouter des couches peut-il encore servir a quelque chose ?
 
     ⚠️ Non quand le ROUTEUR annonce 100 % sur un board propre. Il a tout relie
@@ -1158,7 +1164,26 @@ def _escalade_peut_aider(percent_moteur: int, erreurs: int) -> bool:
 
     Garde : tests/test_escalade_inutile.py.
     """
-    return percent_moteur < 100 or erreurs > 0
+    if erreurs > 0:
+        return True
+    # ⚠️ REGLE DEMANDEE PAR L UTILISATEUR (2026-08-31), et mieux fondee que la
+    # precedente, qui ne regardait que « le moteur annonce-t-il 100 % » :
+    #
+    #     il manque du GND     -> le plan ne l atteint pas   -> PAS d escalade
+    #     il manque du SIGNAL  -> le routeur manque de place -> escalade
+    #
+    # Un net confie au PLAN n est pas route par des pistes : il est COULE. Du
+    # cuivre supplementaire ne l atteint pas davantage. Preuve mesuree sur
+    # `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a 100 % chaque fois,
+    # un seul net incomplet — GND. Six tirages, douze minutes, zero gain.
+    #
+    # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
+    # justifie l escalade ; dix nets de plan ne la justifient pas.
+    if manquants:
+        plan = set(_NETS_CONFIES_AU_PLAN) or _NETS_DE_PLAN_CONNUS
+        if set(manquants) <= plan:
+            return False
+    return percent_moteur < 100
 
 
 def _escalade_epuisee(sans_gain: int) -> bool:
@@ -2026,6 +2051,36 @@ def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
         return pcb_bytes
     return recousu
 
+def _nets_incomplets(rapport: dict) -> set:
+    """Nets que le DRC voit incomplets sur le board livre.
+
+    ⚠️ DEUX formes a reconnaitre, et n en voir qu une rendait le defaut
+    invisible :
+
+        Pad 12 [GND] of U1              une pastille orpheline
+        Zone [GND] on F.Cu, priority 0  un PLAN COUPE EN ILOTS
+
+    Mesure du 2026-08-26 : les 3 « manquantes » de la carte a 100 composants
+    etaient exactement des paires de zones, et le pourcentage restait a 100 %.
+
+    ⚠️ Extraite de `_percent_verifie` pour servir AUSSI a la decision
+    d escalade. Deux extractions separees divergeraient : le message nommerait
+    des nets que la decision ne verrait pas.
+    """
+    nets = set()
+    for item in rapport.get("unconnected_items") or []:
+        for i in item.get("items") or []:
+            d = str(i.get("description", ""))
+            m = _PAD_ISOLEE_RE.match(d)
+            if m:
+                nets.add(m.group(2))
+                continue
+            z = _ZONE_NET_RE.match(d)
+            if z:
+                nets.add(z.group(1))
+    return nets
+
+
 def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> int:
     """Corrige le pourcentage du moteur par ce que le DRC voit sur le board LIVRE.
 
@@ -2055,22 +2110,7 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
         return percent_moteur
     # On compte les NETS touches, pas les paires : un net tres fragmente
     # rendrait le pourcentage negatif.
-    nets = set()
-    for item in manquants:
-        for i in item.get("items") or []:
-            d = str(i.get("description", ""))
-            m = _PAD_ISOLEE_RE.match(d)
-            if m:
-                nets.add(m.group(2))
-                continue
-            # ⚠️ Une paire `Zone [GND] <-> Zone [GND]` est un PLAN COUPE EN
-            # ILOTS, pas une pastille orpheline. Ne chercher que des pastilles
-            # la rendait invisible — mesure du 2026-08-26 : les 3 « manquantes »
-            # de la carte a 100 composants etaient exactement cela, et le
-            # pourcentage restait a 100 %.
-            z = _ZONE_NET_RE.match(d)
-            if z:
-                nets.add(z.group(1))
+    nets = _nets_incomplets(rapport)
     if not nets:
         return percent_moteur
     reel = int(round(100 * max(0, routables - len(nets)) / routables))
@@ -3646,8 +3686,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # part pas en fabrication.
         erreurs = (_compte_erreurs(_rapport_drc(final))
                    if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
-        if not _escalade_peut_aider(percent_moteur, erreurs):
+        # ⚠️ QUELS nets manquent, pas seulement combien. Regle de l utilisateur :
+        # un net confie au PLAN ne se relie pas avec du cuivre en plus.
+        manquants_du_palier = (
+            _nets_incomplets(_rapport_drc(final))
+            if res.kicad_pcb_b64 and not res.skipped else set())
+        if not _escalade_peut_aider(percent_moteur, erreurs,
+                                    manquants=manquants_du_palier):
             escalade_inutile = True
+            logger.info(
+                "route_auto: ce qui manque est confie au PLAN (%s) — escalader "
+                "n y changerait rien, c est un probleme d acces a la broche",
+                ", ".join(sorted(manquants_du_palier)) or "-")
         if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
             return res
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
