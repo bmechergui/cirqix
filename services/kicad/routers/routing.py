@@ -1548,7 +1548,11 @@ _SEGMENT_COMPLET_RE = re.compile(
     r"\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)\s*"
     r"\(width\s+([\d.]+)\)\s*"
     r'\(layer\s+"([^"]+)"\)\s*'
-    r"\(net\s+(\d+)\)")
+    # ⚠️ DEUX FORMES, et n avoir accepte que la premiere rendait ZERO fil sur
+    # un vrai board : `(net 3)` chez kicad-tools et KiCad <= 9, `(net "LED5")`
+    # chez pcbnew 10. Meme piege que celui deja documente dans CLAUDE.md, celui
+    # qui avait produit le faux diagnostic « Freerouting perd la netlist ».
+    r'\(net\s+(?:(\d+)|"([^"]*)")\)')
 
 _NET_NOM_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
 
@@ -1579,10 +1583,15 @@ def _bloc_wiring_pistes(pcb_bytes: bytes) -> str:
     txt = pcb_bytes.decode("utf-8", "replace")
     noms = {int(n): nom for n, nom in _NET_NOM_RE.findall(txt)}
     lignes = []
-    for x1, y1, x2, y2, largeur, couche, net in _SEGMENT_COMPLET_RE.findall(txt):
-        code = int(net)
-        nom = noms.get(code)
-        if not code or not nom:
+    for x1, y1, x2, y2, largeur, couche, num, nomme in _SEGMENT_COMPLET_RE.findall(txt):
+        # Forme nommee : le nom est la. Forme numerotee : on cherche la
+        # declaration ; absente, on ECARTE — jamais on ne devine un net.
+        if nomme:
+            nom = nomme
+        else:
+            code = int(num) if num else 0
+            nom = noms.get(code) if code else None
+        if not nom:
             continue
         lignes.append(
             "    (wire (path %s %.1f %.1f %.1f %.1f %.1f)"

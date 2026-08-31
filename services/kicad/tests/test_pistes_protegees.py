@@ -120,3 +120,40 @@ class TestCablage:
         corps = self.SOURCE[i:i + 6000]
         j = corps.index("_PISTES_A_PROTEGER =")
         assert "meilleur" in corps[max(0, j - 300):j + 60]
+
+
+# ⚠️ LA FORME REELLE d un board sorti du routeur, mesuree le 2026-08-31 :
+# multi-ligne, indentee par tabulations, et surtout **le net est NOMME, pas
+# numerote**. C est le piege KiCad 10 deja documente dans CLAUDE.md —
+# `(net 3 "GND")` chez kicad-tools et KiCad <= 9, `(net "GND")` chez pcbnew 10
+# — celui qui avait produit le faux diagnostic « Freerouting perd la netlist ».
+#
+# La premiere version de ce generateur n acceptait que la forme numerotee et
+# rendait ZERO fil sur un vrai board : « pistes a proteger : 0 fils ». Les
+# douze tests unitaires passaient tous. Seule l execution sur un BOARD REEL l a
+# montre — la lecon deja inscrite : une fixture dit ce qu on a imagine, un
+# board dit ce qui est.
+_BOARD_KICAD10 = b"""(kicad_pcb (version 20240108)
+	(segment
+		(start 161.4229 149.9686)
+		(end 161.9375 149.454)
+		(width 0.2)
+		(layer "F.Cu")
+		(net "LED5")
+		(uuid "178649ae-ab84-4a56-8883-21ce23119f97")
+	)
+)"""
+
+
+class TestFormeReelle:
+    def test_le_net_NOMME_de_kicad_10_est_reconnu(self):
+        bloc = R._bloc_wiring_pistes(_BOARD_KICAD10)
+        assert bloc.count("(wire") == 1
+        assert "(net LED5)" in bloc
+
+    def test_la_forme_multiligne_indentee_est_reconnue(self):
+        # Un attribut par ligne, tabulations : c est ainsi que KiCad ecrit.
+        assert "161422.9 -149968.6" in R._bloc_wiring_pistes(_BOARD_KICAD10)
+
+    def test_le_uuid_qui_suit_le_net_ne_gene_pas(self):
+        assert R._bloc_wiring_pistes(_BOARD_KICAD10).count("(type protect)") == 1
