@@ -384,6 +384,60 @@ def _fenetre_stagnation(unrouted: int) -> int:
     return (_STAGNATION_PASSES_CONDAMNE if unrouted > _MORT_AU_DELA_DE
             else _STAGNATION_PASSES)
 
+# Marge sur la cadence observee avant de declarer un routeur MUET. Trois
+# passes d ecart : en dessous on couperait un job dont la cadence est
+# simplement irreguliere.
+_MARGE_CADENCE: float = 3.0
+
+
+def _numero_de_passe(lignes: list, short_name: str) -> int:
+    """Numero de la DERNIERE passe journalisee par ce job, 0 si aucune.
+
+    Distinguer « lent » de « muet » exige de suivre le NUMERO de passe, pas le
+    pourcentage : un routeur qui avance sans progresser reste vivant.
+    """
+    return next((int(p) for j, p, _, _ in reversed(lignes) if j == short_name), 0)
+
+
+def _routeur_muet(silence_s: float, cadence_s: float, passes_vues: int) -> bool:
+    """Le routeur a-t-il cesse de journaliser ?
+
+    ⚠️ Le garde-fou d origine mesurait le temps SANS PROGRES et coupait un
+    routeur qui parlait, mais lentement. Mesure du 2026-08-31, `stm32-100`,
+    deux tirages independants : « 42 passes sans progres, 3 non routes,
+    plafond de temps » — un board a TROIS nets du but, abandonne parce qu une
+    passe y dure ~7 s et que 300 s n en couvrent que 42.
+
+    Le compteur de PASSES s adapte tout seul a la taille de la carte ; le
+    chronometre, non. On rend donc au chronometre son seul role legitime :
+    detecter le SILENCE.
+
+    ⚠️ Le seuil suit la cadence mesuree, sans quoi on recreerait le defaut de
+    la Nucleo — un tirage abandonne apres UNE passe sur un board ou une passe
+    dure plusieurs minutes.
+
+    ⚠️ Moins de deux passes vues : aucune cadence n est estimable. « Je n ai
+    pas pu mesurer » n est pas « il est mort » — on n abandonne pas.
+    """
+    if passes_vues < 2 or cadence_s <= 0:
+        return False
+    return silence_s > max(_PLAFOND_ATTENTE_S, _MARGE_CADENCE * cadence_s)
+
+
+def _faut_couper(plat: int, fenetre: int, muet: bool) -> bool:
+    """Faut-il cesser d attendre ce tirage ?
+
+    ⚠️ `fenetre == 0` veut dire « ne coupe pas » — presque fini, ou compte de
+    nets inconnu. L ancienne condition coupait quand meme par l horloge :
+    l intention de `_fenetre_stagnation` etait annulee par la ligne qui
+    l utilisait. Seul le silence passe outre, et c est une panne, pas une
+    lenteur.
+    """
+    if fenetre and plat >= fenetre:
+        return True
+    return muet
+
+
 # Ou vit le journal de Freerouting. Meme conteneur que la JVM ; le chemin suit
 # `--user_data_path`, fixe par notre entrypoint.
 _FREEROUTING_LOG = Path(os.environ.get(
@@ -538,7 +592,13 @@ def _route_with_freerouting_api(
         _api("PUT", f"{pre}/jobs/{job_id}/start", {})
 
         deadline = time.time() + timeout_s
-        depart_attente = time.time()
+        # Deux horloges distinctes, et c est tout le correctif : l une suit le
+        # SILENCE (aucune passe nouvelle), l autre la cadence pour en calibrer
+        # le seuil. Le temps sans PROGRES ne coupe plus rien — c est le
+        # compteur de passes qui s en charge, et lui s adapte a la carte.
+        premiere_passe_a = None
+        depart_silence = time.time()
+        derniere_passe = 0
         dernier_unrouted = 0
         short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
@@ -587,14 +647,25 @@ def _route_with_freerouting_api(
                 # deja « sans progres » ; le code, non.
                 if unrouted and unrouted != dernier_unrouted:
                     dernier_unrouted = unrouted
-                    depart_attente = time.time()
-                trop_long = time.time() - depart_attente > _PLAFOND_ATTENTE_S
-                if (fenetre and plat >= fenetre) or (trop_long and plat):
+                passe = _numero_de_passe(derniere, short_name)
+                if passe > derniere_passe:
+                    if premiere_passe_a is None:
+                        premiere_passe_a = time.time()
+                        premiere_passe = passe
+                    derniere_passe = passe
+                    depart_silence = time.time()
+                # Cadence MESUREE : secondes par passe depuis la premiere vue.
+                vues = derniere_passe - premiere_passe + 1 if premiere_passe_a else 0
+                cadence = ((time.time() - premiere_passe_a) / vues
+                           if premiere_passe_a and vues > 0 else 0.0)
+                muet = _routeur_muet(time.time() - depart_silence, cadence, vues)
+                if _faut_couper(plat, fenetre, muet):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
                         "routes%s) — attente abandonnee, le job finit seul",
                         plat, unrouted,
-                        ", plafond de temps atteint" if trop_long else "")
+                        ", routeur muet (%.0fs sans passe, cadence %.1fs)"
+                        % (time.time() - depart_silence, cadence) if muet else "")
                     raise RoutageFige(unrouted=unrouted,
                                       nets=nets_routables)
             time.sleep(2)

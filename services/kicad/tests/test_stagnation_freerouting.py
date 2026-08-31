@@ -211,8 +211,10 @@ class TestPlafondDeTemps:
         import inspect
         from routers.routing import _route_with_freerouting_api
         src = inspect.getsource(_route_with_freerouting_api)
-        assert "_PLAFOND_ATTENTE_S" in src, "plafond jamais applique"
-        assert "trop_long" in src
+        # ⚠️ Le plafond survit, mais comme seuil de SILENCE : il est desormais
+        # consomme par `_routeur_muet`, pas applique en ligne.
+        assert "_routeur_muet(" in src, "garde-fou du silence jamais applique"
+        assert "_faut_couper(" in src
 
 
 class TestSeuilResserre:
@@ -277,16 +279,37 @@ def test_un_tirage_fige_ne_condamne_pas_le_palier():
 # routes. Mon propre commentaire disait deja « sans progres » ; le code, non.
 # ---------------------------------------------------------------------------
 
-def test_le_plafond_compte_le_temps_SANS_PROGRES():
+def test_le_plafond_mesure_le_SILENCE_et_non_la_lenteur():
+    """⚠️ Ce test exigeait le contraire, et il avait raison a son epoque.
+
+    Il protegeait un premier correctif : le plafond comptait le temps TOTAL et
+    coupait un routage legitimement long (Nucleo, abandonnee apres UNE passe).
+    On l a donc fait compter le temps SANS PROGRES.
+
+    Insuffisant, mesure le 2026-08-31 sur `stm32-100`, TROIS tirages
+    independants, ligne identique :
+
+        Freerouting fige (42 passes sans progres, 3 non routes, plafond de temps)
+
+    42 passes, pas 150 : c est l horloge qui coupe, sur un board a TROIS nets
+    du but (96 %). Une passe y dure ~7 s, donc 300 s n en couvrent que 42,
+    quand une carte simple en verrait des centaines. La patience effective
+    etait INVERSEMENT proportionnelle a la taille de la carte.
+
+    Le compteur de PASSES s adapte tout seul ; le chronometre, non. On lui rend
+    donc son seul role legitime — detecter le SILENCE — avec un seuil cale sur
+    la cadence observee, pour ne pas recreer le defaut de la Nucleo.
+    """
     import inspect
     from routers.routing import _route_with_freerouting_api
     src = inspect.getsource(_route_with_freerouting_api)
-    i = src.index("trop_long = ")
-    avant = src[:i]
-    assert "depart_attente = time.time()" in avant.split("while", 1)[-1], (
-        "le compteur n est jamais remis a zero : le plafond mesure le temps "
-        "TOTAL et coupe un routage legitimement long")
-    assert "dernier_unrouted" in avant, "aucun suivi du progres"
+    assert "depart_silence = time.time()" in src, (
+        "aucune horloge de silence : impossible de distinguer un routeur muet "
+        "d un routeur lent")
+    assert "_numero_de_passe(" in src, (
+        "sans le NUMERO de passe, « lent » et « muet » sont indistinguables")
+    assert "trop_long" not in src, (
+        "l ancienne coupe sur le temps sans progres est revenue")
 
 
 # ---------------------------------------------------------------------------
