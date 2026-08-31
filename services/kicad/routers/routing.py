@@ -1840,7 +1840,23 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
             return pcb_bytes
         if not sortie.is_file():
             return pcb_bytes
-        return sortie.read_bytes()
+        repose = sortie.read_bytes()
+    # ⚠️ NE PEUT QU AMELIORER — la garde que ses trois voisines avaient et
+    # qu elle n avait pas. Les positions de ces vias sont calculees AVANT le
+    # routage ; rien ne garantit qu elles restent valides sur le board final.
+    #
+    # Mesure du 2026-08-31, `nucleo-f401` : 3 `copper_edge_clearance` (cuivre a
+    # moins de 0,5 mm du bord), premiere fois que cette carte portait des
+    # erreurs — ses deux mesures precedentes etaient a zero. Une carte avec des
+    # erreurs de fabricabilite ne part pas en production.
+    #
+    # La garde ne tranche pas la cause : elle rend l etape incapable
+    # d aggraver, comme le reste de la chaine.
+    if _compte_erreurs(_rapport_drc(repose)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+        logger.warning(
+            "repose des vias : erreurs ajoutees — board d origine conserve")
+        return pcb_bytes
+    return repose
 
 # Au-dela de ce nombre d ilots par face, le plan n est plus une reference : il
 # est fragmente par les pistes de signal. Un plan sain fait UN ilot par face ;
