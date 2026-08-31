@@ -1819,6 +1819,91 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
     return cibles
 
 
+def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
+    """Pastilles GND des boitiers fine-pitch : ``[(ref, pad)]``.
+
+    ⚠️ ETAPE ③ DE LA SEQUENCE DEMANDEE, sous sa forme qui MARCHE. Prise au
+    pied de la lettre — « router les GND qui ne touchent pas le plan » — elle
+    ne trouve rien : mesure du 2026-08-31, sur le board place avec son plan
+    coule, AUCUNE broche GND n est isolee. Le journal de `stm32-60` ne porte
+    meme pas de ligne « reservation » : `_vias_a_reserver` rend [] faute de
+    cible.
+
+    Les broches GND deviennent orphelines PENDANT le routage — les pistes de
+    signal decoupent le plan autour d elles. C est un effet, pas un etat
+    initial. On reserve donc PREVENTIVEMENT, avant que le routeur n occupe la
+    place, exactement comme pour les SIGNAUX fine-pitch, et exactement comme
+    on fanoute un BGA avant de router quoi que ce soit.
+
+    La mesure soutient le choix : « 21 via(s) d echappement places avant
+    routage, 0 renonce(s) ». Avant le routage la place existe ; apres,
+    504 candidats essayes, aucun ne passe.
+
+    ⚠️ Seuls les boitiers DENSES sont vises. Le plan atteint sans peine la
+    masse d une resistance ; reserver pour elle gaspillerait des sites dont
+    les boitiers denses ont besoin.
+
+    Rend [] au moindre doute : la reservation est un BONUS, jamais un passage
+    oblige.
+    """
+    if not nets_plan:
+        return []
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return []
+    cibles = []
+    for bloc_fp in re.split(r"\(footprint", texte)[1:]:
+        ref = (re.search(r'\(property "Reference" "([^"]+)"\)', bloc_fp)
+               or re.search(r'\(fp_text reference "?([^"\s\)]+)', bloc_fp))
+        if not ref:
+            continue
+        pads = []
+        for morceau in bloc_fp.split('(pad "')[1:]:
+            nom = morceau.split('"', 1)[0]
+            m = (re.search(r'\(net \d+ "([^"]*)"\)', morceau)
+                 or re.search(r'\(net "([^"]*)"\)', morceau))
+            pads.append((nom, m.group(1) if m else ""))
+        if len(pads) < _PADS_FINE_PITCH:
+            continue   # boitier peu dense : le plan l atteint sans peine
+        cibles.extend((ref.group(1), nom) for nom, net in pads
+                      if net in nets_plan)
+    return cibles
+
+
+def _vias_gnd_preventifs(pcb_bytes: bytes, nets_plan: set) -> list:
+    """Vias de sortie reserves pour les GND des boitiers denses, AVANT routage.
+
+    ⚠️ JOURNALISE SA TENTATIVE, pas seulement son succes : ne tracer que
+    `if vias` rendrait indistinguables « aucune cible » et « des cibles mais
+    aucune place » — c est ce qui a masque une premiere version inerte du
+    fanout signal pendant une heure de mesure.
+    """
+    cibles = _pads_gnd_fine_pitch(pcb_bytes, nets_plan)
+    if not cibles:
+        return []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree = Path(tmp) / "in.kicad_pcb"
+            resultat = Path(tmp) / "r.json"
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "plan_escape",
+                "pcb": str(entree),
+                "result": str(resultat),
+                "pads": json.dumps(cibles),
+                "escape_mm": str(_ESCAPE_TRACE_MM),
+            })
+            vias = json.loads(resultat.read_text(encoding="utf-8")).get("vias") or []
+        logger.info(
+            "reservation GND preventive : %d via(s) sur %d pastille(s) GND "
+            "visees sous le(s) boitier(s) dense(s)", len(vias), len(cibles))
+        return vias
+    except Exception as exc:
+        logger.warning("reservation GND preventive impossible (%s)", exc)
+        return []
+
+
 def _vias_signaux_a_reserver(pcb_bytes: bytes) -> list:
     """Vias d echappement pour les pastilles SIGNAL des boitiers fine-pitch.
 
@@ -3576,6 +3661,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # ⚠️ Ce n est PAS un manque de couches : `stm32-100` rend 99 % a
         # 2 couches et 87 % a 4. Le goulot est LOCAL.
         _VIAS_RESERVES = _VIAS_RESERVES + _vias_signaux_a_reserver(etendu)
+
+        # ⚠️ ETAPE ③ DE LA SEQUENCE DEMANDEE, sous sa forme PREVENTIVE. Les
+        # broches GND ne sont pas orphelines maintenant — elles le deviendront
+        # quand les pistes de signal decouperont le plan autour d elles. On
+        # leur reserve donc leur sortie tant que la place existe.
+        _VIAS_RESERVES = _VIAS_RESERVES + _vias_gnd_preventifs(
+            etendu, set(_NETS_CONFIES_AU_PLAN))
 
         tentative = RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(etendu).decode("ascii"),
