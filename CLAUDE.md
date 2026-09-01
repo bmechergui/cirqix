@@ -1465,6 +1465,25 @@ sur le board routé. Rejouer la position — après l'avoir vérifiée — au li
 rechercher. Gardes : `tests/test_wiring_reservation_resoluble.py`,
 `tests/test_reprise_des_sorties_reservees.py`.
 
+**NEVER** laisser un échec rendre la même valeur que son cas normal. Le dernier
+recours du routage (`_recuperer_jobs_abandonnes`) appelait `_api`, définie
+**à l'intérieur** d'une autre fonction : chaque appel levait `NameError`, avalé
+par un `except Exception`, et rendait `None` — exactement ce que rend son cas
+légitime. Il n'a jamais fonctionné, et `stm32-100` est sortie à zéro alors qu'un
+board à 81 % l'attendait dans la JVM. Le défaut est apparu **la minute** où le
+diagnostic a été ajouté. Compter les raisons d'un échec n'est pas du confort.
+
+**NEVER** concaténer deux listes calculées séparément sans se demander si elles
+se recouvrent. `_vias_a_reserver` (pastilles vues isolées par le DRC) et
+`_vias_gnd_preventifs` (toutes les pastilles GND fine-pitch) partagent leurs
+cas les plus critiques ; le doublon posait deux vias au même point, donc une
+violation `hole_to_hole`, donc le rejet TOUT-OU-RIEN des vingt et un vias.
+
+**NEVER** ancrer une garde sur le NOM de l'appelant. Deux gardes cherchaient
+`_api("PUT", …` et se sont mises à lever `ValueError` dès que cette fonction a
+été renommée — elles ne mesuraient plus rien, mais leur intention était intacte.
+S'ancrer sur ce qui ne bouge pas : ici l'URL du départ de job.
+
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
