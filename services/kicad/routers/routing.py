@@ -480,6 +480,27 @@ def _fenetre_effective(fenetre: int, autorise: bool) -> int:
     return fenetre if autorise else 0
 
 
+def _temps_sans_progres(mesure_faite: bool, depuis_s: float) -> float:
+    """Temps sans progres a opposer au plafond — 0 tant que rien n est mesure.
+
+    ⚠️ MA PROPRE FAUTE, le 2026-09-01. `_passes_sans_progres` rend `0` SOIT
+    pour un progres reel, SOIT pour un journal illisible — sa docstring le dit :
+    « sans mesure on ATTEND ». Ma premiere version remettait l horloge a zero
+    sur `plat == 0`, donc aussi quand rien n avait ete mesure : elle repartait a
+    chaque tour et ne coupait jamais. `nucleo-f401` a passe 18 minutes bloquee
+    a 6 non routes sans que la garde, livree une heure plus tot, ne bronche.
+
+    « Mesure a zero » n est pas « jamais mesure » — la faute que ce projet
+    traque partout, commise quelques heures apres avoir ecrit la garde.
+
+    L horloge ne repart donc que sur une AVANCEE MESUREE (le nombre de non
+    routes change) et ne coupe pas tant qu aucune mesure n existe : sinon un
+    board lent serait abandonne avant sa premiere passe, ce qui est deja arrive
+    a la Nucleo avec la version « temps TOTAL ».
+    """
+    return depuis_s if mesure_faite else 0.0
+
+
 def _faut_couper(plat: int, fenetre: int, muet: bool,
                  sans_progres_s: float = 0.0) -> bool:
     """Faut-il cesser d attendre ce tirage ?
@@ -762,10 +783,6 @@ def _route_with_freerouting_api(
                 if unrouted and unrouted != dernier_unrouted:
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
-                if plat == 0:
-                    # Le journal atteste un progres reel (baisse des non
-                    # routes OU changement de score) : l horloge repart.
-                    _dernier_progres_a = time.time()
                 passe = _numero_de_passe(derniere, short_name)
                 if passe > derniere_passe:
                     if premiere_passe_a is None:
@@ -779,7 +796,9 @@ def _route_with_freerouting_api(
                            if premiere_passe_a and vues > 0 else 0.0)
                 muet = _routeur_muet(time.time() - depart_silence, cadence, vues)
                 if _faut_couper(plat, fenetre, muet,
-                                sans_progres_s=time.time() - _dernier_progres_a):
+                                sans_progres_s=_temps_sans_progres(
+                                    dernier_unrouted > 0,
+                                    time.time() - _dernier_progres_a)):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
                         "routes%s) — attente abandonnee, le job finit seul",

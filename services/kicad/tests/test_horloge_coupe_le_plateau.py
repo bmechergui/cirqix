@@ -86,6 +86,34 @@ class TestCriteresExistants:
         assert R._faut_couper(plat=400, fenetre=0, muet=False) is False
 
 
+class TestSansMesure:
+    """⚠️ « Mesure a zero » n est pas « jamais mesure » — ma propre faute.
+
+    `_passes_sans_progres` documente que `0` signifie SOIT un progres reel,
+    SOIT un journal illisible : « sans mesure on ATTEND, on n abandonne pas a
+    l aveugle ». Ma premiere version remettait l horloge a zero sur `plat == 0`
+    — donc AUSSI quand rien n avait ete mesure. Resultat : l horloge repartait
+    a chaque tour de boucle et ne coupait JAMAIS.
+
+    Mesure du 2026-09-01 : `nucleo-f401` a passe 18 minutes dans son repli GND,
+    bloquee a 6 non routes, sans que la garde livree une heure plus tot ne
+    bronche. J ai commis la faute exacte contre laquelle ce projet met en garde
+    partout, quelques heures apres l avoir ecrite.
+
+    Le temps ne repart donc plus que sur une AVANCEE MESUREE — un changement du
+    nombre de non routes — et il ne coupe pas tant qu aucune mesure n existe.
+    """
+
+    def test_sans_aucune_mesure_on_ne_coupe_pas(self):
+        # Avant la premiere passe, `unrouted` est inconnu. Couper la reviendrait
+        # a abandonner un board lent des la premiere seconde — ce qui est
+        # arrive a la Nucleo avec la version « temps TOTAL ».
+        assert R._temps_sans_progres(mesure_faite=False, depuis_s=9999.0) == 0.0
+
+    def test_avec_une_mesure_le_temps_compte(self):
+        assert R._temps_sans_progres(mesure_faite=True, depuis_s=42.0) == 42.0
+
+
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
