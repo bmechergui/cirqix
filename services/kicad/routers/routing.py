@@ -2888,6 +2888,31 @@ def _coudre_jusqu_au_bout(pcb_bytes: bytes) -> bytes:
     return pcb_bytes
 
 
+def _couture_acceptable(erreurs_avant: int, erreurs_apres: int) -> bool:
+    """La couture peut-elle etre gardee ? Elle ne doit jamais AGGRAVER.
+
+    Le critere compte les ERREURS, jamais les avertissements : une erreur de
+    fabricabilite fait refuser la carte, un avertissement non.
+    """
+    return erreurs_apres <= erreurs_avant
+
+
+def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
+    """Board prive de ses `combien` DERNIERS vias, le reste intact.
+
+    Sert au retrait progressif de la couture : quand le lot entier aggrave, on
+    en retire un via et on retente, au lieu de tout jeter.
+    """
+    if combien <= 0 or not pcb_bytes:
+        return pcb_bytes
+    txt = pcb_bytes.decode("utf-8", "replace")
+    vias = [b for b in _blocs_equilibres(txt, "(via")
+            if len(b) > 4 and not b[4].isalnum()]
+    for bloc in vias[-combien:]:
+        txt = txt.replace(bloc, "", 1)
+    return txt.encode("utf-8")
+
+
 def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     """Relie par un via les ilots d un meme plan, decoupes par les pistes.
 
@@ -2925,10 +2950,32 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     if not n:
         return pcb_bytes
     logger.info("couture : %d via(s) poses dans les ilots de plan", n)
-    if _compte_erreurs(_rapport_drc(recousu)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
-        logger.warning("couture de zones : erreurs ajoutees — board d origine conserve")
-        return pcb_bytes
-    return recousu
+    # ⚠️ NE PAS TOUT JETER POUR UN SEUL VIA. Mesure du 2026-09-01,
+    # `nucleo-f401` : « 7 via(s) poses » puis « erreurs ajoutees — board
+    # d origine conserve ». Sept vias perdus parce qu un seul genait, et le
+    # board a garde ses quatre ruptures `Zone <-> Zone` que ces vias devaient
+    # refermer. Meme « tout-ou-rien » que celui deja corrige pour la repose des
+    # vias reserves : la garde « ne peut qu aggraver » est juste, mais
+    # appliquee au LOT elle jette le bon avec le mauvais.
+    #
+    # On retire donc le dernier via pose et on retente, jusqu a trouver un
+    # sous-ensemble qui n aggrave pas. A defaut, le board recu — la garde reste
+    # inviolee.
+    avant = _compte_erreurs(_rapport_drc(pcb_bytes))
+    candidat, retires = recousu, 0
+    while retires <= n:
+        if _couture_acceptable(avant, _compte_erreurs(_rapport_drc(candidat))):
+            if retires:
+                logger.info(
+                    "couture : %d via(s) retire(s) sur %d — le reste ne degrade "
+                    "pas et est conserve", retires, n)
+            return candidat
+        retires += 1
+        candidat = _sans_derniers_vias(recousu, retires)
+    logger.warning(
+        "couture de zones : aucun sous-ensemble des %d via(s) ne tient sans "
+        "aggraver — board d origine conserve", n)
+    return pcb_bytes
 
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
@@ -4600,6 +4647,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # `meilleur is None`. C est ce qui a fait sortir `stm32-100` en ECHEC
         # alors qu un board a 73 % existait.
         if _est_une_panne(res):
+            # ⚠️ DIRE POURQUOI. Un ecart silencieux ici est indistinguable d un
+            # tirage qui n a jamais eu lieu — et c est exactement ce qui a fait
+            # sortir `nucleo-f401` en ECHEC le 2026-09-01 apres deux tirages
+            # rendus a 97 % et 93 %.
+            logger.warning(
+                "route_auto: tirage ECARTE comme panne — %d%%, skipped=%s, "
+                "board=%s, moteur=%s", res.routed_percent, res.skipped,
+                "oui" if res.kicad_pcb_b64 else "NON", res.engine or "-")
             sans_gain += 1
             continue
         if meilleur is None or _palier_meilleur(
