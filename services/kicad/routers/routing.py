@@ -1117,6 +1117,30 @@ def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
     return [palier for palier in echelle for _ in range(tirages)]
 
 
+def _est_une_panne(res) -> bool:
+    """Ce resultat est-il une PANNE plutot qu un mauvais routage ?
+
+    ⚠️ Une panne n est pas un mauvais resultat : c est l ABSENCE de resultat.
+    Elle ne peut donc ni etre livree, ni prendre la place du meilleur, ni
+    empecher le dernier recours d aller chercher un board reel.
+
+    Mesure du 2026-09-01, `stm32-100` : sept tirages tous figes — donc aucun ne
+    rend de resultat — puis un dernier essai en panne (API en timeout,
+    kicad-tools sans budget, « 0 % (aucun moteur) »). Cette panne est devenue
+    « le meilleur » par le simple `meilleur is None` de la boucle,
+    `_recuperer_jobs_abandonnes` n a jamais ete appele, et la carte est sortie
+    en ECHEC alors qu un board a 73 % attendait dans la JVM.
+
+    ⚠️ Un 0 % AVEC board n est PAS une panne : un board reellement route a
+    zero reste un board. Distinguer « mesure a zero » de « jamais mesure » est
+    tout l enjeu, et c est la faute que ce projet traque partout.
+    """
+    if getattr(res, "skipped", False):
+        return True
+    return (getattr(res, "routed_percent", 0) or 0) <= 0 and not getattr(
+        res, "kicad_pcb_b64", "")
+
+
 def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
     """`candidat` bat-il `reference` ? Chaque tuple vaut ``(percent, erreurs)``.
 
@@ -4363,6 +4387,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
             return res
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
+        # ⚠️ UNE PANNE NE PEUT PAS ETRE « LE MEILLEUR ». Sans ce filtre, le
+        # premier resultat venu prend la place — meme un « 0 % (aucun moteur) »
+        # sans board — et bloque le dernier recours, qui ne s arme que sur
+        # `meilleur is None`. C est ce qui a fait sortir `stm32-100` en ECHEC
+        # alors qu un board a 73 % existait.
+        if _est_une_panne(res):
+            sans_gain += 1
+            continue
         if meilleur is None or _palier_meilleur(
                 (res.routed_percent, erreurs), meilleur_note):
             meilleur, meilleur_note = res, (res.routed_percent, erreurs)
