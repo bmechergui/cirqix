@@ -681,6 +681,65 @@ def _points_dans_boite(x1, y1, x2, y2, pas):
         y += pas
 
 
+def _via_relie_vraiment(sur_cette_face: bool, sur_la_face_opposee: bool) -> bool:
+    """Ce point relie-t-il REELLEMENT deux cuivres du meme net ?
+
+    ⚠️ LA CONDITION QUI FAIT TOUTE LA DIFFERENCE, et qui manquait. Un via pose
+    dans un ilot ne relie RIEN si la face opposee n a pas de cuivre du meme net
+    a cet endroit : c est un via borgne, du cuivre pour rien. La couture posait
+    ses vias sans jamais regarder en face.
+
+    La regle generale demandee par l utilisateur tient en une phrase — « tout
+    morceau de cuivre de masse doit posseder au moins un via vers le plan de la
+    face opposee » — et elle n a de sens que si le via ATTEINT ce plan.
+    """
+    return bool(sur_cette_face and sur_la_face_opposee)
+
+
+def _cuivre_du_net_sur(zone, couche_exclue, netcode):
+    """Polygones remplis du net sur les AUTRES couches que `couche_exclue`.
+
+    Sert a repondre a une seule question, pour un point donne : « y a-t-il du
+    cuivre de ce net en face ? »
+    """
+    autres = []
+    try:
+        couches = list(zone.GetLayerSet().Seq())
+    except Exception:
+        return autres
+    for c in couches:
+        if c == couche_exclue:
+            continue
+        try:
+            poly = zone.GetFilledPolysList(c)
+        except Exception:
+            continue
+        if poly.OutlineCount() > 0:
+            autres.append(poly)
+    return autres
+
+
+def _faut_coudre(ilots_sur_la_couche: int, couches_du_net: int) -> bool:
+    """Faut-il poser un via dans cet ilot ?
+
+    ⚠️ La condition d origine — `if total < 2: continue` — ecartait toute face
+    d un seul tenant. Vrai pour une face PRISE SEULE : un ilot unique n a rien
+    a recoudre en lui-meme. Faux des que le net vit sur PLUSIEURS couches.
+
+    Mesure du 2026-09-01, board livre de `nucleo-f401` : F.Cu et B.Cu portent
+    chacun UN seul ilot de GND, donc chacun etait ecarte, donc aucun via ne les
+    reliait. Le rapport `kicad-cli` le disait mot pour mot :
+
+        Zone [GND] on F.Cu, priority 0  <->  Zone [GND] on B.Cu, priority 0
+
+    La couture savait joindre deux ilots d une meme face ; jamais deux faces
+    entre elles.
+    """
+    if ilots_sur_la_couche < 1:
+        return False
+    return ilots_sur_la_couche >= 2 or couches_du_net >= 2
+
+
 def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     """Pose un via dans chaque ilot d un plan, pour les relier par l autre face.
 
@@ -709,14 +768,27 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
         if nets and nom not in nets:
             continue
         obstacles = _obstacles_d_un_autre_net(board, zone.GetNetCode())
+        # ⚠️ Compter les COUCHES du net avant de decider : une face d un seul
+        # tenant n a rien a recoudre en elle-meme, mais deux faces d un seul
+        # tenant ont tout a se dire.
+        couches_du_net = 0
+        for _c in zone.GetLayerSet().Seq():
+            try:
+                if zone.GetFilledPolysList(_c).OutlineCount() > 0:
+                    couches_du_net += 1
+            except Exception:
+                continue
         for couche in zone.GetLayerSet().Seq():
             try:
                 poly = zone.GetFilledPolysList(couche)
                 total = poly.OutlineCount()
             except Exception:
                 continue
-            if total < 2:
-                continue  # plan d un seul tenant : rien a recoudre
+            if not _faut_coudre(total, couches_du_net):
+                continue  # une seule face, d un seul tenant : rien a relier
+            # ⚠️ Le cuivre d en face, calcule UNE fois par couche : c est lui
+            # qui decide si un point relie ou pas.
+            en_face = _cuivre_du_net_sur(zone, couche, zone.GetNetCode())
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False
@@ -730,6 +802,21 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                         continue
                     if any(_dist_point_boite(x, y, o) < via_d / 2 + clearance
                            for o in obstacles):
+                        continue
+                    # ⚠️ REGARDER EN FACE avant de percer. Un via vers du vide
+                    # est un via borgne : il coute un percage et ne relie rien.
+                    dedans_en_face = False
+                    for autre in en_face:
+                        for k in range(autre.OutlineCount()):
+                            try:
+                                if autre.Contains(pt, k):
+                                    dedans_en_face = True
+                                    break
+                            except Exception:
+                                continue
+                        if dedans_en_face:
+                            break
+                    if not _via_relie_vraiment(True, dedans_en_face):
                         continue
                     via = pcbnew.PCB_VIA(board)
                     via.SetPosition(pt)

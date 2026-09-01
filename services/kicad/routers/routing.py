@@ -2330,6 +2330,29 @@ def _nets_du_board(pcb_bytes: bytes) -> set:
         pcb_bytes.decode("utf-8", "replace")))
 
 
+def _liaison_a_pris(avant: list, apres: list) -> bool:
+    """La liaison a-t-elle reellement relie ce qu elle visait ?
+
+    ⚠️ REGLE POSEE PAR L UTILISATEUR le 2026-09-01 : « il faut verifier tous
+    les GND colles, et si pas colles on doit les lier ET verifier que la
+    liaison est la ».
+
+    `escape_pads` rend `{"escaped": N}` — un cuivre POSE, ce qui ne dit rien de
+    ce qui compte : que la broche touche desormais le plan. Un via peut etre
+    pose sans rien relier — c est la definition d un via borgne, et le projet
+    en a deja compte sur de vrais boards.
+
+    Le voisin `_stitch_islands` porte cette verification depuis toujours
+    (`_est_relie` reconstruit la connectivite et refuse le via qui ne joint
+    rien) ; `escape_pads`, non. Deux mecanismes qui posent du cuivre, un seul
+    qui verifie — on comble l ecart chez l appelant.
+
+    Vrai si plus aucune broche n est isolee. Une broche APPARUE isolee est un
+    echec : poser du cuivre ne doit jamais DEconnecter quoi que ce soit.
+    """
+    return not apres
+
+
 def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     """RELIE les broches GND des boitiers denses au plan, AVANT le routage.
 
@@ -2355,6 +2378,13 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     peut partir en fabrication — mesure du 2026-08-23, le fanout force ajoutait
     6 erreurs dont deux courts GND/+3.3V.
     """
+    # ⚠️ Mesure AVANT, avec l instrument qui fait foi (le rapport `kicad-cli`) :
+    # c est a lui qu on comparera l etat apres la pose.
+    try:
+        isolees_avant = _pads_isolees_du_plan(_rapport_drc(pcb_bytes))
+    except Exception:
+        isolees_avant = []
+
     cibles = _pads_gnd_fine_pitch(pcb_bytes, nets_plan)
     if not cibles:
         return pcb_bytes
@@ -2412,6 +2442,23 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
         return pcb_bytes
 
     relie = _fill_zones(relie)
+
+    # ⚠️ LIER NE SUFFIT PAS — VERIFIER. Le runner a rendu « escaped: N », donc
+    # « N cuivres poses ». Ce qui compte est que la broche TOUCHE le plan.
+    try:
+        isolees_apres = _pads_isolees_du_plan(_rapport_drc(relie))
+    except Exception:
+        isolees_apres = isolees_avant
+    if _liaison_a_pris(isolees_avant, isolees_apres):
+        logger.info(
+            "liaison GND verifiee : aucune broche GND isolee du plan "
+            "(%d l etaient avant la pose)", len(isolees_avant))
+    else:
+        logger.warning(
+            "liaison GND : %d broche(s) toujours isolee(s) du plan apres la "
+            "pose (%s) — le cuivre est la, la connexion non",
+            len(isolees_apres),
+            ", ".join("%s.%s" % c for c in isolees_apres[:6]))
     # Le verdict porte sur le board RECOULE : juger celui aux zones perimees
     # reviendrait a mesurer un board que personne ne recevra.
     if _compte_erreurs(_rapport_drc(relie)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
