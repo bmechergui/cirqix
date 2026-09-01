@@ -65,8 +65,12 @@ class TestCablage:
         # Une sortie laterale reste preferable : elle ne coute pas de via bouche.
         corps = self.SOURCE[self.SOURCE.index("def _escape_pads(") :]
         corps = corps[: corps.index(chr(10) + "def ")]
-        assert "_diametre_via_in_pad(" in corps
-        assert corps.index("_choisir_sortie(") < corps.index("_diametre_via_in_pad(")
+        # ⚠️ `_via_in_pad_possible` ENVELOPPE `_diametre_via_in_pad` depuis le
+        # 2026-09-01 : elle y ajoute le refus d une pastille deja percee (un
+        # trou dans un trou). L intention de la garde — le via-in-pad vient
+        # APRES la recherche laterale — est inchangee ; seul le nom appele l est.
+        assert "_via_in_pad_possible(" in corps
+        assert corps.index("_choisir_sortie(") < corps.index("_via_in_pad_possible(")
 
     def test_le_renoncement_reste_possible(self):
         # Si meme le via-in-pad ne tient pas, on ne pose RIEN : une broche

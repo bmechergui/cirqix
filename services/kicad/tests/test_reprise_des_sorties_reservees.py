@@ -100,6 +100,9 @@ class TestCablage:
         # qui n a jamais lieu — le defaut meme qu on corrige ici.
         source = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
             encoding="utf-8")
+        # ⚠️ Le CORPS de la fonction, pas une tranche de longueur fixe : les
+        # 5000 caracteres d origine ont ete depasses le 2026-09-01 et la garde
+        # a cesse de mesurer ce qu elle visait, sans que son intention change.
         i = source.index("def _escape_pads(")
-        corps = source[i:i + 5000]
+        corps = source[i:source.index(chr(10) + "def ", i + 1)]
         assert '"reprises"' in corps

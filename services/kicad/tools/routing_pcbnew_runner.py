@@ -442,6 +442,31 @@ def _trou_libre(x: float, y: float, rayon: float,
 _VIA_MIN_MM = 200_000.0
 
 
+def _bilan_coherent(vises: int, poses: int, renonces: int) -> bool:
+    """Toute pastille visee doit etre POSEE ou RENONCEE — jamais oubliee.
+
+    ⚠️ Mesure du 2026-09-01 : « 1 reliee sur 3 visees, 0 renoncee ». Deux
+    pastilles n etaient ni l un ni l autre — un `continue` muet les sortait de
+    la boucle. Un abandon silencieux est indistinguable d un travail complet,
+    et c est la faute que le projet paie le plus souvent.
+    """
+    return poses + renonces == vises
+
+
+def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
+                         percage_pad: float) -> float:
+    """Diametre du via a poser DANS la pastille. 0 si aucun ne convient.
+
+    ⚠️ UNE PASTILLE DEJA PERCEE LE REFUSE TOUJOURS. Un via dans une pastille
+    traversante est un trou dans un trou — meme faute que les vias superposes
+    de la couture, corrigee le meme jour. Et il serait de toute facon inutile :
+    une pastille traversante relie deja toutes les couches.
+    """
+    if percage_pad > 0:
+        return 0.0
+    return _diametre_via_in_pad(largeur_pad, via_nominal)
+
+
 def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
     """Diametre d un via pose DANS la pastille. 0 si aucun ne tient.
 
@@ -504,8 +529,14 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         centre = fp.GetPosition()
         pos = pad.GetPosition()
         dx, dy = _direction_d_echappement(pad, centre)
-        if (dx * dx + dy * dy) ** 0.5 < 1.0:
-            continue  # pad au centre exact : pas de direction de sortie evidente
+        # ⚠️ NE PAS SORTIR ICI. Une pastille au centre exact du boitier n a pas
+        # de direction laterale evidente — et c est precisement le cas ou le
+        # dernier recours, le via DANS la pastille, est la bonne reponse : il
+        # n en demande aucune. Le `continue` d origine sautait ce recours ET ne
+        # comptait pas l abandon : « 1 reliee sur 3 visees, 0 renoncee ».
+        # La convention KiCad place la broche 1 a l origine du footprint, donc
+        # toute broche 1 ronde de connecteur passait par la.
+        sans_direction = (dx * dx + dy * dy) ** 0.5 < 1.0
 
         obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
@@ -522,7 +553,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
                 propre, marge_piste):
             sortie = reserve
             reprises += 1
-        if sortie is None:
+        if sortie is None and not sans_direction:
             sortie = _choisir_sortie(
                 pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
                 marge_piste, portee, pas
@@ -533,7 +564,11 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             # l autre face, et le probleme du chemin lateral disparait.
             larg = min(float(b.GetRight() - b.GetLeft()),
                        float(b.GetBottom() - b.GetTop()))
-            d = _diametre_via_in_pad(larg, via_d)
+            try:
+                perce = float(pad.GetDrillSizeX())
+            except Exception:
+                perce = 0.0  # sans percage lisible, on traite en CMS
+            d = _via_in_pad_possible(larg, via_d, perce)
             if d <= 0 or any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
                              for o in obstacles):
                 renonces += 1
@@ -565,9 +600,18 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         poses += 1
 
     pcbnew.SaveBoard(args["output"], board)
+    # ⚠️ RENDRE LE NOMBRE DE VISEES, et verifier que le bilan boucle. Sans
+    # `vises`, l appelant ne peut pas distinguer « tout traite » de « des
+    # pastilles oubliees en route » — c est exactement ce qui a masque le
+    # `continue` muet : « 1 reliee sur 3 visees, 0 renoncee ».
+    vises = len(pads)
+    if not _bilan_coherent(vises, poses, renonces):
+        print("escape_pads: BILAN INCOHERENT — %d visee(s), %d posee(s), "
+              "%d renoncee(s) : des pastilles ont disparu de la boucle"
+              % (vises, poses, renonces), file=sys.stderr)
     Path(args["result"]).write_text(
         json.dumps({"escaped": poses, "renonces": renonces,
-                    "reprises": reprises}), encoding="utf-8"
+                    "reprises": reprises, "vises": vises}), encoding="utf-8"
     )
 
 
