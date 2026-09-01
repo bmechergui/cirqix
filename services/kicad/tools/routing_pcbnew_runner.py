@@ -798,15 +798,21 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                 total = poly.OutlineCount()
             except Exception:
                 continue
-            # ⚠️ Le net vit sur autant de couches que de ZONES qui le portent :
+            # ⚠️ Le cuivre d en face, calcule UNE fois par couche : c est lui
+            # qui decide si un point relie ou pas — ET si la couture a lieu.
+            # ⚠️ ORDRE : il doit etre calcule AVANT `_faut_coudre`, qui s en
+            # sert. Une premiere version l utilisait une ligne trop tot et
+            # levait `UnboundLocalError` a CHAQUE appel — avalee par le
+            # `except` de l appelant, elle rendait « couture impossible » et
+            # ne cousait rien du tout. Mesure du 2026-09-01 : trois tirages de
+            # `nucleo-f401`, trois plantages, zero via pose.
+            en_face = _cuivre_du_net_sur(board, couche, zone.GetNetCode())
+            # Le net vit sur autant de couches que de ZONES qui le portent :
             # une par face chez nous. Compter sur la zone courante seule
             # rendait toujours 1, et ecartait le cas « deux faces ».
             couches_du_net = max(couches_du_net, 1 + (1 if en_face else 0))
             if not _faut_coudre(total, couches_du_net):
                 continue  # une seule face, d un seul tenant : rien a relier
-            # ⚠️ Le cuivre d en face, calcule UNE fois par couche : c est lui
-            # qui decide si un point relie ou pas.
-            en_face = _cuivre_du_net_sur(board, couche, zone.GetNetCode())
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False

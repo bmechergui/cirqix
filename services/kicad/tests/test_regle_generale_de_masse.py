@@ -127,3 +127,172 @@ class TestUneZoneParFace:
         src = TestCablage.SOURCE
         j = src.index("def _stitch_zones(")
         assert "_cuivre_du_net_sur(board," in src[j:j + 6000]
+
+
+class _FauxPoly:
+    def __init__(self, n, dedans=True):
+        self._n, self._dedans = n, dedans
+
+    def OutlineCount(self):
+        return self._n
+
+    def Outline(self, i):
+        return self
+
+    def BBox(self):
+        return self
+
+    def GetLeft(self):
+        return 0
+
+    def GetTop(self):
+        return 0
+
+    def GetRight(self):
+        return 10_000_000
+
+    def GetBottom(self):
+        return 10_000_000
+
+    def Contains(self, pt, i=0):
+        return self._dedans
+
+
+class _FausseZone:
+    def __init__(self, couche, ilots, net=1, nom="GND"):
+        self._c, self._ilots, self._net, self._nom = couche, ilots, net, nom
+
+    def GetNetname(self):
+        return self._nom
+
+    def GetNetCode(self):
+        return self._net
+
+    def GetLayerSet(self):
+        class _S:
+            def __init__(self, c):
+                self._c = c
+
+            def Seq(self):
+                return [self._c]
+        return _S(self._c)
+
+    def GetFilledPolysList(self, c):
+        return _FauxPoly(self._ilots if c == self._c else 0)
+
+
+class _FauxBoard:
+    def __init__(self, zones):
+        self._z = zones
+
+    def Zones(self):
+        return self._z
+
+    def GetTracks(self):
+        return []
+
+    def Footprints(self):
+        return []
+
+    def Add(self, item):
+        pass
+
+
+class TestExecutionReelle:
+    """⚠️ La garde qui manquait : EXERCER la fonction, pas seulement la lire.
+
+    Ma correction du 2026-09-01 calculait `couches_du_net` a partir de
+    `en_face` UNE LIGNE AVANT de definir `en_face`. Resultat :
+
+        UnboundLocalError: cannot access local variable 'en_face'
+
+    a CHAQUE appel — avale par le `except` de l appelant, qui journalisait
+    « couture des zones impossible » et conservait le board. Trois tirages de
+    `nucleo-f401`, trois plantages, ZERO via pose. Les tests de l epoque ne
+    lisaient que le source : ils ne pouvaient pas le voir.
+
+    Un faux pcbnew minimal suffit a executer le chemin et a l attraper.
+    """
+
+    def test_la_couture_s_execute_sans_lever(self, tmp_path, monkeypatch):
+        import json as _json
+
+        zf = _FausseZone(0, ilots=3)
+        zb = _FausseZone(31, ilots=1)
+        board = _FauxBoard([zf, zb])
+
+        class _FauxVia:
+            def __init__(self, b):
+                pass
+
+            def SetPosition(self, p):
+                pass
+
+            def SetWidth(self, w):
+                pass
+
+            def SetDrill(self, d):
+                pass
+
+            def SetNetCode(self, n):
+                pass
+
+        class _FauxPcbnew:
+            PCB_VIA = _FauxVia
+
+            @staticmethod
+            def VECTOR2I(x, y):
+                return (x, y)
+
+            @staticmethod
+            def SaveBoard(chemin, b):
+                Path(chemin).write_text("(kicad_pcb)", encoding="utf-8")
+
+        monkeypatch.setattr(RUN, "_charger_board", lambda p, c: board)
+        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n: [])
+        res = tmp_path / "r.json"
+        RUN._stitch_zones(_FauxPcbnew, {
+            "pcb": str(tmp_path / "in.kicad_pcb"),
+            "output": str(tmp_path / "out.kicad_pcb"),
+            "result": str(res),
+            "nets": _json.dumps(["GND"]),
+        })
+        assert "stitched" in _json.loads(res.read_text(encoding="utf-8"))
+
+    def test_elle_pose_bien_des_vias(self, tmp_path, monkeypatch):
+        # 3 ilots sur F.Cu + 1 sur B.Cu : chaque ilot doit recevoir son via.
+        import json as _json
+        board = _FauxBoard([_FausseZone(0, 3), _FausseZone(31, 1)])
+
+        class _FauxVia:
+            def __init__(self, b):
+                pass
+
+            def SetPosition(self, p):
+                pass
+
+            def SetWidth(self, w):
+                pass
+
+            def SetDrill(self, d):
+                pass
+
+            def SetNetCode(self, n):
+                pass
+
+        class _FauxPcbnew:
+            PCB_VIA = _FauxVia
+            VECTOR2I = staticmethod(lambda x, y: (x, y))
+            SaveBoard = staticmethod(
+                lambda c, b: Path(c).write_text("(kicad_pcb)", encoding="utf-8"))
+
+        monkeypatch.setattr(RUN, "_charger_board", lambda p, c: board)
+        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n: [])
+        res = tmp_path / "r.json"
+        RUN._stitch_zones(_FauxPcbnew, {
+            "pcb": str(tmp_path / "in.kicad_pcb"),
+            "output": str(tmp_path / "out.kicad_pcb"),
+            "result": str(res),
+            "nets": _json.dumps(["GND"]),
+        })
+        assert _json.loads(res.read_text(encoding="utf-8"))["stitched"] >= 3
