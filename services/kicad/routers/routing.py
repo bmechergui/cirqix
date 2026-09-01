@@ -1583,12 +1583,26 @@ def _board_outline(pcb_bytes: bytes) -> Optional[tuple[float, float, float, floa
     text = pcb_bytes.decode("utf-8", errors="replace")
     xs: list[float] = []
     ys: list[float] = []
-    for morceau in text.split("(gr_")[1:]:
-        if "Edge.Cuts" not in morceau:
+    # ⚠️ CHAQUE OBJET DANS SES PROPRES PARENTHESES. Un decoupage sur `(gr_`
+    # laissait le morceau courir jusqu au `(gr_` SUIVANT : il avalait donc
+    # tout ce qui se trouve entre les deux, y compris les
+    # `(polygon (pts (xy ...)))` de nos zones de masse. Le contour se
+    # contaminait lui-meme.
+    #
+    # Mesure du 2026-09-01, `nucleo-f401` apres coulee :
+    #     lu      (-6.10, -6.10, 209.75, 150.95)
+    #     pcbnew  (87.20,  59.00, 209.80, 151.00)
+    # Les maxima concordaient, les minima etaient faux de 93 mm — le plan
+    # partait donc de (-6.1, -6.1), tres au-dela de la carte. Defaut vu par
+    # l utilisateur sur une capture KiCad.
+    #
+    # ⚠️ Troisieme cas du meme piege dans la journee, apres le keepout
+    # fine-pitch et la regex de segment : ne jamais supposer ou s arrete un
+    # bloc.
+    for bloc in _blocs_equilibres(text, "(gr_"):
+        if "Edge.Cuts" not in bloc:
             continue
-        # Ne lire que jusqu au prochain element graphique : le suivant a son
-        # propre contexte, et ses coordonnees ne decrivent pas ce contour.
-        for x, y in _EDGE_COORD_RE.findall(morceau):
+        for x, y in _EDGE_COORD_RE.findall(bloc):
             xs.append(float(x))
             ys.append(float(y))
     if not xs or not ys:
@@ -3337,11 +3351,22 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
         zones.append(
             chr(10).join([
                 f'  (zone {ref}(net_name "GND") (layer "{couche}") (hatch edge 0.508)',
+                # ⚠️ La masse gagne quand deux plans se recouvrent — comme dans
+                # `stm32-validation`, la reference visuelle de l utilisateur.
+                "    (priority 1)",
                 # ⚠️ 0,5 mm vidait tout le cuivre entre les broches d un boitier
                 # fine-pitch. Mesure du 2026-08-21 sur le LQFP-48 (pas 0,5 mm) :
                 # 0.5 -> 6 connexions manquantes, 0.25 -> 3. La valeur venait de
                 # la version TypeScript, ecrite pour un board simple.
-                "    (connect_pads yes (clearance 0.25))",
+                #
+                # ⚠️ SANS `yes` : le `yes` soudait le plan EN PLEIN sur chaque
+                # pastille, sans relief thermique. Electriquement meilleur pour
+                # une masse, mais ce n est ni le rendu de KiCad par defaut ni
+                # celui de `stm32-validation` — l utilisateur a tranche le
+                # 2026-09-01, capture a l appui. L isolement MESURE (0,25) est
+                # conserve : ne pas reprendre le 0,3 de la reference sans
+                # remesurer sur un LQFP.
+                "    (connect_pads (clearance 0.25))",
                 "    (min_thickness 0.25)",
                 "    (fill yes (thermal_gap 0.25) (thermal_bridge_width 0.5))",
                 f"    (polygon (pts (xy {x1} {y1}) (xy {x2} {y1}) (xy {x2} {y2}) (xy {x1} {y2})))",
@@ -3638,6 +3663,42 @@ def _confier_au_plan(dsn_path: Path) -> int:
     return total
 
 
+def _sans_keepouts(pcb_bytes: bytes) -> bytes:
+    """Board prive de ses zones d EXCLUSION, plans de masse conserves.
+
+    ⚠️ REGRESSION QUE J AI INTRODUITE le 2026-09-01, mesuree dans l heure. Le
+    correctif 5c759c0 a remis les keepouts fine-pitch SUR leur boitier — ils
+    etaient poses 87 mm a cote depuis toujours. Effet immediat sur
+    `nucleo-f401` : CINQ tirages figes a ~0 %, le routeur ne routait plus rien.
+
+    En Specctra, un `(keepout)` NU bloque TOUT — pistes ET vias — la ou nos
+    zones KiCad ne declarent que `(copperpour not_allowed)`, tracks et vias
+    autorises. L export perd la nuance, et le routeur se voyait interdire toute
+    la surface du LQFP-64, c est-a-dire l endroit meme ou sortent ses broches.
+
+    Tant que les keepouts etaient hors carte, ils ne bloquaient que du vide :
+    le defaut de coordonnees MASQUAIT le defaut d export. Corriger le premier a
+    revele le second.
+
+    Le keepout sert a empecher la COULEE, jamais le ROUTAGE — et la coulee a
+    deja eu lieu quand on exporte. Il reste donc dans le board livre, ou KiCad
+    le respecte au remplissage, et disparait du seul DSN.
+
+    ⚠️ ON NE RETIRE QUE LES ZONES D EXCLUSION. Emporter les plans de masse
+    ferait router sur une carte vide — defaut mesure le 2026-08-29, 68 %
+    contre 94 %.
+    """
+    if not pcb_bytes or b"(keepout" not in pcb_bytes:
+        return pcb_bytes
+    txt = pcb_bytes.decode("utf-8", "replace")
+    a_retirer = [b for b in _blocs_equilibres(txt, "(zone") if "(keepout" in b]
+    if not a_retirer:
+        return pcb_bytes
+    for bloc in a_retirer:
+        txt = txt.replace(bloc, "", 1)
+    return txt.encode("utf-8")
+
+
 def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
     """Export a PCB to Specctra DSN in a bounded pcbnew child process.
 
@@ -3651,6 +3712,9 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
     # citait 32 couches sur une carte qui en declare 2.
     pcb_bytes = _retirer_couches_fantomes(pcb_bytes)
     pcb_bytes = _deguillemeter_keepout(pcb_bytes)
+    # ⚠️ Les zones d EXCLUSION ne partent pas dans le DSN : un `(keepout)`
+    # Specctra bloque pistes ET vias, la ou la nôtre n interdit que la coulee.
+    pcb_bytes = _sans_keepouts(pcb_bytes)
     with tempfile.TemporaryDirectory() as tmp:
         in_pcb = Path(tmp) / "in.kicad_pcb"
         in_pcb.write_bytes(pcb_bytes)
