@@ -1934,6 +1934,23 @@ def _garder_les_nets_declares(bloc: str, declares: set, quoi: str) -> str:
     court-circuit, pas une approximation. Et on le DIT — un ecart silencieux
     ici est exactement ce qui a rendu la reservation inerte sans que rien ne
     paraisse anormal dans le journal.
+
+    ⚠️ CETTE GARDE N EST PAS DE L HYGIENE, C EST UNE PROTECTION CONTRE LE
+    COURT-CIRCUIT — releve par GLM le 2026-09-01 dans le source de Freerouting,
+    et confirme independamment par Grok :
+
+        Wiring.readWireScope::tryCorrectNet — un FIL dont le net est
+        introuvable se voit assigner AUTOMATIQUEMENT le net du premier
+        contact qu il touche (« turret without net in Mentor design »).
+
+    Un via non resolu, lui, est seulement signale (`Wiring: via net '...' not
+    found`) puis insere sans net. Mais une PISTE injectee sous un net absent du
+    DSN peut donc adopter le net du voisin qu elle frole — exactement ce que
+    nous faisions avant le correctif 299cb22, ou toutes les pistes GND etaient
+    ecrites sous un net que `_confier_au_plan` venait de retirer.
+
+    **NEVER** injecter un `(wire ...)` sous un net que la section `(network)`
+    ne declare pas.
     """
     if not bloc:
         return ""
