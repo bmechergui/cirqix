@@ -604,7 +604,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     # `vises`, l appelant ne peut pas distinguer « tout traite » de « des
     # pastilles oubliees en route » — c est exactement ce qui a masque le
     # `continue` muet : « 1 reliee sur 3 visees, 0 renoncee ».
-    vises = len(pads)
+    vises = len(cibles)
     if not _bilan_coherent(vises, poses, renonces):
         print("escape_pads: BILAN INCOHERENT — %d visee(s), %d posee(s), "
               "%d renoncee(s) : des pastilles ont disparu de la boucle"

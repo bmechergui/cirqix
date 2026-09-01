@@ -100,6 +100,127 @@ class TestViaDansPastille:
         assert 0 < d <= 0.4 * MM
 
 
+class TestExecutionReelle:
+    """⚠️ EXERCER la fonction, pas seulement lire son source.
+
+    Le 2026-09-01, la premiere version de ce correctif ecrivait
+    `vises = len(pads)` alors que la liste s appelle `cibles` :
+
+        NameError: name 'pads' is not defined. Did you mean: 'pad'?
+
+    Les quatorze tests passaient — aucun n APPELAIT `_escape_pads`. Le defaut
+    n est apparu qu au banc, avale par le `except` de l appelant, qui a
+    journalise « liaison GND avant routage impossible » et conserve le board.
+    La lecon etait deja inscrite dans CLAUDE.md ; ce test la rend executoire.
+    """
+
+    def _board(self, *, percee: bool, au_centre: bool):
+        class _P:
+            def __init__(s, x, y):
+                s.x, s.y = x, y
+
+        class _Boite:
+            GetLeft = staticmethod(lambda: -0.45 * MM)
+            GetTop = staticmethod(lambda: -0.45 * MM)
+            GetRight = staticmethod(lambda: 0.45 * MM)
+            GetBottom = staticmethod(lambda: 0.45 * MM)
+
+        class _Pad:
+            def __init__(s):
+                s._xy = (10 * MM, 10 * MM)
+
+            GetPadName = staticmethod(lambda: "2")
+            GetNetCode = staticmethod(lambda: 1)
+            GetNetname = staticmethod(lambda: "GND")
+            GetLayer = staticmethod(lambda: 0)
+            GetBoundingBox = staticmethod(lambda: _Boite())
+            GetDrillSizeX = staticmethod(lambda: (0.8 * MM) if percee else 0)
+
+            def GetPosition(s):
+                return _P(*s._xy)
+
+        class _Fp:
+            GetReference = staticmethod(lambda: "D3")
+            Pads = staticmethod(lambda: [_Pad()])
+            GetBoundingBox = staticmethod(lambda: _Boite())
+
+            @staticmethod
+            def GetPosition():
+                # au centre exact -> direction (0, 0) -> le cas du defaut
+                return _P(10 * MM, 10 * MM) if au_centre else _P(0, 0)
+
+        class _Board:
+            def __init__(s):
+                s.ajoutes = []
+            GetFootprints = staticmethod(lambda: [_Fp()])
+            Footprints = staticmethod(lambda: [_Fp()])
+            GetTracks = staticmethod(lambda: [])
+            FindFootprintByReference = staticmethod(lambda r: _Fp())
+
+            def Add(s, item):
+                s.ajoutes.append(item)
+        return _Board()
+
+    def _lancer(self, board, tmp_path, monkeypatch):
+        import json as _json
+
+        class _Via:
+            def __init__(s, b):
+                pass
+            SetPosition = SetWidth = SetDrill = SetNetCode = (
+                lambda s, *a: None)
+
+        class _Track:
+            def __init__(s, b):
+                pass
+            SetStart = SetEnd = SetWidth = SetLayer = SetNetCode = (
+                lambda s, *a: None)
+
+        class _Faux:
+            PCB_VIA = _Via
+            PCB_TRACK = _Track
+            VECTOR2I = staticmethod(lambda x, y: (x, y))
+            SaveBoard = staticmethod(
+                lambda c, b: Path(c).write_text("(pcb)", encoding="utf-8"))
+
+        monkeypatch.setattr(RUN, "_charger_board", lambda p, c: board)
+        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n: [])
+        res = tmp_path / "r.json"
+        RUN._escape_pads(_Faux, {
+            "pcb": str(tmp_path / "in.kicad_pcb"),
+            "output": str(tmp_path / "out.kicad_pcb"),
+            "result": str(res),
+            "pads": _json.dumps([["D3", "2"]]),
+        })
+        return _json.loads(res.read_text(encoding="utf-8"))
+
+    def test_elle_s_execute_sans_lever(self, tmp_path, monkeypatch):
+        bilan = self._lancer(self._board(percee=False, au_centre=True),
+                             tmp_path, monkeypatch)
+        assert "vises" in bilan
+
+    def test_le_bilan_BOUCLE_toujours(self, tmp_path, monkeypatch):
+        for percee in (False, True):
+            bilan = self._lancer(self._board(percee=percee, au_centre=True),
+                                 tmp_path, monkeypatch)
+            assert RUN._bilan_coherent(
+                bilan["vises"], bilan["escaped"], bilan["renonces"]), bilan
+
+    def test_une_pastille_CMS_au_centre_est_RELIEE_par_un_via(self, tmp_path,
+                                                             monkeypatch):
+        # Le cas que le `continue` muet sautait.
+        bilan = self._lancer(self._board(percee=False, au_centre=True),
+                             tmp_path, monkeypatch)
+        assert bilan["escaped"] == 1 and bilan["renonces"] == 0
+
+    def test_une_pastille_PERCEE_au_centre_est_RENONCEE_pas_oubliee(
+            self, tmp_path, monkeypatch):
+        # J10.1 : un via dans un trou n a aucun sens — mais elle doit compter.
+        bilan = self._lancer(self._board(percee=True, au_centre=True),
+                             tmp_path, monkeypatch)
+        assert bilan["escaped"] == 0 and bilan["renonces"] == 1
+
+
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
         encoding="utf-8")
