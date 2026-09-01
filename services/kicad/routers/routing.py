@@ -1605,57 +1605,53 @@ _DENSE_PAD_COUNT: int = 16
 _KEEPOUT_MARGIN_MM: float = 1.5
 
 
-def _dense_footprint_boxes(pcb_bytes: bytes) -> list[tuple[float, float, float, float]]:
-    """Boites englobantes des boitiers fine-pitch haut-broches, avec marge.
+_AT_RE = re.compile(r"\(at\s+(-?[\d.]+)\s+(-?[\d.]+)")
 
-    ⚠️ Un plan ne peut pas atteindre les broches d un LQFP au pas de 0,5 mm :
-    entre deux pattes il n y a place pour aucun cuivre, quel que soit
-    l isolement (mesure du 2026-08-21 : 0,5 mm -> 6 connexions manquantes,
-    0,25 -> 3, 0,2 -> 3). Le routeur, lui, considere GND « pris en charge par
-    le plan » et cesse de le router : ces broches ne sont alors reliees ni par
-    le plan, ni par une piste.
 
-    On lit le fichier avec le parseur de kicad-tools, celui qu utilise deja le
-    placement — pas de geometrie custom.
+def _boites_fine_pitch(pcb_bytes: bytes) -> list:
+    """Boites des boitiers fine-pitch, en coordonnees ABSOLUES du fichier.
+
+    ⚠️ REMPLACE `_dense_footprint_boxes`, qui lisait `kicad-tools`. Defaut
+    trouve le 2026-09-01 par l UTILISATEUR, a l oeil, sur une capture KiCad :
+    trois rectangles vides flottant hors de la carte. Mesure sur `nucleo-f401`,
+    meme board, memes boitiers :
+
+        LQFP-64      kicad-tools ( 67.02,  59.24)   pcbnew (154.27, 118.29)
+        SOT-223      kicad-tools (102.89,  82.48)   pcbnew (190.14, 141.53)
+        PinHeader    kicad-tools ( 35.00,   5.00)   pcbnew (122.25,  64.05)
+
+    Ecart CONSTANT (87.25, 59.05) : le coin du contour. `kicad-tools` rend les
+    positions RELATIVES a l origine de la carte, le format `.kicad_pcb` les
+    ecrit ABSOLUES, et le code melangeait les deux. Resultat : keepouts a
+    60-90 mm de leur boitier, hors carte sur 7 boards sur 8.
+
+    ⚠️ Ce keepout existe pour EMPECHER le plan de pretendre couvrir les
+    pastilles d un boitier au pas de 0,5 mm — la cause documentee des broches
+    GND « couvertes mais non reliees ». Il n a JAMAIS protege un boitier.
+
+    On lit donc le fichier lui-meme : `(footprint ... (at X Y))` est absolu,
+    `(pad ... (at x y))` est relatif au boitier. Un seul referentiel.
     """
-    from kicad_tools.schema.pcb import PCB
-
-    with tempfile.TemporaryDirectory() as tmp:
-        chemin = Path(tmp) / "b.kicad_pcb"
-        chemin.write_bytes(pcb_bytes)
-        try:
-            pcb = PCB.load(str(chemin))
-        except Exception as exc:
-            logger.warning("keepout fine-pitch: board illisible (%s) — aucun keepout", exc)
-            return []
-
-    boites: list[tuple[float, float, float, float]] = []
-    for fp in pcb.footprints:
-        pads = list(getattr(fp, "pads", []) or [])
-        if len(pads) < _DENSE_PAD_COUNT:
+    if not pcb_bytes:
+        return []
+    txt = pcb_bytes.decode("utf-8", "replace")
+    boites = []
+    for bloc in _blocs_equilibres(txt, "(footprint"):
+        m = _AT_RE.search(bloc)
+        if not m:
             continue
-        # ⚠️ Les positions de pad sont RELATIVES au boitier : il faut y ajouter
-        # sa position. Sans cela la boite se calcule autour de l origine et le
-        # keepout tombe hors de la carte — meme erreur que le plan de masse
-        # dessine a (0,0), corrigee le meme jour.
-        origine = getattr(fp, "position", (0.0, 0.0))
-        ox = float(getattr(origine, "x", origine[0]))
-        oy = float(getattr(origine, "y", origine[1]))
-
-        xs: list[float] = []
-        ys: list[float] = []
-        for pad in pads:
-            pos = getattr(pad, "position", None)
-            if pos is None:
+        ox, oy = float(m.group(1)), float(m.group(2))
+        xs, ys = [], []
+        for pad in _blocs_equilibres(bloc, "(pad"):
+            mp = _AT_RE.search(pad)
+            if not mp:
                 continue
-            px = float(getattr(pos, "x", pos[0]))
-            py = float(getattr(pos, "y", pos[1]))
-            xs.append(ox + px)
-            ys.append(oy + py)
-        if not xs:
+            xs.append(ox + float(mp.group(1)))
+            ys.append(oy + float(mp.group(2)))
+        if len(xs) < _DENSE_PAD_COUNT:
             continue
-        m = _KEEPOUT_MARGIN_MM
-        boites.append((min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m))
+        m2 = _KEEPOUT_MARGIN_MM
+        boites.append((min(xs) - m2, min(ys) - m2, max(xs) + m2, max(ys) + m2))
     return boites
 
 
@@ -1741,7 +1737,7 @@ def _projet_kicad(pcb_bytes: bytes):
     chez JLCPCB. La condition est la presence reelle d un boitier dense — meme
     critere que le halo d escape et le keepout de coulee.
     """
-    if not _dense_footprint_boxes(pcb_bytes):
+    if not _boites_fine_pitch(pcb_bytes):
         return None
     return {
         "board": {"design_settings": {"rules": dict(_REGLES_FINE_PITCH)}},
@@ -3371,7 +3367,7 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     # Un keepout de COULEE resout les deux : le plan cesse de pretendre les
     # couvrir, et le routeur les route jusqu au bord du plan. Pistes et vias
     # restent autorises — on interdit le remplissage, pas le routage.
-    for (kx1, ky1, kx2, ky2) in _dense_footprint_boxes(pcb_bytes):
+    for (kx1, ky1, kx2, ky2) in _boites_fine_pitch(pcb_bytes):
         zones.append(
             chr(10).join([
                 '  (zone (net 0) (net_name "") (layer "F.Cu") (hatch edge 0.508)',

@@ -81,14 +81,34 @@ SIMPLE = _board(_footprint("R1", 10, 10, 2))
 
 
 class TestDetectionDesBoitiersDenses:
+    """⚠️ Ces tests passaient — et la fonction qu ils validaient placait les
+    keepouts a 87 mm de leur boitier, HORS CARTE sur 7 boards sur 8.
+
+    Ils exercaient `_dense_footprint_boxes`, qui lisait les positions via
+    `kicad-tools`. Or `kicad-tools` les rend RELATIVES a l origine de la carte
+    tandis que le format `.kicad_pcb` les ecrit ABSOLUES. Sur la fixture, dont
+    l origine carte est (0,0), les deux referentiels coincident : le test ne
+    pouvait pas voir l ecart. Sur un vrai board, mesure le 2026-09-01 :
+
+        LQFP-64   kicad-tools ( 67.02,  59.24)   pcbnew (154.27, 118.29)
+
+    Le defaut a ete trouve par l UTILISATEUR, a l oeil, sur une capture KiCad
+    montrant trois rectangles flottant hors de la carte.
+
+    « Une fixture dit ce qu on a imagine, un board dit ce qui est » — la regle
+    du projet, payee une fois de plus. Les tests visent desormais
+    `_boites_fine_pitch`, qui lit le fichier, et une garde de coordonnees
+    ABSOLUES vit dans tests/test_keepout_au_bon_endroit.py.
+    """
+
     def test_repere_un_boitier_a_beaucoup_de_broches(self):
-        assert routing_router._dense_footprint_boxes(DENSE), "LQFP-48 non detecte"
+        assert routing_router._boites_fine_pitch(DENSE), "LQFP-48 non detecte"
 
     def test_ignore_un_composant_a_deux_broches(self):
-        assert routing_router._dense_footprint_boxes(SIMPLE) == []
+        assert routing_router._boites_fine_pitch(SIMPLE) == []
 
     def test_la_boite_englobe_les_broches_avec_une_marge(self):
-        (x1, y1, x2, y2), = routing_router._dense_footprint_boxes(DENSE)
+        (x1, y1, x2, y2), = routing_router._boites_fine_pitch(DENSE)
         # Les pads vont de (40+0.5, 30) a (40+12, 30), plus la marge.
         assert x1 < 40.5 and x2 > 52.0
         assert y1 < 30.0 and y2 > 30.0
