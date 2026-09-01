@@ -827,21 +827,23 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                     if any(_dist_point_boite(x, y, o) < via_d / 2 + clearance
                            for o in obstacles):
                         continue
-                    # ⚠️ REGARDER EN FACE avant de percer. Un via vers du vide
-                    # est un via borgne : il coute un percage et ne relie rien.
-                    dedans_en_face = False
-                    for autre in en_face:
-                        for k in range(autre.OutlineCount()):
-                            try:
-                                if autre.Contains(pt, k):
-                                    dedans_en_face = True
-                                    break
-                            except Exception:
-                                continue
-                        if dedans_en_face:
-                            break
-                    if not _via_relie_vraiment(True, dedans_en_face):
-                        continue
+                    # ⚠️ CONDITION RETIREE LE 2026-09-01, PAR LA MESURE. J avais
+                    # ajoute « ne percer que si la face opposee porte du cuivre
+                    # a cet endroit » — logiquement seduisant, un via vers du
+                    # vide ne reliant rien. Empiriquement MAUVAIS :
+                    #
+                    #   couture d origine (sans la condition)  1 manquante
+                    #   avec la condition                      4 manquantes
+                    #
+                    # Elle refuse des sites que la couture d origine acceptait,
+                    # et le board livre est moins bon. Un via traversant relie
+                    # AUSSI les couches internes ; juger sa valeur sur la seule
+                    # face opposee etait une vue de l esprit.
+                    #
+                    # `_via_relie_vraiment` et `_cuivre_du_net_sur` restent
+                    # disponibles et testes : c est la CONDITION qui est
+                    # refutee, pas le moyen de la reposer un jour avec une
+                    # mesure a l appui.
                     via = pcbnew.PCB_VIA(board)
                     via.SetPosition(pt)
                     via.SetWidth(via_d)

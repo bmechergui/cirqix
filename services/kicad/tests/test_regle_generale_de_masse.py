@@ -80,13 +80,30 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
         encoding="utf-8")
 
-    def test_la_couture_verifie_la_face_opposee(self):
-        # ⚠️ Une regle correcte que personne n applique est indistinguable
-        # d une regle absente — la faute la plus repetee de ce projet.
+    def test_la_condition_de_face_opposee_reste_REFUTEE(self):
+        """⚠️ Ce test exigeait l INVERSE. La mesure l a renverse.
+
+        « Ne percer que si la face opposee porte du cuivre a cet endroit »
+        est logiquement seduisant — un via vers du vide ne relie rien — et
+        empiriquement MAUVAIS. Mesure du 2026-09-01, `nucleo-f401`, meme
+        placement fige :
+
+            couture d origine, sans la condition   98 %  1 manquante   325 s
+            avec la condition                      98 %  4 manquantes  2666 s
+
+        Elle refuse des sites que la couture d origine acceptait, pose moins de
+        vias, et le board livre est moins bon. Un via traversant relie AUSSI
+        les couches internes : juger sa valeur sur la seule face opposee etait
+        une vue de l esprit.
+
+        On garde le MOYEN (`_via_relie_vraiment`, `_cuivre_du_net_sur`, testes)
+        et on retire la CONDITION. La reposer un jour exigera une mesure qui la
+        soutienne — celle-ci la condamne.
+        """
         i = self.SOURCE.index("def _stitch_zones(")
         corps = self.SOURCE[i:i + 6000]
-        assert "_via_relie_vraiment(" in corps, (
-            "la couture pose encore des vias sans regarder la face opposee")
+        assert "if not _via_relie_vraiment(" not in corps, (
+            "la condition refutee par la mesure du 2026-09-01 est revenue")
 
     def test_le_cuivre_de_la_face_opposee_est_calcule(self):
         i = self.SOURCE.index("def _stitch_zones(")
