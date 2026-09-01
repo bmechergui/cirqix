@@ -100,7 +100,11 @@ class TestCablage:
         # son premier occurrent est la DEFINITION de la fonction, loin de la
         # boucle d attente. Une garde mal ancree verifie autre chose que ce
         # qu elle croit.
-        i = self.SOURCE.index('_api("PUT", f"{pre}/jobs/{job_id}/start"')
+        # ⚠️ Ancrer sur L URL, pas sur le nom de l appelant : celui-ci est
+        # passe de `_api` a `_appel` le 2026-08-31, quand `_api` a du etre
+        # sortie au niveau module — et la garde s est mise a lever
+        # `ValueError` au lieu de mesurer. Ce qu elle verifie n a pas change.
+        i = self.SOURCE.index('f"{pre}/jobs/{job_id}/start"')
         corps = self.SOURCE[i:i + 12000]
         assert "_routeur_muet(" in corps
 

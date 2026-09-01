@@ -573,6 +573,42 @@ def _passes_sans_progres(log_text: str, short_name: str) -> int:
     return plat
 
 
+def _api(method: str, path: str, payload: Optional[dict] = None,
+         base: Optional[str] = None) -> dict:
+    """Un appel a l API Freerouting. Rend le JSON, ou `{}` si le corps est vide.
+
+    ⚠️ Cette fonction etait IMBRIQUEE dans `_route_with_freerouting_api`.
+    `_recuperer_jobs_abandonnes`, au niveau module, l appelait quand meme : tout
+    appel levait donc `NameError: name '_api' is not defined`, avale par son
+    `except Exception` et rendu comme un simple `None`.
+
+    Le dernier recours de la chaine — aller chercher le cuivre d un job que
+    l on a abandonne sur stagnation, mais qui a fini seul dans la JVM — n a
+    ainsi JAMAIS fonctionne. Mesure du 2026-08-31, `stm32-100` au banc a
+    placement fige : six tirages figes (56, 78, 57 % a 2 couches ; 81, 41 % a
+    4), budget epuise, recuperation appelee, `None`, ECHEC total — alors qu un
+    board a 81 % existait dans la JVM.
+
+    Le defaut est reste invisible parce que l echec de la recuperation est
+    INDISTINGUABLE de son cas normal : les deux rendent `None`. Il n est
+    apparu qu une fois le diagnostic ajoute — la meme minute.
+    """
+    import json
+    import urllib.request
+
+    base = base or _freerouting_api_base()
+    headers = _freerouting_api_headers()
+    body: Optional[bytes] = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}{path}", data=body, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read()
+    return json.loads(raw) if raw else {}
+
+
 def _route_with_freerouting_api(
     pcb_bytes: bytes,
     timeout_s: int = _DEFAULT_TIMEOUT_S,
@@ -590,18 +626,11 @@ def _route_with_freerouting_api(
     base = _freerouting_api_base()
     pre = _FREEROUTING_API_PREFIX
 
-    def _api(method: str, path: str, payload: Optional[dict] = None) -> dict:
-        headers = _freerouting_api_headers()
-        body: Optional[bytes] = None
-        if payload is not None:
-            headers["Content-Type"] = "application/json"
-            body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            f"{base}{path}", data=body, method=method, headers=headers
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-        return json.loads(raw) if raw else {}
+    def _appel(method: str, path: str, payload: Optional[dict] = None) -> dict:
+        # ⚠️ Nom DISTINCT de `_api`. Un `def _api` imbrique ombrait la fonction
+        # de module du meme nom ; c est ce qui avait rendu invisible le fait que
+        # `_recuperer_jobs_abandonnes` appelait un nom inexistant.
+        return _api(method, path, payload, base=base)
 
     with tempfile.TemporaryDirectory() as tmp:
         dsn_path = Path(tmp) / "board.dsn"
@@ -619,7 +648,7 @@ def _route_with_freerouting_api(
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
-        session = _api("POST", f"{pre}/sessions/create", {})
+        session = _appel("POST", f"{pre}/sessions/create", {})
         session_id = session["id"]
 
         # ⚠️ On enfilait le job SANS le moindre reglage, donc avec les defauts
@@ -639,16 +668,16 @@ def _route_with_freerouting_api(
         charge = {"session_id": session_id}
         if _REGLAGES_FREEROUTING:
             charge["router_settings"] = _REGLAGES_FREEROUTING
-        job = _api("POST", f"{pre}/jobs/enqueue", charge)
+        job = _appel("POST", f"{pre}/jobs/enqueue", charge)
         job_id = job["id"]
 
-        _api(
+        _appel(
             "POST",
             f"{pre}/jobs/{job_id}/input",
             _freerouting_input_payload(dsn_path.read_bytes()),
         )
 
-        _api("PUT", f"{pre}/jobs/{job_id}/start", {})
+        _appel("PUT", f"{pre}/jobs/{job_id}/start", {})
 
         deadline = time.time() + timeout_s
         # Deux horloges distinctes, et c est tout le correctif : l une suit le
@@ -661,7 +690,7 @@ def _route_with_freerouting_api(
         dernier_unrouted = 0
         short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
-            status = _api("GET", f"{pre}/jobs/{job_id}")
+            status = _appel("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
             if _freerouting_job_done(state):
                 break
@@ -742,7 +771,7 @@ def _route_with_freerouting_api(
         else:
             raise RuntimeError("Freerouting API timeout")
 
-        output = _api("GET", f"{pre}/jobs/{job_id}/output")
+        output = _appel("GET", f"{pre}/jobs/{job_id}/output")
         # `data` est le champ du `BoardFilePayload` ; les deux autres noms sont
         # conservés en repli, sans preuve qu'ils existent — un output vide est
         # rattrapé plus bas par la garde netlist.
@@ -781,15 +810,23 @@ def _recuperer_jobs_abandonnes(pcb_bytes: bytes) -> Optional[bytes]:
     """
     meilleur_board = None
     meilleur_pct = -1
+    # ⚠️ COMPTER LES RAISONS. Sans elles, un `None` ne dit pas si aucun job n a
+    # ete enregistre, s ils tournent encore, ou si leur sortie est vide — trois
+    # situations dont une seule est normale. Mesure du 2026-08-31 : `stm32-100`
+    # sort en ECHEC apres six tirages figes, et le journal ne permet pas de
+    # savoir laquelle des trois s est produite.
+    en_cours = sans_sortie = irrecuperables = 0
     for job in _JOBS_ABANDONNES:
         try:
             statut = _api("GET", "%s/jobs/%s" % (job["pre"], job["job_id"]))
             if not _freerouting_job_done(str(statut.get("state", ""))):
+                en_cours += 1
                 continue
             sortie = _api("GET", "%s/jobs/%s/output" % (job["pre"], job["job_id"]))
             ses_b64 = (sortie.get("data") or sortie.get("output_file")
                        or sortie.get("ses") or "")
             if not ses_b64:
+                sans_sortie += 1
                 continue
             with tempfile.TemporaryDirectory() as tmp:
                 ses = Path(tmp) / "b.ses"
@@ -798,12 +835,23 @@ def _recuperer_jobs_abandonnes(pcb_bytes: bytes) -> Optional[bytes]:
             if board and job.get("percent", 0) > meilleur_pct:
                 meilleur_board, meilleur_pct = board, job.get("percent", 0)
         except Exception as exc:
+            irrecuperables += 1
             logger.debug("job abandonne %s irrecuperable (%s)",
                          job.get("job_id"), exc)
     if meilleur_board is not None:
         logger.warning(
             "route_auto: aucun tirage n a abouti — board RECUPERE d un job "
             "abandonne a ~%d%%, qui avait fini seul dans la JVM", meilleur_pct)
+        return meilleur_board
+    if not _JOBS_ABANDONNES:
+        logger.info(
+            "recuperation : aucun job abandonne n a ete enregistre — il n y a "
+            "rien a aller chercher")
+    else:
+        logger.warning(
+            "recuperation : %d job(s) abandonne(s), aucun exploitable — "
+            "%d encore en cours, %d a sortie vide, %d irrecuperable(s)",
+            len(_JOBS_ABANDONNES), en_cours, sans_sortie, irrecuperables)
     return meilleur_board
 
 

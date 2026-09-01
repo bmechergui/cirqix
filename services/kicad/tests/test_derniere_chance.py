@@ -98,5 +98,10 @@ class TestCablage:
             "le drapeau doit etre arme AVANT la boucle des paliers")
 
     def test_la_fenetre_effective_est_UTILISEE_dans_l_attente(self):
-        i = self.SOURCE.index('_api("PUT", f"{pre}/jobs/{job_id}/start"')
+        # ⚠️ Meme correction que dans test_plafond_muet : s ancrer sur L URL,
+        # pas sur le nom de l appelant. `_api` a du sortir au niveau module le
+        # 2026-08-31 — elle etait imbriquee et `_recuperer_jobs_abandonnes`
+        # levait `NameError` a chaque appel — et l appel local s appelle
+        # desormais `_appel`.
+        i = self.SOURCE.index('f"{pre}/jobs/{job_id}/start"')
         assert "_fenetre_effective(" in self.SOURCE[i:i + 12000]
