@@ -1002,7 +1002,31 @@ incomplète à 9 %, c'est une carte **non fabricable**. Et c'est ce qui explique
 les six cycles place → route → DRC du run complet — le board ne passait pas le
 DRC, donc la chaîne re-tirait le placement.
 
-### ⚠️ Pourquoi kicad-tools reste devant — ce n'est PAS la robustesse
+### ⚠️ PÉRIMÉ — kicad-tools n'est PLUS devant (constat 2026-09-01)
+
+**Le code dit l'inverse de cette section**, et ce depuis un moment :
+
+```
+routers/routing.py:4027   # --- Niveau 1 : Freerouting REST API server ---
+routers/routing.py:4124   # --- Niveau 3 : kicad-tools A* (≤30 nets/comps) ---
+routers/routing.py:4167   logger.info("kicad-tools A* (no limit): ...")   ← Niveau 4
+```
+
+Freerouting est **Niveau 1**, conformément à la décision de l'utilisateur du
+2026-09-01 (« toujours par défaut niveau 1 est Freerouting »), et l'argument
+qui gardait `kicad-tools` devant est **caduc** : l'escalade pose elle-même
+l'empilage (`_expand_stackup(pcb_bytes, palier)`, `routing.py:4409`), donc
+`kicad-tools --auto-layers` n'est plus le seul chemin vers 4 ou 8 couches.
+
+⚠️ Cette section périmée a réellement induit en erreur : l'utilisateur a lu un
+journal où `kicad-tools A* (no limit)` tournait et en a conclu que la cascade
+était mal ordonnée. La vraie cause était le **budget à zéro** — le Niveau 1
+est sauté quand `_budget_suffisant` est faux, et la chaîne tombe au Niveau 4.
+**NEVER** laisser dans CLAUDE.md une description d'ordre d'exécution sans
+l'avoir revérifiée dans le code : un lecteur l'utilise comme un diagnostic.
+
+Mesures conservées ci-dessous — elles restent vraies et expliquent POURQUOI
+Freerouting doit passer en premier.
 
 Décision produit du 2026-08-21, avec sa vraie justification, mesurée :
 
