@@ -102,3 +102,78 @@ saurait que le net existe, la protection deviendrait résoluble, et il n'aurait
 toujours rien à router pour GND. C'est le dernier verrou de la séquence ③
 demandée par l'utilisateur ; **non implémenté, il exige une mesure et une
 validation utilisateur.**
+
+---
+
+# Suite — 2026-09-01 soir / 2026-09-02 nuit
+
+Owner : Claude (session `a9118fd4`). Branche `feat/placement-seed-snap-bypass`,
+head `3228a20`, poussée. Suite du service : **1264 passed**, 2 échecs Windows
+connus (`test_journal_freerouting_lisible`, chemins POSIX — voir mémoire).
+
+## Cinq défauts corrigés, tous mesurés sur de vrais boards
+
+| commit | défaut | mesure |
+|---|---|---|
+| `e4fad23` | la couture reposait un via au même point à chaque passe | 131 vias / 94 positions → **109 / 109** ; 116 `holes_co_located` → **0** |
+| `a929839` | `_secours_est_meilleur` achetait 3 erreurs avec 62 liaisons | échange refusé, sans seuil chiffré |
+| `3ecb629` | `CLAUDE.md` annonçait `kicad-tools` en Niveau 1 | corrigé, c'est Freerouting (`routing.py:4027`) |
+| `c3fdd71` | 4 `starved_thermal` (1 pont au lieu de 2) | **4 erreurs → 0**, 75 violations → 71 |
+| `3c3741a` | l'étape ③ ne visait que les boîtiers fine-pitch | vise aussi `_pads_isolees_du_plan` |
+
+**Forme commune des cinq** : la mesure juste existait, au bon endroit, calculée
+à chaque appel, et personne ne s'en servait. Famille de `max_distance_mm`.
+
+## État de `nucleo-f401`
+
+```
+routage           98 %   (2 couches, Freerouting API, placement figé)
+erreurs DRC       0      après promotion thermique
+avertissements    71     sérigraphie — TOUS présents dans le board PLACÉ
+```
+
+Trois connexions manquantes subsistaient sur `18_cousu` :
+
+```
+PTH pad 1 [GND] of J10  <->  Pad 2 [GND] of D3     ← visée par 3c3741a
+Pad 2 [GND] of D3       <->  Zone [GND] on F.Cu    ← visée par 3c3741a
+Pad 37 [MORPHO_R_6] U1  <->  PTH pad 6 of J11      ← un SIGNAL, hors masse
+```
+
+## En cours au moment du handoff
+
+Banc quatre cartes (`nucleo-f401`, `stm32-30`, `stm32-60`, `stm32-100`) lancé
+dans `cirqix-banc` à 00:05 avec les cinq correctifs, placements figés,
+`CIRQIX_DUMP_ETAPES` actif. Journaux `/tmp/etapes_<carte>.log`, boards dans
+`/tmp/ex/<carte>/output/etapes/`.
+
+⚠️ `routers/routing.py` est importé **une seule fois** au démarrage : un
+correctif qui y vit n'agit qu'à partir du lancement suivant. `tools/*_runner.py`
+s'exécute en processus enfant et relit le fichier à chaque appel.
+
+## Livré à l'utilisateur
+
+`services/kicad/examples/nucleo-f401/output/etapes/` — 18 boards + `LISEZ-MOI.md`
+(légende des six étapes par tirage). `output/` est gitignoré : les fichiers sont
+locaux, pas versionnés. À rafraîchir depuis le conteneur à la fin du banc, et à
+faire pour les trois autres cartes.
+
+## Défaut trouvé, NON corrigé — placement
+
+Les condensateurs de découplage de `nucleo-f401` sont à **24,5 · 43,8 · 51,5 ·
+58,3 · 58,7 · 62,5 · 62,8 · 68,7 mm** du MCU. Cause mesurée :
+`detect_functional_clusters` ne rend que 4 clusters — 3 INTERFACE (J1/J10/J11 +
+LED) et 1 DRIVER (U1 + résistances). **Aucun cluster POWER** : les capas
+n'appartiennent à rien, donc `snap_cluster_members` ne peut rien pour elles.
+
+Les résistances, elles, sont conformes : 13,7 mm d'entraxe laissent ~6,2 mm
+d'espace libre entre corps pour un plafond DRIVER de 6,0 mm. **Ne pas mesurer
+cette distance entre origines.**
+
+Non traité parce que l'utilisateur a **gelé les placements** pour ne faire
+varier que le routage. À reprendre quand il rouvrira le placement.
+
+## Décision produit toujours en attente
+
+Celle de la section précédente (`_confier_au_plan` / GND déclaré sans broches)
+reste ouverte : non implémentée, elle exige une mesure et une validation.
