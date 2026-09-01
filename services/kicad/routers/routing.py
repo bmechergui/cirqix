@@ -480,18 +480,39 @@ def _fenetre_effective(fenetre: int, autorise: bool) -> int:
     return fenetre if autorise else 0
 
 
-def _faut_couper(plat: int, fenetre: int, muet: bool) -> bool:
+def _faut_couper(plat: int, fenetre: int, muet: bool,
+                 sans_progres_s: float = 0.0) -> bool:
     """Faut-il cesser d attendre ce tirage ?
 
-    ⚠️ `fenetre == 0` veut dire « ne coupe pas » — presque fini, ou compte de
-    nets inconnu. L ancienne condition coupait quand meme par l horloge :
-    l intention de `_fenetre_stagnation` etait annulee par la ligne qui
-    l utilisait. Seul le silence passe outre, et c est une panne, pas une
-    lenteur.
+    ⚠️ `fenetre == 0` veut dire « ne coupe pas SUR LES PASSES » — presque
+    fini, ou compte de nets inconnu. L ancienne condition coupait par le temps
+    TOTAL, ce qui annulait l intention de `_fenetre_stagnation` et abandonnait
+    des tirages legitimement longs.
+
+    ⚠️ Mais « ne jamais couper » n etait pas tenable non plus. Mesure du
+    2026-09-01, `stm32-100` : UN SEUL tirage a tourne **plus de 62 minutes**
+    sur `via mask not found for net #18` repete a l infini, avec « 2 unrouted »
+    immobile. La fenetre valait 0 (deux non routes), et le plafond d horloge
+    n etait consulte que par `_routeur_muet` — or ce routeur parlait,
+    3,4 millions de lignes. Rien ne pouvait donc l arreter.
+
+    Le commentaire de la boucle prescrivait pourtant la regle exacte : « seul
+    l HORLOGE tranche alors, et elle tranche toujours… le plafond compte le
+    temps SANS PROGRES, pas le temps total ». Garde DOCUMENTEE, jamais CABLEE.
+
+    On distingue donc trois coupures, et une seule est nouvelle :
+      - la fenetre de passes, inchangee ;
+      - le silence (`muet`), inchange — c est une panne, pas une lenteur ;
+      - le temps SANS PROGRES, remis a zero a chaque avancee reelle.
+
+    ⚠️ `sans_progres_s` vaut 0 par defaut : sans mesure on ATTEND, on
+    n abandonne pas a l aveugle.
     """
     if fenetre and plat >= fenetre:
         return True
-    return muet
+    if muet:
+        return True
+    return sans_progres_s > _PLAFOND_ATTENTE_S
 
 
 # Ou vit le journal de Freerouting. Meme conteneur que la JVM ; le chemin suit
@@ -688,6 +709,10 @@ def _route_with_freerouting_api(
         depart_silence = time.time()
         derniere_passe = 0
         dernier_unrouted = 0
+        # ⚠️ Horloge du temps SANS PROGRES — jamais du temps total. Remise a
+        # zero a chaque avancee reelle ; c est elle qui coupe un routeur
+        # BAVARD mais bloque, cas que `_routeur_muet` ne pouvait pas voir.
+        _dernier_progres_a = time.time()
         short_name = str(job.get("short_name", "")).upper()
         while time.time() < deadline:
             status = _appel("GET", f"{pre}/jobs/{job_id}")
@@ -736,6 +761,11 @@ def _route_with_freerouting_api(
                 # deja « sans progres » ; le code, non.
                 if unrouted and unrouted != dernier_unrouted:
                     dernier_unrouted = unrouted
+                    _dernier_progres_a = time.time()
+                if plat == 0:
+                    # Le journal atteste un progres reel (baisse des non
+                    # routes OU changement de score) : l horloge repart.
+                    _dernier_progres_a = time.time()
                 passe = _numero_de_passe(derniere, short_name)
                 if passe > derniere_passe:
                     if premiere_passe_a is None:
@@ -748,7 +778,8 @@ def _route_with_freerouting_api(
                 cadence = ((time.time() - premiere_passe_a) / vues
                            if premiere_passe_a and vues > 0 else 0.0)
                 muet = _routeur_muet(time.time() - depart_silence, cadence, vues)
-                if _faut_couper(plat, fenetre, muet):
+                if _faut_couper(plat, fenetre, muet,
+                                sans_progres_s=time.time() - _dernier_progres_a):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
                         "routes%s) — attente abandonnee, le job finit seul",
