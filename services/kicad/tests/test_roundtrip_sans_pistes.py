@@ -30,6 +30,22 @@ du bruit — et je l avais d abord lue comme la cause.
 
 On retire donc les pistes AVANT d entrer dans pcbnew, textuellement. Le
 resultat est identique par construction.
+
+⚠️ VALIDE PAR KICAD LUI-MEME, sur deux boards REELS du depot, avec
+`kicad-cli pcb drc --format json` (KiCad 10.99). Le controle qui compte est
+d abord que le board CHARGE : un board refuse rend `rc=0` et un rapport vide,
+que ce projet a deja lu « 0 erreur » une fois.
+
+    board                        violations   erreurs   non connecte
+    stm32 (KiCad 10, keepout)      30 -> 25     0 -> 0      0 -> 26
+    led-blinker                    20 -> 16    10 -> 6      7 -> 14
+
+    types de violation en hausse : AUCUN, sur les deux boards
+
+Les violations BAISSENT — le cuivre retire emporte ses propres defauts — et
+les liaisons non connectees MONTENT, ce qui est exactement l effet attendu du
+retrait d un routage. Aucun type nouveau n apparait : la chirurgie fait ce qu
+elle annonce et rien d autre.
 """
 from __future__ import annotations
 
