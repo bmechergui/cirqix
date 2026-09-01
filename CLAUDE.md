@@ -1508,6 +1508,65 @@ violation `hole_to_hole`, donc le rejet TOUT-OU-RIEN des vingt et un vias.
 été renommée — elles ne mesuraient plus rien, mais leur intention était intacte.
 S'ancrer sur ce qui ne bouge pas : ici l'URL du départ de job.
 
+### Leçons inscrites le 2026-09-01 — la mesure qui dormait à côté du code
+
+Les cinq défauts corrigés ce jour-là ont **la même forme** : la mesure juste
+existait, au bon endroit, calculée à chaque appel, et personne ne s'en servait.
+C'est la famille de `FunctionalCluster.max_distance_mm`.
+
+**NEVER** traiter un TROU comme du CUIVRE. `_obstacles_d_un_autre_net` écarte
+volontairement les objets du net courant : correct pour du cuivre — deux pistes
+GND peuvent se toucher — et faux pour un perçage. La couture reposait donc à
+chaque passe un via au même point : `nucleo-f401` portait **131 vias pour
+94 positions**, 7 positions percées ×5, une ×10, et **116 avertissements
+`holes_co_located`** — la TOTALITÉ des violations ajoutées par le routage.
+Garde : `tests/test_couture_sans_trou_double.py`.
+
+**NEVER** classer deux défauts par ordre lexicographique sans se demander ce
+qu'on échange. `_secours_est_meilleur` rendait `apres < avant` sur
+`(erreurs, manquantes)` : `(0, 73) < (3, 11)` est VRAI parce que `0 < 3`. Trois
+erreurs ont été achetées avec **soixante-deux connexions manquantes**, par un
+repli dont le site d'appel dit qu'il existe parce qu'« une carte non connectée
+ne part pas en fabrication ». Interdire toute augmentation aurait sur-corrigé —
+un test antérieur documente que `(2, 0) → (0, 1)` doit rester accepté. La règle
+retenue ne porte aucun seuil : **un échange ne doit pas empirer le total**.
+
+**NEVER** faire taire un DRC en annulant une décision de l'utilisateur. Les
+4 `starved_thermal` disparaissaient en passant tout le plan en connexion pleine
+— mais le relief thermique de KiCad avait été choisi la veille, capture à
+l'appui, et un 0402 noyé dans le cuivre se dresse à la refusion. On promeut
+donc les **seules** pastilles mesurées comme affamées. Mesuré :
+`4 erreurs → 0`, `75 violations → 71`.
+
+**NEVER** viser une population PROXY quand la population RÉELLE est mesurable.
+L'étape ③ ne ciblait que les broches GND des boîtiers fine-pitch. `D3.2` (LED
+0603) et `J10.1` (connecteur traversant) finissaient orphelines sans avoir
+jamais été visées — et `_pads_isolees_du_plan` les désignait, **une ligne plus
+haut dans la même fonction**, pour la seule vérification d'après-coup. La cible
+préventive reste (les broches deviennent orphelines PENDANT le routage) ; on lui
+AJOUTE la cible mesurée. Union strictement additive.
+
+**NEVER** lire deux compteurs voisins comme s'ils mesuraient la même chose.
+« 1 reliée sur **3 visées**, 0 renoncée » à côté de « **1** l'étaient avant la
+pose » ressemble à une incohérence comptable : ce sont deux populations
+différentes (préventive et mesurée), toutes deux légitimes. J'ai failli
+« corriger » une comptabilité saine. Lire les DEUX définitions avant de conclure.
+
+**NEVER** conclure d'un `budget épuisé` que la cascade est mal ordonnée. Après
+une veille de la machine, le budget se voyait consommé et le Niveau 1 était
+**sauté** (`_budget_suffisant` faux) — la chaîne tombait au Niveau 4,
+`kicad-tools`. Le journal montrait donc `kicad-tools A*` en tête alors que
+Freerouting est bien Niveau 1. Symptôme d'infrastructure, pas de conception.
+
+**NEVER** laisser un faux `pcbnew` de test plus pauvre que le vrai `BOARD`. Le
+faux n'exposait que `Footprints()`, pas `GetFootprints()` — que la production
+utilisait déjà ailleurs. Compléter le faux, jamais affaiblir le code pour lui.
+
+**NEVER** ancrer une garde sur une phrase qu'on vient d'écrire ailleurs. Ma
+propre garde cherchait `"repli GND retenu"` par `index()` et tombait sur la
+docstring de la règle, en amont du site d'appel. `rindex()`, ou un ancrage sur
+ce qui ne bouge pas.
+
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
