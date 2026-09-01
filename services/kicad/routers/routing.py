@@ -2011,6 +2011,24 @@ def _ajouter_aux_pistes_protegees(board: bytes) -> None:
         _PISTES_A_PROTEGER = [deja, board]
 
 
+# Un net declare peut n avoir AUCUNE broche : `(net GND)` seul. La forme
+# `(net GND (pins ...))` reste la plus courante.
+_NET_DECLARE_RE = re.compile(r'\(net\s+("[^"]*"|[^\s()]+)\s*(?:\(pins|\))')
+
+
+def _section_network(dsn_text: str) -> str:
+    """Le bloc `(network ...)` du DSN, ou une chaine vide.
+
+    ⚠️ Lire les nets sur le FICHIER ENTIER rendrait la garde de resolubilite
+    circulaire : le bloc `(wiring)` que nous injectons contient lui-meme des
+    `(net X)`, donc chaque net inconnu se validerait tout seul et plus rien ne
+    serait jamais ecarte.
+    """
+    for bloc in _blocs_equilibres(dsn_text, "(network"):
+        return bloc
+    return ""
+
+
 def _nets_declares_dsn(dsn_text: str) -> set:
     """Noms de nets que le DSN declare. Tout autre net y est INCONNU.
 
@@ -2021,7 +2039,7 @@ def _nets_declares_dsn(dsn_text: str) -> set:
     reservation, c est du bruit que le routeur ne peut pas resoudre.
     """
     return {n[1:-1] if n.startswith('"') else n
-            for n in _NET_DSN_RE.findall(dsn_text)}
+            for n in _NET_DECLARE_RE.findall(_section_network(dsn_text))}
 
 
 def _injecter_wiring(dsn_text: str, vias: list, net: str,
@@ -3380,8 +3398,23 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 _NETS_CONFIES_AU_PLAN: tuple[str, ...] = ("GND",)
 
 
-def _strip_net_from_dsn(dsn_text: str, net_name: str) -> tuple[str, int]:
-    """Retire `(net <nom> (pins ...))` de la section network. Rend (texte, broches)."""
+def _strip_net_from_dsn(dsn_text: str, net_name: str,
+                        garder_declaration: bool = False) -> tuple[str, int]:
+    """Retire les BROCHES d un net de la section network. Rend (texte, broches).
+
+    `garder_declaration=False` supprime l entree entiere — le routeur ignore
+    jusqu a l existence du net.
+
+    `garder_declaration=True` laisse `(net <nom>)` sans broches : le routeur
+    sait que le net EXISTE, donc le cuivre que nous protegeons sous ce nom
+    devient resoluble, mais il n a aucune broche a relier dessus.
+
+    ⚠️ C est le dernier verrou de la sequence demandee. Retirer l entiere
+    etait necessaire — sinon le routeur ROUTE GND, et le repli qui fait cela a
+    ete mesure DEGRADANT six fois sur six. Mais cela rendait aussi toute
+    protection du cuivre de masse INJECTABLE ET IMMEDIATEMENT ECARTEE :
+    « 12 via(s) ecartee(s) (GND x12) ». On dissocie les deux.
+    """
     debut = dsn_text.find(f"(net {net_name}")
     if debut == -1:
         return dsn_text, 0
@@ -3412,15 +3445,30 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str) -> tuple[str, int]:
     if dsn_text[fin : fin + 1] == chr(10):
         fin += 1
     tete = dsn_text[:debut].rstrip(" " + chr(9))
+    if garder_declaration:
+        # L indentation d origine est conservee : `tete` s arrete juste avant.
+        marge = dsn_text[:debut]
+        marge = marge[marge.rfind(chr(10)) + 1:]
+        return (dsn_text[:debut] + "(net %s)" % net_name + chr(10)
+                + dsn_text[fin:], n)
     return tete + dsn_text[fin:], n
 
 
+# Garder le net du plan DECLARE dans le DSN, sans broches, au lieu de le
+# supprimer. Rend resoluble la protection du cuivre de masse pose a l etape ③,
+# sans rendre ses broches au routeur.
+# ⚠️ Que Freerouting accepte une entree `network` sans `(pins ...)` reste a
+# MESURER : c est pourquoi ce comportement est une constante.
+_GARDER_LE_NET_DU_PLAN_DECLARE: bool = True
+
+
 def _confier_au_plan(dsn_path: Path) -> int:
-    """Retire du DSN les nets pris en charge par le plan. Rend le nb de broches."""
+    """Retire du DSN les broches prises en charge par le plan. Rend leur nombre."""
     texte = dsn_path.read_text(encoding="utf-8", errors="replace")
     total = 0
     for net in _NETS_CONFIES_AU_PLAN:
-        texte, n = _strip_net_from_dsn(texte, net)
+        texte, n = _strip_net_from_dsn(
+            texte, net, garder_declaration=_GARDER_LE_NET_DU_PLAN_DECLARE)
         total += n
     if total:
         dsn_path.write_text(texte, encoding="utf-8")
