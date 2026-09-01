@@ -940,6 +940,33 @@ def _run_freerouting(
         raise RuntimeError(f"Freerouting exit {result.returncode}")
 
 
+# Repertoire ou deposer le board a CHAQUE etape, pour inspection dans KiCad.
+# Vide = desactive : la chaine de production n ecrit rien de plus.
+_DOSSIER_ETAPES = os.environ.get("CIRQIX_DUMP_ETAPES", "")
+_NUMERO_ETAPE = [0]
+
+
+def _deposer_etape(nom: str, pcb_bytes: bytes) -> None:
+    """Depose le board de cette etape, si `CIRQIX_DUMP_ETAPES` est defini.
+
+    ⚠️ Demande de l utilisateur le 2026-09-01 : pouvoir OUVRIR chaque etape
+    dans KiCad et juger sur piece — plan coule, GND lie, routage, repose des
+    vias, plans recoules, couture, final.
+
+    ⚠️ Ne JAMAIS lever : un vidage d inspection qui casserait un routage
+    coûterait infiniment plus qu il ne rapporte.
+    """
+    if not _DOSSIER_ETAPES or not pcb_bytes:
+        return
+    try:
+        d = Path(_DOSSIER_ETAPES)
+        d.mkdir(parents=True, exist_ok=True)
+        _NUMERO_ETAPE[0] += 1
+        (d / ("%02d_%s.kicad_pcb" % (_NUMERO_ETAPE[0], nom))).write_bytes(pcb_bytes)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("depot d etape impossible (%s)", exc)
+
+
 def _sans_pistes(pcb_bytes: bytes) -> bytes:
     """Board prive de ses `(segment ...)` et `(via ...)` de premier niveau.
 
@@ -4267,6 +4294,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # ⚠️ Un plan non REMPLI n est qu un contour, dont le routeur ne tient
         # aucun compte — meme defaut que celui du 2026-08-23.
         etendu = _fill_zones(_add_ground_planes(etendu))
+        _deposer_etape("plan_coule", etendu)
 
         # ⚠️ Reserver AVANT de router : apres, il n y a plus de place. Mesure
         # du 2026-08-23 — 504 candidats essayes autour des pattes orphelines
@@ -4314,6 +4342,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
         avant_liaison = etendu
         etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
+        _deposer_etape("gnd_lie", etendu)
         if etendu is not avant_liaison:
             _ajouter_aux_pistes_protegees(etendu)
 
@@ -4382,11 +4411,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # mince, face a une carte qui passe le DRC.
             # Reposer les vias reserves : le round-trip Specctra les a effaces,
             # mais le routeur a travaille AUTOUR de leurs positions.
+            _deposer_etape("route", base64.b64decode(res.kicad_pcb_b64))
             route = _reposer_vias_reserves(base64.b64decode(res.kicad_pcb_b64),
                                            _VIAS_RESERVES)
+            _deposer_etape("vias_reposes", route)
             avec_plans = _add_ground_planes(route)
             # Un plan non rempli n est qu un contour : sans cuivre, aucun blindage.
             avec_plans = _fill_zones(avec_plans)
+            _deposer_etape("plans_recoules", avec_plans)
             # Filet : si une broche reste orpheline malgre tout, on la sort par
             # un via. Le plus souvent il n y a rien a reparer.
             final = _fanout_pads_isolees(avec_plans)
@@ -4397,6 +4429,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Puis les ILOTS DE PLAN : les pistes de signal decoupent le
             # cuivre de la face composants, et aucune pastille n est en cause.
             final = _coudre_jusqu_au_bout(final)
+            _deposer_etape("cousu", final)
 
             # ⚠️ DIRE ce qui reste, pas seulement ce qu on a repare. La couture
             # rapporte ses vias ; si elle laisse un plan en quinze morceaux, le
