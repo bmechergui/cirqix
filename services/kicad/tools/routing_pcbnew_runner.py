@@ -696,26 +696,40 @@ def _via_relie_vraiment(sur_cette_face: bool, sur_la_face_opposee: bool) -> bool
     return bool(sur_cette_face and sur_la_face_opposee)
 
 
-def _cuivre_du_net_sur(zone, couche_exclue, netcode):
-    """Polygones remplis du net sur les AUTRES couches que `couche_exclue`.
+def _cuivre_du_net_sur(board, couche_exclue, netcode):
+    """Polygones remplis de ce NET sur toutes les AUTRES couches.
 
-    Sert a repondre a une seule question, pour un point donne : « y a-t-il du
-    cuivre de ce net en face ? »
+    ⚠️ PARCOURIR TOUT LE BOARD, pas la seule zone courante. Notre generateur
+    ecrit UNE ZONE PAR FACE — deux objets distincts, chacun a une seule couche.
+    Une premiere version interrogeait `zone.GetLayerSet()` de la zone COURANTE :
+    elle ne trouvait donc jamais rien, repondait toujours « pas de cuivre en
+    face », et AUCUN via n etait pose.
+
+    Mesure du 2026-09-01, `nucleo-f401` : F.Cu porte 7 ilots (11023, 2785,
+    1956, 136, 115, 79, 13 mm2) et B.Cu 2 (11023, 6). Le grand plan de B.Cu
+    couvre la carte entiere — chaque ilot de F.Cu a donc du cuivre en face, et
+    un via par ilot suffisait. Un seul a ete pose, et le board est sorti a
+    6 connexions manquantes au lieu d une.
+
+    J avais remplace un via aveugle par un via jamais pose.
     """
     autres = []
-    try:
-        couches = list(zone.GetLayerSet().Seq())
-    except Exception:
-        return autres
-    for c in couches:
-        if c == couche_exclue:
-            continue
+    for z in board.Zones():
         try:
-            poly = zone.GetFilledPolysList(c)
+            if z.GetNetCode() != netcode:
+                continue
+            couches = list(z.GetLayerSet().Seq())
         except Exception:
             continue
-        if poly.OutlineCount() > 0:
-            autres.append(poly)
+        for c in couches:
+            if c == couche_exclue:
+                continue
+            try:
+                poly = z.GetFilledPolysList(c)
+            except Exception:
+                continue
+            if poly.OutlineCount() > 0:
+                autres.append(poly)
     return autres
 
 
@@ -784,11 +798,15 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                 total = poly.OutlineCount()
             except Exception:
                 continue
+            # ⚠️ Le net vit sur autant de couches que de ZONES qui le portent :
+            # une par face chez nous. Compter sur la zone courante seule
+            # rendait toujours 1, et ecartait le cas « deux faces ».
+            couches_du_net = max(couches_du_net, 1 + (1 if en_face else 0))
             if not _faut_coudre(total, couches_du_net):
                 continue  # une seule face, d un seul tenant : rien a relier
             # ⚠️ Le cuivre d en face, calcule UNE fois par couche : c est lui
             # qui decide si un point relie ou pas.
-            en_face = _cuivre_du_net_sur(zone, couche, zone.GetNetCode())
+            en_face = _cuivre_du_net_sur(board, couche, zone.GetNetCode())
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False

@@ -92,3 +92,38 @@ class TestCablage:
         i = self.SOURCE.index("def _stitch_zones(")
         corps = self.SOURCE[i:i + 6000]
         assert "_cuivre_du_net_sur" in corps
+
+
+class TestUneZoneParFace:
+    r"""⚠️ Le cuivre d en face vit dans une AUTRE zone, pas dans la meme.
+
+    Notre generateur ecrit UNE ZONE PAR FACE (`routers/routing.py`, boucle sur
+    les couches) : deux objets distincts, chacun a une seule couche. Chercher
+    « les autres couches de la zone courante » ne trouve donc JAMAIS rien.
+
+    Mesure du 2026-09-01, `nucleo-f401`, board livre :
+
+        F.Cu : 7 ilots — 11023, 2785, 1956, 136, 115, 79, 13 mm2
+        B.Cu : 2 ilots — 11023, 6 mm2
+
+    Le grand plan de B.Cu couvre la carte entiere : chaque ilot de F.Cu a du
+    cuivre en face, un via par ilot suffisait. UN SEUL a ete pose, et la carte
+    est sortie a 6 connexions manquantes au lieu d une — toutes GND, aucune de
+    signal. J avais remplace un via aveugle par un via jamais pose.
+
+    La recherche parcourt donc TOUT le board, filtre sur le NET, et exclut la
+    seule couche courante.
+    """
+
+    def test_la_recherche_prend_le_board_en_premier_argument(self):
+        import inspect
+        params = list(inspect.signature(RUN._cuivre_du_net_sur).parameters)
+        assert params[0] == "board", (
+            "la recherche interroge encore la zone courante, qui n a qu une "
+            "couche : elle ne trouvera jamais le cuivre d en face")
+
+    def test_le_cablage_passe_bien_le_board(self):
+        i = RUN.__file__ and 0
+        src = TestCablage.SOURCE
+        j = src.index("def _stitch_zones(")
+        assert "_cuivre_du_net_sur(board," in src[j:j + 6000]
