@@ -2482,6 +2482,33 @@ def _liaison_a_pris(avant: list, apres: list) -> bool:
     return not apres
 
 
+def _cibles_de_liaison(preventives, mesurees) -> list:
+    """Union des cibles de l etape ③ : les PREVENTIVES et les MESUREES.
+
+    ⚠️ La cible preventive (broches GND des boitiers fine-pitch) existe parce
+    que les broches deviennent orphelines PENDANT le routage — les pistes de
+    signal decoupent le plan autour d elles. C est un effet, pas un etat
+    initial, et la mesure du 2026-08-31 le montrait : sur le board place avec
+    son plan coule, aucune broche GND n etait isolee.
+
+    ⚠️ Mais cet ensemble n est pas toujours vide. Mesure du 2026-09-01,
+    `nucleo-f401` : `D3.2` (LED 0603) et `J10.1` (connecteur traversant)
+    finissent orphelines du plan, et NI L UNE NI L AUTRE n est fine-pitch —
+    donc aucune n etait visee. Le rapport DRC les designe pourtant, et cette
+    mesure etait deja calculee dans la fonction appelante, pour la seule
+    verification d apres-coup.
+
+    L union est strictement additive : quand la mesure ne trouve rien, la
+    cible est exactement celle d avant.
+    """
+    cibles: list = []
+    for c in list(preventives or []) + list(mesurees or []):
+        paire = (str(c[0]), str(c[1]))
+        if paire not in cibles:
+            cibles.append(paire)
+    return cibles
+
+
 def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     """RELIE les broches GND des boitiers denses au plan, AVANT le routage.
 
@@ -2514,7 +2541,13 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     except Exception:
         isolees_avant = []
 
-    cibles = _pads_gnd_fine_pitch(pcb_bytes, nets_plan)
+    # ⚠️ La cible PREVENTIVE (boitiers denses) ET la cible MESUREE (ce que le
+    # DRC dit isole du plan). `isolees_avant` etait deja calcule juste au-
+    # dessus et ne servait qu a verifier apres coup ; il DESIGNE pourtant les
+    # broches a relier. Mesure du 2026-09-01 : `D3.2` et `J10.1` finissaient
+    # orphelines sans jamais avoir ete visees, faute d etre fine-pitch.
+    cibles = _cibles_de_liaison(
+        _pads_gnd_fine_pitch(pcb_bytes, nets_plan), isolees_avant)
     if not cibles:
         return pcb_bytes
     try:
