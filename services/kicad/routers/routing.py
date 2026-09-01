@@ -780,7 +780,7 @@ def _route_with_freerouting_api(
             raise RuntimeError("Freerouting API returned an empty output")
         ses_path.write_bytes(base64.b64decode(ses_b64))
 
-        return _specctra_roundtrip(pcb_bytes, ses_path)
+        return _specctra_roundtrip(_sans_pistes(pcb_bytes), ses_path)
 
 
 # Jobs de routage abandonnes par la detection de stagnation. Ils CONTINUENT de
@@ -831,7 +831,7 @@ def _recuperer_jobs_abandonnes(pcb_bytes: bytes) -> Optional[bytes]:
             with tempfile.TemporaryDirectory() as tmp:
                 ses = Path(tmp) / "b.ses"
                 ses.write_bytes(base64.b64decode(ses_b64))
-                board = _specctra_roundtrip(pcb_bytes, ses)
+                board = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
             if board and job.get("percent", 0) > meilleur_pct:
                 meilleur_board, meilleur_pct = board, job.get("percent", 0)
         except Exception as exc:
@@ -888,6 +888,45 @@ def _run_freerouting(
     )
     if result.returncode != 0 and not ses.exists():
         raise RuntimeError(f"Freerouting exit {result.returncode}")
+
+
+def _sans_pistes(pcb_bytes: bytes) -> bytes:
+    """Board prive de ses `(segment ...)` et `(via ...)` de premier niveau.
+
+    ⚠️ `_specctra_roundtrip` commence par DETRUIRE toutes les pistes du board
+    recu, avant d importer la session : `for track in list(board.GetTracks()):
+    board.Remove(track)`. Les lui envoyer ne sert donc a rien.
+
+    Or dans tout le temoin des 8 cartes, le board remis au round-trip etait un
+    board PLACE, qui ne porte aucune piste : cette boucle ne s executait jamais
+    et `board.Remove()` n avait JAMAIS ete appele. L etape ③ a rendu la liste
+    non vide pour la premiere fois le 2026-09-01, et le processus enfant est
+    mort en `exit -11` (SIGSEGV) la meme fois, sur `esp32-baseline`.
+
+    ⚠️ Que `board.Remove()` soit la ligne fautive n est PAS prouve — la mesure
+    exige le conteneur. Ce qui est etabli : l operation n avait jamais tourne
+    avant la carte qui plante, et ce qu on lui confie est detruit a la ligne
+    suivante. On retire donc les pistes AVANT d entrer dans pcbnew.
+
+    ⚠️ On ne touche a RIEN d autre : footprints, nets, zones et regles restent
+    en place. Un retrait qui les emporterait serait bien pire que le plantage
+    qu il evite.
+    """
+    if not pcb_bytes:
+        return pcb_bytes
+    txt = pcb_bytes.decode("utf-8", "replace")
+    # ⚠️ EXIGER UNE FRONTIERE APRES LE JETON. `(vias allowed)` d un keepout
+    # commence par `(via` : un ancrage sur le simple prefixe l emporterait et
+    # corromprait la zone d exclusion. Douzieme piege de forme de cette
+    # famille, vu AVANT livraison cette fois.
+    a_retirer = [b for ouvrant in ("(segment", "(via")
+                 for b in _blocs_equilibres(txt, ouvrant)
+                 if len(b) > len(ouvrant) and not b[len(ouvrant)].isalnum()]
+    if not a_retirer:
+        return pcb_bytes  # cas le plus frequent : un board place
+    for bloc in a_retirer:
+        txt = txt.replace(bloc, "", 1)
+    return txt.encode("utf-8")
 
 
 def _specctra_roundtrip(pcb_bytes: bytes, ses_path: Path) -> bytes:
@@ -3681,7 +3720,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
-                new_pcb = _specctra_roundtrip(pcb_bytes, ses)
+                new_pcb = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
             logger.info("Freerouting: %d%% routé (connectivité mesurée)", routed_pct)
