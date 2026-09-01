@@ -2164,6 +2164,14 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
     return cibles
 
 
+def _nets_du_board(pcb_bytes: bytes) -> set:
+    """Noms de nets declares par le board. Sert a prouver qu il reste entier."""
+    if not pcb_bytes:
+        return set()
+    return {nom for _, nom in
+            _NET_NOM_RE.findall(pcb_bytes.decode("utf-8", "replace"))}
+
+
 def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     """RELIE les broches GND des boitiers denses au plan, AVANT le routage.
 
@@ -2222,6 +2230,32 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
         "visee(s), %d renoncee(s) — pose AVANT que les signaux n occupent la "
         "place", bilan.get("escaped", 0), len(cibles), bilan.get("renonces", 0))
 
+    # ⚠️ RECOULER. Cette etape s execute APRES `_fill_zones` : elle vient de
+    # poser une piste et un via A L INTERIEUR de zones deja remplies, dont les
+    # polygones decrivent desormais un cuivre qui n existe plus tel qu il est
+    # ecrit. Un plan rempli PERIME est pire qu un contour : il affirme quelque
+    # chose de faux, et c est le seul endroit de la chaine ou du cuivre etait
+    # modifie sans remplissage derriere — le chemin post-routage, lui, recoule
+    # (`_reposer_vias_reserves` puis `_add_ground_planes` puis `_fill_zones`).
+    # ⚠️ NE PEUT QU AMELIORER — etendu de la qualite du routage a l INTEGRITE
+    # du fichier. Un board ampute de ses nets ne provoque pas un echec franc :
+    # il provoque un plantage lointain et un message qui accuse une autre
+    # etape. Mesure du 2026-09-01, `esp32-baseline` : deux symptomes nouveaux
+    # apparus ensemble sur la carte ou cette etape s executait pour la premiere
+    # fois — `pcbnew child exit -11` a l import Specctra, puis
+    # `Net 'GND' not found in PCB` cote kicad-tools. La cause n est pas
+    # etablie ; la garde, elle, empeche de la propager.
+    perdus = _nets_du_board(pcb_bytes) - _nets_du_board(relie)
+    if perdus:
+        logger.error(
+            "liaison GND avant routage : le board rendu a PERDU %d net(s) "
+            "(%s) — board recu conserve, la reecriture pcbnew l a abime",
+            len(perdus), ", ".join(sorted(perdus)[:6]))
+        return pcb_bytes
+
+    relie = _fill_zones(relie)
+    # Le verdict porte sur le board RECOULE : juger celui aux zones perimees
+    # reviendrait a mesurer un board que personne ne recevra.
     if _compte_erreurs(_rapport_drc(relie)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
         logger.warning(
             "liaison GND avant routage : erreurs ajoutees — board recu conserve")
