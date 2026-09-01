@@ -50,6 +50,47 @@ class TestLectureDesNets:
         assert R._nets_du_board(b"") == set()
 
 
+class TestLesDeuxFormesDeKiCad:
+    """⚠️ La garde ne doit pas devenir un no-op sur un board de KiCad 10.
+
+    Deux ecritures coexistent pour la meme information :
+
+        (net 3 "GND")   kicad-tools, et KiCad <= 9
+        (net "GND")     pcbnew de KiCad 10 — donc tout board sorti du
+                        round-trip Specctra
+
+    Mesure du 2026-09-01 sur un board REEL du depot
+    (`examples/stm32-validation/output/freerouting/…`, sorti de Freerouting) :
+    la lecture numerotee seule y compte **ZERO net**. La garde
+    « le board ne doit pas perdre de net » y comparait donc l ensemble vide a
+    l ensemble vide et ne gardait plus rien — silencieusement.
+
+    C est le meme piege que celui documente dans CLAUDE.md pour
+    `_NET_DECL_RE` le 2026-08-20, reproduit a l identique. On accepte les deux
+    formes.
+    """
+
+    def test_la_forme_numerotee_est_lue(self):
+        assert R._nets_du_board(b'(net 3 "GND")') == {"GND"}
+
+    def test_la_forme_NOMMEE_de_kicad_10_est_lue(self):
+        assert R._nets_du_board(b'(net "GND")') == {"GND"}
+
+    def test_les_deux_formes_se_melangent_sans_doublon(self):
+        board = b'(kicad_pcb (net 3 "GND") (pad (net "GND")) (net "VCC"))'
+        assert R._nets_du_board(board) == {"GND", "VCC"}
+
+    def test_un_board_REEL_de_kicad_10_declare_bien_ses_nets(self):
+        chemin = (_SERVICE_ROOT / "examples" / "stm32-validation" / "output"
+                  / "freerouting" / "stm32_routage_2026-08-26.kicad_pcb")
+        if not chemin.is_file():
+            import pytest
+            pytest.skip("board d inspection absent (output/ est gitignore)")
+        nets = R._nets_du_board(chemin.read_bytes())
+        assert "GND" in nets
+        assert len(nets) > 5, "la garde retomberait a un ensemble quasi vide"
+
+
 class TestGarde:
     def _cibler(self, monkeypatch, sortie_pcbnew: bytes):
         monkeypatch.setattr(R, "_pads_gnd_fine_pitch",

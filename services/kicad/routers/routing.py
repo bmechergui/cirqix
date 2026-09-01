@@ -2203,12 +2203,22 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
     return cibles
 
 
+# Nom d un net sous ses DEUX ecritures : `(net 3 "GND")` et `(net "GND")`.
+_NET_TOUTES_FORMES_RE = re.compile(r'\(net\s+(?:\d+\s+)?"([^"]*)"')
+
+
 def _nets_du_board(pcb_bytes: bytes) -> set:
     """Noms de nets declares par le board. Sert a prouver qu il reste entier."""
     if not pcb_bytes:
         return set()
-    return {nom for _, nom in
-            _NET_NOM_RE.findall(pcb_bytes.decode("utf-8", "replace"))}
+    # ⚠️ LES DEUX ECRITURES. `(net 3 "GND")` pour kicad-tools et KiCad <= 9,
+    # `(net "GND")` pour pcbnew de KiCad 10 — donc tout board sorti du
+    # round-trip Specctra. Mesure du 2026-09-01 sur un board reel du depot :
+    # la lecture numerotee seule y compte ZERO net, et la garde comparait
+    # alors l ensemble vide a l ensemble vide sans plus rien garder. Meme
+    # piege que `_NET_DECL_RE` le 2026-08-20, reproduit a l identique.
+    return set(_NET_TOUTES_FORMES_RE.findall(
+        pcb_bytes.decode("utf-8", "replace")))
 
 
 def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
