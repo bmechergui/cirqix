@@ -208,6 +208,13 @@ class _FauxBoard:
     def GetTracks(self):
         return []
 
+    # ⚠️ Le vrai BOARD de pcbnew expose `GetFootprints()`, et la production s en
+    # sert deja (`_obstacles_d_un_autre_net`, `_trous_perces`). Le faux ne
+    # portait que `Footprints()` : il ne pouvait pas le voir tant que l appel
+    # etait monkeypatche. Completer le faux, pas affaiblir le code.
+    def GetFootprints(self):
+        return []
+
     def Footprints(self):
         return []
 

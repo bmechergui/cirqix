@@ -9,6 +9,7 @@ uvicorn worker that is concurrently serving other routing requests.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from collections import defaultdict
@@ -389,6 +390,52 @@ def _obstacles_d_un_autre_net(board, net_code) -> list:
         except Exception:
             continue  # un item sans boite ni net ne peut pas etre un obstacle connu
     return boites
+
+# Ecart minimal entre deux PERCAGES, mesure bord a bord. JLCPCB demande
+# 0,5 mm : en deca les deux trous se rejoignent au percage.
+_ECART_TROUS_MM = 500_000.0
+
+
+def _trous_perces(board) -> list[tuple[float, float, float]]:
+    """(x, y, rayon de percage) de chaque trou DEJA present sur le board.
+
+    ⚠️ Un trou est un obstacle pour un autre trou QUEL QUE SOIT SON NET.
+    `_obstacles_d_un_autre_net` ecarte volontairement le net courant : c est
+    juste pour du CUIVRE — deux pistes GND peuvent se toucher sans court-circuit
+    — et faux pour un PERCAGE, que deux vias ne peuvent pas partager.
+
+    Mesure du 2026-09-01 (`nucleo-f401`, board `99_final`) : 131 vias pour
+    94 positions, 7 positions percees x5 — une par passe de couture — et 116
+    avertissements `holes_co_located` absents du board place.
+    """
+    trous: list[tuple[float, float, float]] = []
+    pads = [p for fp in board.GetFootprints() for p in fp.Pads()]
+    for item in list(board.GetTracks()) + pads:
+        rayon = 0.0
+        for nom in ("GetDrillValue", "GetDrillSizeX"):
+            try:
+                rayon = float(getattr(item, nom)()) / 2.0
+            except Exception:
+                continue
+            if rayon > 0:
+                break
+        if rayon <= 0:
+            continue  # pas de percage : pastille CMS, piste, zone
+        try:
+            p = item.GetPosition()
+            trous.append((float(p.x), float(p.y), rayon))
+        except Exception:
+            continue  # un objet perce mais sans position ne peut pas gener
+    return trous
+
+
+def _trou_libre(x: float, y: float, rayon: float,
+                trous: list[tuple[float, float, float]], ecart: float) -> bool:
+    """Vrai si l on peut percer en (x, y) sans toucher un trou existant."""
+    return all(
+        math.hypot(x - tx, y - ty) >= rayon + tr + ecart for tx, ty, tr in trous
+    )
+
 
 # Percage minimal fabricable. En deca, on dessinerait un trou que personne ne
 # peut realiser — JLCPCB descend a 0,20 mm de diametre de via.
@@ -772,6 +819,11 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
     clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+    ecart_trous = float(args.get("ecart_trous_mm", "0.5")) * 1_000_000
+    # ⚠️ Releve UNE fois, puis tenu a jour a chaque pose. Un via pose ici doit
+    # etre un obstacle pour le suivant — de cette passe comme des suivantes,
+    # puisque la couture est RE-EXECUTEE tant qu elle trouve des ilots.
+    trous = _trous_perces(board)
 
     poses = 0
     for zone in board.Zones():
@@ -827,6 +879,12 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                     if any(_dist_point_boite(x, y, o) < via_d / 2 + clearance
                            for o in obstacles):
                         continue
+                    # ⚠️ Le CUIVRE du meme net ne gene pas ; le TROU, si. Sans
+                    # ce refus, chaque passe retrouvait le meme ilot, le meme
+                    # meilleur point, et repercait au meme endroit — x5 vias
+                    # empiles, 116 `holes_co_located` sur `nucleo-f401`.
+                    if not _trou_libre(x, y, perc_d / 2, trous, ecart_trous):
+                        continue
                     # ⚠️ CONDITION RETIREE LE 2026-09-01, PAR LA MESURE. J avais
                     # ajoute « ne percer que si la face opposee porte du cuivre
                     # a cet endroit » — logiquement seduisant, un via vers du
@@ -850,6 +908,7 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                     via.SetDrill(perc_d)
                     via.SetNetCode(zone.GetNetCode())
                     board.Add(via)
+                    trous.append((float(x), float(y), perc_d / 2))
                     poses += 1
                     pose = True
                     break
