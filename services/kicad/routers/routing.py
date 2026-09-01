@@ -3004,7 +3004,33 @@ def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
     98 % a 100 % par ce repli, alors qu au banc, sur le meme board, le repli
     s est declenche AUSSI et la carte est sortie a 98 %. Un repli qui reussit
     moins bien ecrasait un meilleur resultat sans que rien ne le dise.
+
+    ⚠️ UN REPLI QUI DECONNECTE EST IRRECEVABLE, quel que soit son compte
+    d erreurs. Mesure du 2026-09-01, `nucleo-f401` :
+
+        repli GND retenu : (3 erreur, 11 manquante) -> (0 erreur, 73 manquante)
+
+    L ordre lexicographique seul l acceptait — `(0, 73) < (3, 11)` est vrai
+    parce que `0 < 3` — donc il traitait UNE erreur comme infiniment pire que
+    N liaisons absentes, quel que soit N. Trois erreurs ont ete echangees
+    contre soixante-deux connexions manquantes.
+
+    Cela contredit l objet du repli, ecrit a son site d appel : il refait le
+    routage en INCLUANT GND parce qu « une carte non connectée ne part pas en
+    fabrication ». Un repli qui deconnecte la carte a manque son objet.
+
+    ⚠️ INTERDIRE TOUTE augmentation serait une SUR-CORRECTION, et un test
+    anterieur le prouve : `(2 erreur, 0 manquante) -> (0 erreur, 1 manquante)`
+    doit rester accepte — deux erreurs pour une liaison, c est un bon echange.
+    Ce qui separe ce cas du cas mesure est l AMPLEUR : +1 contre +62.
+
+    On refuse donc, en amont du classement, tout echange qui augmente le
+    NOMBRE TOTAL de defauts. Aucun seuil chiffre n est introduit : la regle se
+    lit « un compromis ne doit pas empirer le total ». Elle laisse passer les
+    quatre comportements deja documentes et arrete le seul cas pathologique.
     """
+    if sum(apres) > sum(avant):
+        return False
     return apres < avant
 
 
