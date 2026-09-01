@@ -1876,6 +1876,98 @@ _CHAMP_LAYER_RE = re.compile(r'\(layer\s+"([^"]+)"\)')
 _CHAMP_NET_RE = re.compile(r'\(net\s+(?:(\d+)|"([^"]*)")\s*\)')
 
 
+_RE_PAD_AFFAMEE = re.compile(r"Pad (\S+) \[[^\]]*\] of (\S+)")
+
+
+def _pastilles_affamees(rapport: dict) -> list[tuple[str, str]]:
+    """(reference, numero de pastille) de chaque relief thermique affame.
+
+    ⚠️ On filtre sur le TYPE de violation, pas sur la presence d une pastille
+    dans le texte : `silk_overlap` en cite une aussi, et la promouvoir en
+    connexion pleine n aurait aucun rapport avec son defaut.
+    """
+    trouvees: list[tuple[str, str]] = []
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("type") != "starved_thermal":
+            continue
+        for item in v.get("items") or []:
+            m = _RE_PAD_AFFAMEE.search(item.get("description") or "")
+            if m and (m.group(2), m.group(1)) not in trouvees:
+                trouvees.append((m.group(2), m.group(1)))
+    return trouvees
+
+
+def _connexion_pleine(pcb_bytes: bytes, pastilles) -> bytes:
+    """Force `(zone_connect 2)` sur ces pastilles-la, et sur elles seules.
+
+    ⚠️ Le plan garde partout ailleurs le relief thermique de KiCad : c est la
+    decision de l utilisateur du 2026-09-01, capture a l appui, inscrite au
+    site de `(connect_pads (clearance 0.25))`. On ne l annule pas pour faire
+    taire un DRC — et un plan entierement plein ferait par-dessus le marche se
+    dresser les 0402 a la refusion.
+
+    Rend le board INTACT s il n y a rien a promouvoir : re-ecrire un fichier
+    pour rien est une occasion de le corrompre.
+    """
+    voulues = {(str(r), str(p)) for r, p in (pastilles or [])}
+    if not voulues:
+        return pcb_bytes
+
+    texte = pcb_bytes.decode("utf-8", errors="replace")
+    remplacements: list[tuple[str, str]] = []
+    for fp in _blocs_equilibres(texte, "(footprint "):
+        m = re.search(r'\(property "Reference" "([^"]+)"', fp)
+        if m is None:
+            continue
+        ref = m.group(1)
+        neuf = fp
+        for pad in _blocs_equilibres(fp, '(pad "'):
+            num = pad[6:pad.index('"', 6)]
+            if (ref, num) not in voulues or "(zone_connect" in pad:
+                continue
+            neuf = neuf.replace(pad, pad[:-1] + " (zone_connect 2))", 1)
+        if neuf != fp:
+            remplacements.append((fp, neuf))
+
+    for avant, apres in remplacements:
+        texte = texte.replace(avant, apres, 1)
+    return texte.encode("utf-8")
+
+
+def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
+    """Promeut les pastilles affamees en connexion pleine, puis recoule.
+
+    ⚠️ MESURER D ABORD, promouvoir ensuite. On ne peut pas savoir avant le
+    remplissage quelles pastilles n obtiendront qu un pont : cela depend du
+    cuivre voisin. La regle est donc generale — elle se mesure sur chaque
+    board — sans etre pour autant une prediction.
+
+    ⚠️ Garde « ne peut qu ameliorer », comme ses quatre voisines. Promouvoir
+    une pastille change le remplissage autour d elle ; rien ne garantit a
+    priori que le total d erreurs baisse.
+    """
+    rapport = _rapport_drc(pcb_bytes)
+    pastilles = _pastilles_affamees(rapport)
+    if not pastilles:
+        return pcb_bytes
+
+    promu = _connexion_pleine(pcb_bytes, pastilles)
+    if promu == pcb_bytes:
+        return pcb_bytes  # deja pleines : rien a faire
+
+    rempli = _fill_zones(promu)
+    avant, apres = _compte_erreurs(rapport), _compte_erreurs(_rapport_drc(rempli))
+    if apres < avant:
+        logger.info(
+            "reliefs thermiques : %d pastille(s) passee(s) en connexion pleine "
+            "— %d erreur(s) -> %d", len(pastilles), avant, apres)
+        return rempli
+    logger.warning(
+        "reliefs thermiques : promotion REFUSEE (%d erreur(s) -> %d) — "
+        "board conserve", avant, apres)
+    return pcb_bytes
+
+
 def _blocs_equilibres(txt: str, ouvrant: str):
     """Rend chaque bloc `ouvrant ... )` du texte, parentheses equilibrees."""
     i = 0
@@ -4616,6 +4708,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             "fait pas mieux que (%d erreur, %d manquante) — "
                             "board conserve",
                             apres[0], apres[1], avant[0], avant[1])
+
+            # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
+            # se mesure sur le remplissage FINAL. Mesuree avant, elle
+            # nommerait des pastilles que la suite aurait de toute facon
+            # reliees, et en manquerait d autres.
+            final = _reparer_reliefs_affames(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)
