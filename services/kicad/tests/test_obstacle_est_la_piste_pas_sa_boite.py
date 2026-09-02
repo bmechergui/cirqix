@@ -114,3 +114,51 @@ class TestCablage:
         i = self.SOURCE.index("def _stitch_zones(")
         j = self.SOURCE.find(chr(10) + "def ", i + 1)
         assert "_distance_a_obstacle(" in self.SOURCE[i:j]
+
+
+class TestTousLesConsommateurs:
+    """⚠️ LA GARDE QUI MANQUAIT, et qui a laissé passer une régression.
+
+    En donnant aux obstacles une forme nouvelle — `("segment", x1, y1, x2, y2,
+    largeur)`, six éléments — j'ai basculé trois sites d'appel sur
+    `_distance_a_obstacle` et j'en ai oublié trois autres, qui appelaient
+    encore `_dist_point_boite`. Ceux-là déballent quatre valeurs :
+
+        gauche, haut, droite, bas = boite
+        ValueError: too many values to unpack
+
+    Le fanout plantait donc à CHAQUE broche, sur les quatre cartes. Aucun test
+    ne l'a vu : ils n'exerçaient ces chemins qu'avec des boîtes.
+
+    Une forme de donnée nouvelle doit être passée à TOUS ses consommateurs,
+    et c'est exactement ce que ces tests vérifient.
+    """
+
+    OBSTACLES = [
+        ("segment", 0, 0, 10 * MM, 10 * MM, 0.25 * MM),
+        (20 * MM, 20 * MM, 22 * MM, 22 * MM),
+    ]
+
+    def test_la_sortie_reservee_accepte_les_deux_formes(self):
+        # `_sortie_reservee_valide` parcourt la liste d'obstacles : elle doit
+        # survivre à un segment, pas lever `too many values to unpack`.
+        assert RUN._sortie_reservee_valide(
+            50 * MM, 50 * MM, 51 * MM, 50 * MM, self.OBSTACLES,
+            0.5 * MM) is True
+
+    def test_choisir_sortie_survit_aux_segments(self):
+        # Le chemin du fanout, celui qui plantait à chaque broche.
+        sortie = RUN._choisir_sortie(
+            50 * MM, 50 * MM, 1.0, 0.0, 1.2 * MM, self.OBSTACLES, 0.5 * MM)
+        assert sortie is not None
+
+    def test_aucun_consommateur_ne_deballe_une_boite_a_l_aveugle(self):
+        # ⚠️ Garde structurelle : tout parcours d'une LISTE d'obstacles doit
+        # passer par l'aiguillage, jamais par `_dist_point_boite` directement.
+        src = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
+            encoding="utf-8")
+        code = [l for l in src.split(chr(10)) if not l.strip().startswith("#")]
+        fautifs = [l.strip() for l in code
+                   if "_dist_point_boite(" in l and "for o in obstacles" in l]
+        assert not fautifs, (
+            "un consommateur deballe encore l obstacle en boite : %s" % fautifs)

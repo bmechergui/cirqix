@@ -246,7 +246,7 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
         if exempt is not None and _dist_point_boite(px, py, exempt) == 0:
             continue  # dans sa propre pastille : la clearance est celle du pad
         for boite in obstacles:
-            if _dist_point_boite(px, py, boite) < marge:
+            if _distance_a_obstacle(px, py, boite) < marge:
                 return False
     return True
 
@@ -266,7 +266,7 @@ def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
     """
     if not _trajet_libre(x0, y0, x1, y1, obstacles, marge_piste or marge, exempt):
         return False
-    return not any(_dist_point_boite(x1, y1, o) < marge for o in obstacles)
+    return not any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles)
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
@@ -312,7 +312,7 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                                      marge_piste or marge, exempt):
                     continue
                 # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
-                if any(_dist_point_boite(x1, y1, o) < marge for o in obstacles):
+                if any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles):
                     continue
                 return int(x1), int(y1)
     return None
