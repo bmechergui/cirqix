@@ -3102,6 +3102,47 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
         "aggraver — board d origine conserve", n)
     return pcb_bytes
 
+# Replis GND deja tentes SANS SUCCES pendant cet appel a `route_auto`.
+# ⚠️ Videe a chaque appel : deux cartes differentes ne doivent pas se
+# contaminer, sinon la seconde heriterait des echecs de la premiere.
+_replis_gnd_echoues: set = set()
+
+
+def _signature_orphelines(orphelines) -> tuple:
+    """Ce qu on a ESSAYE DE REPARER, independamment de l ordre du rapport.
+
+    Le rapport DRC ne garantit pas l ordre de ses items : deux listes des
+    memes broches decrivent le meme probleme et doivent se reconnaitre.
+    """
+    return tuple(sorted((str(a), str(b)) for a, b in (orphelines or ())))
+
+
+def _repli_deja_tente(orphelines) -> bool:
+    """Ce jeu de broches a-t-il DEJA fait echouer un repli pendant cet appel ?
+
+    ⚠️ Mesure du 2026-09-02, banc des quatre cartes : ONZE replis GND tentes,
+    ZERO retenu. Le repli retire GND du plan, ce qui oblige Freerouting a
+    router 58 broches de masse en pistes — plus de vingt minutes sur
+    `stm32-100`, pour rattraper UNE pastille, et le resultat est ensuite
+    refuse par la garde qui compare.
+
+    On ne SUPPRIME pas le repli : CLAUDE.md documente un cas ou il a fait
+    passer `stm32-60` de 98 % a 100 %, et la garde ne peut de toute facon rien
+    retenir de mauvais. On retire la REPETITION — les tirages successifs d une
+    meme carte produisent des etats tres proches, et un repli refuse sur un jeu
+    de broches le sera sur le meme jeu.
+
+    Aucun seuil : la regle est « pas deux fois la meme chose », jamais
+    « pas plus de N fois ».
+    """
+    return _signature_orphelines(orphelines) in _replis_gnd_echoues
+
+
+def _noter_repli_echoue(orphelines) -> None:
+    """Retient qu un repli sur CES broches n a rien donne."""
+    _replis_gnd_echoues.add(_signature_orphelines(orphelines))
+
+
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
     """Nombre de broches GND que le DRC declare non reliees a leur plan."""
     try:
@@ -4356,6 +4397,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
     deadline = _now() + req.timeout_s
+    # ⚠️ VIDER la memoire des replis GND a chaque appel : deux cartes
+    # differentes ne doivent pas se contaminer, sinon la seconde heriterait
+    # des echecs de la premiere et sauterait un repli jamais tente sur elle.
+    _replis_gnd_echoues.clear()
     meilleur: Optional[RouteAutoResponse] = None
     # Denominateur de la mesure : les nets routables du board d ENTREE. Le
     # recalculer sur la sortie fausserait le pourcentage.
@@ -4711,14 +4756,32 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Une carte non connectée ne part pas en fabrication — on refait
             # alors le routage en INCLUANT GND, qui relie tout par des pistes.
             # Plus de cuivre, mais une carte complète.
-            if _NETS_CONFIES_AU_PLAN and _gnd_orphelines(final):
+            # ⚠️ QUELLES broches, pas seulement COMBIEN : c est leur identite
+            # qui dit si ce repli a deja ete tente en vain pendant cet appel.
+            try:
+                orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+            except Exception:
+                orphelines = []
+            if (_NETS_CONFIES_AU_PLAN and orphelines
+                    and _repli_deja_tente(orphelines)):
+                logger.info(
+                    "plan de masse : %d broche(s) GND non reliée(s) — repli "
+                    "DEJA tenté sans succès sur ces mêmes broches, on ne le "
+                    "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
+                    len(orphelines))
+            elif _NETS_CONFIES_AU_PLAN and orphelines:
                 logger.warning(
                     "plan de masse : %d broche(s) GND non reliée(s) — "
-                    "repli sur un routage incluant GND", _gnd_orphelines(final))
+                    "repli sur un routage incluant GND", len(orphelines))
                 # `final` = le board ROUTE : ses pistes seront protegees, le
                 # routeur ne fera qu ajouter les liaisons GND manquantes.
                 secours = _router_en_incluant_gnd(etendu, req, restant,
                                                   deja_route=final)
+                if secours is None:
+                    # ⚠️ NOTER l echec, sinon la memoire reste vide et le
+                    # correctif est inerte — un repli qui rend None a coute
+                    # tout son temps sans rien produire.
+                    _noter_repli_echoue(orphelines)
                 if secours is not None:
                     # ⚠️ COMPARER avant de remplacer. Ce mecanisme etait le
                     # seul de la chaine a ecraser le board sans verifier qu il
@@ -4736,6 +4799,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             avant[0], avant[1], apres[0], apres[1])
                         final = secours
                     else:
+                        _noter_repli_echoue(orphelines)
                         logger.warning(
                             "repli GND REFUSE : (%d erreur, %d manquante) ne "
                             "fait pas mieux que (%d erreur, %d manquante) — "

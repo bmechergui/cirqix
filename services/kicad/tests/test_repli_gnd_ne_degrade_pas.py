@@ -70,8 +70,14 @@ class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
     def test_le_remplacement_n_est_plus_INCONDITIONNEL(self):
+        # ⚠️ Le bloc REEL, pas une tranche de longueur fixe. Les 900
+        # caracteres d origine ont ete depasses le 2026-09-02 par l ajout du
+        # « repli deja tente » : la garde a cesse de mesurer ce qu elle visait,
+        # alors que son intention — comparer avant de remplacer — etait
+        # intacte. Troisieme ancrage fragile repare dans cette session.
         i = self.SOURCE.index("secours = _router_en_incluant_gnd(")
-        bloc = self.SOURCE[i:i + 900]
+        fin = self.SOURCE.index("_reparer_reliefs_affames", i)
+        bloc = self.SOURCE[i:fin]
         assert "_secours_est_meilleur(" in bloc, (
             "le repli remplace le board sans comparer")
 
