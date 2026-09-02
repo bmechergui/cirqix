@@ -133,3 +133,52 @@ temps de routage gonflé par le vide à explorer.
 
 C'est le levier suivant, et il est en amont du placement comme du routage.
 **Non traité** : c'est un changement de comportement livré, donc une décision.
+
+---
+
+## ⚠️ Dimensionnement de carte — hypothèse RÉFUTÉE par la mesure (2026-09-02)
+
+**Ne pas retenter sans lire ceci.**
+
+Le constat de départ était juste : les cartes sont occupées à **2 % à 10 %** par
+leurs composants, là où un layout professionnel tourne autour de 30-60 %.
+
+```
+carte            carte      surface  nombre   critère qui gagne   occupation
+stm32-30          75x56       35,1    75,0    nombre                 7,3 %
+stm32-60         132x99       42,5   132,0    nombre                 3,5 %
+stm32-100       208x156       50,8   208,0    nombre                 2,0 %
+nucleo-f401      122x92       66,4   122,5    nombre                 9,8 %
+arduino-uno       84x63       47,2    84,5    nombre                10,4 %
+esp32-baseline    93x70       93,1    56,0    SURFACE               33,3 %
+```
+
+Le critère « nombre » (`18 + 1,9 × n`, dans `scripts/generer_exemples.py`)
+l'emporte sur cinq cartes sur six. Il fait croître le CÔTÉ linéairement avec le
+nombre de composants, alors que la géométrie voudrait √n — d'où l'aggravation
+avec la taille : 7,3 % à trente composants, 2,0 % à cent.
+
+**L'argument géométrique est juste. La mesure le réfute quand même.**
+`stm32-100`, placée deux fois, même code, même circuit :
+
+```
+                carte        capas méd / max    DRC
+ACTUELLE      208 x 156       13,2 / 20,3 mm    0 erreur · 125 violations · 320 s
+SURFACE        51 x 38        20,4 / 30,5 mm    7 ERREURS · 148 violations · 316 s
+```
+
+La carte serrée est **pire sur tous les critères** : sept erreurs de
+fabricabilité, et un découplage DÉGRADÉ. Elle n'est pas livrable.
+
+**Ce que le plancher protège réellement.** Pas une contrainte physique — à 25 %
+d'occupation, il reste de la place. Il compense un OPTIMISEUR DE PLACEMENT qui
+a besoin de mou pour résoudre ses conflits. C'est une béquille, mais elle porte
+quelque chose.
+
+**Conséquence :** le levier n'est pas la taille de la carte, c'est la capacité
+du placeur à travailler dense. Les deux sont liés **dans cet ordre**. Resserrer
+la carte d'abord ne fait que produire des boards non fabricables.
+
+Reproduction : `scripts/reference_sans_snap.py` pour le protocole, ou le script
+d'expérience décrit ici — générer le même circuit à deux tailles, placer les
+deux, comparer erreurs DRC et distance des condensateurs.
