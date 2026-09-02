@@ -3038,6 +3038,61 @@ def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
     return txt.encode("utf-8")
 
 
+def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
+    """Retire les ilots de plan qu AUCUN via ne relie — du cuivre flottant.
+
+    ⚠️ APRES la couture, jamais avant : un ilot qu on aurait pu coudre ne doit
+    pas etre retire. C est le dernier recours.
+
+    Mesure du 2026-09-02, `stm32-60` : un ilot de 4,9 mm2 porte UN via, et ce
+    via n atteint aucun cuivre de masse en face. La suppression native de KiCad
+    ne peut rien — `ISLAND_REMOVAL_MODE_ALWAYS` retire les ilots SANS
+    connexion, et celui-ci en a une, inutile mais presente.
+
+    Avis de Grok, consulte le 2026-09-02 : « c est du cuivre flottant, pas un
+    ilot de reference mal cousu ». Le laisser est le pire choix — une antenne
+    et un condensateur de couplage pile sur les signaux qui l ont isole.
+
+    ⚠️ GARDE « NE PEUT QU AMELIORER », comme ses voisines : si le retrait
+    ajoute des erreurs, on rend le board recu.
+    """
+    if not _NETS_CONFIES_AU_PLAN:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "retirer_ilots_flottants",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "nets": json.dumps(list(_NETS_CONFIES_AU_PLAN)),
+            })
+        except Exception as exc:
+            logger.warning(
+                "retrait des ilots flottants impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        bilan = json.loads(resultat.read_text(encoding="utf-8"))
+        allege = sortie.read_bytes()
+    n = bilan.get("retires", 0)
+    if not n:
+        return pcb_bytes
+    if _compte_erreurs(_rapport_drc(allege)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+        logger.warning(
+            "retrait des ilots flottants : erreurs ajoutees — board conserve")
+        return pcb_bytes
+    logger.info(
+        "ilots flottants : %d retire(s) avec %d via(s) borgne(s) — du cuivre "
+        "sans liaison est une antenne, pas une reference",
+        n, bilan.get("vias_retires", 0))
+    return allege
+
+
 def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     """Relie par un via les ilots d un meme plan, decoupes par les pistes.
 
@@ -4805,6 +4860,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             "fait pas mieux que (%d erreur, %d manquante) — "
                             "board conserve",
                             apres[0], apres[1], avant[0], avant[1])
+
+            # ⚠️ APRES la couture : un ilot qu on aurait pu coudre ne doit pas
+            # etre retire. Ce qui reste sans aucune liaison n est plus une
+            # reference de masse, c est une plaque flottante — antenne et
+            # condensateur de couplage sur les signaux qui l ont isolee.
+            final = _retirer_ilots_flottants(final)
 
             # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
             # se mesure sur le remplissage FINAL. Mesuree avant, elle

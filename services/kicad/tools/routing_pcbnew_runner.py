@@ -941,6 +941,30 @@ def _via_relie_vraiment(sur_cette_face: bool, sur_la_face_opposee: bool) -> bool
     return bool(sur_cette_face and sur_la_face_opposee)
 
 
+def _ilot_est_flottant(vias_dedans: int, vias_reliants: int,
+                       pastilles_dedans: int) -> bool:
+    """Cet ilot est-il du cuivre FLOTTANT, sans aucune liaison a son net ?
+
+    ⚠️ Mesure du 2026-09-02, `stm32-60` : un ilot de 4,9 mm2 porte UN via, et
+    ce via n atteint aucun cuivre de masse sur la face opposee. Du cuivre perce
+    pour rien. La suppression native de KiCad ne peut rien : `ALWAYS` retire
+    les ilots SANS connexion, et celui-ci en a une — inutile, mais presente.
+
+    Avis de Grok, consulte le 2026-09-02 : « c est du cuivre flottant, pas un
+    ilot de reference mal cousu. Plus aucune liaison : ce n est plus une
+    reference, c est une plaque. » Le laisser est le pire choix — antenne et
+    condensateur de couplage pile sur les signaux qui l ont isole.
+
+    ⚠️ CHIRURGICAL, PAS UN SEUIL. On ne retire pas « les petits ilots » : un
+    petit plan encore relie est utile, et le projet a mesure qu une carte
+    livree a 100 % en portait six. Une PASTILLE du net sur la meme face suffit
+    a garder l ilot, meme sans via.
+    """
+    if pastilles_dedans > 0:
+        return False
+    return vias_reliants <= 0
+
+
 def _pas_d_echantillonnage(largeur: float, hauteur: float,
                            via_d: float) -> float:
     """Pas de la grille de candidats, DEDUIT de la taille de l ilot.
@@ -1055,6 +1079,92 @@ def _faut_coudre(ilots_sur_la_couche: int, couches_du_net: int) -> bool:
     if ilots_sur_la_couche < 1:
         return False
     return ilots_sur_la_couche >= 2 or couches_du_net >= 2
+
+
+def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
+    """Retire les ilots de plan qu AUCUN via ne relie, et leurs vias inutiles.
+
+    ⚠️ A LANCER APRES la couture, jamais avant : un ilot qu on aurait pu
+    coudre ne doit pas etre retire. C est le dernier recours, quand toutes les
+    tentatives de liaison ont echoue.
+
+    ⚠️ CE N EST PAS LA SUPPRESSION NATIVE DE KiCad. `ISLAND_REMOVAL_MODE_ALWAYS`
+    est deja actif et retire les ilots SANS connexion ; celui qu on vise ici
+    porte un via — donc KiCad le croit connecte — mais ce via n atteint aucun
+    cuivre du net sur la face opposee. Mesure du 2026-09-02, `stm32-60` :
+    regler le mode et recouler ne change AUCUNE connexion manquante.
+
+    Le via borgne est retire avec l ilot : sans cela il resterait un percage
+    facture qui ne relie rien, et un obstacle de plus pour le routage suivant.
+    """
+    board = _charger_board(pcbnew, args["pcb"])
+    nets = set(json.loads(args.get("nets", "[]")))
+    retires = 0
+    vias_retires = 0
+
+    zones = [z for z in board.Zones()
+             if not nets or str(z.GetNetname()) in nets]
+    autre = {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
+
+    for zone in zones:
+        try:
+            netcode = zone.GetNetCode()
+        except Exception:
+            continue
+        vias = [t for t in board.GetTracks()
+                if t.GetClass() == "PCB_VIA" and t.GetNetCode() == netcode]
+        pads = [p for fp in board.GetFootprints() for p in fp.Pads()
+                if p.GetNetCode() == netcode]
+        for couche in list(zone.GetLayerSet().Seq()):
+            try:
+                poly = zone.GetFilledPolysList(couche)
+            except Exception:
+                continue
+            nom = board.GetLayerName(couche)
+            # ⚠️ De la FIN vers le DEBUT : supprimer un polygone decale les
+            # indices suivants, et parcourir en avant en sauterait.
+            for i in range(poly.OutlineCount() - 1, -1, -1):
+                dedans = [v for v in vias if poly.Contains(v.GetPosition(), i)]
+                pastilles = sum(1 for p in pads
+                                if poly.Contains(p.GetPosition(), i))
+                reliants = 0
+                for v in dedans:
+                    if _touche_le_net_en_face(board, zones, autre.get(nom),
+                                              v.GetPosition()):
+                        reliants += 1
+                if not _ilot_est_flottant(len(dedans), reliants, pastilles):
+                    continue
+                for v in dedans:
+                    board.Remove(v)
+                    vias_retires += 1
+                poly.DeletePolygon(i)
+                retires += 1
+            try:
+                zone.SetFilledPolysList(couche, poly)
+            except Exception:
+                pass
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(
+        json.dumps({"retires": retires, "vias_retires": vias_retires}),
+        encoding="utf-8")
+
+
+def _touche_le_net_en_face(board, zones, couche_opposee, position) -> bool:
+    """Ce point touche-t-il du cuivre du net sur la face opposee ?"""
+    if not couche_opposee:
+        return False
+    for z in zones:
+        for c in list(z.GetLayerSet().Seq()):
+            try:
+                if board.GetLayerName(c) != couche_opposee:
+                    continue
+                p = z.GetFilledPolysList(c)
+                if any(p.Contains(position, k) for k in range(p.OutlineCount())):
+                    return True
+            except Exception:
+                continue
+    return False
 
 
 def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
@@ -1266,6 +1376,8 @@ def main(argv: list[str]) -> int:
         _stitch_zones(pcbnew, args)
     elif operation == "stitch_islands":
         _stitch_islands(pcbnew, args)
+    elif operation == "retirer_ilots_flottants":
+        _retirer_ilots_flottants(pcbnew, args)
     elif operation == "plan_escape":
         _plan_escape(pcbnew, args)
     elif operation == "fill_zones":
