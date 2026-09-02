@@ -31,11 +31,73 @@ courante : les deux regles se composent au lieu de s'annuler.
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
+import re
 from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
+
+# La detection native est importee au niveau du module pour qu'un test puisse
+# la remplacer, et pour que `_clusters_natifs` reste le SEUL point de passage.
+try:  # pragma: no cover - depend de l'environnement
+    from kicad_tools.optim.clustering import detect_functional_clusters
+except Exception:  # pragma: no cover
+    detect_functional_clusters = None  # type: ignore[assignment]
+
+# `+3.3V` -> `+3V3`. Ancre aux DEUX bouts : on ne bricole pas un nom quelconque
+# qui contiendrait un rail (`VDD_3.3V_SENSE` reste intact).
+_RE_RAIL_DECIMAL = re.compile(r"^([+-]?)(\d+)\.(\d+)V$")
+
+
+def _nom_kicad_du_rail(nom: str) -> str:
+    """Rend le nom d'un rail dans la convention KiCad : `+3.3V` -> `+3V3`.
+
+    ⚠️ Mesure du 2026-09-02, `nucleo-f401`. Le motif natif de `kicad-tools`
+    est ``r"^(\\+|\\-)?\\d+V"`` : il exige des chiffres IMMEDIATEMENT suivis
+    d'un `V`. Notre generateur ecrit `+3.3V`, et le point decimal fait echouer
+    le motif — le rail principal de la carte n'etait donc pas reconnu comme
+    une alimentation, aucun cluster POWER n'etait construit, et les huit
+    condensateurs de decouplage restaient a 24-68 mm du MCU, sans contrainte.
+
+    `+3V3` est LA convention KiCad, concue precisement pour eviter ce point.
+
+    Tout autre nom est rendu tel quel.
+    """
+    m = _RE_RAIL_DECIMAL.match(nom or "")
+    if m is None:
+        return nom
+    return "%s%sV%s" % (m.group(1), m.group(2), m.group(3))
+
+
+def _clusters_natifs(composants):
+    """`detect_functional_clusters`, sur des noms de rails NORMALISES.
+
+    ⚠️ AUCUNE heuristique maison : la detection reste native, on lui donne
+    seulement le nom que KiCad emploie lui-meme. Precedent exact dans le
+    projet : `kct_route.py::_VCC_RENAME` renomme deja `+3.3V` en `P3V3` pour
+    contourner une classification de la meme lib.
+
+    ⚠️ SUR UNE COPIE, IMPERATIVEMENT. Renommer les pins du modele charge
+    renommerait les nets du board ecrit derriere, et un board dont les nets
+    changent de nom est un board casse. La normalisation ne sert qu'a la
+    DETECTION ; les clusters rendus ne portent que des references.
+
+    Effet mesure sur `nucleo-f401`, meme board :
+        sans : 4 clusters, aucun POWER
+        avec : 5 clusters — POWER, ancre U1, plafond 3,0 mm, les 8 capas
+    """
+    if detect_functional_clusters is None:
+        return []
+    copie = copy.deepcopy(list(composants))
+    for c in copie:
+        for pin in getattr(c, "pins", None) or []:
+            try:
+                pin.net_name = _nom_kicad_du_rail(getattr(pin, "net_name", ""))
+            except Exception:
+                continue  # une pin en lecture seule ne doit pas tuer la detection
+    return detect_functional_clusters(copie)
 
 # Degagement laisse entre les deux courtyards apres le saut. Assez pour que
 # l'Inspecteur n'ait rien a ecarter dans le cas nominal, assez petit pour que
@@ -232,9 +294,10 @@ def snap_cluster_members(
 
     Renvoie le nombre de footprints deplaces.
     """
-    from kicad_tools.optim.clustering import detect_functional_clusters
-
-    clusters = detect_functional_clusters(_composants(pcb))
+    # ⚠️ `_clusters_natifs` et non la detection brute : le nom de rail doit
+    # etre normalise avant, sinon `+3.3V` n'est pas reconnu comme une
+    # alimentation et AUCUN cluster POWER n'est construit.
+    clusters = _clusters_natifs(_composants(pcb))
     if not clusters:
         return 0
 
