@@ -253,3 +253,30 @@ dégagement.
 Le levier restant se situe **au routage, pas à la réparation** : poser aussi
 une courte piste de masse sur la face opposée du dogbone, protégée dans le DSN,
 pour que le plan puisse toujours rejoindre le via. Non implémenté, non mesuré.
+
+### Tentative RÉFUTÉE — le dogbone à deux faces (2026-09-02)
+
+Pour fermer l'îlot de `D21`, j'ai posé avec chaque via de dogbone une courte
+piste de masse **sur la face opposée**, protégée dans le DSN. GLM validait :
+« sa fin ouverte fusionnera avec le plan puisqu'elle porte le même net, c'est
+un pont forcé à travers la coupure » — en avertissant du **bouchon de
+routage**. C'est le bouchon qui l'a emporté.
+
+```
+                   %   manq  err  seg  segments GND   duree
+sans amorce       99     1     0  779       57         901 s
+avec amorce       99     1     0  732        6        2798 s
+```
+
+Aucun gain sur la connexion manquante, **trois fois plus lent**, et les
+segments GND survivant au round-trip Specctra s'effondrent de **57 à 6** : les
+amorces protégées gênent le routeur au point de lui faire perdre les dogbones
+eux-mêmes. Le remède coûtait plus que le mal.
+
+Retiré. La réfutation est inscrite à son site exact dans
+`tools/routing_pcbnew_runner.py::_escape_pads`, avec ses chiffres — un futur
+lecteur y trouvera pourquoi ne pas la retenter telle quelle.
+
+⚠️ C'est la CONDITION qui est réfutée, pas l'analyse : l'îlot de `D21` reste
+causé par un via isolé après coup. Un remède devra agir **sans ajouter de
+cuivre protégé sur la face que le routeur utilise**.

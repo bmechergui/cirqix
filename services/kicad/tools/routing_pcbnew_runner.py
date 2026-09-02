@@ -820,6 +820,26 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         board.Add(via)
         trous.append((float(vx), float(vy), perc_d / 2))
         poses += 1
+        # ⚠️ AMORCE EN FACE : ESSAYEE LE 2026-09-02, REFUTEE PAR LA MESURE.
+        # L idee — poser avec le via une courte piste de masse sur la face
+        # opposee, protegee dans le DSN, pour que le plan re-coule rejoigne
+        # toujours le via — etait validee par GLM : « sa fin ouverte fusionnera
+        # avec le plan puisqu elle porte le meme net, c est un pont force a
+        # travers la coupure ». Elle avertissait aussi du bouchon de routage.
+        # C est le bouchon qui l a emporte, sur `stm32-100` :
+        #
+        #                    %   manq  err  seg  segments GND   duree
+        #   sans amorce     99     1     0  779       57         901 s
+        #   avec amorce     99     1     0  732        6        2798 s
+        #
+        # Aucun gain sur la connexion manquante, TROIS FOIS plus lent, et les
+        # segments GND qui survivent au round-trip Specctra s effondrent de 57
+        # a 6 : les amorces protegees genent le routeur au point de faire
+        # perdre les dogbones eux-memes. Le remede coutait plus que le mal.
+        #
+        # ⚠️ C est la CONDITION qui est refutee, pas l analyse : l ilot de
+        # `D21` reste cause par un via isole apres coup. Un futur remede devra
+        # agir sans ajouter de cuivre protege sur la face du routage.
 
     pcbnew.SaveBoard(args["output"], board)
     # ⚠️ RENDRE LE NOMBRE DE VISEES, et verifier que le bilan boucle. Sans
