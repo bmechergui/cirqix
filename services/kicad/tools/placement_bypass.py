@@ -179,6 +179,37 @@ _PAS_ANGULAIRE_DEG: float = 12.0
 _ESSAIS_ANGULAIRES: int = 15
 _ESSAIS_RADIAUX: int = 4
 _PAS_RADIAL_MM: float = 1.5
+# Plafond ABSOLU de la recherche radiale, pour borner le temps de calcul.
+# 80 pas x 1,5 mm = 120 mm : au-dela de la diagonale de nos plus grandes
+# cartes, donc jamais atteint par un cas legitime. Le pire ecart mesure sur
+# `nucleo-f401` est 68,7 mm, soit 43 pas.
+_ESSAIS_RADIAUX_MAX: int = 80
+
+
+def _essais_radiaux(ecart_actuel: Optional[float], marge: float) -> int:
+    """Combien de pas radiaux explorer, DEDUIT de la situation.
+
+    ⚠️ Mesure du 2026-09-02, `nucleo-f401` : les huit condensateurs de
+    decouplage n etaient jamais deplaces, le journal rendant « aucune place
+    libre » pour chacun. Avec `_ESSAIS_RADIAUX = 4` et un pas de 1,5 mm, la
+    recherche n explorait que 4,5 mm au-dela de la marge — soit, sur une ancre
+    dense (marge 5 mm), l anneau d ecart libre 5,0 a 9,5 mm. Or les resistances
+    occupent precisement cet anneau (13,7 mm d entraxe, ~6,2 mm d ecart libre
+    au corps du LQFP-64). L anneau etait plein, la recherche echouait.
+
+    ⚠️ J avais d abord conclu a une contradiction entre le plafond POWER (3 mm)
+    et la marge du halo (5 mm). C etait FAUX : le plafond decide seulement s il
+    faut ESSAYER ; le deplacement est accepte des qu il AMELIORE l ecart. Un
+    point a 5 mm remplacait parfaitement un point a 58 mm.
+
+    La borne naturelle est l ecart ou le membre se trouve DEJA : au-dela, la
+    garde « ne peut qu ameliorer » refuserait le point de toute facon. Aucun
+    seuil n est donc choisi — il est deduit.
+    """
+    if ecart_actuel is None:
+        return _ESSAIS_RADIAUX
+    besoin = (float(ecart_actuel) - marge) / _PAS_RADIAL_MM
+    return max(1, min(_ESSAIS_RADIAUX_MAX, int(math.ceil(besoin))))
 
 
 def _boites_absolues(pcb, sauf: str) -> list:
@@ -200,8 +231,58 @@ def _libre(boite: tuple, obstacles: list, marge: float) -> bool:
     return True
 
 
+# Isolement exige entre le cuivre et le bord de la carte. Ce n est PAS un
+# reglage : c est la contrainte que le DRC applique lui-meme
+# (`board setup constraints edge clearance`, 0,5 mm par defaut chez KiCad).
+# La reproduire, c est obeir au juge, pas choisir un seuil.
+_MARGE_BORD_MM: float = 0.5
+
+
+def _contour_de_carte(pcb) -> Optional[tuple]:
+    """(min_x, min_y, max_x, max_y) du contour, en coordonnees de footprint.
+
+    Lecture NATIVE — `extract_board_outline`, la meme que `tools/placement.py`.
+    Rend ``None`` si le contour est illisible : on ne remplace pas une
+    contrainte qu on ne sait pas evaluer par un refus global.
+    """
+    try:
+        from kicad_tools.optim.board_outline import extract_board_outline
+        outline = extract_board_outline(pcb)
+        if outline is None or not outline.vertices:
+            return None
+        ox, oy = pcb.board_origin
+        xs = [v.x - ox for v in outline.vertices]
+        ys = [v.y - oy for v in outline.vertices]
+        return (min(xs), min(ys), max(xs), max(ys))
+    except Exception:
+        return None
+
+
+def _dans_le_contour(boite: tuple, contour: Optional[tuple],
+                     marge: float = _MARGE_BORD_MM) -> bool:
+    """La boite tient-elle dans le contour, isolement du bord compris ?
+
+    ⚠️ Mesure du 2026-09-02, `nucleo-f401` : la recherche elargie a pousse
+    `D26` a 0,4474 mm du bord pour 0,5000 exiges — une erreur
+    `copper_edge_clearance`, seule erreur du board. `_cible_libre` testait ses
+    candidats contre les BOITES DES COMPOSANTS et contre rien d autre ; le
+    contour n a jamais fait partie de ses obstacles. Tant que la recherche ne
+    depassait pas 4,5 mm elle ne pouvait pas atteindre le bord : le defaut
+    etait LATENT, et l elargissement l a reveille.
+
+    Contour inconnu : on n interdit rien.
+    """
+    if not contour:
+        return True
+    x1, y1, x2, y2 = boite
+    cx1, cy1, cx2, cy2 = contour
+    return (x1 >= cx1 + marge and y1 >= cy1 + marge
+            and x2 <= cx2 - marge and y2 <= cy2 - marge)
+
+
 def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
-                 direction: tuple, marge: float, ref: str):
+                 direction: tuple, marge: float, ref: str,
+                 ecart_actuel: Optional[float] = None):
     """Premier point libre pour le CENTRE du corps de `fp`, ou ``None``.
 
     ⚠️ Sans cette recherche, deux membres de directions voisines atterrissent
@@ -219,9 +300,14 @@ def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
     ux, uy = direction
     _, _, mhw, mhh = _centre_et_demi(fp)
     obstacles = _boites_absolues(pcb, ref)
+    # ⚠️ Le CONTOUR est un obstacle au meme titre que les voisins. Sans lui,
+    # la recherche elargie pousse un composant hors carte ou trop pres du bord.
+    contour = _contour_de_carte(pcb)
     angle0 = math.atan2(uy, ux)
     pas = math.radians(_PAS_ANGULAIRE_DEG)
-    for k_r in range(_ESSAIS_RADIAUX):
+    # ⚠️ Portee DEDUITE de l ecart actuel, pas constante. Une fenetre de
+    # 4,5 mm ne pouvait pas depasser l anneau de voisins d une ancre dense.
+    for k_r in range(_essais_radiaux(ecart_actuel, marge)):
         supplement = k_r * _PAS_RADIAL_MM
         for k_a in range(_ESSAIS_ANGULAIRES):
             for signe in ((1,) if k_a == 0 else (1, -1)):
@@ -234,7 +320,8 @@ def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
                 # ⚠️ Le degagement exige est la MARGE, pas zero. Deux boites
                 # qui se touchent passent un test de recouvrement et echouent
                 # l analyseur, dont les regles portent sur un ecart reel.
-                if _libre(boite, obstacles, marge):
+                if (_dans_le_contour(boite, contour)
+                        and _libre(boite, obstacles, marge)):
                     return cx, cy
     return None
 
@@ -342,8 +429,10 @@ def snap_cluster_members(
             if dist - portee <= cluster.max_distance_mm:
                 continue
 
+            # ⚠️ TRANSMETTRE l ecart actuel : sans lui, la recherche retombe
+            # sur sa fenetre d origine de 4,5 mm et le correctif serait inerte.
             place = _cible_libre(pcb, fp, (acx, acy), (ahw, ahh), (ux, uy),
-                                 marge, ref)
+                                 marge, ref, ecart_actuel=dist - portee)
             if place is None:
                 # ⚠️ Mieux vaut laisser un membre LOIN que le poser sur un
                 # voisin : un court-circuit coute plus cher qu un decouplage
