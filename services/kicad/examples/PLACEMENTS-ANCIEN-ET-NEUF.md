@@ -105,3 +105,83 @@ refuse encore les huit capas faute de place légale. Voir `docs/DECISIONS.md`,
 Le routage n'a **pas** été rejoué. Les verdicts ci-dessus portent sur l'ancien
 placement. Adopter le neuf imposerait de relancer le banc complet — sinon on
 comparerait un routage neuf à des chiffres obtenus sur un autre placement.
+
+---
+
+# Campagne de dispersion — 4 tirages par carte (2026-09-02)
+
+Le placement est stochastique : un tirage isolé ne prouve rien. Quatre tirages
+par carte, comparés au board conservé (« témoin »). Distance des condensateurs
+de découplage au MCU, en médiane et en maximum.
+
+```
+carte             témoin   tirages                          étendue
+arduino-uno        12,5     12,2 · 13,2 · 11,1 · 12,2         2,1 mm
+nucleo-f401        58,5     14,8 · 14,4 · 14,8 · 14,5         0,4 mm
+esp32-baseline     35,8     35,8 · 35,8 · 35,8 · 35,8         0,0 mm
+```
+
+## Verdict par carte
+
+**`nucleo-f401` — l'ancien placement était un MAUVAIS TIRAGE.** Les quatre
+tirages tiennent dans 0,4 mm autour de 14,5 mm ; le témoin, à 58,5 mm, est
+très loin en dehors. Ce n'est donc pas de la chance : re-placer cette carte
+améliore la médiane d'un facteur quatre, de façon reproductible.
+
+⚠️ Deux réserves qui interdisent d'adopter sans vérifier :
+
+```
+le MAXIMUM varie   15,7 · 25,9 · 45,7 · 53,0 mm
+                   un condensateur reste toujours loin — mais pas le même
+le tirage 2 ajoute 1 erreur DRC
+```
+
+Un placement neuf n'est pas gratuit : il faut le passer au DRC à chaque fois.
+
+**`arduino-uno` — aucun gain.** Le témoin (12,5 mm) tombe au milieu de la
+plage des tirages (11,1-13,2 mm). Re-placer ne fait que tirer à nouveau.
+Un point constant tout de même : les violations passent de 35 à 23-27 sur
+**les quatre** tirages.
+
+**`stm32-validation` — le neuf DÉGRADE.** Six condensateurs éloignés, quatre
+rapprochés ; `C13` passe de 6,9 à 15,7 mm. DRC identique (0 erreur,
+25 violations) — rien ne l'aurait signalé.
+
+## ⚠️ `esp32-baseline` — le placement est un NO-OP sur cette carte
+
+Quatre tirages, quatre résultats **bit-à-bit identiques** — y compris au board
+d'entrée :
+
+```
+84707a6c5ee885a23678db21ee0095e2  2_placement.kicad_pcb
+84707a6c5ee885a23678db21ee0095e2  2_placement_t1.kicad_pcb
+84707a6c5ee885a23678db21ee0095e2  2_placement_t2.kicad_pcb
+84707a6c5ee885a23678db21ee0095e2  2_placement_t3.kicad_pcb
+84707a6c5ee885a23678db21ee0095e2  2_placement_t4.kicad_pcb
+```
+
+Pour un GA stochastique, c'est impossible. Le journal donne la cause :
+
+```
+auto_place: 3 conflit(s) au tirage 1/1 — on re-tire plutôt que de router un board cassé
+auto_place: 11 conflit(s)  ·  9 conflit(s)  ·  7 conflit(s)
+```
+
+L'optimisation tourne, échoue à résorber 3 à 11 conflits, et le filet de
+sécurité restaure l'entrée. Le comportement est **journalisé**, mais rien dans
+la VALEUR RENDUE ne distingue « placé » de « rendu tel quel » : il faut
+comparer les octets pour le voir.
+
+⚠️ **Question ouverte, non mesurée.** Ce test a fourni un board DÉJÀ PLACÉ,
+donc rendre l'entrée est inoffensif. Dans la chaîne réelle, `auto_place` reçoit
+la **grille brute du générateur**. Si le même repli s'y déclenche, la carte
+serait routée sur une grille non placée — et rien dans la réponse ne le dirait.
+À mesurer séparément.
+
+## Ce qu'il faut retenir
+
+Aucun des deux placements n'est meilleur *par construction*. C'est la même
+méthode qui tire deux fois. Ce que la dispersion permet, c'est de distinguer
+un mauvais tirage conservé (`nucleo-f401`) d'un bruit sans enjeu
+(`arduino-uno`) — et de repérer une carte où le placement ne fait rien du tout
+(`esp32-baseline`).
