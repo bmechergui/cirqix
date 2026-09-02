@@ -876,6 +876,37 @@ def _via_relie_vraiment(sur_cette_face: bool, sur_la_face_opposee: bool) -> bool
     return bool(sur_cette_face and sur_la_face_opposee)
 
 
+def _candidats_par_preference(points, relie):
+    """Les points qui RELIENT d abord, les autres ensuite. Aucun n est perdu.
+
+    ⚠️ CE PIEGE A DEJA ETE TENDU ET REFUTE. Le 2026-09-01 j avais ajoute la
+    condition « ne percer que si la face opposee porte du cuivre ».
+    Empiriquement mauvais :
+
+        couture d origine (sans la condition)   1 connexion manquante
+        avec la condition                       4 connexions manquantes
+
+    Parce qu elle REFUSAIT des sites sans en chercher d autres : moins de vias
+    poses, donc moins d ilots relies. Le test de l epoque a ete inverse pour
+    interdire son retour, et il reste en vigueur.
+
+    La bonne forme n est pas un filtre, c est un ORDRE. On essaie d abord les
+    points qui relieront vraiment ; si aucun ne convient, on se rabat sur les
+    autres — exactement le comportement d avant. La couture ne peut donc que
+    s ameliorer : a pire egal, elle pose les memes vias qu aujourd hui.
+
+    ⚠️ Un predicat qui LEVE ne doit pas eteindre la couture : on retombe sur
+    l ordre d origine, jamais sur zero via.
+    """
+    devant, derriere = [], []
+    for p in points or []:
+        try:
+            (devant if relie(p) else derriere).append(p)
+        except Exception:
+            return list(points or [])
+    return devant + derriere
+
+
 def _cuivre_du_net_sur(board, couche_exclue, netcode):
     """Polygones remplis de ce NET sur toutes les AUTRES couches.
 
@@ -1001,8 +1032,26 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False
-                for x, y in _points_dans_boite(b.GetLeft(), b.GetTop(),
-                                               b.GetRight(), b.GetBottom(), via_d * 3):
+                # ⚠️ PREFERER les points qui relient VRAIMENT — sans jamais
+                # les exiger. Mesure du 2026-09-02, `nucleo-f401` : deux ilots
+                # (238 et 128 mm2) recoivent un via qui traverse vers du VIDE,
+                # parce que la face opposee n a pas de cuivre a cet endroit.
+                # Exiger ce cuivre a deja ete essaye et REFUTE (1 -> 4
+                # manquantes) : la condition refusait des sites sans en
+                # chercher d autres. On ORDONNE, on ne filtre pas.
+                def _relie(p, _poly=poly, _i=i):
+                    q = pcbnew.VECTOR2I(int(p[0]), int(p[1]))
+                    return _via_relie_vraiment(
+                        _poly.Contains(q, _i),
+                        any(pf.Contains(q, k) for pf in en_face
+                            for k in range(pf.OutlineCount())))
+
+                candidats = _candidats_par_preference(
+                    list(_points_dans_boite(b.GetLeft(), b.GetTop(),
+                                            b.GetRight(), b.GetBottom(),
+                                            via_d * 3)),
+                    _relie)
+                for x, y in candidats:
                     pt = pcbnew.VECTOR2I(int(x), int(y))
                     try:
                         if not poly.Contains(pt, i):
