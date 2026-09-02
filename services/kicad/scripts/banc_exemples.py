@@ -334,6 +334,30 @@ def _redemarrer_freerouting() -> None:
     print("  (JVM Freerouting redemarree)", flush=True)
 
 
+def _version_du_code() -> str:
+    """SHA court du depot, ou une mention EXPLICITE de l indisponibilite.
+
+    ⚠️ Jamais de valeur inventee ni de chaine vide : « inconnue » doit se lire
+    comme tel. Un banc qui affiche une version fausse est pire qu un banc qui
+    n en affiche aucune — on lui ferait confiance.
+    """
+    for racine in ("/app", str(Path(__file__).resolve().parents[3])):
+        try:
+            r = subprocess.run(
+                ["git", "-C", racine, "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                sale = subprocess.run(
+                    ["git", "-C", racine, "status", "--porcelain",
+                     "services/kicad/tools", "services/kicad/routers"],
+                    capture_output=True, text=True, timeout=10)
+                suffixe = " (arbre MODIFIE)" if sale.stdout.strip() else ""
+                return r.stdout.strip() + suffixe
+        except Exception:
+            continue
+    return "inconnue"
+
+
 def _fichier_de_cas(dossier: Path) -> Optional[Path]:
     """Le fichier d entree d un cas, quel que soit son nom.
 
@@ -413,6 +437,13 @@ def main(argv: list[str]) -> int:
         # sortie qu un banc qui n en a que six.
         for nom, raison in ecartes:
             print("  (ecarte : %-26s %s)" % (nom, raison), flush=True)
+    # ⚠️ DATER ET VERSIONNER LE BANC. Un tableau de resultats sans la version
+    # qui l a produit n est pas rejouable : on ne peut ni le reproduire, ni le
+    # refuter, ni savoir a quel correctif imputer un ecart. Demande de
+    # l utilisateur le 2026-09-02, apres une nuit ou quatre correctifs de
+    # placement se sont succede en quelques heures.
+    print("  version du code : %s   %s"
+          % (_version_du_code(), time.strftime("%Y-%m-%d %H:%M")), flush=True)
     print(f"{'cas':<18}{'comp':>5}{'couches':>8}{'%':>5}{'manq':>6}"
           f"{'err':>5}{'warn':>6}{'seg':>6}{'GND':>5}{'duree':>8}")
     resultats = {}
