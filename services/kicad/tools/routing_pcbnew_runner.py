@@ -414,7 +414,52 @@ def _distance_a_obstacle(px: float, py: float, obstacle) -> float:
     return _dist_point_boite(px, py, obstacle)
 
 
-def _obstacles_d_un_autre_net(board, net_code) -> list:
+def _couches_cuivre_d_un_item(item) -> set:
+    """Les couches CUIVRE que l item occupe reellement.
+
+    ⚠️ Fail-closed : illisible rend l ensemble VIDE, ce qui prive de toute
+    dispense au lieu d en accorder une sans preuve.
+    """
+    try:
+        return {int(c) for c in item.GetLayerSet().CuStack()}
+    except Exception:
+        return set()
+
+
+def _couches_cuivre_du_board(board) -> set:
+    """Les couches cuivre de l empilage — celles que le via traverse."""
+    try:
+        return {int(c) for c in board.GetEnabledLayers().CuStack()}
+    except Exception:
+        return set()
+
+
+def _est_sur_une_couche(item, couches) -> bool:
+    """Vrai si l item porte du cuivre sur AU MOINS une des couches visees.
+
+    ⚠️ Fail-closed : un item dont les couches sont illisibles est CONSERVE
+    comme obstacle. Mieux vaut refuser une pose licite que percer a l aveugle.
+    """
+    try:
+        return any(item.IsOnLayer(int(c)) for c in couches)
+    except Exception:
+        return True
+
+
+def _couches_traversees_hors_pastille(couches_pad, couches_cuivre) -> set:
+    """Les couches ou le via pose du cuivre que la pastille NE COUVRE PAS.
+
+    La dispense de degagement du via en pastille est juste — sur la couche de
+    la pastille. Une pastille CMS n existe que sur une face ; le via traverse
+    tout l empilage et pose ailleurs du cuivre que rien ne vouche.
+
+    ⚠️ Fail-closed : une pastille dont les couches sont illisibles n obtient
+    AUCUNE dispense, et tout est verifie.
+    """
+    return set(couches_cuivre) - set(couches_pad)
+
+
+def _obstacles_d_un_autre_net(board, net_code, couches=None) -> list:
     """Obstacles d un AUTRE net : les pistes en SEGMENTS, le reste en boites.
 
     ⚠️ Une piste diagonale n occupe pas son rectangle englobant. La reduire a
@@ -426,6 +471,8 @@ def _obstacles_d_un_autre_net(board, net_code) -> list:
     for item in board.GetTracks():
         try:
             if item.GetNetCode() == net_code:
+                continue
+            if couches is not None and not _est_sur_une_couche(item, couches):
                 continue
             # ⚠️ S ANCRER SUR CE QUI NE VARIE PAS. Une premiere version testait
             # `GetClass() == "PCB_TRACE"` : la classe s appelle en realite
@@ -448,6 +495,8 @@ def _obstacles_d_un_autre_net(board, net_code) -> list:
         for pad in fp.Pads():
             try:
                 if pad.GetNetCode() == net_code:
+                    continue
+                if couches is not None and not _est_sur_une_couche(pad, couches):
                     continue
                 b = pad.GetBoundingBox()
                 obstacles.append((b.GetLeft(), b.GetTop(),
@@ -704,6 +753,20 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             gene = (not _via_in_pad_dispense_de_clearance(d, larg)
                     and any(_distance_a_obstacle(pos.x, pos.y, o) < d / 2 + clearance
                             for o in obstacles))
+            # ⚠️ LA DISPENSE S ARRETE A LA COUCHE DE LA PASTILLE. Une pastille
+            # CMS n existe que sur une face ; le via traverse jusqu a l autre,
+            # ou il pose du cuivre que RIEN ne vouche. Mesure du 2026-09-02 sur
+            # `stm32-100` : le via herite de l isolement de sa pastille sur
+            # F.Cu et se retrouve a 0,0481 mm d une piste GPIO46 sur B.Cu, pour
+            # un degagement exige de 0,2 mm. On verifie donc les couches que la
+            # pastille NE couvre pas — toujours, dispense ou non.
+            nues = _couches_traversees_hors_pastille(
+                _couches_cuivre_d_un_item(pad), _couches_cuivre_du_board(board))
+            if nues and not gene:
+                gene = any(
+                    _distance_a_obstacle(pos.x, pos.y, o) < d / 2 + clearance
+                    for o in _obstacles_d_un_autre_net(
+                        board, pad.GetNetCode(), couches=nues))
             if (d <= 0 or gene
                     or not _trou_libre(pos.x, pos.y, perc / 2, trous,
                                        ecart_trous)):

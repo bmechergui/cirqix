@@ -95,8 +95,14 @@ class TestCablage:
         encoding="utf-8")
 
     def _recours(self) -> str:
+        # ⚠️ ANCRER SUR LA FIN DU BLOC, PAS SUR UNE LONGUEUR. Une tranche de
+        # 1400 caracteres a lache des qu une verification de couche s est
+        # inseree dans le recours : `_trou_libre` etait toujours appele, mais
+        # hors de la fenetre. C est la sixieme ancre fragile de cette suite —
+        # toutes ecrites par moi, toutes du meme motif.
         i = self.SOURCE.index("Dernier recours : le via DANS la pastille")
-        return self.SOURCE[i:i + 1400]
+        j = self.SOURCE.index("via = pcbnew.PCB_VIA(board)", i)
+        return self.SOURCE[i:j]
 
     def test_le_dernier_recours_CONSULTE_la_dispense(self):
         # ⚠️ Une règle correcte jamais appelée est indistinguable d'une règle

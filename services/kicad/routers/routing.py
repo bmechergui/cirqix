@@ -2442,6 +2442,51 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
 
 
 # Nom d un net sous ses DEUX ecritures : `(net 3 "GND")` et `(net "GND")`.
+def _pads_plan_a_degager(pcb_bytes: bytes, nets_plan) -> list:
+    """Toute pastille CMS d un net de plan — quelle que soit la densite.
+
+    ⚠️ `_pads_gnd_fine_pitch` ne vise que les boitiers DENSES, sur la premisse
+    que « le plan atteint sans peine la masse d une resistance ». Mesure du
+    2026-09-02 sur `stm32-100` : `U1.8`, `C12.2` et `C2.2` finissent orphelines
+    du plan, et AUCUNE n appartient a un boitier assez dense pour etre visee.
+    Deux d entre elles surplombent pourtant le cuivre de B.Cu : un via droit
+    les relierait, si une piste de signal ne passait pas a 0,048 mm.
+
+    Elles etaient collees au plan F.Cu AVANT le routage ; ce sont les pistes de
+    signal qui ont decoupe le plan autour d elles. Reserver le dogbone avant le
+    routage donne au routeur une raison de contourner.
+
+    ⚠️ LES TRAVERSANTES SONT EXCLUES : leur percage atteint deja le plan de la
+    face opposee, et poser un via de plus serait le doublon qui a coute a ce
+    depot le rejet TOUT-OU-RIEN de vingt et un vias.
+
+    Rend [] au moindre doute : la reservation est un BONUS, jamais un passage
+    oblige.
+    """
+    if not nets_plan or not pcb_bytes:
+        return []
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return []
+    cibles = []
+    for bloc_fp in re.split(r"\(footprint", texte)[1:]:
+        ref = (re.search(r'\(property "Reference" "([^"]+)"', bloc_fp)
+               or re.search(r'\(fp_text reference "?([^"\s\)]+)', bloc_fp))
+        if not ref:
+            continue
+        for morceau in bloc_fp.split('(pad "')[1:]:
+            nom, reste = morceau.split('"', 1)
+            # ⚠️ Le TYPE suit immediatement le nom : `(pad "2" smd roundrect`.
+            if not reste.lstrip().startswith("smd"):
+                continue
+            m = (re.search(r'\(net \d+ "([^"]*)"\)', morceau)
+                 or re.search(r'\(net "([^"]*)"\)', morceau))
+            if m and m.group(1) in nets_plan:
+                cibles.append((ref.group(1), nom))
+    return cibles
+
+
 _NET_TOUTES_FORMES_RE = re.compile(r'\(net\s+(?:\d+\s+)?"([^"]*)"')
 
 
@@ -2547,7 +2592,9 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
     # broches a relier. Mesure du 2026-09-01 : `D3.2` et `J10.1` finissaient
     # orphelines sans jamais avoir ete visees, faute d etre fine-pitch.
     cibles = _cibles_de_liaison(
-        _pads_gnd_fine_pitch(pcb_bytes, nets_plan), isolees_avant)
+        _cibles_de_liaison(_pads_gnd_fine_pitch(pcb_bytes, nets_plan),
+                           _pads_plan_a_degager(pcb_bytes, nets_plan)),
+        isolees_avant)
     if not cibles:
         return pcb_bytes
     try:

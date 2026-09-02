@@ -94,5 +94,18 @@ class TestCablage:
     def test_les_isolees_mesurees_alimentent_l_union(self):
         corps = self._corps_de_l_etape()
         i = corps.index("_cibles_de_liaison(")
-        assert "isolees_avant" in corps[i:i + 160], (
+        # ⚠️ ANCRER SUR L EXPRESSION, PAS SUR UNE LONGUEUR. Une fenetre de
+        # 160 caracteres a lache des que l argument preventif est devenu lui
+        # meme une union imbriquee — l intention etait intacte, la garde non.
+        # On lit donc l appel COMPLET, jusqu a sa parenthese fermante.
+        profondeur, fin = 0, i
+        for k in range(i, len(corps)):
+            if corps[k] == "(":
+                profondeur += 1
+            elif corps[k] == ")":
+                profondeur -= 1
+                if profondeur == 0:
+                    fin = k + 1
+                    break
+        assert "isolees_avant" in corps[i:fin], (
             "l union ne recoit pas la mesure qui designe les broches orphelines")
