@@ -876,6 +876,33 @@ def _via_relie_vraiment(sur_cette_face: bool, sur_la_face_opposee: bool) -> bool
     return bool(sur_cette_face and sur_la_face_opposee)
 
 
+def _pas_d_echantillonnage(largeur: float, hauteur: float,
+                           via_d: float) -> float:
+    """Pas de la grille de candidats, DEDUIT de la taille de l ilot.
+
+    ⚠️ Mesure du 2026-09-02 : les petits ilots ne recevaient AUCUN via.
+
+        nucleo-f401   ilot de  8,4 mm2                    0 via
+        stm32-30      ilots de 23,9 · 21,2 · 12,4 mm2     0 via
+        stm32-60      ilots de  6,6 ·  4,9 mm2            0 via
+
+    Le compte correspond exactement aux ruptures `plan <-> plan` du DRC ; tous
+    les ilots plus grands sont relies. La grille avait un pas fixe de
+    `via_d * 3`, soit 1,8 mm : sur une languette large de 0,5 mm, aucun point
+    ne tombe dedans. L ilot n etait pas REFUSE, il n etait JAMAIS VISITE.
+
+    Deux bornes, toutes deux deduites :
+      - assez fin pour que la PLUS PETITE dimension recoive plusieurs points ;
+      - jamais plus fin que le via lui-meme — deux points distants de moins
+        d un diametre donnent le meme verdict, on paierait des essais sans gain.
+    """
+    petite = min(abs(largeur), abs(hauteur))
+    plafond = max(via_d, 0.0) * 3.0
+    if petite <= 0:
+        return max(via_d, 1.0)
+    return max(min(plafond, petite / 3.0), max(via_d, 1.0))
+
+
 def _candidats_par_preference(points, relie):
     """Les points qui RELIENT d abord, les autres ensuite. Aucun n est perdu.
 
@@ -1046,10 +1073,16 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                         any(pf.Contains(q, k) for pf in en_face
                             for k in range(pf.OutlineCount())))
 
+                # ⚠️ Le pas se DEDUIT de l ilot. Fixe a 1,8 mm, il sautait
+                # entierement les languettes de quelques mm2 — elles n etaient
+                # pas refusees, elles n etaient jamais visitees.
+                pas_ech = _pas_d_echantillonnage(
+                    b.GetRight() - b.GetLeft(), b.GetBottom() - b.GetTop(),
+                    via_d)
                 candidats = _candidats_par_preference(
                     list(_points_dans_boite(b.GetLeft(), b.GetTop(),
                                             b.GetRight(), b.GetBottom(),
-                                            via_d * 3)),
+                                            pas_ech)),
                     _relie)
                 for x, y in candidats:
                     pt = pcbnew.VECTOR2I(int(x), int(y))
