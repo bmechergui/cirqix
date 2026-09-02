@@ -189,7 +189,7 @@ Head `1de31db`. Neuf correctifs, tous mesurés sur de vrais boards.
 | `stm32-30` | 96 % · 3 manq | **100 %** · 1 manq | **0** | 2 |
 | `stm32-60` | 98 % · 1 manq | 98 % · 2 manq | **0** | 2 |
 | `nucleo-f401` | 98 % · 187 violations | 98 % · **74 violations** | 1 | 2 |
-| `stm32-100` | 70 % · 27 manq | *en cours* — **96 % au 1er palier** | ? | 2 |
+| `stm32-100` | **70 % · 27 manq** | **99 %** · 3 manq | **0** | 2 |
 
 ⚠️ Freerouting est stochastique (jusqu'à 26 points d'écart mesurés entre deux
 tirages du même board). Le 100 % de `stm32-30` et le +1 manquante de
@@ -249,9 +249,53 @@ Chaque légende porte les chiffres MESURÉS de sa carte, ses réserves comprises
 
 ## Reste à faire
 
-- verdict de `stm32-100`, puis livraison de ses boards ;
+- ~~verdict de `stm32-100`~~ — **99 %, 3 manquantes, 0 erreur, 4153 s.** Boards livres.
 - **suite complète non re-validée après `1de31db`** — tuée deux fois par la
   contention avec le banc ; ciblé vert (29/29 vias, 6/6 couture d'îlots) ;
 - `D-2026-09-02-a` — décision produit ouverte sur les capas de découplage ;
 - la relance des placements demandée par l'utilisateur, qui ne changera rien
   pour les capas tant que `D-2026-09-02-a` n'est pas tranchée.
+
+---
+
+# BANC TERMINÉ — les quatre verdicts (2026-09-02)
+
+```
+cas             comp  couches   %   manq  err  warn  seg   durée
+nucleo-f401       55     2     98     1    1    73   632   3668 s
+stm32-30          30     2    100     1    0    24   173    413 s
+stm32-60          60     2     98     2    0    68   374    324 s
+stm32-100        100     2     99     3    0   130   710   4153 s
+```
+
+**Trois cartes sur quatre à ZÉRO erreur de fabricabilité. Les quatre tiennent
+sur 2 couches** — aucune n'a eu besoin d'escalader.
+
+Écarts face au témoin :
+
+| carte | avant | après |
+|---|---|---|
+| `stm32-100` | **70 % · 27 manquantes** | **99 % · 3 · 0 erreur** |
+| `stm32-30` | 96 % · 3 manquantes | **100 % · 0 erreur** |
+| `nucleo-f401` | 187 violations | **74 violations** · 1 erreur |
+| `stm32-60` | 98 % · 1 manquante | 98 % · 2 · **0 erreur** |
+
+⚠️ Freerouting est stochastique. Le 100 % de `stm32-30` et le +1 de `stm32-60`
+sont dans le bruit ; **le 0 erreur est le résultat solide**, et il tient sur
+trois cartes.
+
+## Livré dans le dépôt (local — `output/` est gitignoré)
+
+```
+examples/stm32-30/output/etapes/      19 boards + LISEZ-MOI.md
+examples/stm32-60/output/etapes/      19 boards + LISEZ-MOI.md
+examples/stm32-100/output/etapes/     19 boards + LISEZ-MOI.md
+examples/nucleo-f401/output/etapes/   31 boards + LISEZ-MOI.md
+```
+
+## Piste ouverte, non traitée — le repli GND est disproportionné
+
+Les 4153 s de `stm32-100` incluent **plus de vingt minutes de repli GND**,
+déclenché par **une seule** broche non reliée : il re-route la carte entière,
+GND compris. Router le seul net concerné coûterait quelques secondes. Défaut
+d'économie, pas de correction — invisible tant que les cartes étaient petites.
