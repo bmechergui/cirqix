@@ -376,20 +376,85 @@ def _portee_d_echappement(fp, via_d: float) -> tuple:
     return max(taille, via_d * 4), max(via_d, 100_000.0)
 
 
+def _dist_point_segment(px: float, py: float,
+                        x1: float, y1: float, x2: float, y2: float) -> float:
+    """Distance d un point a un SEGMENT — pas a son rectangle englobant.
+
+    ⚠️ Mesure du 2026-09-02, `stm32-30` : les trois ilots non relies
+    recevaient enfin des points candidats, et 100 % etaient rejetes. Les
+    obstacles etaient des BOITES ENGLOBANTES, et celle d une piste diagonale
+    couvre toute la diagonale — une surface sans commune mesure avec le cuivre
+    reel, large de 0,25 mm. Un petit ilot coince entre deux pistes tombait
+    entierement dans l un de ces rectangles.
+
+    Le meme symptome avait ete vu sans etre compris : l obstacle le plus proche
+    de `D3.2` etait mesure a 0,000 mm, le centre de la pastille se trouvant
+    « dans » la boite d une piste eloignee.
+    """
+    dx, dy = x2 - x1, y2 - y1
+    longueur2 = dx * dx + dy * dy
+    if longueur2 <= 0:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / longueur2))
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def _distance_a_obstacle(px: float, py: float, obstacle) -> float:
+    """Distance au CUIVRE de l obstacle, quelle que soit sa forme.
+
+    Un obstacle est soit une boite `(x1, y1, x2, y2)` — pastille, forme dont
+    le rectangle est representatif — soit un segment
+    `("segment", x1, y1, x2, y2, largeur)` : une piste, dont le rectangle ne
+    l est pas.
+    """
+    if obstacle and obstacle[0] == "segment":
+        _, x1, y1, x2, y2, largeur = obstacle
+        return max(0.0, _dist_point_segment(px, py, x1, y1, x2, y2)
+                   - float(largeur) / 2.0)
+    return _dist_point_boite(px, py, obstacle)
+
+
 def _obstacles_d_un_autre_net(board, net_code) -> list:
-    """Boites englobantes des pistes, vias et pads d un AUTRE net."""
-    boites = []
-    for item in list(board.GetTracks()) + [
-        p for fp in board.GetFootprints() for p in fp.Pads()
-    ]:
+    """Obstacles d un AUTRE net : les pistes en SEGMENTS, le reste en boites.
+
+    ⚠️ Une piste diagonale n occupe pas son rectangle englobant. La reduire a
+    sa boite declarait obstrues des points ou le cuivre passe a plusieurs
+    millimetres — et bloquait 100 % des candidats de la couture sur les petits
+    ilots.
+    """
+    obstacles = []
+    for item in board.GetTracks():
         try:
             if item.GetNetCode() == net_code:
                 continue
+            # ⚠️ S ANCRER SUR CE QUI NE VARIE PAS. Une premiere version testait
+            # `GetClass() == "PCB_TRACE"` : la classe s appelle en realite
+            # `PCB_TRACK`, aucune piste n etait reconnue, et les 167 segments
+            # du board restaient traites en boites — le correctif ne
+            # s appliquait a RIEN. Dans `GetTracks()`, tout ce qui n est pas un
+            # via est un segment ; un arc traite par sa corde reste infiniment
+            # plus juste que par son rectangle englobant.
+            if item.GetClass() != "PCB_VIA" and hasattr(item, "GetStart"):
+                d, f = item.GetStart(), item.GetEnd()
+                obstacles.append(("segment", float(d.x), float(d.y),
+                                  float(f.x), float(f.y),
+                                  float(item.GetWidth())))
+                continue
             b = item.GetBoundingBox()
-            boites.append((b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom()))
+            obstacles.append((b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom()))
         except Exception:
-            continue  # un item sans boite ni net ne peut pas etre un obstacle connu
-    return boites
+            continue  # un item sans forme ni net ne peut pas etre un obstacle connu
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            try:
+                if pad.GetNetCode() == net_code:
+                    continue
+                b = pad.GetBoundingBox()
+                obstacles.append((b.GetLeft(), b.GetTop(),
+                                  b.GetRight(), b.GetBottom()))
+            except Exception:
+                continue
+    return obstacles
 
 # Ecart minimal entre deux PERCAGES, mesure bord a bord. JLCPCB demande
 # 0,5 mm : en deca les deux trous se rejoignent au percage.
@@ -637,7 +702,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             # du banc alors qu elles surplombaient le plan de B.Cu.
             # Le TROU, lui, reste verifie — un percage est physique.
             gene = (not _via_in_pad_dispense_de_clearance(d, larg)
-                    and any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
+                    and any(_distance_a_obstacle(pos.x, pos.y, o) < d / 2 + clearance
                             for o in obstacles))
             if (d <= 0 or gene
                     or not _trou_libre(pos.x, pos.y, perc / 2, trous,
@@ -822,7 +887,7 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
         obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         marge = via_d / 2 + float(args.get("clearance_mm", "0.2")) * 1_000_000
         for x, y in _candidats_de_couture(pos.x, pos.y, portee, via_d):
-            if any(_dist_point_boite(x, y, o) < marge for o in obstacles):
+            if any(_distance_a_obstacle(x, y, o) < marge for o in obstacles):
                 continue
             # ⚠️ Un trou deja perce interdit ce point, quel que soit son net.
             if not _trou_libre(x, y, perc_d / 2, trous, ecart_trous):
@@ -1091,7 +1156,7 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                             continue
                     except Exception:
                         continue
-                    if any(_dist_point_boite(x, y, o) < via_d / 2 + clearance
+                    if any(_distance_a_obstacle(x, y, o) < via_d / 2 + clearance
                            for o in obstacles):
                         continue
                     # ⚠️ Le CUIVRE du meme net ne gene pas ; le TROU, si. Sans

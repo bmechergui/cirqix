@@ -110,7 +110,11 @@ class TestCablage:
 
     def test_la_dispense_ne_supprime_PAS_le_test_d_obstacle(self):
         # Il doit rester, pour les vias qui débordent de leur pastille.
-        assert "_dist_point_boite(" in self._recours()
+        # ⚠️ Ancré sur la MESURE, pas sur le nom : `_dist_point_boite` a été
+        # remplacé par `_distance_a_obstacle` le 2026-09-02, quand les pistes
+        # ont cessé d'être réduites à leur boîte englobante. Quatrième ancrage
+        # fragile de la session — un nom de fonction n'est pas un invariant.
+        assert "_distance_a_obstacle(" in self._recours()
 
 
 class TestPercageMinimal:
