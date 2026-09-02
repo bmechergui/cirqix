@@ -3429,18 +3429,50 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     if not isolees:
         return pcb_bytes
 
-    repare = _pose_les_vias_d_echappement(pcb_bytes, isolees)
-    if repare is pcb_bytes:
-        return pcb_bytes
-
     avant = _compte_erreurs(rapport)
-    apres = _compte_erreurs(_rapport_drc(repare))
-    if apres > avant:
-        logger.warning(
-            "fanout: %d erreur(s) ajoutee(s) (%d -> %d) — board d origine conserve",
-            apres - avant, avant, apres)
-        return pcb_bytes
-    return repare
+    # ⚠️ NE PAS TOUT JETER POUR UNE SEULE PASTILLE FAUTIVE. Mesure du
+    # 2026-09-02, `stm32-100` : quatre pastilles GND visees — D36, U1.8, C2,
+    # C12 — une seule ajoute une erreur, et les QUATRE sont perdues. Le journal
+    # ne disait que « 1 erreur(s) ajoutee(s) — board d origine conserve ».
+    #
+    # Meme tout-ou-rien que celui deja corrige pour la repose des vias
+    # reserves (21 vias perdus pour un doublon) et pour la couture (7 vias
+    # perdus pour un genant). La garde « ne peut qu aggraver » est juste ;
+    # appliquee au LOT, elle jette le bon avec le mauvais.
+    #
+    # ⚠️ L unite de retrait est la PASTILLE, pas le via : c est ce que le
+    # fanout traite, et une pastille peut donner une piste ET un via.
+    for retirees in range(len(isolees)):
+        cibles = _sans_dernieres_pastilles(isolees, retirees)
+        if not cibles:
+            break
+        repare = _pose_les_vias_d_echappement(pcb_bytes, cibles)
+        if repare is pcb_bytes:
+            continue
+        apres = _compte_erreurs(_rapport_drc(repare))
+        if apres <= avant:
+            if retirees:
+                logger.info(
+                    "fanout: %d pastille(s) ecartee(s) sur %d — les %d autres "
+                    "sont reliees sans aggraver",
+                    retirees, len(isolees), len(cibles))
+            return repare
+    logger.warning(
+        "fanout: aucune combinaison de pastilles ne relie sans ajouter "
+        "d erreur (%d visee(s)) — board d origine conserve", len(isolees))
+    return pcb_bytes
+
+
+def _sans_dernieres_pastilles(pastilles, combien: int) -> list:
+    """La liste privee de ses `combien` dernieres pastilles.
+
+    Ordre stable : on rogne par la fin, comme `_sans_derniers_vias` pour la
+    couture. Retirer plus que la liste ne contient rend une liste vide, jamais
+    une exception — un filet en panne ne doit pas casser la chaine.
+    """
+    if combien <= 0:
+        return list(pastilles or [])
+    return list(pastilles or [])[:max(0, len(pastilles or []) - combien)]
 
 
 def _couches_deja_couvertes(text: str) -> set:
