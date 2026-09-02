@@ -298,6 +298,101 @@ _TYPES_CONFLIT = ("courtyards_overlap", "shorting_items",
                   "pth_inside_courtyard", "clearance")
 
 
+# Combien de fois retirer des composants avant de tomber sur le repli total.
+# Chaque passe coute un Inspecteur (~0,1 s) et un DRC (~1-2 s) : trois passes
+# restent negligeables devant les 2-4 minutes d un placement.
+_PASSES_RETRAIT_SNAP: int = 3
+
+_RE_REF_DRC = re.compile(r"(?:Footprint|of)\s+([A-Za-z]+\d+)\b")
+
+
+def _positions_des_footprints(pcb_path: Path) -> dict:
+    """{reference: (x, y, rotation)} — l etat a restaurer si besoin."""
+    from kicad_tools.schema.pcb import PCB
+    etat = {}
+    try:
+        for fp in PCB.load(str(pcb_path)).footprints:
+            p = fp.position
+            xy = (p.x, p.y) if hasattr(p, "x") else tuple(p)[:2]
+            etat[fp.reference] = (xy[0], xy[1], getattr(fp, "rotation", 0.0))
+    except Exception:
+        return {}
+    return etat
+
+
+def _footprints_deplaces(avant: dict, pcb_path: Path, seuil_mm: float = 0.01) -> set:
+    """References dont la position a CHANGE — celles que le snap a bougees."""
+    apres = _positions_des_footprints(pcb_path)
+    bouges = set()
+    for ref, a in (avant or {}).items():
+        b = apres.get(ref)
+        if b is None:
+            continue
+        if math.hypot(b[0] - a[0], b[1] - a[1]) > seuil_mm:
+            bouges.add(ref)
+    return bouges
+
+
+def _remettre_footprints(pcb_path: Path, positions: dict, refs: set) -> int:
+    """Restaure la position d avant pour CES references seulement."""
+    from kicad_tools.schema.pcb import PCB
+    try:
+        pcb = PCB.load(str(pcb_path))
+        n = 0
+        for fp in pcb.footprints:
+            cible = positions.get(fp.reference)
+            if fp.reference not in refs or cible is None:
+                continue
+            p = fp.position
+            if hasattr(p, "x"):
+                p.x, p.y = cible[0], cible[1]
+            else:
+                fp.position = (cible[0], cible[1])
+            n += 1
+        pcb.save(str(pcb_path))
+        return n
+    except Exception as exc:
+        logger.warning("auto_place: remise en place impossible (%s)", exc)
+        return 0
+
+
+def _rapport_drc_sans_lever(pcb_path: Path) -> dict:
+    """Rapport DRC, ou dict vide — un filet en panne ne casse pas la chaine."""
+    try:
+        return _rapport_drc_placement(pcb_path)
+    except Exception:
+        return {}
+
+
+def _refs_en_conflit(rapport: dict) -> set:
+    """References citees par les violations d ERREUR du rapport DRC.
+
+    ⚠️ Les avertissements sont ecartes : un `silk_overlap` ne justifie pas de
+    defaire un deplacement, ce n est pas lui qui fait refuser la carte.
+
+    Un rapport illisible rend un ensemble vide — un filet en panne ne doit pas
+    faire echouer un placement valide.
+    """
+    refs = set()
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("severity") != "error":
+            continue
+        for item in v.get("items") or []:
+            for m in _RE_REF_DRC.finditer(str(item.get("description") or "")):
+                refs.add(m.group(1))
+    return refs
+
+
+def _a_remettre(fautifs: set, deplaces: set) -> set:
+    """Ceux qu on remet a leur place d avant : fautifs ET deplaces par le snap.
+
+    ⚠️ Si les erreurs ne viennent PAS de composants que le snap a bouges,
+    defaire des deplacements ne les corrigerait pas. L appelant tombe alors sur
+    le repli total plutot que de s acharner.
+    """
+    return set(fautifs or ()) & set(deplaces or ())
+
+
 def _compter_conflits_erreur(pcb_path: Path) -> int:
     """Conflits de placement, mesures par `kicad-cli` — l instrument qui tranche.
 
@@ -2058,11 +2153,38 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             _rendre_lisible(out)
             avant_snap = out.read_bytes()
             n_err_avant = _compter_conflits_erreur(out)
+            positions_avant = _positions_des_footprints(out)
             pcb_snap.save(str(out))
             _normalize_to_board_frame(out)
             _resolve_remaining_conflicts(out, conn)
             _rendre_lisible(out)
             n_err_apres = _compter_conflits_erreur(out)
+
+            # ⚠️ RETRAIT CIBLE avant le repli total. Mesure du 2026-09-02,
+            # `stm32-100` : le snap ramene les 13 condensateurs de 64-94 mm a
+            # 6,5-12,5 mm d ecart libre en deplacant 71 composants — et cinq
+            # conflits residuels faisaient annuler les soixante et onze. Le
+            # rapport DRC NOMME les fautifs : on remet ceux-la, et eux seuls.
+            # Meme motif que le retrait progressif des vias de couture.
+            if n_err_apres > n_err_avant:
+                deplaces = _footprints_deplaces(positions_avant, out)
+                for _ in range(_PASSES_RETRAIT_SNAP):
+                    if n_err_apres <= n_err_avant:
+                        break
+                    fautifs = _refs_en_conflit(_rapport_drc_sans_lever(out))
+                    remis = _a_remettre(fautifs, deplaces)
+                    if not remis:
+                        break  # les erreurs ne viennent pas du snap
+                    _remettre_footprints(out, positions_avant, remis)
+                    deplaces -= remis
+                    _resolve_remaining_conflicts(out, conn)
+                    _rendre_lisible(out)
+                    n_err_apres = _compter_conflits_erreur(out)
+                    logger.info(
+                        "auto_place: snap — %d composant(s) remis a leur place "
+                        "d avant, %d conflit(s) ERROR restant(s)",
+                        len(remis), n_err_apres)
+
             if n_err_apres > n_err_avant:
                 logger.warning(
                     "auto_place: snap bypass a laisse %d conflit(s) ERROR "
