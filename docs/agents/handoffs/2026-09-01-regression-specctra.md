@@ -177,3 +177,81 @@ varier que le routage. À reprendre quand il rouvrira le placement.
 
 Celle de la section précédente (`_confier_au_plan` / GND déclaré sans broches)
 reste ouverte : non implémentée, elle exige une mesure et une validation.
+
+---
+
+# Verdicts du banc — 2026-09-02, placements figés
+
+Head `1de31db`. Neuf correctifs, tous mesurés sur de vrais boards.
+
+| carte | témoin | après | erreurs | couches |
+|---|---|---|---|---|
+| `stm32-30` | 96 % · 3 manq | **100 %** · 1 manq | **0** | 2 |
+| `stm32-60` | 98 % · 1 manq | 98 % · 2 manq | **0** | 2 |
+| `nucleo-f401` | 98 % · 187 violations | 98 % · **74 violations** | 1 | 2 |
+| `stm32-100` | 70 % · 27 manq | *en cours* — **96 % au 1er palier** | ? | 2 |
+
+⚠️ Freerouting est stochastique (jusqu'à 26 points d'écart mesurés entre deux
+tirages du même board). Le 100 % de `stm32-30` et le +1 manquante de
+`stm32-60` sont dans ce bruit ; **le 0 erreur, lui, est solide**.
+
+## Les neuf correctifs
+
+```
+e4fad23  plus jamais deux vias dans le même trou       116 holes_co_located → 0
+a929839  un repli ne peut plus acheter 3 erreurs contre 62 liaisons perdues
+3ecb629  CLAUDE.md annonçait kicad-tools en Niveau 1 — c'est Freerouting
+c3fdd71  reliefs thermiques affamés promus             4 erreurs → 0
+3c3741a  l'étape ③ vise aussi les broches mesurées isolées
+dbb8c97  une pastille sans direction ne disparaît plus  1/3 visées → 3/3
+74a3d19  le NameError, et la garde d'exécution qui manquait
+53329f3  +3.3V n'était pas reconnu comme rail          0 → 1 cluster POWER
+1de31db  la règle du trou sur les QUATRE sites de perçage
+```
+
+**Forme commune** : la mesure juste existait, au bon endroit, et personne ne
+s'en servait. Famille de `max_distance_mm`.
+
+## Trois fois mes propres gardes ne mesuraient rien
+
+- une cherchait un mot dans un **commentaire** que je venais d'écrire ;
+- une découpait le fichier sur **5000 caractères fixes** que mes ajouts ont dépassés ;
+- une s'ancrait sur un **nom de fonction** que j'avais enveloppé.
+
+Et surtout : **quatorze tests verts n'ont pas vu un `NameError`**, parce
+qu'aucun n'EXÉCUTAIT la fonction — ils lisaient son source. Le défaut n'est
+apparu qu'au banc, avalé par un `except`. `TestExecutionReelle` ajoutée et
+vérifiée **dans les deux sens** (4 échecs sur la version cassée, 18/18 après).
+
+## Observation NON traitée — le plancher d'échappement est périmé
+
+```
+stm32-100 : « 36 signaux à échapper — 4 couches seraient nécessaires ; on tente 2 »
+            → palier 2 couches : 96 %
+```
+
+`_CAPACITE_ECHAPPEMENT = 3.0` déclare 2 couches hors d'atteinte pour une carte
+qui rend 96 % sur 2 couches. Il a été calibré **avant** que le plan soit coulé
+avant le routage et que les GND soient liés : sa calibration est périmée par
+les correctifs de cette nuit, et il ferait acheter 4 couches inutiles.
+
+**Non modifié** : seuil chiffré ⇒ décision produit. À trancher avec l'utilisateur.
+
+## Livré dans le dépôt (local, `output/` est gitignoré)
+
+```
+examples/stm32-30/output/etapes/      19 boards + LISEZ-MOI.md
+examples/stm32-60/output/etapes/      19 boards + LISEZ-MOI.md
+examples/nucleo-f401/output/etapes/   31 boards + LISEZ-MOI.md
+```
+
+Chaque légende porte les chiffres MESURÉS de sa carte, ses réserves comprises.
+
+## Reste à faire
+
+- verdict de `stm32-100`, puis livraison de ses boards ;
+- **suite complète non re-validée après `1de31db`** — tuée deux fois par la
+  contention avec le banc ; ciblé vert (29/29 vias, 6/6 couture d'îlots) ;
+- `D-2026-09-02-a` — décision produit ouverte sur les capas de découplage ;
+- la relance des placements demandée par l'utilisateur, qui ne changera rien
+  pour les capas tant que `D-2026-09-02-a` n'est pas tranchée.
