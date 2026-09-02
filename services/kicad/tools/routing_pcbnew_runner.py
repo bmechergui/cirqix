@@ -453,6 +453,53 @@ def _bilan_coherent(vises: int, poses: int, renonces: int) -> bool:
     return poses + renonces == vises
 
 
+# Percage minimal que le DRC de KiCad applique PAR DEFAUT. Ce n est pas un
+# reglage : c est la contrainte du juge (`board setup constraints min hole`).
+# ⚠️ A ne pas confondre avec `_VIA_MIN_MM`, qui borne le DIAMETRE d un via
+# chez JLCPCB (0,20 mm). Confondre les deux a produit des vias perces a
+# 0,28 mm, refuses par `drill_out_of_range` — mesure du 2026-09-02.
+_PERCAGE_MIN_KICAD_MM: float = 300_000.0
+
+
+def _percage_pour_via(diametre_via: float) -> float:
+    """Percage d un via : la moitie de son diametre, jamais sous le minimum.
+
+    Mesure du 2026-09-02 : un via de 0,56 mm donnait 0,28 mm de percage, et le
+    DRC le refusait — « min hole 0.3000 mm; actual 0.2800 mm ». Le plancher
+    utilise etait `_VIA_MIN_MM / 2`, soit 0,10 mm : une valeur qui n a rien a
+    voir avec le percage, puisqu elle borne le DIAMETRE du via.
+    """
+    if diametre_via <= 0:
+        return 0.0
+    return max(diametre_via / 2.0, _PERCAGE_MIN_KICAD_MM)
+
+
+def _via_in_pad_dispense_de_clearance(diametre_via: float,
+                                      largeur_pad: float) -> bool:
+    """Ce via tient-il DANS la pastille, au point d heriter de son isolement ?
+
+    ⚠️ L argument est deja ecrit dans `_diametre_via_in_pad` — et le site
+    d appel faisait le contraire. Un via qui ne DEPASSE PAS la pastille occupe
+    du cuivre que la pastille occupe deja : il ne peut violer aucun isolement
+    qu elle ne violerait pas elle-meme, et le board est accepte avec elle.
+    Redemander un degagement autour de lui, c est exiger deux fois la meme
+    chose.
+
+    Mesure du 2026-09-02, les trois pastilles orphelines du banc :
+
+        C5.2  via 0,56 mm  obstacle a 0,395 mm  exige 0,480 mm  ->  REFUSE
+        D3.2  via 0,60 mm  obstacle a 0,000 mm  exige 0,500 mm  ->  REFUSE
+        C3.2  via 0,56 mm  obstacle a 0,000 mm  exige 0,480 mm  ->  REFUSE
+
+    Les trois sont posees PILE au-dessus du cuivre de masse de B.Cu : un via
+    dans la pastille les reliait, et il tenait geometriquement.
+
+    ⚠️ La dispense porte sur le CUIVRE, jamais sur le TROU. Un percage est
+    physique : deux trous au meme endroit restent impossibles.
+    """
+    return 0 < diametre_via <= largeur_pad
+
+
 def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
                          percage_pad: float) -> float:
     """Diametre du via a poser DANS la pastille. 0 si aucun ne convient.
@@ -464,7 +511,14 @@ def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
     """
     if percage_pad > 0:
         return 0.0
-    return _diametre_via_in_pad(largeur_pad, via_nominal)
+    d = _diametre_via_in_pad(largeur_pad, via_nominal)
+    # ⚠️ Si le PERCAGE minimal ne tient pas dans la pastille, poser le via
+    # ferait deborder le trou du cuivre : on renonce plutot que de livrer un
+    # board que le DRC refusera. Mesure du 2026-09-02 : une pastille de
+    # 0,56 mm accepte tout juste 0,30 mm de percage ; en deca, non.
+    if d > 0 and _percage_pour_via(d) > largeur_pad:
+        return 0.0
+    return d
 
 
 def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
@@ -576,10 +630,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             except Exception:
                 perce = 0.0  # sans percage lisible, on traite en CMS
             d = _via_in_pad_possible(larg, via_d, perce)
-            perc = max(d / 2, _VIA_MIN_MM / 2) if d > 0 else 0.0
-            if (d <= 0
-                    or any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
-                           for o in obstacles)
+            perc = _percage_pour_via(d)
+            # ⚠️ Un via qui TIENT dans la pastille herite de SON isolement :
+            # exiger un degagement autour de lui reviendrait a demander deux
+            # fois la meme chose, et refusait les trois pastilles orphelines
+            # du banc alors qu elles surplombaient le plan de B.Cu.
+            # Le TROU, lui, reste verifie — un percage est physique.
+            gene = (not _via_in_pad_dispense_de_clearance(d, larg)
+                    and any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
+                            for o in obstacles))
+            if (d <= 0 or gene
                     or not _trou_libre(pos.x, pos.y, perc / 2, trous,
                                        ecart_trous)):
                 renonces += 1
