@@ -507,6 +507,13 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
     marge = via_d / 2 + clearance          # le via, au bout du trajet
     marge_piste = largeur / 2 + clearance  # la piste, sur tout le trajet
+    # ⚠️ Les TROUS deja perces, releves une fois puis tenus a jour a chaque
+    # pose. `_obstacles_d_un_autre_net` ecarte le net courant : correct pour du
+    # cuivre, faux pour un percage. La regle etait posee sur la seule couture,
+    # et le board final de `nucleo-f401` sortait avec 150 vias pour
+    # 149 positions — un via superpose que cette voie-ci creait.
+    ecart_trous = float(args.get("ecart_trous_mm", "0.5")) * 1_000_000
+    trous = _trous_perces(board)
 
     poses = 0
     renonces = 0
@@ -569,19 +576,32 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             except Exception:
                 perce = 0.0  # sans percage lisible, on traite en CMS
             d = _via_in_pad_possible(larg, via_d, perce)
-            if d <= 0 or any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
-                             for o in obstacles):
+            perc = max(d / 2, _VIA_MIN_MM / 2) if d > 0 else 0.0
+            if (d <= 0
+                    or any(_dist_point_boite(pos.x, pos.y, o) < d / 2 + clearance
+                           for o in obstacles)
+                    or not _trou_libre(pos.x, pos.y, perc / 2, trous,
+                                       ecart_trous)):
                 renonces += 1
                 continue
             via = pcbnew.PCB_VIA(board)
             via.SetPosition(pos)
             via.SetWidth(int(d))
-            via.SetDrill(int(max(d / 2, _VIA_MIN_MM / 2)))
+            via.SetDrill(int(perc))
             via.SetNetCode(pad.GetNetCode())
             board.Add(via)
+            trous.append((float(pos.x), float(pos.y), perc / 2))
             poses += 1
             continue
         vx, vy = sortie
+        # ⚠️ La sortie a ete choisie sur des obstacles de CUIVRE ; un trou
+        # existant, lui, n en est pas un pour `_obstacles_d_un_autre_net`
+        # quand il porte le meme net. Mesure du 2026-09-02, board final de
+        # `nucleo-f401` : 150 vias pour 149 positions — un via superpose que
+        # la regle posee sur la seule couture ne pouvait pas voir.
+        if not _trou_libre(vx, vy, perc_d / 2, trous, ecart_trous):
+            renonces += 1
+            continue
 
         piste = pcbnew.PCB_TRACK(board)
         piste.SetStart(pos)
@@ -597,6 +617,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         via.SetDrill(perc_d)
         via.SetNetCode(pad.GetNetCode())
         board.Add(via)
+        trous.append((float(vx), float(vy), perc_d / 2))
         poses += 1
 
     pcbnew.SaveBoard(args["output"], board)
@@ -713,6 +734,10 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     perc_d = int(float(args.get("drill_mm", "0.3")) * 1_000_000)
     portee = float(args.get("portee_mm", "8.0")) * 1_000_000
+    # ⚠️ Meme regle que partout ailleurs : un trou est un obstacle pour un
+    # autre trou, quel que soit son net.
+    ecart_trous = float(args.get("ecart_trous_mm", "0.5")) * 1_000_000
+    trous = _trous_perces(board)
 
     isoles = {(str(r), str(n)) for r, n in cibles}
     poses = 0
@@ -739,6 +764,9 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
         for x, y in _candidats_de_couture(pos.x, pos.y, portee, via_d):
             if any(_dist_point_boite(x, y, o) < marge for o in obstacles):
                 continue
+            # ⚠️ Un trou deja perce interdit ce point, quel que soit son net.
+            if not _trou_libre(x, y, perc_d / 2, trous, ecart_trous):
+                continue
             via = pcbnew.PCB_VIA(board)
             via.SetPosition(pcbnew.VECTOR2I(x, y))
             via.SetWidth(via_d)
@@ -746,6 +774,7 @@ def _stitch_islands(pcbnew, args: dict[str, str]) -> None:
             via.SetNetCode(pad.GetNetCode())
             board.Add(via)
             if _est_relie(pcbnew, board, pad, temoin):
+                trous.append((float(x), float(y), perc_d / 2))
                 poses += 1
                 break
             board.Remove(via)

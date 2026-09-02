@@ -67,6 +67,51 @@ class TestRegleGeometrique:
         assert RUN._trou_libre(0.0, 0.0, 0.15 * MM, [], 0.5 * MM)
 
 
+class TestTousLesSitesDePose:
+    """⚠️ La regle doit valoir pour TOUT percage, pas pour la seule couture.
+
+    Mesure du 2026-09-02, board `99_final` livre de `nucleo-f401`, APRES la
+    premiere version de ce correctif :
+
+        150 vias  ·  149 positions distinctes  ·  1 via en trop
+        (128,851 · 95,053) x2, GND
+
+    La regle n etait posee que dans `_stitch_zones`. Trois AUTRES endroits du
+    runner percent des vias — l echappement lateral, le via-in-pad, et la
+    couture de pastilles — et aucun ne la consultait. Un via superpose de plus
+    suffit a faire deux avertissements `holes_co_located`, et surtout un
+    percage que le fabricant ne peut pas realiser.
+    """
+
+    SOURCE = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
+        encoding="utf-8")
+
+    def _blocs_de_pose(self):
+        """Le voisinage de chaque `PCB_VIA(board)` du fichier."""
+        i, blocs = 0, []
+        while True:
+            i = self.SOURCE.find("PCB_VIA(board)", i)
+            if i < 0:
+                return blocs
+            blocs.append(self.SOURCE[max(0, i - 1400):i])
+            i += 14
+
+    def test_le_fichier_perce_bien_a_plusieurs_endroits(self):
+        # Si ce compte tombe a 1, la garde ci-dessous ne prouverait plus rien.
+        assert len(self._blocs_de_pose()) >= 4
+
+    def test_CHAQUE_pose_de_via_consulte_la_regle(self):
+        muets = [n for n, b in enumerate(self._blocs_de_pose())
+                 if "_trou_libre(" not in b]
+        assert not muets, (
+            "des vias sont poses sans verifier le trou : sites %s" % muets)
+
+    def test_chaque_site_TIENT_A_JOUR_la_liste(self):
+        # Un site qui consulte sans inscrire laisse le suivant percer au meme
+        # point — le defaut reapparaitrait a l interieur d une meme passe.
+        assert self.SOURCE.count("trous.append(") >= 4
+
+
 class _FauxPoly:
     def __init__(self, n):
         self._n = n

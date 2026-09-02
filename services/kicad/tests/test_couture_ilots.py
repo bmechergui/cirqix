@@ -109,6 +109,13 @@ class TestOperation:
             def GetConnectedItems(self, _i, *_a):
                 return []            # jamais relie : chaque essai doit echouer
 
+            # ⚠️ Le vrai BOARD de pcbnew expose `GetTracks()`, et la production
+            # s en sert (`_obstacles_d_un_autre_net`, `_trous_perces`). Un faux
+            # plus pauvre que le vrai fait echouer la production sur un defaut
+            # qui n existe pas : completer le faux, jamais affaiblir le code.
+            def GetTracks(self):
+                return []
+
             def GetFootprints(self):
                 return []
 
