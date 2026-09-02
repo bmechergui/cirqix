@@ -14,46 +14,6 @@
 
 ## En attente de validation
 
-### D-2026-09-02-a — Plafond POWER contre halo d'escape : la contradiction 3 mm / 5 mm
-- **Statut : EN ATTENTE. Rien n'est implémenté.**
-- **Le fait mesuré.** Depuis le commit `53329f3`, `detect_functional_clusters`
-  rend enfin un cluster POWER (ancre `U1`, plafond **3,0 mm**, les 8
-  condensateurs de découplage de `nucleo-f401`). Les capas ne bougent pourtant
-  toujours pas. Le journal du snap le dit pour les huit :
-
-  ```
-  snap C16 -> U1 : aucune place libre, non deplace
-  snap C29 -> U1 : aucune place libre, non deplace
-  … les huit
-  ```
-
-- **La cause est une contradiction entre deux règles justes.** `U1` est un
-  LQFP-64, donc fine-pitch, donc `marge = max(marge_mm, marge_dense_mm) = 5 mm`
-  — le halo d'escape que `_reserve_escape_halos` vient de dégager. Le snap
-  cherche alors un point **à la fois** à moins de 3 mm et à plus de 5 mm du
-  corps de l'ancre. **Impossible par construction.** Sur toute ancre
-  fine-pitch, aucun membre POWER ne peut être placé.
-
-  C'est le motif déjà payé le 2026-08-27 (clamp contre centrage des dominants)
-  et le 2026-08-29 (snap contre Géomètre) : deux correctifs qui s'annulent. La
-  docstring du snap affirme l'avoir évité — elle décrit l'intention, pas le
-  résultat.
-
-- **Ce qui reste à trancher, et qui appartient à l'utilisateur.** La physique
-  ne permet pas de mettre un découplage à 3 mm du corps d'un LQFP-64 sur la
-  MÊME face sans reboucher son canal de sortie. Trois voies, non implémentées :
-
-  | voie | effet | coût |
-  |---|---|---|
-  | déplacer « au plus près légalement » au lieu de refuser | 62 mm → ~6 mm | change la stratégie du snap (tout-ou-rien → meilleur effort) |
-  | placer les capas sur la face OPPOSÉE, sous l'IC | 3 mm réels, pratique standard | le placement est mono-face aujourd'hui |
-  | assouplir le halo pour les seuls membres POWER | 3 mm atteint | rouvre le risque d'échappement mesuré le 2026-08-23 |
-
-- **NEVER** implémenter l'une de ces voies sans validation explicite :
-  `CLAUDE.md` classe la stratégie de placement parmi les décisions produit.
-- **Ce qui EST livré** (pur correctif de défaut, hors décision) : la détection
-  du cluster POWER, cassée par un point décimal dans `+3.3V`. Voir `53329f3`.
-
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 - **Ce qui a été décidé sans validation :** la limite acceptée le 2026-06-18
   (« clusters à 13-28 mm du MCU, routable, adjacence serrée → Phase 6 RL_PCB ») a été
@@ -104,6 +64,63 @@ Tirages multiples par palier (Freerouting stochastique), classement
 ---
 
 ## Annulées (trace conservée)
+
+### D-2026-09-02-a — ⚠️ RETIRÉE : le diagnostic qui la fondait était FAUX
+
+- **Statut : SANS OBJET. Aucune décision produit n'était nécessaire.**
+- **Ce que j'avais écrit**, le 2026-09-02 au matin : le plafond POWER (3 mm) et
+  la marge du halo d'escape (5 mm) seraient contradictoires, « le snap cherche
+  un point à la fois à moins de 3 et à plus de 5 mm du corps de l'ancre,
+  impossible par construction ». J'en concluais qu'il fallait trancher entre
+  trois voies, toutes touchant à la stratégie de placement.
+
+- **C'était faux.** Le plafond ne décide que s'il faut **ESSAYER** :
+
+  ```python
+  if dist - portee <= cluster.max_distance_mm:
+      continue          # déjà assez près : on ne tente rien
+  ```
+
+  Le déplacement, lui, est accepté dès qu'il **AMÉLIORE** l'écart libre. Un
+  point à 5 mm remplaçait donc parfaitement un point à 58 mm. Les deux règles
+  ne se contredisaient pas — je les avais lues comme une conjonction alors
+  qu'elles agissent à deux moments différents.
+
+- **La vraie cause était banale, et purement technique** : la fenêtre de
+  recherche.
+
+  ```
+  _ESSAIS_RADIAUX = 4  ·  _PAS_RADIAL_MM = 1,5   ->  4,5 mm au-delà de la marge
+  ```
+
+  Sur une ancre dense (marge 5 mm), `_cible_libre` n'explorait que l'anneau
+  d'écart libre **5,0 à 9,5 mm** — précisément celui qu'occupent les
+  résistances de `nucleo-f401` (13,7 mm d'entraxe, ~6,2 mm d'écart libre au
+  corps du LQFP-64). L'anneau était plein, la recherche rendait `None`, le snap
+  renonçait pour les huit condensateurs.
+
+- **Corrigé sans aucun seuil choisi** (commit `f037d29`). La portée est
+  **déduite** de l'écart où le membre se trouve déjà : au-delà, la garde « ne
+  peut qu'améliorer » refuserait le point de toute façon. Un second défaut,
+  **latent**, a été réveillé au passage — le contour de la carte n'était pas
+  un obstacle, et `D26` s'est retrouvé à 0,4474 mm du bord pour 0,5 exigés. Il
+  est traité, nativement, par `extract_board_outline`.
+
+- **Mesure sur le chemin réel**, `nucleo-f401`, depuis la grille du générateur :
+
+  ```
+  grille              médiane  90,4 mm   max 129,0 mm
+  placement corrigé   médiane  14,4 mm   max  15,3 mm   0 erreur DRC
+  ancien board        médiane  58,5 mm   max  68,7 mm
+  ```
+
+- ⚠️ **La leçon, et elle est déjà écrite ailleurs dans ce dépôt** : j'ai
+  transformé une limite technique en décision produit, et j'ai bloqué le
+  travail plusieurs échanges durant en attendant un arbitrage qui n'avait pas
+  lieu d'être. **NEVER** ériger un défaut non diagnostiqué en dilemme à
+  arbitrer : chercher la cause d'abord, et ne remonter une décision que
+  lorsqu'il reste un vrai choix.
+
 
 ### D-2026-08-28-x — Budget GA divisé par 3 (commit 2744899)
 Réduire `generations/population/iterations` du GA pour la vitesse. **Reverté**
