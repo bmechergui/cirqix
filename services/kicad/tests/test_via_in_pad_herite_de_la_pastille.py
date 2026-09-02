@@ -120,7 +120,13 @@ class TestCablage:
         # remplacé par `_distance_a_obstacle` le 2026-09-02, quand les pistes
         # ont cessé d'être réduites à leur boîte englobante. Quatrième ancrage
         # fragile de la session — un nom de fonction n'est pas un invariant.
-        assert "_distance_a_obstacle(" in self._recours()
+        # ⚠️ ANCRER SUR L INTENTION, PAS SUR L APPEL. Le test d obstacle a ete
+        # EXTRAIT dans `_via_gene_par` pour etre partage avec
+        # `_poser_via_dans_pastille` — il est toujours la, sous un autre nom.
+        # Septieme ancre de cette suite lachee par un refactor legitime.
+        recours = self._recours()
+        assert ("_distance_a_obstacle(" in recours
+                or "_via_gene_par(" in recours), recours
 
 
 class TestPercageMinimal:

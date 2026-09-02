@@ -414,6 +414,20 @@ def _distance_a_obstacle(px: float, py: float, obstacle) -> float:
     return _dist_point_boite(px, py, obstacle)
 
 
+def _via_gene_par(px: float, py: float, diametre: float,
+                  clearance: float, obstacles) -> bool:
+    """Le cuivre de ce via approche-t-il un obstacle de trop pres ?
+
+    ⚠️ EXTRAIT pour etre mesurable. Inline dans deux fonctions, cette regle ne
+    pouvait etre testee que par leurs effets — et c est ainsi que
+    `_poser_via_dans_pastille` a diverge de `_escape_pads` sans que rien ne le
+    signale, alors que sa docstring promet d en « reutiliser exactement les
+    regles ».
+    """
+    demi = diametre / 2.0 + clearance
+    return any(_distance_a_obstacle(px, py, o) < demi for o in obstacles)
+
+
 def _couches_cuivre_d_un_item(item) -> set:
     """Les couches CUIVRE que l item occupe reellement.
 
@@ -751,8 +765,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             # du banc alors qu elles surplombaient le plan de B.Cu.
             # Le TROU, lui, reste verifie — un percage est physique.
             gene = (not _via_in_pad_dispense_de_clearance(d, larg)
-                    and any(_distance_a_obstacle(pos.x, pos.y, o) < d / 2 + clearance
-                            for o in obstacles))
+                    and _via_gene_par(pos.x, pos.y, d, clearance, obstacles))
             # ⚠️ LA DISPENSE S ARRETE A LA COUCHE DE LA PASTILLE. Une pastille
             # CMS n existe que sur une face ; le via traverse jusqu a l autre,
             # ou il pose du cuivre que RIEN ne vouche. Mesure du 2026-09-02 sur
@@ -763,9 +776,9 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             nues = _couches_traversees_hors_pastille(
                 _couches_cuivre_d_un_item(pad), _couches_cuivre_du_board(board))
             if nues and not gene:
-                gene = any(
-                    _distance_a_obstacle(pos.x, pos.y, o) < d / 2 + clearance
-                    for o in _obstacles_d_un_autre_net(
+                gene = _via_gene_par(
+                    pos.x, pos.y, d, clearance,
+                    _obstacles_d_un_autre_net(
                         board, pad.GetNetCode(), couches=nues))
             if (d <= 0 or gene
                     or not _trou_libre(pos.x, pos.y, perc / 2, trous,
@@ -1190,6 +1203,10 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
     relies = 0
     via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
     ecart_trous = float(args.get("ecart_trous_mm", "0.5")) * 1_000_000
+    # ⚠️ SANS CE DEGAGEMENT, la verification des couches nues serait INERTE :
+    # `_poser_via_dans_pastille` la saute quand `clearance` vaut 0. Une regle
+    # jamais invoquee est indistinguable d une regle absente.
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
     trous = _trous_perces(board)
 
     zones = [z for z in board.Zones()
@@ -1231,7 +1248,8 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
                         if not poly.Contains(p.GetPosition(), i):
                             continue
                         if _poser_via_dans_pastille(pcbnew, board, p, via_d,
-                                                    ecart_trous, trous):
+                                                    ecart_trous, trous,
+                                                    clearance):
                             relies += 1
                             break
                     continue
@@ -1255,12 +1273,24 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
 
 
 def _poser_via_dans_pastille(pcbnew, board, pad, via_d: float,
-                             ecart_trous: float, trous: list) -> bool:
+                             ecart_trous: float, trous: list,
+                             clearance: float = 0.0) -> bool:
     """Pose un via DANS la pastille, pour relier son ilot au plan d en face.
 
     Reutilise exactement les regles du fanout : le via ne depasse jamais la
-    pastille — il herite donc de son isolement — le percage respecte le
-    minimum de KiCad, et un trou deja perce interdit le point.
+    pastille — il herite donc de son isolement SUR SA COUCHE — le percage
+    respecte le minimum de KiCad, un trou deja perce interdit le point, et le
+    degagement est verifie sur les couches que la pastille NE couvre PAS.
+
+    ⚠️ Cette derniere regle manquait. Mesure du 2026-09-02, `stm32-100` a une
+    connexion du but : l operation rendait « relies: 1 » et le DRC passait de
+    `1 manquante, 0 erreur` a `1 manquante, 1 ERREUR`. Le via reliait bien
+    l ilot, mais posait sur la face opposee du cuivre que rien ne vouchait, et
+    la garde « ne peut qu ameliorer » de la chaine le rejetait — a raison.
+
+    La phrase « reutilise exactement les regles du fanout » etait vraie quand
+    elle a ete ecrite ; le renforcement du fanout, le matin meme, l a rendue
+    fausse SANS QUE RIEN NE LE SIGNALE. Une garde compare desormais les deux.
     """
     try:
         b = pad.GetBoundingBox()
@@ -1275,6 +1305,15 @@ def _poser_via_dans_pastille(pcbnew, board, pad, via_d: float,
     perc = _percage_pour_via(d)
     pos = pad.GetPosition()
     if not _trou_libre(pos.x, pos.y, perc / 2, trous, ecart_trous):
+        return False
+    # ⚠️ LA DISPENSE S ARRETE A LA COUCHE DE LA PASTILLE — meme regle que le
+    # fanout, et pour la meme raison : une pastille CMS n existe que sur une
+    # face, le via traverse jusqu a l autre.
+    nues = _couches_traversees_hors_pastille(
+        _couches_cuivre_d_un_item(pad), _couches_cuivre_du_board(board))
+    if nues and clearance > 0 and _via_gene_par(
+            pos.x, pos.y, d, clearance,
+            _obstacles_d_un_autre_net(board, pad.GetNetCode(), couches=nues)):
         return False
     via = pcbnew.PCB_VIA(board)
     via.SetPosition(pos)
