@@ -14,6 +14,46 @@
 
 ## En attente de validation
 
+### D-2026-09-02-a — Plafond POWER contre halo d'escape : la contradiction 3 mm / 5 mm
+- **Statut : EN ATTENTE. Rien n'est implémenté.**
+- **Le fait mesuré.** Depuis le commit `53329f3`, `detect_functional_clusters`
+  rend enfin un cluster POWER (ancre `U1`, plafond **3,0 mm**, les 8
+  condensateurs de découplage de `nucleo-f401`). Les capas ne bougent pourtant
+  toujours pas. Le journal du snap le dit pour les huit :
+
+  ```
+  snap C16 -> U1 : aucune place libre, non deplace
+  snap C29 -> U1 : aucune place libre, non deplace
+  … les huit
+  ```
+
+- **La cause est une contradiction entre deux règles justes.** `U1` est un
+  LQFP-64, donc fine-pitch, donc `marge = max(marge_mm, marge_dense_mm) = 5 mm`
+  — le halo d'escape que `_reserve_escape_halos` vient de dégager. Le snap
+  cherche alors un point **à la fois** à moins de 3 mm et à plus de 5 mm du
+  corps de l'ancre. **Impossible par construction.** Sur toute ancre
+  fine-pitch, aucun membre POWER ne peut être placé.
+
+  C'est le motif déjà payé le 2026-08-27 (clamp contre centrage des dominants)
+  et le 2026-08-29 (snap contre Géomètre) : deux correctifs qui s'annulent. La
+  docstring du snap affirme l'avoir évité — elle décrit l'intention, pas le
+  résultat.
+
+- **Ce qui reste à trancher, et qui appartient à l'utilisateur.** La physique
+  ne permet pas de mettre un découplage à 3 mm du corps d'un LQFP-64 sur la
+  MÊME face sans reboucher son canal de sortie. Trois voies, non implémentées :
+
+  | voie | effet | coût |
+  |---|---|---|
+  | déplacer « au plus près légalement » au lieu de refuser | 62 mm → ~6 mm | change la stratégie du snap (tout-ou-rien → meilleur effort) |
+  | placer les capas sur la face OPPOSÉE, sous l'IC | 3 mm réels, pratique standard | le placement est mono-face aujourd'hui |
+  | assouplir le halo pour les seuls membres POWER | 3 mm atteint | rouvre le risque d'échappement mesuré le 2026-08-23 |
+
+- **NEVER** implémenter l'une de ces voies sans validation explicite :
+  `CLAUDE.md` classe la stratégie de placement parmi les décisions produit.
+- **Ce qui EST livré** (pur correctif de défaut, hors décision) : la détection
+  du cluster POWER, cassée par un point décimal dans `+3.3V`. Voir `53329f3`.
+
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 - **Ce qui a été décidé sans validation :** la limite acceptée le 2026-06-18
   (« clusters à 13-28 mm du MCU, routable, adjacence serrée → Phase 6 RL_PCB ») a été
