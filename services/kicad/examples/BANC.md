@@ -36,7 +36,7 @@ cas             comp  couches   %   manq  err  warn  seg   durée
 nucleo-f401       55     2     98     2    0    54   567   3313 s
 stm32-30          30     2     96     3    0    19   167    495 s
 stm32-60          60     2     98     3    0    50   415   2795 s
-stm32-100        100     2      —     —    —     —     —   en cours
+stm32-100        100     2     99     8    0   122   734   3907 s
 ```
 
 Placements correspondants, distance des condensateurs de découplage au circuit
@@ -78,8 +78,23 @@ carte           ancien              nouveau             qui gagne
 nucleo-f401     98 % · 1 erreur     98 % · 0 erreur     LE NEUF
 stm32-30       100 % · 0 erreur     96 % · 0 erreur     L'ANCIEN
 stm32-60        98 % · 0 erreur     98 % · 0 erreur     égalité
-stm32-100       99 % · 0 erreur     en cours            —
+stm32-100       99 % · 0 erreur     99 % · 0 erreur     égalité
 ```
+
+**Le fait marquant : les QUATRE cartes sortent à ZÉRO erreur de
+fabricabilité, toutes sur DEUX couches.** C'est une première — au banc
+précédent, `nucleo-f401` en portait une.
+
+Bilan du changement de placement : **une carte améliorée** (`nucleo-f401`,
+1 erreur → 0), **une dégradée** (`stm32-30`, 100 % → 96 %), **deux
+inchangées**. Et sur les quatre, un découplage reproductible de 12 à 19 mm là
+où l'ancien dépendait du tirage.
+
+⚠️ Les connexions manquantes montent partout (2→3, 1→3, 2→3, 3→8). Aucune
+n'est une erreur de fabricabilité — ce sont des liaisons de plan de masse et
+des îlots non cousus. Mais la tendance est constante sur les quatre cartes,
+donc ce n'est PAS du bruit : le placement resserré rend le plan plus difficile
+à raccorder. C'est le prix mesuré du gain sur le découplage.
 
 **Critère de départage retenu : zéro erreur DRC d'abord, puis le taux de
 routage.** Les deux versions sont conservées dans Git, le choix est donc
