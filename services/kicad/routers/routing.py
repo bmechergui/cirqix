@@ -3079,7 +3079,7 @@ def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
             return pcb_bytes
         bilan = json.loads(resultat.read_text(encoding="utf-8"))
         allege = sortie.read_bytes()
-    n = bilan.get("retires", 0)
+    n = bilan.get("retires", 0) + bilan.get("relies", 0)
     if not n:
         return pcb_bytes
     if _compte_erreurs(_rapport_drc(allege)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
@@ -3087,9 +3087,11 @@ def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
             "retrait des ilots flottants : erreurs ajoutees — board conserve")
         return pcb_bytes
     logger.info(
-        "ilots flottants : %d retire(s) avec %d via(s) borgne(s) — du cuivre "
-        "sans liaison est une antenne, pas une reference",
-        n, bilan.get("vias_retires", 0))
+        "ilots de plan : %d retire(s) (%d via(s) borgne(s)) et %d relie(s) par "
+        "un via dans leur pastille — du cuivre sans liaison est une antenne, "
+        "mais un ilot qui porte une broche se RELIE, il ne se supprime pas",
+        bilan.get("retires", 0), bilan.get("vias_retires", 0),
+        bilan.get("relies", 0))
     return allege
 
 
@@ -4861,17 +4863,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             "board conserve",
                             apres[0], apres[1], avant[0], avant[1])
 
-            # ⚠️ APRES la couture : un ilot qu on aurait pu coudre ne doit pas
-            # etre retire. Ce qui reste sans aucune liaison n est plus une
-            # reference de masse, c est une plaque flottante — antenne et
-            # condensateur de couplage sur les signaux qui l ont isolee.
-            final = _retirer_ilots_flottants(final)
-
             # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
             # se mesure sur le remplissage FINAL. Mesuree avant, elle
             # nommerait des pastilles que la suite aurait de toute facon
             # reliees, et en manquerait d autres.
             final = _reparer_reliefs_affames(final)
+
+            # ⚠️ TOUT DERNIER, APRES le dernier remplissage. Place avant
+            # `_reparer_reliefs_affames`, le retrait etait ANNULE : cette
+            # etape recoule les zones, et le remplissage regenere les ilots
+            # qu on venait d enlever. Mesure du 2026-09-02 : « 0 ilot
+            # flottant retire » alors que `stm32-60` en portait un de
+            # 4,9 mm2, mesure a 1 via et 0 reliant.
+            #
+            # Meme faute que le clamp contre le centrage des dominants
+            # (2026-08-27) et le snap contre le Geometre (2026-08-29) : deux
+            # correctifs justes qui s annulent. L ordre fait partie du
+            # correctif, pas de son emballage.
+            final = _retirer_ilots_flottants(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)

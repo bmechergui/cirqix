@@ -965,6 +965,29 @@ def _ilot_est_flottant(vias_dedans: int, vias_reliants: int,
     return vias_reliants <= 0
 
 
+def _ilot_a_relier_par_sa_pastille(vias_reliants: int,
+                                   pastilles_dedans: int) -> bool:
+    """Cet ilot porte une pastille du net mais n atteint pas le plan ?
+
+    ⚠️ Mesure du 2026-09-02, `stm32-60`. La derniere rupture, annoncee par le
+    DRC comme `Zone GND B.Cu <-> Zone GND F.Cu`, vient d un ilot de 4,9 mm2
+    qui contient la PASTILLE GND de `C4` : un via dedans, zero reliant.
+
+    Ce n est pas du cuivre flottant — c est le cuivre local d une pastille de
+    masse, isolee du reste du plan. Le retirer DECONNECTERAIT C4.
+
+    Et le fanout ne la vise jamais : le DRC ne la declare pas isolee, puisqu
+    elle EST reliee — a son petit ilot. C est l ilot qui n atteint pas le plan.
+
+    `C4` est CMS, large de 0,56 mm, et surplombe le cuivre de B.Cu : un via
+    dans sa pastille la relie, comme pour `D1`, `D3` et `C5`.
+
+    ⚠️ EXCLUSIF de `_ilot_est_flottant` : un ilot ne peut pas etre a la fois
+    retire et relie.
+    """
+    return pastilles_dedans > 0 and vias_reliants <= 0
+
+
 def _pas_d_echantillonnage(largeur: float, hauteur: float,
                            via_d: float) -> float:
     """Pas de la grille de candidats, DEDUIT de la taille de l ilot.
@@ -1101,6 +1124,10 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
     nets = set(json.loads(args.get("nets", "[]")))
     retires = 0
     vias_retires = 0
+    relies = 0
+    via_d = int(float(args.get("via_mm", "0.6")) * 1_000_000)
+    ecart_trous = float(args.get("ecart_trous_mm", "0.5")) * 1_000_000
+    trous = _trous_perces(board)
 
     zones = [z for z in board.Zones()
              if not nets or str(z.GetNetname()) in nets]
@@ -1132,6 +1159,19 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
                     if _touche_le_net_en_face(board, zones, autre.get(nom),
                                               v.GetPosition()):
                         reliants += 1
+                # ⚠️ Un ilot qui porte une pastille du net ne se supprime pas —
+                # il se RELIE. Le retirer deconnecterait la broche. Mesure du
+                # 2026-09-02, `stm32-60` : l ilot de 4,9 mm2 contient la
+                # pastille GND de C4, qui surplombe le plan de B.Cu.
+                if _ilot_a_relier_par_sa_pastille(reliants, pastilles):
+                    for p in pads:
+                        if not poly.Contains(p.GetPosition(), i):
+                            continue
+                        if _poser_via_dans_pastille(pcbnew, board, p, via_d,
+                                                    ecart_trous, trous):
+                            relies += 1
+                            break
+                    continue
                 if not _ilot_est_flottant(len(dedans), reliants, pastilles):
                     continue
                 for v in dedans:
@@ -1146,8 +1186,41 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
 
     pcbnew.SaveBoard(args["output"], board)
     Path(args["result"]).write_text(
-        json.dumps({"retires": retires, "vias_retires": vias_retires}),
+        json.dumps({"retires": retires, "vias_retires": vias_retires,
+                    "relies": relies}),
         encoding="utf-8")
+
+
+def _poser_via_dans_pastille(pcbnew, board, pad, via_d: float,
+                             ecart_trous: float, trous: list) -> bool:
+    """Pose un via DANS la pastille, pour relier son ilot au plan d en face.
+
+    Reutilise exactement les regles du fanout : le via ne depasse jamais la
+    pastille — il herite donc de son isolement — le percage respecte le
+    minimum de KiCad, et un trou deja perce interdit le point.
+    """
+    try:
+        b = pad.GetBoundingBox()
+        larg = min(float(b.GetRight() - b.GetLeft()),
+                   float(b.GetBottom() - b.GetTop()))
+        perce = float(pad.GetDrillSizeX())
+    except Exception:
+        return False
+    d = _via_in_pad_possible(larg, via_d, perce)
+    if d <= 0:
+        return False
+    perc = _percage_pour_via(d)
+    pos = pad.GetPosition()
+    if not _trou_libre(pos.x, pos.y, perc / 2, trous, ecart_trous):
+        return False
+    via = pcbnew.PCB_VIA(board)
+    via.SetPosition(pos)
+    via.SetWidth(int(d))
+    via.SetDrill(int(perc))
+    via.SetNetCode(pad.GetNetCode())
+    board.Add(via)
+    trous.append((float(pos.x), float(pos.y), perc / 2))
+    return True
 
 
 def _touche_le_net_en_face(board, zones, couche_opposee, position) -> bool:

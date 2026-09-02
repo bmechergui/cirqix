@@ -103,3 +103,83 @@ class TestCablage:
         i = self.SOURCE.index("def _retirer_ilots_flottants(")
         j = self.SOURCE.find(chr(10) + "def ", i + 1)
         assert '"retires"' in self.SOURCE[i:j]
+
+
+class TestOrdre:
+    """⚠️ Le retrait doit venir APRÈS le dernier remplissage de zones.
+
+    Mesure du 2026-09-02 : placé avant `_reparer_reliefs_affames`, le retrait
+    rendait « 0 îlot flottant » alors que `stm32-60` en portait un de 4,9 mm²,
+    mesuré à 1 via et 0 reliant. Cette étape **recoule les zones**, et le
+    remplissage régénère les îlots qu'on venait d'enlever.
+
+    Même faute que le clamp contre le centrage des dominants (2026-08-27) et
+    le snap contre le Géomètre (2026-08-29) : deux correctifs justes qui
+    s'annulent. **L'ordre fait partie du correctif.**
+    """
+
+    SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
+
+    def test_le_retrait_vient_APRES_la_reparation_thermique(self):
+        # Celle-ci recoule les zones : tout retrait qui la précède est annulé.
+        retrait = self.SOURCE.rindex("final = _retirer_ilots_flottants(final)")
+        thermique = self.SOURCE.rindex("final = _reparer_reliefs_affames(final)")
+        assert retrait > thermique, (
+            "le retrait precede un remplissage qui regenere les ilots")
+
+    def test_le_retrait_vient_APRES_la_couture(self):
+        # Un îlot qu'on aurait pu coudre ne doit pas être retiré.
+        retrait = self.SOURCE.rindex("final = _retirer_ilots_flottants(final)")
+        couture = self.SOURCE.rindex("_recoudre_les_zones")
+        assert retrait > couture
+
+    def test_le_board_retire_est_bien_CELUI_QUI_EST_RENDU(self):
+        # Un retrait dont le resultat n'est pas encodé serait inerte.
+        retrait = self.SOURCE.rindex("final = _retirer_ilots_flottants(final)")
+        rendu = self.SOURCE.index("res.kicad_pcb_b64 = base64.b64encode(final)",
+                                  retrait)
+        assert rendu > retrait
+
+
+class TestIlotAvecPastille:
+    """Un îlot qui porte une pastille ne se supprime pas — il se RELIE.
+
+    ⚠️ Mesure du 2026-09-02, `stm32-60`. La dernière rupture, annoncée par le
+    DRC comme `Zone GND B.Cu ↔ Zone GND F.Cu`, vient d'un îlot de 4,9 mm² :
+
+        1 via dedans · 0 reliant · contient la PASTILLE GND de C4
+
+    Ce n'est pas du cuivre flottant : c'est le cuivre local de la pastille de
+    masse de `C4`, isolé du reste du plan. Le retirer **déconnecterait C4**.
+
+    Et le fanout ne la vise jamais : le DRC ne la déclare pas isolée, puisqu'elle
+    EST reliée — à son petit îlot. C'est l'îlot qui n'atteint pas le plan.
+
+    Or `C4` est CMS, large de 0,56 mm, et **surplombe le cuivre de masse de
+    B.Cu**. Un via dans sa pastille la relie directement, comme pour `D1`,
+    `D3` et `C5`.
+
+    La règle : îlot sans pastille et sans via reliant → on retire. Îlot AVEC
+    pastille et sans via reliant → on tente le via dans la pastille.
+    """
+
+    def test_un_ilot_avec_pastille_et_sans_reliant_appelle_le_VIA_EN_PASTILLE(self):
+        assert RUN._ilot_a_relier_par_sa_pastille(
+            vias_reliants=0, pastilles_dedans=1) is True
+
+    def test_un_ilot_SANS_pastille_ne_le_declenche_pas(self):
+        # Celui-là se retire — il n'y a rien à relier.
+        assert RUN._ilot_a_relier_par_sa_pastille(
+            vias_reliants=0, pastilles_dedans=0) is False
+
+    def test_un_ilot_DEJA_relie_ne_le_declenche_pas(self):
+        assert RUN._ilot_a_relier_par_sa_pastille(
+            vias_reliants=2, pastilles_dedans=1) is False
+
+    def test_les_deux_regles_sont_EXCLUSIVES(self):
+        # ⚠️ Un îlot ne peut pas être à la fois retiré et relié.
+        for vr in (0, 1, 3):
+            for pd in (0, 1, 2):
+                a = RUN._ilot_est_flottant(1, vr, pd)
+                b = RUN._ilot_a_relier_par_sa_pastille(vr, pd)
+                assert not (a and b), (vr, pd)
