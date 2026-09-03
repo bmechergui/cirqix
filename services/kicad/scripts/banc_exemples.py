@@ -341,7 +341,17 @@ def _version_du_code() -> str:
     comme tel. Un banc qui affiche une version fausse est pire qu un banc qui
     n en affiche aucune — on lui ferait confiance.
     """
-    for racine in ("/app", str(Path(__file__).resolve().parents[3])):
+    # ⚠️ `parents[3]` etait evalue dans l EN-TETE du `for`, donc HORS du `try`
+    # qui devait le proteger. Dans l image Docker le fichier est a
+    # `/app/scripts/`, qui n a que trois ancetres : `IndexError: 3`, leve avant
+    # que la boucle ne commence. La CI l a vu, pas la machine de developpement,
+    # ou le depot est assez profond. Une garde placee dans un `try` ne protege
+    # que ce qui est A L INTERIEUR.
+    racines = ["/app"]
+    ancetres = Path(__file__).resolve().parents
+    if len(ancetres) > 3:
+        racines.append(str(ancetres[3]))
+    for racine in racines:
         try:
             r = subprocess.run(
                 ["git", "-C", racine, "rev-parse", "--short", "HEAD"],

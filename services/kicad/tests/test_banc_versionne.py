@@ -77,3 +77,36 @@ class TestCablage:
         # Un SHA seul mentirait par omission si le code execute n est pas
         # celui du commit — et c est le cas courant pendant une session.
         assert "arbre MODIFIE" in self.SOURCE
+
+
+
+class TestProfondeurDuChemin:
+    """La version doit tenir meme dans une arborescence PEU PROFONDE.
+
+    Mesure du 2026-09-03, CI « KiCad Docker Build » : `IndexError: 3`, trois
+    fois. `_version_du_code` calculait `Path(__file__).resolve().parents[3]`
+    DANS L EN-TETE DU `for`, donc HORS du `try` cense le proteger. Dans
+    l image le fichier est a `/app/scripts/`, qui n a que trois ancetres.
+
+    La machine de developpement ne pouvait pas le voir : le depot y est assez
+    profond. Seule la CI, qui execute dans l image, l a revele.
+
+    Une garde placee dans un `try` ne protege que ce qui est A L INTERIEUR.
+    """
+
+    def test_elle_ne_leve_pas_quand_le_fichier_est_peu_profond(self, tmp_path,
+                                                               monkeypatch):
+        # On simule `/app/scripts/banc_exemples.py` : trois ancetres, pas plus.
+        faux = tmp_path / "scripts" / "banc_exemples.py"
+        faux.parent.mkdir(parents=True)
+        faux.write_text("", encoding="utf-8")
+        monkeypatch.setattr(_BANC, "__file__", str(faux))
+        assert isinstance(_BANC._version_du_code(), str)
+
+    def test_la_profondeur_est_LUE_avant_d_etre_indexee(self):
+        # Garde structurelle : plus aucun `parents[N]` indexe a l aveugle.
+        import inspect
+        src = inspect.getsource(_BANC._version_du_code)
+        code = chr(10).join(l for l in src.split(chr(10))
+                            if not l.strip().startswith("#"))
+        assert "parents[3]" not in code, code
