@@ -63,7 +63,18 @@ services:
       --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
-    # Aucun port publié : seul le worker y accède, par le réseau Docker interne.
+    # ⚠️ Publié sur la BOUCLE LOCALE uniquement (2026-09-03). La note
+    # precedente disait « aucun port publié : seul le worker y accède » — vrai
+    # tant que la route web n'enfilait pas de job. Depuis la bascule
+    # asynchrone, c'est la ROUTE qui enfile, et elle tourne sur l'hôte : sans
+    # ce port elle ne peut pas joindre la file, `asyncPipelineEnabled` reste
+    # faux, et allumer le drapeau serait INERTE.
+    # `127.0.0.1:` et non `0.0.0.0:` — Redis n'a pas de mot de passe ici, il ne
+    # doit jamais être joignable depuis le réseau.
+    # En production la file est un Redis managé, joint par le réseau : cette
+    # ligne ne concerne que le développement local.
+    ports:
+      - '127.0.0.1:6379:6379'
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
