@@ -156,6 +156,26 @@ class TestRouteAutoEndToEnd:
             routing_router, "_route_with_kicad_tools",
             lambda *a, **k: (sortie, 100),
         )
+        # ⚠️ NEUTRALISER FREEROUTING, sinon ce test ne mesure plus rien.
+        # Mesure du 2026-09-03, CI « KiCad Docker Build » : l image n a pas de
+        # serveur Freerouting en ecoute, la cascade retombe sur le `java -jar`,
+        # qui EXPIRE A 298 s et consomme TOUT le budget :
+        #
+        #   Freerouting echoue (java -jar ... timed out after 298 seconds)
+        #   kicad-tools A* (no limit) echoue (budget epuise avant le Niveau 4)
+        #   tirage ECARTE comme panne — 0%
+        #
+        # Le Niveau 4 n est donc jamais atteint — et c est LUI que ce test
+        # remplace ci-dessus. Le faux etait pose, jamais appele : le test
+        # mesurait l infrastructure de la machine, pas la garde netlist qu il
+        # annonce. Sur une machine ou la JVM tourne deja, il passait.
+        #
+        # ⚠️ On ne « corrige » pas la cascade pour un test : c est le test qui
+        # doit s isoler de ce qu il ne mesure pas.
+        monkeypatch.setattr(routing_router, "_find_freerouting_api",
+                            lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_find_freerouting",
+                            lambda *a, **k: None)
 
         req = routing_router.RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
