@@ -127,6 +127,12 @@ class TestRouteAutoEndToEnd:
         )
         # Pas de Freerouting disponible dans le test → on va jusqu'au repli.
         monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
         monkeypatch.setattr(routing_router, "_find_freerouting", lambda: None)
 
         req = routing_router.RouteAutoRequest(
@@ -140,12 +146,36 @@ class TestRouteAutoEndToEnd:
 
     def test_route_auto_reussit_quand_la_netlist_survit(self, monkeypatch):
         entree = _board_with_pads(nets=30)
+        # ⚠️ Board SYNTHETIQUE : sans piste reelle, un vrai DRC le declare
+        # incomplet et `_percent_verifie` ramenerait le pourcentage a 3 %.
+        # Ce test mesure la garde NETLIST, pas le verdict DRC.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
         sortie = _board_with_pads(nets=30, segments=12)
 
         monkeypatch.setattr(
             routing_router, "_route_with_kicad_tools",
             lambda *a, **k: (sortie, 100),
         )
+        # ⚠️ NEUTRALISER FREEROUTING, sinon ce test ne mesure plus rien.
+        # Mesure du 2026-09-03, CI « KiCad Docker Build » : l image n a pas de
+        # serveur Freerouting en ecoute, la cascade retombe sur le `java -jar`,
+        # qui EXPIRE A 298 s et consomme TOUT le budget :
+        #
+        #   Freerouting echoue (java -jar ... timed out after 298 seconds)
+        #   kicad-tools A* (no limit) echoue (budget epuise avant le Niveau 4)
+        #   tirage ECARTE comme panne — 0%
+        #
+        # Le Niveau 4 n est donc jamais atteint — et c est LUI que ce test
+        # remplace ci-dessus. Le faux etait pose, jamais appele : le test
+        # mesurait l infrastructure de la machine, pas la garde netlist qu il
+        # annonce. Sur une machine ou la JVM tourne deja, il passait.
+        #
+        # ⚠️ On ne « corrige » pas la cascade pour un test : c est le test qui
+        # doit s isoler de ce qu il ne mesure pas.
+        monkeypatch.setattr(routing_router, "_find_freerouting_api",
+                            lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_find_freerouting",
+                            lambda *a, **k: None)
 
         req = routing_router.RouteAutoRequest(
             kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
@@ -153,3 +183,131 @@ class TestRouteAutoEndToEnd:
         res = routing_router.route_auto(req)
         assert res.routed_percent == 100
         assert res.skipped is False
+
+
+class TestFreeroutingEchecNeJettePasLeTravailDejaFait:
+    """Un echec de Freerouting ne doit pas effacer le routage partiel de kicad-tools.
+
+    Mesure du 2026-08-20, board STM32 reel : `kct route` rend un routage sous
+    `_MIN_ROUTED_PCT`, la chaine bascule sur Freerouting, dont le round-trip
+    Specctra renvoie un board **sans netlist** (99 nets en entree, 0 en sortie).
+    La garde refuse ce board -- a raison -- mais le Niveau 3 levait alors un 500
+    qui court-circuitait le Niveau 4, lequel aurait rendu le `kt_partial` deja
+    obtenu : un routage partiel REEL, qui passe sa propre garde.
+
+    Un resultat valide etait donc jete parce qu'un AUTRE routeur avait echoue.
+    Le commentaire du Niveau 4 annonce pourtant cette reutilisation ; elle etait
+    inatteignable des que Freerouting etait present et defaillant.
+
+    Symetrie attendue : Freerouting ABSENT et Freerouting DEFAILLANT doivent
+    conduire au meme repli.
+    """
+
+    @staticmethod
+    def _freerouting_qui_perd_la_netlist(monkeypatch, sortie_vide: bytes) -> None:
+        monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
+        monkeypatch.setattr(routing_router, "_find_freerouting", lambda: ("java", "fr.jar"))
+        monkeypatch.setattr(routing_router, "_export_specctra", lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_run_freerouting", lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_specctra_roundtrip", lambda *a, **k: sortie_vide)
+
+    def test_le_partiel_de_kicad_tools_est_livre_quand_freerouting_perd_la_netlist(
+        self, monkeypatch
+    ):
+        entree = _board_with_pads(nets=30)
+        partiel = _board_with_pads(nets=30, segments=6)
+
+        monkeypatch.setattr(
+            routing_router, "_route_with_kicad_tools",
+            lambda *a, **k: (partiel, 60),  # < _MIN_ROUTED_PCT -> garde en reserve
+        )
+        self._freerouting_qui_perd_la_netlist(monkeypatch, _board(nets=0, segments=40))
+
+        req = routing_router.RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
+        )
+        res = routing_router.route_auto(req)
+
+        assert res.kicad_pcb_b64 is not None, "le routage partiel reel ne doit pas etre jete"
+        assert res.routed_percent == 60
+        assert res.skipped is False
+
+    def test_aucun_routeur_utilisable_reste_un_echec_franc(self, monkeypatch):
+        """Sans partiel a sauver, l'echec doit rester un echec -- jamais un faux succes."""
+        entree = _board_with_pads(nets=30)
+
+        def _kicad_tools_indisponible(*_a, **_k):
+            raise RuntimeError("kct absent")
+
+        monkeypatch.setattr(
+            routing_router, "_route_with_kicad_tools", _kicad_tools_indisponible
+        )
+        self._freerouting_qui_perd_la_netlist(monkeypatch, _board(nets=0, segments=40))
+
+        req = routing_router.RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
+        )
+        res = routing_router.route_auto(req)
+
+        assert res.skipped is True
+        assert res.kicad_pcb_b64 is None
+        assert res.routed_percent == 0
+
+
+class TestLeMessageDitLaquelleDesDeuxCausesSEstProduite:
+    """« indisponible ou defaillant » ne dit pas laquelle -- et les deux se soignent
+    differemment.
+
+    ABSENT se lit dans le deploiement : le binaire ou la JVM manquent, c'est un
+    probleme d'image. DEFAILLANT se lit dans les donnees : Freerouting a tourne
+    et a rendu quelque chose d'inutilisable -- lors de la mesure du 2026-08-20,
+    un board sans netlist. Confondre les deux envoie chercher au mauvais endroit.
+    """
+
+    @staticmethod
+    def _kicad_tools_rend_un_partiel(monkeypatch, partiel: bytes) -> None:
+        monkeypatch.setattr(
+            routing_router, "_route_with_kicad_tools", lambda *a, **k: (partiel, 60)
+        )
+        monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: None)
+        # ⚠️ Ces boards sont SYNTHETIQUES : sans piste reelle, un vrai DRC les
+        # declare tous incomplets et `_percent_verifie` ramenerait le
+        # pourcentage a 3 %. Ce test mesure la GARDE NETLIST, pas le verdict
+        # DRC — on neutralise donc ce dernier plutot que de deformer ce que
+        # le test cherche a prouver.
+        monkeypatch.setattr(routing_router, "_rapport_drc", lambda _b: {})
+
+    def _route(self, entree: bytes):
+        req = routing_router.RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(entree).decode("ascii"), layers=2
+        )
+        return routing_router.route_auto(req)
+
+    def test_freerouting_absent_le_dit(self, monkeypatch):
+        entree = _board_with_pads(nets=30)
+        self._kicad_tools_rend_un_partiel(monkeypatch, _board_with_pads(nets=30, segments=6))
+        monkeypatch.setattr(routing_router, "_find_freerouting", lambda: None)
+
+        warning = self._route(entree).warning or ""
+        assert "absent" in warning.lower()
+        assert "défaillant" not in warning.lower()
+
+    def test_freerouting_defaillant_le_dit(self, monkeypatch):
+        entree = _board_with_pads(nets=30)
+        self._kicad_tools_rend_un_partiel(monkeypatch, _board_with_pads(nets=30, segments=6))
+        monkeypatch.setattr(routing_router, "_find_freerouting", lambda: ("java", "fr.jar"))
+        monkeypatch.setattr(routing_router, "_export_specctra", lambda *a, **k: None)
+        monkeypatch.setattr(routing_router, "_run_freerouting", lambda *a, **k: None)
+        monkeypatch.setattr(
+            routing_router, "_specctra_roundtrip", lambda *a, **k: _board(nets=0, segments=40)
+        )
+
+        warning = self._route(entree).warning or ""
+        assert "défaillant" in warning.lower()
+        assert "absent" not in warning.lower()

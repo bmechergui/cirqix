@@ -1,0 +1,33 @@
+{
+  "name": "@cirqix/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "node dist/worker.cjs",
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/worker.cjs --external:bullmq --external:ioredis --external:@supabase/supabase-js --external:pino --external:zod --external:@anthropic-ai/sdk --external:jszip"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "@cirqix/agents": "workspace:*",
+    "@cirqix/logger": "workspace:*",
+    "@cirqix/types": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.3.0",
+    "jszip": "^3.10.1",
+    "pino": "^9.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@cirqix/config-typescript": "workspace:*",
+    "@types/node": "^20.0.0",
+    "esbuild": "0.21.5",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

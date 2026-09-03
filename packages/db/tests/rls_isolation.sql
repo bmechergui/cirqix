@@ -1,4 +1,7 @@
--- Credits/RLS security regression tests through migration 018.
+-- Credits/RLS security regression tests through migration 020.
+-- La publication `supabase_realtime` est créée par `ci-scaffold.sql` (absente
+-- d'un PostgreSQL nu). AG vérifie l'identité ; AH l'appartenance si la
+-- publication existe — ne pas asserter `pg_publication_tables` sans ce garde.
 -- Run against a disposable local Supabase database:
 --   supabase db reset
 --   psql "$LOCAL_POSTGRES_URL" -f packages/db/tests/rls_isolation.sql
@@ -1136,6 +1139,202 @@ BEGIN
     RAISE EXCEPTION 'FAIL AB: provenance inconnue acceptee (sqlstate=%)', code;
   END IF;
   RAISE NOTICE 'PASS AB - an unknown provenance is still refused';
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Migration 019 — runs de pipeline.
+-- ---------------------------------------------------------------------------
+--
+-- `pcb_runs.agent_mode` porte la provenance qui gouverne le gate JLCPCB. Un
+-- client capable d'y écrire pourrait forger `orchestrator`, c'est-à-dire la
+-- condition d'une commande réelle et payante. D'où : lecture limitée au
+-- porteur, AUCUNE politique d'écriture (service_role seul).
+
+-- AC. Alice voit ses propres runs, Bob ne les voit pas.
+-- ⚠️ Variable nommee `id_du_run`, jamais `run_id` : ce bloc n interroge que
+--    `pcb_runs`, qui n a pas cette colonne, mais le bloc AF a paye
+--    l ambiguite. On ne laisse pas le piege en sursis.
+DO $$
+DECLARE id_du_run uuid; vus_par_alice int; vus_par_bob int;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  INSERT INTO public.pcb_runs (project_id, user_id, agent_mode)
+  VALUES (
+    '33333333-3333-3333-3333-333333333333',
+    '11111111-1111-1111-1111-111111111111',
+    'orchestrator'
+  ) RETURNING id INTO id_du_run;
+  RESET ROLE;
+
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO vus_par_alice FROM public.pcb_runs WHERE id = id_du_run;
+  RESET ROLE;
+
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO vus_par_bob FROM public.pcb_runs WHERE id = id_du_run;
+  RESET ROLE;
+
+  IF vus_par_alice <> 1 OR vus_par_bob <> 0 THEN
+    RAISE EXCEPTION 'FAIL AC: alice=%, bob=%', vus_par_alice, vus_par_bob;
+  END IF;
+  RAISE NOTICE 'PASS AC - pcb_runs is readable only by its owner';
+END $$;
+
+-- AD. Personne ne peut ÉCRIRE un run — forger une provenance ouvrirait le gate
+--     de commande JLCPCB.
+DO $$
+DECLARE code text := '';
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO public.pcb_runs (project_id, user_id, agent_mode)
+    VALUES (
+      '33333333-3333-3333-3333-333333333333',
+      '22222222-2222-2222-2222-222222222222',
+      'orchestrator'
+    );
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code = '' THEN
+    RAISE EXCEPTION 'FAIL AD: un client a pu INSERER un run (provenance forgeable)';
+  END IF;
+  RAISE NOTICE 'PASS AD - clients cannot write pcb_runs';
+END $$;
+
+-- AE. Un seul run vivant par projet — deux runs concurrents se disputeraient
+--     `iteration_count` et l'artefact du board.
+DO $$
+DECLARE code text := '';
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  BEGIN
+    INSERT INTO public.pcb_runs (project_id, user_id, agent_mode, status)
+    VALUES (
+      '33333333-3333-3333-3333-333333333333',
+      '11111111-1111-1111-1111-111111111111',
+      'orchestrator', 'running'
+    );
+  EXCEPTION WHEN unique_violation THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code <> '23505' THEN
+    RAISE EXCEPTION 'FAIL AE: un second run vivant a ete accepte (sqlstate=%)', code;
+  END IF;
+  RAISE NOTICE 'PASS AE - only one live run per project';
+END $$;
+
+-- AF. Le journal suit la propriete du run : Bob ne lit pas les evenements
+--     d'Alice.
+-- ⚠️ La variable NE DOIT PAS porter le nom de la colonne. Avec
+--    `DECLARE run_id uuid`, la clause `WHERE run_id = run_id` est ambigue et
+--    PostgreSQL leve « column reference "run_id" is ambiguous » : ce test
+--    n avait donc JAMAIS pu s executer, et la CI echouait a cette ligne.
+DO $$
+DECLARE id_du_run uuid; vus_par_bob int;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT id INTO id_du_run FROM public.pcb_runs
+   WHERE user_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+  INSERT INTO public.pcb_run_events (run_id, kind, payload)
+  VALUES (id_du_run, 'status', '{"status":"ROUTING_DONE"}'::jsonb);
+  RESET ROLE;
+
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO vus_par_bob
+    FROM public.pcb_run_events WHERE run_id = id_du_run;
+  RESET ROLE;
+
+  IF vus_par_bob <> 0 THEN
+    RAISE EXCEPTION 'FAIL AF: bob lit % evenements du run d alice', vus_par_bob;
+  END IF;
+  RAISE NOTICE 'PASS AF - run events follow run ownership';
+END $$;
+
+-- AG. Realtime + RLS exigent REPLICA IDENTITY FULL sur le journal. Sans ça,
+--     la politique `EXISTS (pcb_runs.user_id = auth.uid())` ne peut pas être
+--     évaluée sur le replica : souscription « ok », zéro événement.
+DO $$
+DECLARE ident "char";
+BEGIN
+  SELECT c.relreplident INTO ident
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relname = 'pcb_run_events';
+  IF ident IS DISTINCT FROM 'f' THEN
+    RAISE EXCEPTION 'FAIL AG: pcb_run_events replica identity is %, expected FULL (f)', ident;
+  END IF;
+  RAISE NOTICE 'PASS AG - pcb_run_events replica identity FULL';
+END $$;
+
+-- AH. Si la publication existe : le journal y est, pcb_runs n'y est pas.
+--     (sur CI le scaffold la crée ; sur un PG nu sans 020-pub, no-op).
+DO $$
+DECLARE run_events_in boolean;
+        runs_in boolean;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    RAISE NOTICE 'SKIP AH - supabase_realtime publication absent';
+    RETURN;
+  END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public' AND tablename = 'pcb_run_events'
+  ) INTO run_events_in;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public' AND tablename = 'pcb_runs'
+  ) INTO runs_in;
+  IF NOT run_events_in THEN
+    RAISE EXCEPTION 'FAIL AH: pcb_run_events not in supabase_realtime';
+  END IF;
+  IF runs_in THEN
+    RAISE EXCEPTION 'FAIL AH: pcb_runs must not be in supabase_realtime';
+  END IF;
+  RAISE NOTICE 'PASS AH - realtime publishes journal only';
+END $$;
+
+-- AI. Un client ne peut pas ÉCRIRE le journal — forger un `done` n'ouvre
+--     pas le gate JLCPCB, mais tromperait l'UI. GRANT + absence de policy.
+DO $$
+DECLARE code text := '';
+        id_du_run uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  SET LOCAL ROLE service_role;
+  SELECT id INTO id_du_run FROM public.pcb_runs
+   WHERE user_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+  RESET ROLE;
+
+  PERFORM set_config('request.jwt.claims',
+    '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO public.pcb_run_events (run_id, kind, payload)
+    VALUES (id_du_run, 'done', '{}'::jsonb);
+  EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
+  END;
+  RESET ROLE;
+
+  IF code = '' THEN
+    RAISE EXCEPTION 'FAIL AI: un client a pu INSERER un evenement de run';
+  END IF;
+  RAISE NOTICE 'PASS AI - clients cannot write pcb_run_events';
 END $$;
 
 ROLLBACK;

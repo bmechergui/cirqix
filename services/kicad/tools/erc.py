@@ -43,6 +43,46 @@ def _extract_ref_pin(description: str) -> tuple[str | None, str | None]:
     return match.group("ref"), match.group("pin")
 
 
+def _collect_violations(report: dict[str, Any]) -> list[Any]:
+    """Extrait les violations d'un rapport ERC, quelle que soit sa forme.
+
+    ``kicad-cli sch erc --format json`` (schema ``erc.v1``) ne publie PAS de
+    ``violations`` de premier niveau : il les range par feuille, sous
+    ``sheets[].violations``. Le DRC, lui, en publie un. Le parseur exigeait la
+    forme du DRC, si bien que l'ERC d'autorité échouait à chaque exécution et
+    que seul le repli TypeScript rendait un verdict.
+
+    Les deux formes sont acceptées ici ; une forme inconnue reste une erreur —
+    ne rien savoir lire n'est jamais « zéro violation ».
+    """
+    if "violations" in report:
+        raw = report["violations"]
+        if not isinstance(raw, list):
+            raise InvalidReportError(
+                f"ERC report field 'violations' must be a list, got {type(raw).__name__}"
+            )
+        return raw
+
+    sheets = report.get("sheets")
+    if isinstance(sheets, list):
+        collected: list[Any] = []
+        for sheet in sheets:
+            if not isinstance(sheet, dict):
+                continue
+            raw = sheet.get("violations", [])
+            if not isinstance(raw, list):
+                raise InvalidReportError(
+                    f"ERC report field 'sheets[].violations' must be a list, got "
+                    f"{type(raw).__name__}"
+                )
+            collected.extend(raw)
+        return collected
+
+    raise InvalidReportError(
+        "ERC report has neither 'violations' nor 'sheets[].violations'"
+    )
+
+
 def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli sch erc --format json`` report.
 
@@ -63,15 +103,7 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
             f"ERC report must be a JSON object, got {type(report).__name__}"
         )
 
-    if "violations" not in report:
-        raise InvalidReportError("ERC report missing required 'violations' list")
-
-    raw_violations = report["violations"]
-    if not isinstance(raw_violations, list):
-        raise InvalidReportError(
-            f"ERC report field 'violations' must be a list, got "
-            f"{type(raw_violations).__name__}"
-        )
+    raw_violations = _collect_violations(report)
 
     out: list[dict[str, Any]] = []
     for raw in raw_violations:

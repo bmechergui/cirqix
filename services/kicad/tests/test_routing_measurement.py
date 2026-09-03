@@ -39,7 +39,11 @@ def _board(*, two_pad_nets: int, single_pad_nets: int = 0) -> bytes:
 def _run_freerouting_api(monkeypatch, board: bytes, measurement: tuple[int, int]):
     monkeypatch.setattr(routing_router, "_count_footprints", lambda _pcb: 31)
     monkeypatch.setattr(routing_router, "_find_freerouting_api", lambda: "http://freerouting")
-    monkeypatch.setattr(routing_router, "_route_with_freerouting_api", lambda *_a: board)
+    # ⚠️ `**_k` obligatoire : l appel reel passe `nets_routables=` en nomme
+    # (detection de stagnation, 2026-08-29). Sans lui le mock leve TypeError,
+    # la cascade retombe sur kicad-tools, et le test mesure le mauvais moteur.
+    monkeypatch.setattr(routing_router, "_route_with_freerouting_api",
+                        lambda *_a, **_k: board)
     monkeypatch.setattr(routing_router, "_measure_routing", lambda _pcb: measurement)
     req = routing_router.RouteAutoRequest(
         kicad_pcb_b64=base64.b64encode(board).decode("ascii"), layers=2
@@ -121,6 +125,13 @@ def test_measurement_uses_transitive_connectivity_and_ignores_single_pad(tmp_pat
         def GetNetCode(self):
             return self.net
 
+        def Type(self):
+            # Le mock doit modeler l API qu il imite : sous KiCad 10,
+            # `GetConnectedItems` rend TOUS les items relies et l appelant
+            # filtre par `Type()`. Sans cette methode, le faux validait un code
+            # qui plante en production.
+            return FakePcbnew.PCB_PAD_T
+
     complete_a, complete_b = Pad("a", 1), Pad("b", 1)
     incomplete_a, incomplete_b = Pad("c", 2), Pad("d", 2)
     single = Pad("e", 3)
@@ -137,9 +148,13 @@ def test_measurement_uses_transitive_connectivity_and_ignores_single_pad(tmp_pat
         def GetConnectedPads(self, _pad):
             raise AssertionError("direct neighbours are not a connectivity proof")
 
-        def GetConnectedItems(self, pad, item_types, ignore_netcodes=False):
-            assert item_types == [FakePcbnew.PCB_PAD_T]
-            assert ignore_netcodes is False
+        def GetConnectedItems(self, pad, *args):
+            # ⚠️ Signature CHANGEE sous KiCad 10 :
+            #     GetConnectedItems(self, aItem, int aFlags=0)
+            # La liste de types a disparu — KiCad 10 rend tous les items relies
+            # et le filtrage revient a l appelant. Ce mock figeait l ancienne
+            # forme, donc il aurait valide un code qui plante en production.
+            # Il accepte desormais les deux, comme l appelant.
             if pad is complete_a:
                 return [complete_a, complete_b]
             if pad is incomplete_a:

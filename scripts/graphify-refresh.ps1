@@ -304,7 +304,9 @@ function Enter-RefreshLock {
             if ($NoWait) {
                 return $null
             }
-            Write-Output "Graphify refresh already running; waiting for the lock."
+            # Write-Host, pas Write-Output : tout le pipeline émis ici s'additionne
+            # au FileStream retourné, et $lockStream.Dispose() meurt sur la chaîne.
+            Write-Host "Graphify refresh already running; waiting for the lock."
             Start-Sleep -Seconds 2
         }
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -466,7 +468,9 @@ finally {
     if (-not $CheckOnly) {
         Start-RepositoryWatcher
     }
-    if ($null -ne $lockStream) {
-        $lockStream.Dispose()
+    # Défense en profondeur : si la fonction de verrou a déjà pollué son retour,
+    # ne disposer que les vrais flux, jamais les chaînes du pipeline.
+    @($lockStream) | Where-Object { $_ -is [System.IO.Stream] } | ForEach-Object {
+        $_.Dispose()
     }
 }

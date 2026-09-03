@@ -37,6 +37,8 @@ from typing import Optional
 # kicad-tools/src en local/CI seulement (jamais en Docker, où le paquet est
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
+from tools.placement_bypass import snap_cluster_members
+from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +171,265 @@ def _normalize_to_board_frame(pcb_path: Path) -> int:
     )
     return len(outside)
 
+
+class DrcInexecutable(RuntimeError):
+    """`kicad-cli` est present mais n a rendu aucun rapport exploitable.
+
+    ⚠️ Cette exception existe parce que l absence de rapport se lisait « 0
+    erreur ». Mesure du 2026-08-27 sur l ESP32 : le board place etait refuse
+    par `kicad-cli` (« Failed to load board »), le rapport revenait VIDE, et
+    `_compter_conflits_erreur` annoncait zero conflit sur un board qui en
+    portait vingt. La boucle de re-tirage s endormait, et la chaine routait
+    vingt-cinq minutes un board condamne d avance.
+
+    Un controle qui n a pas eu lieu ne rend pas un verdict favorable : il ne
+    rend pas de verdict.
+    """
+
+
+# Percage minimum du procede STANDARD de JLCPCB, et defaut de KiCad. En
+# dessous, la carte part en option payante — ou se fait refuser.
+_PERCAGE_MINIMUM_MM = 0.3
+# Anneau minimum de part et d autre du percage (defaut KiCad : 0,10 mm).
+_ANNEAU_MINIMUM_MM = 0.1
+
+_PERCAGE_RE = re.compile(r"\(drill\s+(\d+(?:\.\d+)?)\)")
+_TAILLE_RE = re.compile(r"\(size\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\)")
+
+
+def elargir_percages_trop_fins(texte: str) -> tuple:
+    """Renvoie ``(texte_corrige, nombre_de_percages_elargis)``.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 : les douze dernieres erreurs du board place
+    etaient `drill_out_of_range` sur les vias thermiques du module —
+    `(drill 0.2)`, tels que la bibliotheque KiCad les fournit. Le minimum par
+    defaut de KiCad vaut 0,30 mm, comme le procede standard de JLCPCB.
+
+    ⚠️ On n assouplit PAS la regle dans le `.kicad_pro`. `_projet_kicad` ne le
+    fait que pour les boitiers fine-pitch, en assumant l option payante ;
+    l appliquer ici ferait passer pour fabricable une carte qui ne l est pas au
+    tarif standard. Elargir le percage, lui, ne coute rien.
+
+    ⚠️ La pastille suit : elargir le percage seul remplacerait une erreur de
+    percage par une erreur d anneau.
+
+    Garde : tests/test_percages_fabricables.py.
+    """
+    n = 0
+
+    def sur_un_pad(bloc: str) -> str:
+        nonlocal n
+        m = _PERCAGE_RE.search(bloc)
+        if m is None or float(m.group(1)) >= _PERCAGE_MINIMUM_MM:
+            return bloc
+        n += 1
+        bloc = bloc[:m.start()] + "(drill %s)" % _PERCAGE_MINIMUM_MM + bloc[m.end():]
+        mini = _PERCAGE_MINIMUM_MM + 2 * _ANNEAU_MINIMUM_MM
+        t = _TAILLE_RE.search(bloc)
+        if t is not None and (float(t.group(1)) < mini or float(t.group(2)) < mini):
+            bloc = bloc[:t.start()] + "(size %s %s)" % (
+                max(float(t.group(1)), mini), max(float(t.group(2)), mini)
+            ) + bloc[t.end():]
+        return bloc
+
+    # On decoupe par pastille : le percage et la taille d un MEME pad doivent
+    # etre corriges ensemble, jamais appareilles au hasard du fichier.
+    morceaux = texte.split("(pad ")
+    sortie = [morceaux[0]] + [sur_un_pad(m) for m in morceaux[1:]]
+    return "(pad ".join(sortie), n
+
+
+def _rendre_lisible(pcb_path: Path) -> None:
+    """Repare, EN PLACE, ce que les lecteurs de KiCad refusent.
+
+    Appelee juste avant de mesurer et de rendre le board — donc avant que
+    `kicad-cli` ne le lise, et avant qu il ne quitte le service. Reparer chez
+    chaque lecteur revient a en oublier un ; ici il n y en a qu un a ne pas
+    oublier.
+    """
+    brut = pcb_path.read_text(encoding="utf-8", errors="replace")
+    corrige, n = unquote_keepout_values(brut)
+    if n:
+        logger.info(
+            "auto_place: %d valeur(s) de keepout deguillemetee(s) — sans quoi "
+            "kicad-cli refuse le board et son rapport revient vide", n)
+    corrige, n_percages = elargir_percages_trop_fins(corrige)
+    if n_percages:
+        logger.info(
+            "auto_place: %d percage(s) elargi(s) a %s mm — en dessous, JLCPCB "
+            "refuse la carte au tarif standard", n_percages, _PERCAGE_MINIMUM_MM)
+    if n or n_percages:
+        pcb_path.write_text(corrige, encoding="utf-8")
+
+
+def _rapport_drc_placement(pcb_path: Path) -> dict:
+    """Rapport `kicad-cli pcb drc`, ou dict vide s il est indisponible."""
+    import json as _json
+    import shutil as _shutil
+
+    cli = _shutil.which("kicad-cli")
+    if cli is None:
+        # Seule absence toleree : l outil n est pas la. Le service traite deja
+        # ce cas en amont (`skipped`), et l appelant ne peut pas le confondre
+        # avec un board refuse.
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        rapport = Path(tmp) / "drc.json"
+        r = subprocess.run(
+            [cli, "pcb", "drc", str(pcb_path), "--format", "json",
+             "-o", str(rapport)],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        if not rapport.is_file():
+            raise DrcInexecutable(
+                "kicad-cli n a produit aucun rapport (%s)"
+                % ((r.stdout or r.stderr or "").strip()[:200] or "sans message"))
+        return _json.loads(rapport.read_text(encoding="utf-8"))
+
+
+# Nombre de conflits rendu quand le DRC n a PAS pu se prononcer. Volontairement
+# enorme : `auto_place` garde le tirage au plus petit compte, donc un tirage
+# non mesurable ne peut jamais etre retenu comme « le meilleur ».
+_CONFLITS_INDETERMINES = 10 ** 6
+
+
+# Violations de placement au sens du DRC : ce que le verdict final refuse.
+_TYPES_CONFLIT = ("courtyards_overlap", "shorting_items",
+                  "pth_inside_courtyard", "clearance")
+
+
+# Combien de fois retirer des composants avant de tomber sur le repli total.
+# Chaque passe coute un Inspecteur (~0,1 s) et un DRC (~1-2 s) : trois passes
+# restent negligeables devant les 2-4 minutes d un placement.
+_PASSES_RETRAIT_SNAP: int = 3
+
+_RE_REF_DRC = re.compile(r"(?:Footprint|of)\s+([A-Za-z]+\d+)\b")
+
+
+def _positions_des_footprints(pcb_path: Path) -> dict:
+    """{reference: (x, y, rotation)} — l etat a restaurer si besoin."""
+    from kicad_tools.schema.pcb import PCB
+    etat = {}
+    try:
+        for fp in PCB.load(str(pcb_path)).footprints:
+            p = fp.position
+            xy = (p.x, p.y) if hasattr(p, "x") else tuple(p)[:2]
+            etat[fp.reference] = (xy[0], xy[1], getattr(fp, "rotation", 0.0))
+    except Exception:
+        return {}
+    return etat
+
+
+def _footprints_deplaces(avant: dict, pcb_path: Path, seuil_mm: float = 0.01) -> set:
+    """References dont la position a CHANGE — celles que le snap a bougees."""
+    apres = _positions_des_footprints(pcb_path)
+    bouges = set()
+    for ref, a in (avant or {}).items():
+        b = apres.get(ref)
+        if b is None:
+            continue
+        if math.hypot(b[0] - a[0], b[1] - a[1]) > seuil_mm:
+            bouges.add(ref)
+    return bouges
+
+
+def _remettre_footprints(pcb_path: Path, positions: dict, refs: set) -> int:
+    """Restaure la position d avant pour CES references seulement."""
+    from kicad_tools.schema.pcb import PCB
+    try:
+        pcb = PCB.load(str(pcb_path))
+        n = 0
+        for fp in pcb.footprints:
+            cible = positions.get(fp.reference)
+            if fp.reference not in refs or cible is None:
+                continue
+            p = fp.position
+            if hasattr(p, "x"):
+                p.x, p.y = cible[0], cible[1]
+            else:
+                fp.position = (cible[0], cible[1])
+            n += 1
+        pcb.save(str(pcb_path))
+        return n
+    except Exception as exc:
+        logger.warning("auto_place: remise en place impossible (%s)", exc)
+        return 0
+
+
+def _rapport_drc_sans_lever(pcb_path: Path) -> dict:
+    """Rapport DRC, ou dict vide — un filet en panne ne casse pas la chaine."""
+    try:
+        return _rapport_drc_placement(pcb_path)
+    except Exception:
+        return {}
+
+
+def _refs_en_conflit(rapport: dict) -> set:
+    """References citees par les violations d ERREUR du rapport DRC.
+
+    ⚠️ Les avertissements sont ecartes : un `silk_overlap` ne justifie pas de
+    defaire un deplacement, ce n est pas lui qui fait refuser la carte.
+
+    Un rapport illisible rend un ensemble vide — un filet en panne ne doit pas
+    faire echouer un placement valide.
+    """
+    refs = set()
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("severity") != "error":
+            continue
+        for item in v.get("items") or []:
+            for m in _RE_REF_DRC.finditer(str(item.get("description") or "")):
+                refs.add(m.group(1))
+    return refs
+
+
+def _a_remettre(fautifs: set, deplaces: set) -> set:
+    """Ceux qu on remet a leur place d avant : fautifs ET deplaces par le snap.
+
+    ⚠️ Si les erreurs ne viennent PAS de composants que le snap a bouges,
+    defaire des deplacements ne les corrigerait pas. L appelant tombe alors sur
+    le repli total plutot que de s acharner.
+    """
+    return set(fautifs or ()) & set(deplaces or ())
+
+
+def _compter_conflits_erreur(pcb_path: Path) -> int:
+    """Conflits de placement, mesures par `kicad-cli` — l instrument qui tranche.
+
+    ⚠️ On interrogeait `PlacementAnalyzer` (kicad-tools, ses propres
+    DesignRules). Mesure du 2026-08-27, ESP32 : il declarait le placement
+    PROPRE au tirage 3, et le board final portait ONZE
+    `courtyards_overlap`. Le re-tirage s arretait donc sur un placement
+    qu il croyait bon, et la chaine routait 25 minutes un board condamne.
+
+    Mesurer avec un autre instrument que celui qui tranche, c est se
+    rassurer sans rien garantir. Le DRC coute 1 a 2 s par tirage contre 2 a
+    4 MINUTES de placement : le bon outil ne change pas l ordre de grandeur.
+
+    Rend 0 si la mesure est impossible : un compteur en panne ne doit ni
+    faire echouer un placement valide, ni declencher des re-tirages inutiles.
+    """
+    try:
+        rapport = _rapport_drc_placement(pcb_path)
+    except DrcInexecutable as exc:
+        # ⚠️ On rendait 0 — « non mesurable » se lisait « propre ». La boucle
+        # de re-tirage acceptait alors un board jamais controle. Un tirage
+        # qu on ne sait pas juger doit etre RE-TIRE, donc compte comme pire
+        # que n importe quel tirage mesure.
+        logger.error(
+            "auto_place: conflits NON MESURABLES (%s) — tirage tenu pour "
+            "invalide plutot que pour propre", exc)
+        return _CONFLITS_INDETERMINES
+    except Exception as exc:
+        logger.error(
+            "auto_place: rapport DRC illisible (%s) — tirage tenu pour invalide",
+            exc)
+        return _CONFLITS_INDETERMINES
+    return sum(
+        1 for v in (rapport.get("violations") or [])
+        if isinstance(v, dict) and v.get("severity") == "error"
+        and v.get("type") in _TYPES_CONFLIT
+    )
 
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
@@ -310,6 +571,17 @@ def _run_cmaes_in_subprocess(pcb_path: Path, out_path: Path, time_budget_s: floa
     return proc.returncode
 
 
+# Messages du Géomètre — nommés pour que la garde d'observabilité puisse les
+# retrouver, et pour qu'un futur refactor ne les supprime pas par distraction.
+_LOG_GEOMETRE_OK = (
+    "auto_place: Géomètre CMA-ES appliqué — %.1fs, déplacement max %.1fmm "
+    "(seuil %.1fmm)"
+)
+_LOG_GEOMETRE_SAUTE = (
+    "auto_place: Géomètre CMA-ES NON appliqué (%.1fs) — board de l'Architecte conservé"
+)
+
+
 def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float = 20.0) -> dict:
     """Micro-raffinement natif — équivalent ``kct optimize-placement --strategy
     cmaes --seed-method current`` (CMAwM, patch Cirqix ``seed="current"`` :
@@ -360,7 +632,22 @@ def _refine_with_cmaes(pcb_path: Path, anchored: list[str], time_budget_s: float
     return {"refined": True, "elapsed_s": elapsed}
 
 
-def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0) -> list[str]:
+def _clamp_axe(v: float, b0: float, b1: float, lo: float, hi: float) -> float:
+    """Ramene ``v`` pour que le segment ``[v + b0, v + b1]`` tienne dans ``[lo, hi]``.
+
+    ⚠️ Rend le CENTRAGE si la piece est plus large que le contour : la
+    contrainte est alors insatisfiable, et debordement pour debordement, mieux
+    vaut deborder des deux cotes d autant — un coin choisi au hasard mettrait
+    tout le corps du meme cote.
+    """
+    bas, haut = lo - b0, hi - b1
+    if bas > haut:
+        return (lo + hi) / 2.0 - (b0 + b1) / 2.0
+    return min(max(v, bas), haut)
+
+
+def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 2.0,
+                                 exempts: list = None) -> list[str]:
     """Ramène les footprints ``fixed_refs`` à l'intérieur du contour Edge.Cuts.
 
     ``OptimizationWorkflow`` traite ``fixed_refs`` comme des ancrages immobiles :
@@ -384,14 +671,120 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         if fp.reference not in fixed_refs:
             continue
         x, y = fp.position
-        cx = min(max(x, min_x), max_x)
-        cy = min(max(y, min_y), max_y)
-        if (cx, cy) != (x, y):
-            logger.warning("connector %s hors-carte (%.2f,%.2f) -> clampé (%.2f,%.2f)",
-                           fp.reference, x, y, cx, cy)
-            fp.position = (cx, cy)
+        # ⚠️ On ramene la BOITE dans le contour, pas la POSITION. L origine
+        # d un connecteur est sur sa broche 1, a une extremite : un Morpho
+        # 2x19 mesure 50 mm, et clamper sa position a 2 mm du bord laissait
+        # 48 mm de corps DEHORS — le defaut meme que ce clamp doit empecher,
+        # puisqu un ancrage n est plus jamais deplace ensuite.
+        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        cx = _clamp_axe(x, fx0, fx1, min_x, max_x)
+        cy = _clamp_axe(y, fy0, fy1, min_y, max_y)
+        # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
+        # connecteurs superposés À L'INTÉRIEUR du contour produisent le même
+        # blocage, et n'étaient pas clampés donc pas examinés.
+        # ⚠️ Un boitier DOMINANT est exempt du deplacement anti-collision.
+        # Il chevauche forcement ses voisins au moment ou on le pose — c est
+        # aux voisins de s ecarter, pas a lui. Sans cette exemption, le
+        # module ESP32 centre a 46,5 mm etait POUSSE a 82 sur une carte de
+        # 93, ou il debordait de 9,6 mm : deux correctifs qui se combattent,
+        # mesure du 2026-08-27.
+        if exempts and fp.reference in exempts:
+            nx, ny = cx, cy
+        else:
+            nx, ny = _position_libre_pour_ancrage(pcb, fp.reference, cx, cy,
+                                                  min_x, max_x, min_y, max_y)
+        if (nx, ny) != (x, y):
+            logger.warning("ancrage %s (%.2f,%.2f) -> reposé (%.2f,%.2f)",
+                           fp.reference, x, y, nx, ny)
+            fp.position = (nx, ny)
             clamped.append(fp.reference)
     return clamped
+
+
+# Pas de recherche pour reposer un ancrage : la MOITIÉ de son propre encombrement.
+# Dérivé du footprint, jamais d'une constante — un connecteur 40 broches et un
+# 2 broches n'ont pas le même besoin, et une valeur fixe conviendrait à l'un en
+# trahissant l'autre. Plancher à 1 mm pour progresser même sur un footprint
+# minuscule ou sans courtyard déclaré.
+_PAS_MIN_MM: float = 1.0
+
+
+def _encombrement_mm(pcb, ref: str) -> float:
+    """Plus grande dimension du footprint, d'après ses propres pads."""
+    fp = next((f for f in pcb.footprints if f.reference == ref), None)
+    if fp is None:
+        return _PAS_MIN_MM
+    xs, ys = [], []
+    for pad in getattr(fp, "pads", []) or []:
+        px, py = getattr(pad, "position", (0.0, 0.0))
+        xs.append(px)
+        ys.append(py)
+    if not xs:
+        return _PAS_MIN_MM
+    return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
+
+
+def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
+                                 min_x: float, max_x: float,
+                                 min_y: float, max_y: float) -> tuple:
+    """Repose un ancrage clampé là où il n'entre en collision avec RIEN.
+
+    ⚠️ Le clamp traitait chaque ancrage INDÉPENDAMMENT : deux connecteurs
+    hors-carte du même côté atterrissaient au MÊME coin. Mesuré le
+    2026-08-23 sur le premier pipeline complet passé par la file —
+    l'orchestrateur rapportait « courtyards overlap + PTH inside courtyard
+    → J1 et J3 co-localisés (même position x=128.5, y=123) » et re-tirait le
+    placement en boucle, trois minutes par tirage.
+
+    Or **le re-tirage ne peut pas réparer ça** : les connecteurs sont ancrés,
+    donc l'optimiseur ne les déplace jamais. Le run épuisait ses itérations
+    sans pouvoir atteindre DRC_CLEAN.
+
+    La collision est jugée par `PCB.check_placement_collision`, l'API native
+    de kicad-tools : elle compare les COURTYARDS RÉELS de chaque composant.
+    Aucune constante d'écart, donc aucune hypothèse sur la taille des
+    boîtiers — un connecteur 40 broches est traité comme tel.
+    """
+    try:
+        if not pcb.check_placement_collision(ref, cx, cy).has_collision:
+            return cx, cy
+    except Exception as exc:  # API absente ou footprint atypique
+        logger.debug("collision non vérifiable pour %s (%s)", ref, exc)
+        return cx, cy
+
+    pas = _encombrement_mm(pcb, ref)
+    # On glisse le long des bords : un ancrage clampé y est déjà, et c'est là
+    # que la place se trouve. Spirale en croix, jamais en diagonale.
+    for i in range(1, 41):
+        for nx, ny in ((cx, cy + i * pas), (cx, cy - i * pas),
+                       (cx + i * pas, cy), (cx - i * pas, cy)):
+            if not (min_x <= nx <= max_x and min_y <= ny <= max_y):
+                continue
+            try:
+                if not pcb.check_placement_collision(ref, nx, ny).has_collision:
+                    return nx, ny
+            except Exception:
+                return cx, cy
+    # Aucune place libre : on garde la position clampée. Superposer deux
+    # connecteurs reste moins grave que les poser hors du contour, où leurs
+    # nets seraient inroutables.
+    logger.warning("ancrage %s : aucune position libre trouvée dans la carte", ref)
+    return cx, cy
+    for i in range(1, len(occupees) + 2):
+        for nx, ny in ((cx, cy + i * _ECART_ANCRAGES_MM),
+                       (cx, cy - i * _ECART_ANCRAGES_MM),
+                       (cx + i * _ECART_ANCRAGES_MM, cy),
+                       (cx - i * _ECART_ANCRAGES_MM, cy)):
+            if not (min_x <= nx <= max_x and min_y <= ny <= max_y):
+                continue
+            if any(abs(nx - ox) < _ECART_ANCRAGES_MM and abs(ny - oy) < _ECART_ANCRAGES_MM
+                   for ox, oy in occupees):
+                continue
+            return nx, ny
+    # Aucune place : on rend la position clampée telle quelle. Superposer
+    # deux connecteurs reste moins grave que les poser hors du contour, où
+    # leurs nets seraient inroutables.
+    return cx, cy
 
 
 # Retrait du bord pour reposer un composant sorti du contour, et pas d'une
@@ -819,6 +1212,321 @@ _HALO_PUSH_STEP_MM: float = 0.5
 _HALO_PUSH_MAX_STEPS: int = 60
 
 
+# Part de la surface de carte au-dela de laquelle un boitier est DOMINANT.
+# 12 % : un module ESP32-WROOM (41 x 48 mm) sur une carte de 93 x 70 en
+# occupe 30, un LQFP-48 (9 x 9) sur la meme carte en occupe 1.
+_PART_DOMINANTE = 0.12
+
+
+def _encombrement_fp(fp) -> tuple:
+    """Etendue (largeur, hauteur) d un footprint — COURTYARD d abord.
+
+    ⚠️ Le corps d un boitier deborde largement ses pastilles. Mesure du
+    2026-08-27, ESP32-WROOM :
+
+        etendue des pastilles : 17,5 x 17,8 mm
+        courtyard reel        : 41,3 x 48,1 mm
+
+    En prenant les pastilles, `_ecarter_des_dominants` poussait les passifs hors
+    d une boite DEUX FOIS trop petite : ils retombaient sur le module, et les
+    `courtyards_overlap` subsistaient jusque dans le meilleur de trois tirages.
+
+    Le courtyard est la surface que le fabricant reserve, et c est celle que le
+    DRC compare. On ne retient QUE lui : la serigraphie deborde souvent, et la
+    prendre gonflerait l emprise sans raison.
+
+    Sans courtyard declare, on retombe sur les pastilles — rendre 0 ferait
+    perdre toute protection.
+    """
+    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    return x1 - x0, y1 - y0
+
+
+def _boite_locale_fp(fp) -> tuple:
+    """Boite du footprint DANS SON REPERE : ``(x0, y0, x1, y1)``.
+
+    ⚠️ `_encombrement_fp` n en rendait que la TAILLE, et jetait le decalage.
+    Or c est le decalage qui manquait. Courtyard reel de l ESP32-WROOM, lu
+    dans un board du banc :
+
+        x local : de -24,00 a +24,00      (centre sur l origine)
+        y local : de -30,74 a +10,51      (decale de 10 mm)
+
+    L origine d un module est sur sa pastille 1, pas au milieu de son corps —
+    c est vrai de l ESP32, des en-tetes Arduino et des connecteurs Nucleo.
+    Raisonner en demi-taille de part et d autre de la position fait donc
+    tomber un cote de la couronne EN PLEIN dans le module : cinq
+    `courtyards_overlap` mesures le 2026-08-27.
+
+    ⚠️ Pastilles et courtyard sont l un comme l autre en coordonnees LOCALES
+    (verifie sur un board reel) : la boite se ramene en absolu en ajoutant
+    simplement `fp.position`.
+    """
+    xs, ys = [], []
+    for g in getattr(fp, "graphics", []) or []:
+        if str(getattr(g, "layer", "")) not in ("F.CrtYd", "B.CrtYd"):
+            continue
+        for point in (getattr(g, "start", None), getattr(g, "end", None)):
+            if point is None:
+                continue
+            try:
+                xs.append(float(point[0]))
+                ys.append(float(point[1]))
+            except (TypeError, IndexError, ValueError):
+                continue
+    if not xs:
+        xs = [p.position[0] for p in getattr(fp, "pads", []) or []]
+        ys = [p.position[1] for p in getattr(fp, "pads", []) or []]
+    if not xs:
+        return 0.0, 0.0, 0.0, 0.0
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _boitiers_dominants(pcb) -> list:
+    """Refs des boitiers occupant une part notable de la carte.
+
+    ⚠️ Le critere porte sur la SURFACE RELATIVE, pas sur le nombre de broches.
+    `_dense_part_refs` (>= 16 pads) repond a une autre question — le canal
+    d escape — et ne convient pas ici : un LQFP-48 de 9 x 9 mm sur une carte
+    de 100 mm n a rien de dominant, et l ancrer priverait l optimiseur d un
+    degre de liberte utile.
+
+    Mesure du 2026-08-26 : meme sur une carte de 93 x 70 mm ou son courtyard
+    de 41 x 48 tient largement, l ESP32-WROOM recevait 9 chevauchements —
+    `OptimizationWorkflow` empile les passifs par-dessus et `PlacementFixer`
+    n y parvient pas, deplacer un boitier de 2000 mm2 demandant de deplacer
+    tout le reste.
+
+    Sans taille de carte connue, « dominant » n a pas de sens : on ne devine
+    pas, on rend une liste vide.
+    """
+    try:
+        l_carte, h_carte = pcb.board_size
+    except Exception:
+        return []
+    aire = float(l_carte) * float(h_carte)
+    if aire <= 0:
+        return []
+    dominants = []
+    for fp in pcb.footprints:
+        if not fp.reference:
+            continue
+        l, h = _encombrement_fp(fp)
+        if l * h >= _PART_DOMINANTE * aire:
+            dominants.append(fp.reference)
+    return dominants
+
+
+# Marge ajoutee quand on pousse un mobile hors d un boitier ancre : de quoi
+# loger sa propre demi-taille plus un degagement de routage.
+_MARGE_ECARTEMENT_MM = 2.0
+
+
+def _placer_en_couronne(pcb, dominants: list) -> int:
+    """Place le boitier dominant au centre et les autres en couronne autour.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 du banc : les QUATRE tirages de
+    `OptimizationWorkflow` produisent des conflits de courtyard. Ce n est pas
+    de la malchance, c est structurel — un genetique optimise une longueur de
+    fil totale qu un boitier de 2000 mm2 domine entierement, et les 19 passifs
+    deviennent du bruit dans sa fonction de cout.
+
+    Un concepteur ne procede pas ainsi : il pose le module, puis dispose les
+    passifs autour. Deterministe, sans tirage, donc REPRODUCTIBLE — c est tout
+    l interet face au genetique.
+
+    ⚠️ Ne remplace PAS l optimiseur. Sur une carte sans boitier dominant, le
+    genetique fait mieux : il groupe les decouplages avec leur IC, ce qu une
+    grille ignore. On ne bascule que sur le cas ou il echoue.
+    """
+    try:
+        l_carte, h_carte = (float(v) for v in pcb.board_size)
+    except Exception:
+        return 0
+    if l_carte <= 0 or h_carte <= 0:
+        return 0
+
+    cx, cy = l_carte / 2.0, h_carte / 2.0
+    modules = [f for f in pcb.footprints if f.reference in set(dominants)]
+    autres = [f for f in pcb.footprints
+              if f.reference and f.reference not in set(dominants)]
+    if not modules:
+        return 0
+
+    principal = modules[0]
+    # ⚠️ On centre le CORPS, pas l ORIGINE. L origine d un module est sur sa
+    # pastille 1 ; la poser au milieu de la carte y decale le corps d autant.
+    bx0, by0, bx1, by1 = _boite_locale_fp(principal)
+    principal.position = (cx - (bx0 + bx1) / 2.0, cy - (by0 + by1) / 2.0)
+    px, py = principal.position
+    # Boite ABSOLUE du corps : c est elle que la couronne doit contourner.
+    mx0, my0 = px + bx0, py + by0
+    mx1, my1 = px + bx1, py + by1
+
+    # Anneaux successifs autour de cette boite. Le pas vaut la plus grande
+    # piece a loger, pour qu aucune ne deborde sur sa voisine.
+    pas = max([max(_encombrement_fp(f)) for f in autres] or [2.0]) + 1.5
+    places, anneau = 0, 1
+    restants = list(autres)
+    while restants and anneau < 40:
+        marge = anneau * pas
+        gx0, gy0 = mx0 - marge, my0 - marge
+        gx1, gy1 = mx1 + marge, my1 + marge
+        # Positions sur le rectangle de cet anneau, dans un ordre stable.
+        cases = []
+        nx = max(2, int((gx1 - gx0) / pas))
+        ny = max(2, int((gy1 - gy0) / pas))
+        for i in range(nx + 1):
+            x = gx0 + i * (gx1 - gx0) / nx
+            cases.append((x, gy0))
+            cases.append((x, gy1))
+        for j in range(1, ny):
+            y = gy0 + j * (gy1 - gy0) / ny
+            cases.append((gx0, y))
+            cases.append((gx1, y))
+        for x, y in cases:
+            if not restants:
+                break
+            fx0, fy0, fx1, fy1 = _boite_locale_fp(restants[0])
+            # Hors contour : un passif dehors est inroutable. La boite du
+            # passif, pas sa demi-taille — meme raison que pour le module.
+            if not (0.0 <= x + fx0 and x + fx1 <= l_carte
+                    and 0.0 <= y + fy0 and y + fy1 <= h_carte):
+                continue
+            restants.pop(0).position = (x, y)
+            places += 1
+        anneau += 1
+
+    if restants:
+        logger.warning(
+            "auto_place: %d composant(s) sans place en couronne — laisses ou ils sont",
+            len(restants))
+    return places
+
+def _ecarter_dans_le_fichier(pcb_path: Path, dominants: list) -> int:
+    """Recharge le board, ecarte les mobiles des ancres, et resauve.
+
+    Le raffinement CMA-ES et l Inspecteur travaillent sur le FICHIER : il
+    faut donc repasser dessus, pas sur l objet en memoire d avant.
+    """
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        pcb = PCB.load(str(pcb_path))
+        n = _ecarter_des_dominants(pcb, dominants)
+        if n:
+            pcb.save(str(pcb_path))
+            logger.info(
+                "auto_place: %d composant(s) ecarte(s) de l emprise des "
+                "boitiers dominants (apres raffinement)", n)
+        return n
+    except Exception as exc:
+        logger.warning("auto_place: ecartement final impossible (%s)", exc)
+        return 0
+
+
+def _ecarter_des_dominants(pcb, dominants: list) -> int:
+    """Pousse les composants MOBILES hors de l emprise des boitiers ancres.
+
+    ⚠️ Mesure du 2026-08-27, ESP32 du banc : apres avoir centre et ancre le
+    module, il restait trois `courtyards_overlap`, tous entre U1 et un passif
+    pose PAR-DESSUS. `PlacementFixer` ne les ecarte pas — sa reparation locale
+    deplace de proche en proche, et un boitier de 2000 mm2 ne lui laisse aucun
+    voisinage libre ou glisser.
+
+    Un composant ancre occupe une surface INTERDITE aux autres. On pousse donc
+    chaque mobile dans la direction qui l en sort le plus vite.
+
+    ⚠️ On ne deplace QUE les mobiles : pousser un ancre annulerait l ancrage,
+    et deux ancres qui se chevauchent relevent de
+    `_position_libre_pour_ancrage`.
+
+    ⚠️ Le composant pousse reste DANS la carte. Le sortir du contour
+    echangerait un chevauchement contre un defaut pire — ses nets seraient
+    inroutables.
+    """
+    try:
+        l_carte, h_carte = (float(v) for v in pcb.board_size)
+    except Exception:
+        l_carte = h_carte = 0.0
+    fixes = set(dominants)
+    # ⚠️ Des BOITES absolues, pas des centres et des demi-tailles. L origine
+    # d un module est sur sa pastille 1 : `position ± demi-taille` rend une
+    # emprise trop PETITE du cote long et trop GRANDE du cote court. Sur le
+    # courtyard de l ESP32, decale de 10 mm, un passif pose en plein dans le
+    # module tombait hors de cette emprise fausse et n etait pas ecarte.
+    boites = []
+    for ref in dominants:
+        fp = next((f for f in pcb.footprints if f.reference == ref), None)
+        if fp is None:
+            continue
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        px, py = fp.position
+        boites.append((px + bx0, py + by0, px + bx1, py + by1))
+    if not boites:
+        return 0
+
+    ecartes = 0
+    for fp in pcb.footprints:
+        if not fp.reference or fp.reference in fixes:
+            continue
+        x, y = fp.position
+        # Le mobile n est pas un POINT non plus : sa propre boite compte.
+        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        for mx0, my0, mx1, my1 in boites:
+            if (x + fx1 <= mx0 or mx1 <= x + fx0
+                    or y + fy1 <= my0 or my1 <= y + fy0):
+                continue  # deja dehors, son courtyard compris
+            # Sortir par le cote le plus proche : c est le trajet le plus court,
+            # donc celui qui derange le moins le reste du placement. On raisonne
+            # en DEPLACEMENT, seul moyen d etre juste sur une boite decalee.
+            m = _MARGE_ECARTEMENT_MM
+            sorties = [
+                (mx0 - m - (x + fx1), lambda d: (x + d, y)),   # vers la gauche
+                (mx1 + m - (x + fx0), lambda d: (x + d, y)),   # vers la droite
+                (my0 - m - (y + fy1), lambda d: (x, y + d)),   # vers le haut
+                (my1 + m - (y + fy0), lambda d: (x, y + d)),   # vers le bas
+            ]
+            sorties.sort(key=lambda s: abs(s[0]))
+            for delta, deplacer in sorties:
+                nx, ny = deplacer(delta)
+                # ⚠️ Le contour se verifie sur la BOITE, pas sur la position :
+                # un composant pousse le corps dehors est inroutable — le
+                # defaut meme que cet ecartement dit vouloir eviter.
+                if l_carte > 0 and not (0.0 <= nx + fx0 and nx + fx1 <= l_carte
+                                        and 0.0 <= ny + fy0 and ny + fy1 <= h_carte):
+                    continue
+                fp.position = (nx, ny)
+                ecartes += 1
+                break
+            break
+    return ecartes
+
+def _centrer(pcb, refs: list) -> None:
+    """Pose les refs au centre de la carte, en les ecartant les unes des autres.
+
+    ⚠️ Ancrer un boitier LA OU `gen_pcb` l a laisse figerait un mauvais
+    placement — la grille de depart n a aucune intention. Un module dominant
+    va au milieu, et les passifs s organisent autour : c est ce que fait un
+    concepteur.
+    """
+    try:
+        l_carte, h_carte = pcb.board_size
+    except Exception:
+        return
+    cx, cy = float(l_carte) / 2.0, float(h_carte) / 2.0
+    for i, ref in enumerate(refs):
+        fp = next((f for f in pcb.footprints if f.reference == ref), None)
+        if fp is None:
+            continue
+        # ⚠️ Le CORPS au centre, pas l ORIGINE. L origine d un module est sur
+        # sa pastille 1 : centrer l origine decale le corps de tout le
+        # decalage du courtyard — 10 mm sur l ESP32-WROOM.
+        x0, y0, x1, y1 = _boite_locale_fp(fp)
+        l = x1 - x0
+        # Plusieurs dominants : on les decale de leur propre largeur.
+        fp.position = (cx + i * (l + 5.0) - (x0 + x1) / 2.0, cy - (y0 + y1) / 2.0)
+
 def _dense_part_refs(pcb) -> list[str]:
     """Refs des composants fine-pitch haut-broches (≥ ``_DENSE_PAD_COUNT`` pads).
 
@@ -907,6 +1615,38 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 # ---------------------------------------------------------------------------
 
 # Paramètres de la commande native `kct placement optimize --strategy hybrid`
+# ⚠️ BUDGET REDUIT LE 2026-08-29, sur mesure — quatre tirages de chaque,
+# board STM32 17 composants, placement complet :
+#
+#                  temps                       fil (hors GND)
+#     100x50+1000  266 311 399 392       365 390 407 386     342 s / 387 mm
+#      30x25+ 300  101  91 172 128       359 441 372 565     123 s / 434 mm
+#
+# 2,8x plus rapide, toujours. Le cout n est PAS dans la moyenne (+12 %, qui
+# ment) mais dans la DISPERSION : l etendue passe de 42 a 206 mm, avec un
+# tirage a 565 — « parfois un placement absurde », pas « un peu plus de fil ».
+#
+# ⚠️ Le remede n est pas de remonter le budget. Trois tirages reduits sur
+# quatre atteignent la region du complet : le budget SUFFIT, c est le depart
+# qui varie. Remonter a 100 generations paierait le pire cas partout pour
+# corriger un tirage sur quatre. Le remede est le FILTRE — deux tirages
+# reduits coutent moins qu un complet (246 s contre 342) et on garde le
+# meilleur. Voir `_TIRAGES_MINIMUM`.
+# ⚠️ BUDGET REDUIT PUIS RESTAURE LE 2026-08-30. La coupe (30/25/300) tenait
+# sur un board de 17 composants — 2,8x plus vite, meme longueur de fil. Elle
+# ECHOUE des que la carte se densifie. Mesure sur `arduino-uno`, 35 composants
+# avec connecteurs :
+#
+#     budget complet   0 conflit,  1228-1308 s,  0 erreur DRC
+#     budget reduit    1 conflit APRES 4 TIRAGES,  1410 s,  1 ERREUR DRC
+#
+# Plus lent ET une carte non fabricable : le gain par tirage est mange par le
+# nombre de tirages, et la qualite ne suffit plus a produire un placement
+# legal. J avais generalise depuis un seul board — l erreur que je m etais
+# promis d eviter le matin meme.
+#
+# Ce qui SURVIT de l experience : `_placement_meilleur`, qui departage deux
+# tirages legaux par la longueur de fil. Il ne coute rien et reste juste.
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
 _WF_POPULATION: int = 50
@@ -952,7 +1692,247 @@ _CMAES_MAX_ITERATIONS: int = 30
 _CMAES_MAX_DISPLACEMENT_MM: float = 20.0
 
 
-def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float) -> dict:
+# Tirages de placement avant de renoncer. Le placement coute 2 a 4 minutes,
+# le routage 25 : re-tirer un placement casse est DIX FOIS moins cher que
+# router un board que le DRC refusera. Borne, pour qu une carte reellement
+# impossible ne bloque pas le pipeline.
+_MAX_TIRAGES_PLACEMENT = 4
+
+# Tirages TOUJOURS effectues, meme quand le premier est propre. C est le filtre
+# anti-aberration qui rend le budget reduit acceptable : sans lui on garderait
+# le placement a 565 mm par simple ordre d arrivee, ses 0 conflit ne le
+# distinguant pas des autres.
+#
+# ⚠️ Deux, pas trois : best-of-3 reduit coute 369 s et ne bat plus un tirage
+# complet a 342 s. Le gain disparait exactement la.
+# ⚠️ Ramene a 1 avec la restauration du budget. Le best-of-2 etait la
+# CONTREPARTIE du budget reduit — un filtre contre ses placements aberrants
+# (etendue du fil 206 mm contre 42). A budget complet cette dispersion
+# disparait, et forcer un second tirage ne ferait que doubler le cout.
+_TIRAGES_MINIMUM = 1
+
+# Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
+# compter dans la longueur de fil fausserait la comparaison.
+_NETS_DE_PLAN = frozenset({"GND", "AGND", "DGND", "GNDA"})
+
+
+def _longueur_de_fil_mm(pcb_path) -> Optional[float]:
+    """Somme des distances pastille -> pastille par net, hors nets de plan.
+
+    Proxy de la qualite d un placement LEGAL — c est ce que le GA optimise, et
+    c est assez peu couteux pour departager deux tirages. Ce n est PAS un
+    predicteur de routabilite : un board a 360 mm qui route a 100 % vaut mieux
+    qu un a 350 mm qui laisse cinq broches orphelines au QFP. On s en sert donc
+    pour choisir entre placements DEJA legaux, jamais pour juger une carte.
+
+    Rend ``None`` si la mesure echoue : un fil inconnu ne doit pas gagner.
+    """
+    try:
+        pcb = PCB.load(str(pcb_path))
+    except Exception:
+        return None
+    par_net: dict = {}
+    for fp in pcb.footprints:
+        px, py = fp.position
+        for pad in (getattr(fp, "pads", None) or []):
+            nom = str(getattr(pad, "net_name", "") or "")
+            if not nom or nom in _NETS_DE_PLAN:
+                continue
+            par_net.setdefault(nom, []).append(
+                (px + pad.position[0], py + pad.position[1]))
+    total = 0.0
+    for points in par_net.values():
+        ancre = points[0]
+        for autre in points[1:]:
+            total += math.hypot(autre[0] - ancre[0], autre[1] - ancre[1])
+    return total
+
+
+def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
+    """`candidat` bat-il `reference` ? Conflits d abord, longueur de fil ensuite.
+
+    ⚠️ Le seul compte de conflits NE DEPARTAGE RIEN quand tous les tirages
+    sont propres — c est le cas mesure le 2026-08-29, huit placements a
+    0 ERROR dont un a 565 mm de fil contre 372 pour son voisin. Sans second
+    critere, on garde le premier arrive.
+
+    Un fil inconnu ne gagne jamais par defaut : sans mesure, on ne prefere pas.
+    """
+    if reference is None:
+        return True
+    c_conf = candidat.get("conflits_restants", 10 ** 6)
+    r_conf = reference.get("conflits_restants", 10 ** 6)
+    if c_conf != r_conf:
+        return c_conf < r_conf
+    c_fil = candidat.get("fil_mm")
+    r_fil = reference.get("fil_mm")
+    if c_fil is None:
+        return False
+    if r_fil is None:
+        return True
+    return c_fil < r_fil
+
+
+def _dominants_du_b64(kicad_pcb_b64: str) -> list:
+    """Boitiers dominants du board RECU, avant tout placement.
+
+    Sert a decider du nombre de tirages : la reponse doit etre connue AVANT de
+    payer dix minutes de genetique. Rend une liste vide si le board est
+    illisible — on retombe alors sur la serie complete, jamais sur un raccourci
+    decide par une erreur.
+    """
+    import base64 as _b64
+
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "b.kicad_pcb"
+            f.write_bytes(_b64.b64decode(kicad_pcb_b64))
+            return _boitiers_dominants(PCB.load(str(f)))
+    except Exception as exc:
+        logger.debug("dominants non lisibles avant placement (%s)", exc)
+        return []
+
+
+def _tirages_utiles(dominants: list) -> int:
+    """Nombre de tirages du genetique qui vaut la peine d etre paye.
+
+    ⚠️ Chronologie mesuree le 2026-08-27 sur `arduino-uno`, 35 composants :
+
+        19:27:11  tirage 1 demarre
+        19:27:33  tirage 1 fini          22 s de travail journalise
+        19:37:15  tirage 2 demarre       9 min 42 de SILENCE entre les deux
+
+    Le silence est `OptimizationWorkflow`, qui ne journalise qu a la fin. Son
+    budget est FIXE — 100 generations x 50 individus, plus 1000 iterations de
+    raffinement — et ne diminue pas pour une carte simple.
+
+    Or ces tirages ne divergent pas quand un boitier domine : 1 et 1 sur
+    l Arduino, 17/16/16/22 sur l ESP32. L echec est STRUCTUREL, comme le dit
+    deja `_placer_en_couronne` — le genetique optimise une longueur de fil que
+    le boitier ecrase, et les passifs deviennent du bruit dans sa fonction de
+    cout. On payait trente minutes pour quatre fois le meme echec, avant que la
+    couronne deterministe ne reprenne la main en 0,1 s.
+
+    ⚠️ Sans boitier dominant, on garde la serie complete : la variance est
+    alors reelle (8/0/3/0/5 conflits mesures sur le board STM32) et le
+    genetique est le bon outil. On ne reduit que la ou l on a mesure que les
+    tirages n apportent rien.
+
+    Garde : tests/test_tirages_selon_le_cas.py.
+    """
+    return 1 if dominants else _MAX_TIRAGES_PLACEMENT
+
+
+def auto_place(kicad_pcb_b64: str, board_width_mm: float,
+               board_height_mm: float) -> dict:
+    """Place, et RE-TIRE tant que des conflits subsistent.
+
+    ⚠️ `OptimizationWorkflow` n a pas de seed fixe. Mesure du 2026-08-27 sur
+    le meme board ESP32, sans qu une ligne change :
+
+        tirage A : 0 conflit     tirage B : 13 conflits
+
+    Le second partait quand meme au routage — 25 minutes — pour produire un
+    board que le DRC refusait de toute facon.
+
+    On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
+    """
+    meilleur = None
+    tirages = max(_TIRAGES_MINIMUM,
+                  _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
+    for essai in range(tirages):
+        r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm)
+        n_conflits = r.get("conflits_restants", 0)
+        if _placement_meilleur(r, meilleur):
+            meilleur = r
+        # ⚠️ ON NE S ARRETE PLUS AU PREMIER PLACEMENT PROPRE. Le budget du GA
+        # a ete divise par ~3 le 2026-08-29 ; son prix est la DISPERSION, pas
+        # la moyenne — un tirage sur quatre rend un placement absurde (565 mm
+        # de fil contre 372) avec 0 conflit, donc indiscernable sans second
+        # tirage. Le filtre EST la contrepartie du budget reduit : deux
+        # tirages reduits coutent moins qu un seul complet (246 s contre 342).
+        if n_conflits == 0 and essai + 1 >= _TIRAGES_MINIMUM:
+            logger.info(
+                "auto_place: %d tirage(s) propres — retenu %s",
+                essai + 1,
+                f"{meilleur.get('fil_mm', 0):.0f} mm de fil"
+                if meilleur.get("fil_mm") else "le premier")
+            break
+        if n_conflits:
+            logger.warning(
+                "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot "
+                "que de router un board casse", n_conflits, essai + 1, tirages)
+    if meilleur.get("conflits_restants"):
+        # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
+        # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
+        # quatre tirages, quatre echecs. Un genetique optimise une longueur
+        # de fil qu un boitier dominant ecrase ; les passifs deviennent du
+        # bruit dans sa fonction de cout.
+        #
+        # On bascule alors sur un placement DETERMINISTE — module au centre,
+        # passifs en couronne — qui ne depend d aucun tirage.
+        secours = _couronne_de_secours(kicad_pcb_b64, meilleur)
+        if secours is not None:
+            return secours
+        logger.error(
+            "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
+            meilleur["conflits_restants"], tirages)
+    return meilleur
+
+
+def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):
+    """Placement deterministe, essaye quand l optimiseur a echoue partout.
+
+    ⚠️ Rend None si la couronne ne fait pas MIEUX. Elle ignore les grappes
+    fonctionnelles que le genetique sait grouper — la preferer sans gain
+    serait une regression.
+    """
+    import base64 as _b64
+
+    try:
+        from kicad_tools.schema.pcb import PCB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "b.kicad_pcb"
+            f.write_bytes(_b64.b64decode(kicad_pcb_b64))
+            pcb = PCB.load(str(f))
+            dominants = _boitiers_dominants(pcb)
+            if not dominants:
+                return None
+            _placer_en_couronne(pcb, dominants)
+            pcb.save(str(f))
+            _resolve_remaining_conflicts(f, dominants)
+            _rendre_lisible(f)
+            n = _compter_conflits_erreur(f)
+            if n >= meilleur.get("conflits_restants", 10**6):
+                logger.info(
+                    "auto_place: couronne deterministe %d conflit(s) — pas mieux "
+                    "que l optimiseur (%d), on garde l optimiseur",
+                    n, meilleur.get("conflits_restants"))
+                return None
+            logger.info(
+                "auto_place: couronne deterministe retenue — %d conflit(s) "
+                "contre %d pour l optimiseur", n, meilleur.get("conflits_restants"))
+            fps = PCB.load(str(f)).footprints
+            return {
+                "kicad_pcb_b64": _b64.b64encode(f.read_bytes()).decode(),
+                "placed_count": len(fps),
+                "conflits_restants": n,
+                "positions": [
+                    {"ref": fp.reference, "x_mm": fp.position[0],
+                     "y_mm": fp.position[1]}
+                    for fp in fps if fp.reference
+                ],
+            }
+    except Exception as exc:
+        logger.warning("auto_place: couronne de secours impossible (%s)", exc)
+        return None
+
+
+def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
+                         board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
 
     Équivalent de ``kct placement optimize --strategy hybrid --cluster
@@ -985,7 +1965,17 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
 
         # Connecteurs ancrés + clampés dans le contour AVANT l'optimisation
         conn = _connector_refs(pcb)
-        _clamp_fixed_refs_to_outline(pcb, conn)
+        # ⚠️ Les boitiers DOMINANTS rejoignent les ancrages, apres avoir ete
+        # centres. Un module qui occupe un quart de la carte ne se place pas
+        # par tirage genetique : mesure du 2026-08-26, l ESP32-WROOM recevait
+        # 9 chevauchements de courtyard meme avec la place necessaire.
+        dominants = _boitiers_dominants(pcb)
+        if dominants:
+            logger.info("auto_place: boitier(s) dominant(s) centre(s) et ancre(s) : %s",
+                        ", ".join(dominants))
+            _centrer(pcb, dominants)
+            conn = conn + [r for r in dominants if r not in conn]
+        _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         cfg = WorkflowConfig(
@@ -1007,6 +1997,19 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
         # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
         # CMA-ES, halo — travaille sur un board déjà faux.
         n_norm = _normalize_origin_after_write(pcb, skip=conn)
+
+        # ⚠️ Ecarter les MOBILES poses sur un boitier ancre. L optimiseur les
+        # y depose, et `PlacementFixer` ne les en sort pas : sa reparation
+        # locale deplace de proche en proche, et un boitier de 2000 mm2 ne
+        # lui laisse aucun voisinage libre. Mesure du 2026-08-27 : trois
+        # `courtyards_overlap` residuels sur l ESP32, tous contre U1.
+        if dominants:
+            n_ecartes = _ecarter_des_dominants(pcb, dominants)
+            if n_ecartes:
+                logger.info(
+                    "auto_place: %d composant(s) ecarte(s) de l emprise des "
+                    "boitiers dominants", n_ecartes)
+
         logger.info(
             "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
             updated,
@@ -1074,6 +2077,27 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                         "auto_place: kct placement fix natif (post-CMA-ES) — %d erreur(s) -> %d après réparation",
                         n_err_before, n_err_after,
                     )
+                # ⚠️ Journaliser le SUCCÈS, pas seulement les échecs.
+                #
+                # Toutes les autres branches du Géomètre écrivent un warning ou
+                # une exception ; le succès, lui, était MUET. Un succès
+                # silencieux est indistinguable d'une étape jamais exécutée —
+                # et c'est exactement la condition qui a masqué pendant des
+                # semaines le fait que le Géomètre ne tournait JAMAIS en
+                # production (`signal.signal` hors thread principal).
+                #
+                # Le verdict seul ne suffit pas : sans le déplacement mesuré, on
+                # ne peut pas distinguer un micro-raffinement d'une dérive.
+                # Garde : tests/test_placement_geometre_observable.py.
+                logger.info(
+                    _LOG_GEOMETRE_OK,
+                    refine.get("elapsed_s", 0.0), max_disp, _CMAES_MAX_DISPLACEMENT_MM,
+                )
+        else:
+            # Sauté ou indisponible : le board reste celui de l'Architecte, ce
+            # qui est valide — mais il faut le DIRE plutôt que le laisser
+            # déduire d'une absence de trace.
+            logger.info(_LOG_GEOMETRE_SAUTE, refine.get("elapsed_s", 0.0))
 
         # ── Brique 1 : halo d'escape — dégage le canal de routage des boîtiers
         # denses (fine-pitch) en écartant leurs voisins mobiles. No-op sur une
@@ -1084,6 +2108,94 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
             logger.info(
                 "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
                 "des composants denses (fine-pitch)", n_halo)
+
+        # ── Brique 2 : snap bypass — APRES le Geometre et APRES le halo.
+        #
+        # Le GA laisse les decouplages a 13-28 mm de leur IC (mesure du
+        # 2026-06-18) : sa fonction de cout est une longueur de fil globale
+        # que les rails GND dominent, et aucun reglage ne l en fera devier.
+        # Le CMA-ES en reprend 2-3 mm. Le reste est une REGLE, pas un
+        # optimum : `FunctionalCluster.max_distance_mm`, applique par saut.
+        #
+        # ⚠️ L ordre est contraint des deux cotes. Avant le CMA-ES, le snap
+        # serait defait — l optimiseur renverrait la capa au loin. Avant le
+        # halo, il serait defait aussi — le halo ecarte les voisins des
+        # boitiers fine-pitch. Il vient donc en dernier, et connait le halo :
+        # sur une ancre dense il garde les 5 mm du canal d escape au lieu de
+        # le reboucher.
+        #
+        # ⚠️ La distance se mesure entre les CORPS. L origine d un module est
+        # sur sa pastille 1 (courtyard ESP32-WROOM : y de -30,74 a +10,51) ;
+        # snapper « a 3 mm de l origine » poserait la capa DANS le module.
+        pcb_snap = PCB.load(str(out))
+        n_snap = snap_cluster_members(
+            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap))
+        if n_snap:
+            # ⚠️ FILET OBLIGATOIRE, meme forme que celui du Geometre. Le snap
+            # a ete livre le 2026-08-29 SANS filet, sur l hypothese que
+            # « l Inspecteur nettoie ». C etait une hypothese, pas une mesure :
+            #
+            #     board STM32   0 ERROR avant  ->  1 ERROR apres (8 deplaces)
+            #     Arduino                          202 ERROR    (44 deplaces)
+            #
+            # L Inspecteur en resorbait presque tout, mais les 4 residuels
+            # declenchaient un RE-TIRAGE COMPLET du placement — seize minutes,
+            # trois fois sur la meme carte. Un embellissement de placement ne
+            # peut pas coûter une heure ni risquer un court-circuit.
+            #
+            # On tente, on repare avec l outil natif, et on REVIENT au board
+            # d avant si 0 ERROR n est pas atteint. Le board livre est donc
+            # toujours au moins aussi bon que sans snap.
+            # ⚠️ REPARER AVANT DE MESURER, des deux cotes de la comparaison.
+            # Un board illisible rend un rapport DRC vide, que le compteur lit
+            # « 0 erreur » (defaut du 2026-08-27). Comparer deux zeros fantomes
+            # ferait accepter n importe quel snap.
+            _rendre_lisible(out)
+            avant_snap = out.read_bytes()
+            n_err_avant = _compter_conflits_erreur(out)
+            positions_avant = _positions_des_footprints(out)
+            pcb_snap.save(str(out))
+            _normalize_to_board_frame(out)
+            _resolve_remaining_conflicts(out, conn)
+            _rendre_lisible(out)
+            n_err_apres = _compter_conflits_erreur(out)
+
+            # ⚠️ RETRAIT CIBLE avant le repli total. Mesure du 2026-09-02,
+            # `stm32-100` : le snap ramene les 13 condensateurs de 64-94 mm a
+            # 6,5-12,5 mm d ecart libre en deplacant 71 composants — et cinq
+            # conflits residuels faisaient annuler les soixante et onze. Le
+            # rapport DRC NOMME les fautifs : on remet ceux-la, et eux seuls.
+            # Meme motif que le retrait progressif des vias de couture.
+            if n_err_apres > n_err_avant:
+                deplaces = _footprints_deplaces(positions_avant, out)
+                for _ in range(_PASSES_RETRAIT_SNAP):
+                    if n_err_apres <= n_err_avant:
+                        break
+                    fautifs = _refs_en_conflit(_rapport_drc_sans_lever(out))
+                    remis = _a_remettre(fautifs, deplaces)
+                    if not remis:
+                        break  # les erreurs ne viennent pas du snap
+                    _remettre_footprints(out, positions_avant, remis)
+                    deplaces -= remis
+                    _resolve_remaining_conflicts(out, conn)
+                    _rendre_lisible(out)
+                    n_err_apres = _compter_conflits_erreur(out)
+                    logger.info(
+                        "auto_place: snap — %d composant(s) remis a leur place "
+                        "d avant, %d conflit(s) ERROR restant(s)",
+                        len(remis), n_err_apres)
+
+            if n_err_apres > n_err_avant:
+                logger.warning(
+                    "auto_place: snap bypass a laisse %d conflit(s) ERROR "
+                    "contre %d avant — board pre-snap restaure",
+                    n_err_apres, n_err_avant)
+                out.write_bytes(avant_snap)
+            else:
+                logger.info(
+                    "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
+                    "a portee de leur ancre, %d conflit(s) ERROR",
+                    n_snap, n_err_apres)
 
         # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
         # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une
@@ -1123,6 +2235,12 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 len(repares), ", ".join(repares))
             _resolve_remaining_conflicts(out, conn + repares)
 
+        # ⚠️ Repasser l ecartement APRES le raffinement et l Inspecteur : le
+        # CMA-ES ne connait pas nos ancrages dominants et peut y ramener des
+        # mobiles. Un ecartement fait AVANT eux ne survit pas.
+        if dominants:
+            _ecarter_dans_le_fichier(out, dominants)
+
         n_hors = _outside_outline_refs(out)
         if n_hors:
             logger.error(
@@ -1130,10 +2248,32 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float, board_height_mm: float
                 "sont inroutables et kct route refusera le board ; réparation "
                 "non implémentée", n_hors)
 
+        # ⚠️ Compter ce qu on n a PAS su reparer, et le dire. Mesure du
+        # 2026-08-26, ESP32 du banc : 9 `courtyards_overlap`, 8
+        # `shorting_items` et 2 `pth_inside_courtyard` livres SANS un mot.
+        # L appelant routait un board deja casse et decouvrait les degats
+        # au DRC, trois etapes plus loin, sans pouvoir les imputer.
+        #
+        # On ne LEVE pas : un board imparfait vaut mieux qu aucun board, et
+        # l orchestrateur sait deja re-tirer. Mais on ne ment plus par
+        # omission.
+        _rendre_lisible(out)
+        conflits_restants = _compter_conflits_erreur(out)
+        if conflits_restants:
+            logger.error(
+                "auto_place: %d conflit(s) de placement NON RESOLU(S) — le "
+                "board est livre en l etat, le DRC les signalera",
+                conflits_restants)
+
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
+            "conflits_restants": conflits_restants,
+            # Second critere de choix entre tirages LEGAUX — sans lui, deux
+            # placements a 0 conflit ne se departagent pas et on garde le
+            # premier arrive, fut-il a 565 mm de fil contre 372.
+            "fil_mm": _longueur_de_fil_mm(out),
             # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
             # attendu par le client TS (`placement-service.ts::isValidPosition`).
             # Le code émettait `x`/`y`, contredisant son propre modèle : le client

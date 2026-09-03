@@ -9,25 +9,13 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { PLACEMENT_TIMEOUT_MS } from './placement-budget';
+import { longCallFetch } from './long-call-transport';
 
 const log = pino({
   name: 'cirqix.agents.placement-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
-
-/**
- * `/place/auto` enchaîne Architecte (GA hybrid+cluster), Géomètre (CMA-ES,
- * budget interne 20 s) et Inspecteur : 34 à 45 s mesurées le 2026-07-27 sur un
- * board de 8 composants (examples/led-blinker-full-pipeline), et davantage sur
- * un board dense. La valeur précédente — 10 s — faisait donc expirer le client
- * AVANT toute fin de placement : `call_agent_placement` échouait
- * systématiquement en production dès qu'un vrai service répondait. Invisible
- * jusqu'ici parce que la chaîne TS n'avait jamais tourné contre le service réel
- * (tests mockés uniquement) ; révélé par `tests/pipeline-live.test.ts`.
- *
- * Aligné sur les autres étapes longues : routage 90 s, reasoner 180 s.
- */
-const PLACEMENT_TIMEOUT_MS = 180_000;
 
 export class PlacementServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -83,7 +71,7 @@ export async function runRealPlacement(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await longCallFetch(url, {
       method: 'POST',
       headers: buildKicadServiceHeaders(),
       body,

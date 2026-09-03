@@ -27,8 +27,19 @@ class PcbRequest(BaseModel):
     components: list[SchemaComponent]
     nets: list[str]
     connections: list[SchemaNet] = Field(default_factory=list)
-    board_width_mm: float = Field(default=50.0, ge=10.0, le=200.0)
-    board_height_mm: float = Field(default=50.0, ge=10.0, le=200.0)
+    # ⚠️ Plafond a 500 mm, la borne du procede STANDARD de JLCPCB (400 x 500).
+    # Il valait 200 — un chiffre rond, pose sans mesure, qui rendait TOUTE carte
+    # de plus de ~90 composants impossible a generer. Mesure du 2026-08-28 :
+    # `stm32-100` echouait AVANT le placement, `1 validation error ...
+    # board_width_mm`, parce que `_dimensions` demande 208 x 156 mm pour cent
+    # composants. Six cartes sur sept passaient la chaine entiere ; la septieme
+    # ne pouvait meme pas naitre.
+    #
+    # ⚠️ On garde une borne : sans elle, une taille aberrante — calcul faux ou
+    # entree hostile — produirait un board que le routeur mettrait des heures a
+    # traiter. Garde : tests/test_taille_carte_plafond.py.
+    board_width_mm: float = Field(default=50.0, ge=10.0, le=500.0)
+    board_height_mm: float = Field(default=50.0, ge=10.0, le=500.0)
     project_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
     kicad_sch_b64: Optional[str] = Field(default=None, description=".kicad_sch encodé base64 — utilisé par kicad-tools PCBFromSchematic")
 

@@ -44,26 +44,25 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     );
   }
 
-  // Layer count heuristic: kicad-tools A* handles ≤30 comps/nets on 2 layers.
-  // Freerouting handles complex boards — 4 layers beyond that threshold.
-  const neededLayers: 2 | 4 | 8 =
-    schema.components.length <= 30 && schema.nets.length <= 30 ? 2 : 4;
-
-  // Le plan PLAFONNE ce besoin ; il ne le prescrit pas. Un petit board reste en
-  // 2 couches sur un plan Pro Max — `Math.min` ne peut qu'abaisser.
+  // Le plan donne le PLAFOND ; le service decide du palier reel.
   //
-  // Jusqu'ici l'heuristique décidait seule, si bien qu'un compte gratuit
-  // obtenait des boards 4 couches : sensiblement plus chers à fabriquer, et
-  // contraires à la grille annoncée. C'est le premier droit réellement adossé
-  // au plan, désormais fiable (le webhook le remet à `free` en fin
-  // d'abonnement, migration 016).
+  // ⚠️ Une heuristique decidait ici du nombre de couches — « <= 30 composants
+  // et <= 30 nets -> 2 couches » — puis on plafonnait par le plan. Le service
+  // recevait donc 2 sur toute carte modeste, et son echelle d escalade
+  // (`_layer_ladder`) ne rend qu UN palier dans ce cas : monter a 4 etait
+  // structurellement impossible.
   //
-  // Un plan absent du cache retombe sur `free` via `maxLayersForPlan` : une
+  // Mesure du 2026-08-26 : l ESP32 du banc (20 composants, 5 nets) restait a
+  // 2 couches et n y arrivait pas — 25 % route, 8 connexions manquantes.
+  //
+  // L heuristique est une ESTIMATION faite AVANT le routage ; le service
+  // escalade sur une MESURE, apres avoir essaye et compte. Preferer la
+  // premiere revient a faire primer une supposition sur un fait constate.
+  //
+  // ⚠️ Le plan reste un PLAFOND : un compte gratuit ne depasse pas 2 couches,
+  // quoi que le routage reclame. Un plan absent retombe sur `free` — une
   // omission de plumbing ne doit pas ouvrir de droits.
-  const decidedLayers = Math.min(
-    neededLayers,
-    maxLayersForPlan(getProjectPlan(projectId)),
-  ) as 2 | 4 | 8;
+  const decidedLayers = maxLayersForPlan(getProjectPlan(projectId)) as 2 | 4 | 8;
 
   // Use the placed .kicad_pcb from cache when call_agent_placement ran first.
   // Regenerate from Circuit-Synth only on a cold cache (e.g. routing called standalone).
@@ -107,11 +106,23 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
       status: 'success',
       pcb_status: 'ROUTING_DONE',
       routed_percent: service.routedPercent, // vrai % — déclenche call_agent_reason si <100
-      layers: service.layers as 2 | 4 | 8,
+      // Couches MESURÉES sur le board livré — pas le type `2 | 4 | 8` de
+      // `DesignJson.layers`, qui décrit une DÉCISION bornée par le plan. Le
+      // `as 2 | 4 | 8` qui traînait ici affirmait au compilateur une contrainte
+      // que la mesure ne garantit pas : un board à 6 couches serait passé pour
+      // un 2, 4 ou 8. Aucun effet à l'exécution — mais un refactor s'appuyant
+      // sur ce type aurait hérité du mensonge.
+      layers: service.layers,
       kicad_pcb_content: finalPcb,
-      engine: 'kicad-tools',
+      // ⚠️ Le moteur vient du SERVICE, il n'est plus écrit en dur. La cascade a
+      // quatre niveaux : sur un board dense, kicad-tools rend 91 %, sous le
+      // seuil, et c'est Freerouting qui livre. Annoncer « kicad-tools » dans ce
+      // cas est une attribution fausse, et elle envoie chercher au mauvais
+      // endroit. Garde : tests/routing-budget.test.ts.
+      engine: service.engine ?? 'inconnu',
       note:
-        `Routage kicad-tools ${service.routedPercent}% — ${schema.nets.length} nets, ` +
+        `Routage ${service.engine ?? 'moteur non identifié'} ` +
+        `${service.routedPercent}% — ${schema.nets.length} nets, ` +
         `${service.layers} couches.` +
         (service.routedPercent < 100
           ? ' Nets bloqués → reasoner auto-déclenché par l\'orchestrateur.'

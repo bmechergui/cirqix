@@ -1,4 +1,5 @@
 import type { PCBState, PCBStatus, AgentStep } from '@cirqix/types';
+import { followRun } from './follow-run';
 
 export type AgentSseEvent =
   | { type: 'token'; content: string }
@@ -24,6 +25,23 @@ export async function runAgent({ projectId, prompt, onEvent, signal }: RunAgentO
   };
   if (signal) init.signal = signal;
   const res = await fetch('/api/agent', init);
+
+  // Mode ASYNCHRONE : la route a depose le travail et rendu la main (`202`).
+  // Il n'y a pas de flux a lire — la progression vit dans `pcb_run_events`.
+  // Realtime d'abord, sondage HTTP en repli (`followRun`). C'est ce chemin qui
+  // permet a un routage de 20 min d'aboutir, la ou l'invocation web etait
+  // coupee a 300 s ; et il survit a la fermeture de l'onglet.
+  if (res.status === 202) {
+    const { runId } = (await res.json()) as { runId?: string };
+    if (!runId) {
+      onEvent({ type: 'error', message: 'Run accepte sans identifiant' });
+      return;
+    }
+    const followOptions: Parameters<typeof followRun>[0] = { runId, onEvent };
+    if (signal) followOptions.signal = signal;
+    await followRun(followOptions);
+    return;
+  }
 
   if (!res.ok || !res.body) {
     const errText = await res.text().catch(() => '');

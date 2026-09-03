@@ -17,6 +17,10 @@ services:
       - ./routers:/app/routers:ro
       - ./main.py:/app/main.py:ro
       - ./security.py:/app/security.py:ro
+      # Importé par main.py (init_sentry). Sans ce montage, le main.py monté
+      # ci-dessus importe un module absent de l'image : ModuleNotFoundError,
+      # les 4 workers meurent au démarrage et AUCUNE route n'est servie.
+      - ./observability.py:/app/observability.py:ro
     environment:
       - PYTHONUNBUFFERED=1
       - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
@@ -37,5 +41,76 @@ services:
       # Xvfb, Freerouting and KiCad can take time to initialize.
       start_period: 180s
 
+  # ---------------------------------------------------------------------------
+  # File d'attente des jobs PCB (migration asynchrone, étape 1).
+  # ---------------------------------------------------------------------------
+  #
+  # Pourquoi un Redis local et PAS Upstash, déjà utilisé par le rate limiting :
+  # BullMQ s'appuie sur des commandes BLOQUANTES (BZPOPMIN, BRPOPLPUSH) qu'un
+  # worker au repos répète en boucle. Sur une tarification à la commande, c'est
+  # un coût permanent pour zéro travail. Upstash reste en place pour ce qu'il
+  # fait bien — le rate limiting HTTP REST depuis Vercel. Deux Redis, deux rôles
+  # disjoints, assumé.
+  #
+  # `noeviction` est CRITIQUE : sous toute autre politique, Redis évincerait des
+  # clés sous pression mémoire — donc des jobs. Un PCB perdu en silence.
+  redis:
+    image: redis:7-alpine
+    container_name: cirqix-redis
+    command: >-
+      redis-server
+      --appendonly yes
+      --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    # Aucun port publié : seul le worker y accède, par le réseau Docker interne.
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Worker de pipeline PCB — en VEILLE à l'étape 1.
+  # ---------------------------------------------------------------------------
+  #
+  # Il ne consomme encore aucun job : cette étape ne change aucun comportement.
+  # Le pipeline continue de tourner dans l'invocation Next.js jusqu'à l'étape 3.
+  #
+  # Colocalisé avec le service KiCad, et c'est la raison principale : `kicad`
+  # n'écoute que sur 127.0.0.1:8766, donc il n'est pas exposé sur Internet.
+  # Héberger le worker ailleurs (Railway, Vercel) obligerait à publier une API
+  # qui accepte des .kicad_pcb et exécute du calcul lourd. Ici, le worker parle
+  # à KiCad par le réseau interne et KICAD_SERVICE_TOKEN ne quitte pas la machine.
+  #
+  # Aucun port publié : le navigateur ne joint JAMAIS le worker. La progression
+  # transite par Postgres (`pcb_run_events`, migration 019) lu en Supabase
+  # Realtime — c'est ce qui permet au worker de rester sans surface réseau.
+  worker:
+    build:
+      # Contexte = racine du dépôt : le worker consomme des paquets du workspace
+      # et le lockfile vit à la racine.
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    image: cirqix-worker:latest
+    container_name: cirqix-worker
+    # PAS de montage du dépôt : les node_modules installés sous Windows ne se
+    # résolvent pas dans un conteneur Linux (binaires natifs par plateforme,
+    # liens pnpm). Mesuré — l'installation échoue au premier binaire, esbuild.
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KICAD_SERVICE_URL=http://kicad:8766
+      - KICAD_SERVICE_TOKEN=${KICAD_SERVICE_TOKEN:?KICAD_SERVICE_TOKEN must be set}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   kicad-jobs:
+  redis-data:

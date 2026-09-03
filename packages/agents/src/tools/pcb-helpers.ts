@@ -50,12 +50,39 @@ export function stripTrackSegments(pcbContent: string): string {
  * Industry-standard practice: route signals on F.Cu, GND plane on B.Cu.
  */
 export function addGroundPlane(pcbContent: string, boardW: number, boardH: number): string {
-  const netMatch = pcbContent.match(/\(net (\d+) "GND"\)/);
-  if (!netMatch) return pcbContent;
-  const netId = netMatch[1];
+  // ⚠️ DEUX écritures pour la même information, selon le writer :
+  //
+  //     (net 1 "GND")   ← kicad-tools, et KiCad <= 9
+  //     (net "GND")     ← pcbnew de KiCad 10 (round-trip Specctra)
+  //
+  // Seule la première était reconnue. Le board qui sort de FREEROUTING passe
+  // par pcbnew, donc il porte la seconde : le `match` rendait `null`, la
+  // fonction retournait le contenu inchangé, et toute carte routée par
+  // Freerouting perdait son plan de masse SANS UN MOT.
+  //
+  // L'ironie tient dans le commentaire ci-dessus : la zone est censée garantir
+  // la connectivité GND « même quand Freerouting échoue ». C'est précisément
+  // sur sa sortie qu'elle ne faisait rien.
+  //
+  // Invisible avant le 2026-08-21 : Freerouting n'était jamais atteint (sonde
+  // sur un préfixe d'URL inexistant). Réparer un chemin mort en révèle les
+  // usagers. Garde : tests/ground-plane.test.ts.
+  const numbered = pcbContent.match(/\(net (\d+) "GND"\)/);
+  const named = /\(net "GND"\)/.test(pcbContent);
+  if (!numbered && !named) return pcbContent;
+
+  // Le routeur peut avoir coulé lui-même les zones power (`kct route` le fait).
+  // Empiler une seconde zone GND sur B.Cu créerait deux remplissages
+  // concurrents sur la même couche.
+  if (/\(zone[^)]*[\s\S]{0,200}?net_name "GND"/.test(pcbContent)) return pcbContent;
+
+  // Sans numéro de net, on n'en invente pas : `(net_name "GND")` suffit à KiCad
+  // pour rattacher la zone, et un identifiant fabriqué pourrait en désigner un
+  // autre.
+  const netRef = numbered ? `(net ${numbered[1]}) ` : '';
 
   const zone = [
-    `  (zone (net ${netId}) (net_name "GND") (layer "B.Cu") (hatch edge 0.508)`,
+    `  (zone ${netRef}(net_name "GND") (layer "B.Cu") (hatch edge 0.508)`,
     `    (connect_pads yes (clearance 0.5))`,
     `    (min_thickness 0.25)`,
     `    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))`,

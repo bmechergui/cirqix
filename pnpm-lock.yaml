@@ -189,6 +189,9 @@ importers:
       pino:
         specifier: ^9.0.0
         version: 9.14.0
+      undici:
+        specifier: ^7.24.7
+        version: 7.24.7
       zod:
         specifier: ^3.23.0
         version: 3.25.76
@@ -319,6 +322,55 @@ importers:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+
+  services/worker:
+    dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.92.0
+        version: 0.92.0(zod@3.25.76)
+      '@cirqix/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@cirqix/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
+      '@cirqix/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.100.1
+      bullmq:
+        specifier: ^5.0.0
+        version: 5.71.1
+      ioredis:
+        specifier: ^5.3.0
+        version: 5.10.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      pino:
+        specifier: ^9.0.0
+        version: 9.14.0
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@cirqix/config-typescript':
+        specifier: workspace:*
+        version: link:../../packages/config-typescript
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.37
+      esbuild:
+        specifier: 0.21.5
+        version: 0.21.5
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.37)(jsdom@29.0.1)(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(terser@5.50.0)
 
 packages:
 
@@ -7143,7 +7195,7 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 1.2.0
 
-  '@vitest/mocker@2.1.9(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(vite@5.4.21(@types/node@20.19.37))':
+  '@vitest/mocker@2.1.9(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(vite@5.4.21(@types/node@20.19.37)(terser@5.50.0))':
     dependencies:
       '@vitest/spy': 2.1.9
       estree-walker: 3.0.3
@@ -8062,7 +8114,7 @@ snapshots:
       '@humanfs/node': 0.16.7
       '@humanwhocodes/module-importer': 1.0.1
       '@humanwhocodes/retry': 0.4.3
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
       ajv: 6.14.0
       chalk: 4.1.2
       cross-spawn: 7.0.6
@@ -10416,7 +10468,7 @@ snapshots:
   vitest@2.1.9(@types/node@20.19.37)(jsdom@29.0.1)(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(terser@5.50.0):
     dependencies:
       '@vitest/expect': 2.1.9
-      '@vitest/mocker': 2.1.9(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(vite@5.4.21(@types/node@20.19.37))
+      '@vitest/mocker': 2.1.9(msw@2.12.14(@types/node@20.19.37)(typescript@5.9.3))(vite@5.4.21(@types/node@20.19.37)(terser@5.50.0))
       '@vitest/pretty-format': 2.1.9
       '@vitest/runner': 2.1.9
       '@vitest/snapshot': 2.1.9
@@ -10469,7 +10521,7 @@ snapshots:
 
   webpack@5.109.2(postcss@8.5.8):
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
       '@types/json-schema': 7.0.15
       '@webassemblyjs/ast': 1.14.1
       '@webassemblyjs/wasm-edit': 1.14.1

@@ -18,6 +18,8 @@ from typing import Optional
 
 from tools.schematic import SchemaComponent, SchemaNet, SchemaPin, _expand_footprint
 
+from tools.sexp_quote import quote_bare_property_values
+
 logger = logging.getLogger(__name__)
 
 
@@ -351,38 +353,15 @@ def _snap_labels_to_pins(sch_content: str, tolerance_mm: float = 8.0) -> str:
     return processed
 
 
-_BARE_PROPERTY_RE = re.compile(
-    r'(\(property\s+"[^"]*"\s+)(-?\d+(?:\.\d+)?)(?=[\s()])'
-)
-
-
 def _quote_bare_property_values(text: str) -> tuple[str, int]:
     """Requote les valeurs de propriété sérialisées en atome nu.
 
-    `kicad_tools/sexp/parser.py` ne quote un atome chaîne que s'il a été LU
-    depuis un token quoté (`_originally_quoted`) ou s'il ne ressemble pas à un
-    nombre. Ce drapeau vaut False pour les atomes construits programmatiquement
-    — c'est-à-dire pour toute valeur de composant injectée depuis notre schéma
-    JSON. Une valeur purement numérique ressort donc nue :
-
-        (property "Value" 330          ← S-expression invalide
-
-    KiCad 10.0.4 rejette alors le fichier ENTIER (`Failed to load board`, et
-    `pcbnew.LoadBoard` renvoie None), alors que le parseur de kicad-tools, plus
-    permissif, l'accepte : le board se place et se route normalement, puis DRC
-    et export échouent — sur un board pourtant routé à 100 %. Mesuré le
-    2026-07-27 sur le cas led-blinker (R3 = 330 Ω).
-
-    Les valeurs numériques sans unité sont la norme (330, 100, 4700, 10…), donc
-    le correctif est board-agnostique et s'applique à toute propriété. Il ne
-    touche QUE les valeurs de `(property "…" …)` : les atomes numériques
-    légitimes (`(at …)`, `(size …)`, `(version …)`) sont préservés.
-
-    Le fix appartient à `kicad_tools` (le défaut d'`_originally_quoted` est
-    inadapté à la construction programmatique) ; ce garde vit ici en attendant,
-    le submodule suivant la procédure fork/rebase de DEPENDENCIES.md.
+    Implémentation PARTAGÉE avec l'ERC — voir `tools/sexp_quote.py`. Elle vivait
+    ici seule, et le schéma s'est retrouvé sans garde pendant un mois alors que
+    le board en avait un : deux copies d'une même règle divergent, une seule ne
+    le peut pas.
     """
-    return _BARE_PROPERTY_RE.subn(r'\1"\2"', text)
+    return quote_bare_property_values(text)
 
 
 def _generate_with_kicad_tools(
@@ -638,6 +617,105 @@ def _generate_with_pcbnew(
         return None
 
 
+_PAD_RE = re.compile(chr(92) + "(pad " + chr(92) + "b.*?" + chr(10) + chr(9) + "*" + chr(92) + ")", re.DOTALL)
+_NUM_PAD_RE = re.compile(chr(92) + "(pad " + chr(92) + "s*" + chr(34) + "([^" + chr(34) + "]*)" + chr(34))
+_NET_PAD_RE = re.compile(chr(92) + "(net " + chr(92) + "s*(?:" + chr(92) + "d+ )?" + chr(34) + "[^" + chr(34) + "]*" + chr(34) + chr(92) + ")")
+
+
+def _blocs_pads(texte: str) -> list:
+    """Blocs `(pad ...)` complets, quel que soit leur formatage.
+
+    ⚠️ Balayage de parentheses plutot que motif : une pastille peut tenir
+    sur UNE ligne (notre generateur) ou sur PLUSIEURS (pcbnew, KiCad). Un
+    motif regle sur l une ignore silencieusement l autre — c est le meme
+    piege que la garde anti-empilement de plans, aveugle aux zones
+    multilignes (2026-08-24).
+    """
+    blocs, i = [], texte.find("(pad ")
+    while i != -1:
+        prof, dans, j = 0, False, i
+        while j < len(texte):
+            c = texte[j]
+            if c == chr(34) and texte[j - 1] != chr(92):
+                dans = not dans
+            elif not dans and c == "(":
+                prof += 1
+            elif not dans and c == ")":
+                prof -= 1
+                if prof == 0:
+                    blocs.append(texte[i:j + 1])
+                    break
+            j += 1
+        else:
+            break
+        i = texte.find("(pad ", j)
+    return blocs
+
+
+def propager_nets_pastilles_homonymes(pcb_content: str) -> str:
+    """Donne le meme net a toutes les pastilles portant le MEME NUMERO.
+
+    ⚠️ Des pastilles de meme numero sont le MEME NOEUD — c est la definition
+    de KiCad, et c est ainsi qu il exprime un pave thermique et ses vias.
+
+    Mesure du 2026-08-27, ESP32 du banc : U1 portait 60 pastilles dont 22
+    numerotees « 39 », et 21 d entre elles n avaient AUCUN net. Ce cuivre sans
+    nom, touche par le plan de masse, produisait huit `shorting_items` :
+
+        Pad 39 [+3V3]     of U1 on F.Cu
+        Pad 39 [<no net>] of U1 on F.Cu
+
+    ⚠️ Le defaut n a rien de propre a ce module : tout boitier a pave
+    thermique est concerne — QFN, DFN, modules RF, regulateurs de puissance.
+    La reparation vit donc au niveau du BOARD, pas dans un cas particulier.
+
+    ⚠️ On PROPAGE, on n invente pas : une pastille dont aucune homonyme ne
+    porte de net reste sans net. Une broche non connectee doit le rester.
+
+    ⚠️ La propagation est INTERNE a chaque footprint. Deux boitiers peuvent
+    avoir chacun une pastille « 39 » sur des nets differents ; propager entre
+    eux creerait le court-circuit qu on cherche a supprimer.
+    """
+    morceaux = pcb_content.split("(footprint ")
+    if len(morceaux) < 2:
+        return pcb_content
+
+    total = 0
+    for i in range(1, len(morceaux)):
+        bloc = morceaux[i]
+        pads = _blocs_pads(bloc)
+        if not pads:
+            continue
+        # Net connu pour chaque numero, dans CE footprint seulement.
+        connus = {}
+        for pad in pads:
+            num = _NUM_PAD_RE.search(pad)
+            net = _NET_PAD_RE.search(pad)
+            if num and net:
+                connus.setdefault(num.group(1), net.group(0))
+        if not connus:
+            continue
+        for pad in pads:
+            if _NET_PAD_RE.search(pad):
+                continue
+            num = _NUM_PAD_RE.search(pad)
+            if not num or num.group(1) not in connus:
+                continue
+            # Inserer le net juste avant la parenthese fermante du pad.
+            j = pad.rstrip().rfind(")")
+            repare = pad[:j] + " " + connus[num.group(1)] + pad[j:]
+            bloc = bloc.replace(pad, repare, 1)
+            total += 1
+        morceaux[i] = bloc
+
+    if not total:
+        return pcb_content
+    logger.info(
+        "generate_pcb: %d pastille(s) homonyme(s) ont recu le net de leur "
+        "noeud — sans cela leur cuivre reste sans nom et court-circuite le plan",
+        total)
+    return "(footprint ".join(morceaux)
+
 def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
     """Re-assign single-pad floating nets (Net-(X-Y), unconnected-*) using
     circuit_synth connection data which has the correct pad→net topology.
@@ -756,6 +834,10 @@ def generate_pcb(
                 kicad_net_content=kicad_net_content,
             )
             if content:
+                # ⚠️ Les pastilles HOMONYMES doivent porter le meme net, quel que soit
+                # le niveau qui a genere le board : un pave thermique et ses vias sont
+                # un seul noeud, et le cuivre laisse sans nom court-circuite le plan.
+                content = propager_nets_pastilles_homonymes(content)
                 content, requoted = _quote_bare_property_values(content)
                 if requoted:
                     logger.warning(
@@ -772,6 +854,7 @@ def generate_pcb(
         try:
             content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
+                content = propager_nets_pastilles_homonymes(content)
                 content, _ = _quote_bare_property_values(content)
                 logger.info("generate_pcb: niveau 2 pcbnew OK")
                 return content

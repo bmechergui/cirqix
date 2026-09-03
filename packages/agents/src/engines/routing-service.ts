@@ -11,21 +11,15 @@
 
 import pino from 'pino';
 import { buildKicadServiceHeaders } from './kicad-service-auth';
+import { longCallFetch } from './long-call-transport';
+import { routingSearchBudgetS, routingAbortMs } from './routing-budget';
 
 const log = pino({
   name: 'cirqix.agents.routing-service',
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 
-/**
- * `/route/auto` s'accorde 300 s côté service (`routers/routing.py
- * _DEFAULT_TIMEOUT_S`), et `kct_route` jusqu'à 600 s. Le client coupait à 90 s :
- * il abandonnait donc des routages longs mais légitimes, transformant une
- * réussite en « service indisponible ». Observé le 2026-07-27 sur un tirage GA
- * défavorable (`pipeline-live.test.ts`, échec à ~90 s puis succès en 58 s au run
- * suivant). Aligné sur le budget du service + marge réseau.
- */
-const ROUTING_TIMEOUT_MS = 330_000;
+
 
 export class RoutingServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -48,6 +42,8 @@ export interface RealRoutingResult {
   trackLengthMm?: number;
   skipped: boolean;
   warning?: string;
+  /** Quel niveau du service a réellement produit le board. */
+  engine?: string;
 }
 
 interface ServiceResponseBody {
@@ -58,6 +54,26 @@ interface ServiceResponseBody {
   track_length_mm?: unknown;
   skipped?: unknown;
   warning?: unknown;
+  engine?: unknown;
+}
+
+/**
+ * Moteur annoncé par le service — jamais deviné.
+ *
+ * `handlers/routing.ts` écrivait `engine: 'kicad-tools'` EN DUR et composait sa
+ * note avec. Or la cascade du service a quatre niveaux : sur un board dense,
+ * kicad-tools rend 91 %, sous le seuil, et c'est Freerouting qui livre. L'
+ * utilisateur lisait pourtant « Routage kicad-tools ».
+ *
+ * Une attribution fausse envoie chercher au mauvais endroit — elle a coûté
+ * plusieurs heures le 2026-08-20. Un service plus ancien qui ne renvoie pas le
+ * champ ne se voit donc attribuer AUCUN moteur : mieux vaut se taire que
+ * désigner le mauvais.
+ */
+export function readRoutingEngine(body: { engine?: unknown }): string | undefined {
+  return typeof body.engine === 'string' && body.engine.length > 0
+    ? body.engine
+    : undefined;
 }
 
 export async function runRealRouting(
@@ -70,8 +86,10 @@ export async function runRealRouting(
   }
 
   const url = `${baseUrl.replace(/\/+$/, '')}/route/auto`;
-  // Per-layer timeout heuristic — capped by ROUTING_TIMEOUT_MS for safety.
-  const timeoutS = Math.min(60 + input.layers * 30, ROUTING_TIMEOUT_MS / 1000);
+  // Budget de RECHERCHE accordé au routeur — pas une limite de patience :
+  // `kct route` rend la main dès 100 % atteint. Voir `routing-budget.ts` pour
+  // pourquoi l'ancienne heuristique (180 s sur 4 couches) bridait la complétion.
+  const timeoutS = routingSearchBudgetS(input.layers);
   const body = JSON.stringify({
     kicad_pcb_b64: Buffer.from(input.kicadPcbContent, 'utf-8').toString('base64'),
     layers: input.layers,
@@ -80,11 +98,11 @@ export async function runRealRouting(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await longCallFetch(url, {
       method: 'POST',
       headers: buildKicadServiceHeaders(),
       body,
-      signal: AbortSignal.timeout(ROUTING_TIMEOUT_MS),
+      signal: AbortSignal.timeout(routingAbortMs(input.layers)),
     });
   } catch (err) {
     log.warn({ err, url }, 'routing service: fetch failed');
@@ -124,6 +142,8 @@ export async function runRealRouting(
   }
   if (typeof parsed.via_count === 'number') result.viaCount = parsed.via_count;
   if (typeof parsed.track_length_mm === 'number') result.trackLengthMm = parsed.track_length_mm;
+  const engine = readRoutingEngine(parsed);
+  if (engine) result.engine = engine;
   if (typeof parsed.warning === 'string') result.warning = parsed.warning;
   return result;
 }

@@ -29,8 +29,8 @@ jusqu'à DRC propre + Gerbers exportés + commande JLCPCB ✅
 
 - Concept : SaaS web 100% cloud de conception PCB via langage naturel
 - Moteur PCB : Circuit-Synth (Python, génère .kicad_sch + .kicad_pcb natifs) + KiCad (pro multi-couches)
-- Placement auto : 2 phases — Phase 1 PlacementOptimizer (clustering + connecteurs ancrés) → Phase 2 CMA-ES (kct optimize-placement --strategy cmaes, seed=current) → re-ancrage connecteurs
-- Routage auto : kicad-tools A* Python (≤30 nets routables) → Freerouting REST API 1 JVM (circuits complexes) → subprocess → GND plane
+- Placement auto : 5 étapes 100 % natives — ① Architecte `OptimizationWorkflow(strategy="hybrid", enable_clustering=True)` + `write_to_pcb()` · ② Géomètre CMA-ES (`seed-method current`, sous-processus) · ③ Inspecteur `PlacementFixer` · ④ halo d'escape fine-pitch (5 mm) · ⑤ **snap bypass** (`FunctionalCluster.max_distance_mm` appliqué par saut). L'Inspecteur repasse après chaque étape qui déplace. Tout est re-tiré, on garde le meilleur.
+- Routage auto : **plan de masse coulé et rempli D'ABORD** (les deux faces extérieures), puis les signaux (GND confié au plan), puis fanout, vias et couture des îlots répétée. Le palier de DÉPART se déduit du board (échappement du boîtier fine-pitch le plus chargé : 36 signaux d'un LQFP-48 sont hors d'atteinte à 2 couches), puis escalade → 6 → 8 … avec 3 tirages par palier (Freerouting est stochastique : 65/77/91 % sur le même board) ; on garde toujours le meilleur, et on abandonne les tirages d'un palier sous 80 % — il ne peut plus rattraper 100 %.
 - Couches : 2 à 8 couches selon le plan
 - Exports : .kicad_pcb + .kicad_sch + Gerber + BOM + PDF + STEP 3D
 - Viewer Schéma + PCB : KiCanvas (rendu natif KiCad dans le navigateur)
@@ -61,10 +61,17 @@ Orchestrateur Sonnet 4.6 · 8 agents Haiku 4.5 · max 15 itérations · SSE stre
      Primaire : Docker kicad_gen.py → .kicad_pcb
      Fallback : runCircuitSynthEngine() TypeScript inline
 
-⑤ call_agent_placement → positions X/Y/rotation — 2 PHASES dans l'agent :
-     Phase 1 : PlacementOptimizer (clustering + connecteurs J*/P* ancrés/clampés)
-     Phase 2 : kct optimize-placement --strategy cmaes (500 itér, seed=current)
-               → raffine DEPUIS la Phase 1 (patch lib #6)
+⑤ call_agent_placement → positions X/Y/rotation — 5 ÉTAPES dans l'agent :
+     ① Architecte  : OptimizationWorkflow(hybrid + clustering, J*/P* ancrés) + write_to_pcb()
+     ② Géomètre    : kct optimize-placement --strategy cmaes --seed-method current
+                     (sous-processus : signal.signal interdit hors thread principal)
+     ③ Inspecteur  : PlacementFixer.iterative_fix — repasse après CHAQUE déplacement
+     ④ Halo escape : 5 mm autour des boîtiers fine-pitch (≥16 pads)
+     ⑤ Snap bypass : FunctionalCluster.max_distance_mm appliqué par SAUT
+                     (POWER 3 mm · TIMING 5 · DRIVER 6 · INTERFACE 8)
+                     distance mesurée entre les CORPS, pas les origines
+     Ordre contraint : le snap APRÈS le Géomètre (sinon défait) et APRÈS le halo
+     (sinon défait aussi) ; il connaît le halo et garde ses 5 mm sur ancre dense.
      Re-ancrage : positions connecteurs restaurées post-CMA-ES
      Filet : place_unplaced(cluster=True) si footprints hors-carte (-1000)
 
