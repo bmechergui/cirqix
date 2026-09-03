@@ -50,18 +50,24 @@ def _mcu(famille: str) -> dict:
 # exactement le cas qui faisait tomber la couronne sur le module ESP32.
 _CONNECTEURS = {
     "arduino": [
+        # TQFP-32 : 1-8 a gauche, 9-16 en bas, 17-24 a droite, 25-32 en haut.
         ("J10", "POWER", "Connector_Generic:Conn_01x08",
-         "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical", 8),
+         "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical", 8, 2),
         ("J11", "ANALOG", "Connector_Generic:Conn_01x06",
-         "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical", 6),
+         "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical", 6, 10),
         ("J12", "DIGITAL", "Connector_Generic:Conn_01x10",
-         "Connector_PinHeader_2.54mm:PinHeader_1x10_P2.54mm_Vertical", 10),
+         "Connector_PinHeader_2.54mm:PinHeader_1x10_P2.54mm_Vertical", 10, 18),
     ],
     "nucleo": [
+        # ⚠️ La derniere valeur est la PREMIERE broche du MCU a utiliser, et
+        # elle n est pas decorative. Un LQFP-64 numerote ses broches par cote :
+        # 1-16 a gauche, 17-32 en bas, 33-48 a droite, 49-64 en haut. Le
+        # connecteur de GAUCHE prend donc les broches de gauche, celui de
+        # DROITE les broches de droite.
         ("J10", "MORPHO_L", "Connector_Generic:Conn_02x19_Odd_Even",
-         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38),
+         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38, 2),
         ("J11", "MORPHO_R", "Connector_Generic:Conn_02x19_Odd_Even",
-         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38),
+         "Connector_PinHeader_2.54mm:PinHeader_2x19_P2.54mm_Vertical", 38, 34),
     ],
 }
 
@@ -103,12 +109,22 @@ def circuit(famille: str, cible: int) -> dict:
     # Connecteurs de carte-mere. Broche 1 sur GND, broche 2 sur +3,3 V, le
     # reste sur des signaux propres — un connecteur non relie ne serait qu un
     # obstacle, jamais une contrainte de routage.
-    broche_mcu = 30
-    for ref, val, sym, fp, n_broches in _CONNECTEURS.get(famille, []):
+    # ⚠️ Les broches du MCU etaient attribuees SEQUENTIELLEMENT a partir de 30,
+    # sans regarder la geometrie. Mesure du 2026-08-28 sur la Nucleo : les seize
+    # liaisons des DEUX connecteurs — l un a x = 50, l autre a x = 110 —
+    # aboutissaient toutes sur la meme bande de 8 mm du MCU, par des fils de 44
+    # a 62 mm. Seize signaux dans la meme fenetre : aucun routeur ne demele
+    # cela, ni en ajoutant des couches, ni en re-tirant. La carte plafonnait a
+    # 68 %.
+    #
+    # Un concepteur choisit ses broches selon le cote ou part le signal. C est
+    # ce qui rend une vraie carte Nucleo routable, et c est ce qu on fait ici.
+    for ref, val, sym, fp, n_broches, premiere in _CONNECTEURS.get(famille, []):
         composants.append({"ref": ref, "value": val,
                            "symbol": sym, "footprint": fp})
         relier("GND", ref, 1)
         relier("+3.3V", ref, 2)
+        broche_mcu = premiere
         for k in range(3, min(n_broches, 10) + 1):
             relier("%s_%d" % (val, k), ref, k)
             relier("%s_%d" % (val, k), "U1", broche_mcu)
