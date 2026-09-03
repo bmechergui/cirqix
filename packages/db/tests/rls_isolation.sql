@@ -1151,8 +1151,11 @@ END $$;
 -- porteur, AUCUNE politique d'écriture (service_role seul).
 
 -- AC. Alice voit ses propres runs, Bob ne les voit pas.
+-- ⚠️ Variable nommee `id_du_run`, jamais `run_id` : ce bloc n interroge que
+--    `pcb_runs`, qui n a pas cette colonne, mais le bloc AF a paye
+--    l ambiguite. On ne laisse pas le piege en sursis.
 DO $$
-DECLARE run_id uuid; vus_par_alice int; vus_par_bob int;
+DECLARE id_du_run uuid; vus_par_alice int; vus_par_bob int;
 BEGIN
   PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
   SET LOCAL ROLE service_role;
@@ -1161,19 +1164,19 @@ BEGIN
     '33333333-3333-3333-3333-333333333333',
     '11111111-1111-1111-1111-111111111111',
     'orchestrator'
-  ) RETURNING id INTO run_id;
+  ) RETURNING id INTO id_du_run;
   RESET ROLE;
 
   PERFORM set_config('request.jwt.claims',
     '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO vus_par_alice FROM public.pcb_runs WHERE id = run_id;
+  SELECT count(*) INTO vus_par_alice FROM public.pcb_runs WHERE id = id_du_run;
   RESET ROLE;
 
   PERFORM set_config('request.jwt.claims',
     '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO vus_par_bob FROM public.pcb_runs WHERE id = run_id;
+  SELECT count(*) INTO vus_par_bob FROM public.pcb_runs WHERE id = id_du_run;
   RESET ROLE;
 
   IF vus_par_alice <> 1 OR vus_par_bob <> 0 THEN
@@ -1233,21 +1236,26 @@ END $$;
 
 -- AF. Le journal suit la propriete du run : Bob ne lit pas les evenements
 --     d'Alice.
+-- ⚠️ La variable NE DOIT PAS porter le nom de la colonne. Avec
+--    `DECLARE run_id uuid`, la clause `WHERE run_id = run_id` est ambigue et
+--    PostgreSQL leve « column reference "run_id" is ambiguous » : ce test
+--    n avait donc JAMAIS pu s executer, et la CI echouait a cette ligne.
 DO $$
-DECLARE run_id uuid; vus_par_bob int;
+DECLARE id_du_run uuid; vus_par_bob int;
 BEGIN
   PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
   SET LOCAL ROLE service_role;
-  SELECT id INTO run_id FROM public.pcb_runs
+  SELECT id INTO id_du_run FROM public.pcb_runs
    WHERE user_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
   INSERT INTO public.pcb_run_events (run_id, kind, payload)
-  VALUES (run_id, 'status', '{"status":"ROUTING_DONE"}'::jsonb);
+  VALUES (id_du_run, 'status', '{"status":"ROUTING_DONE"}'::jsonb);
   RESET ROLE;
 
   PERFORM set_config('request.jwt.claims',
     '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
   SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO vus_par_bob FROM public.pcb_run_events WHERE run_id = run_id;
+  SELECT count(*) INTO vus_par_bob
+    FROM public.pcb_run_events WHERE run_id = id_du_run;
   RESET ROLE;
 
   IF vus_par_bob <> 0 THEN
@@ -1305,11 +1313,11 @@ END $$;
 --     pas le gate JLCPCB, mais tromperait l'UI. GRANT + absence de policy.
 DO $$
 DECLARE code text := '';
-        run_id uuid;
+        id_du_run uuid;
 BEGIN
   PERFORM set_config('request.jwt.claims', '{"role":"service_role"}', true);
   SET LOCAL ROLE service_role;
-  SELECT id INTO run_id FROM public.pcb_runs
+  SELECT id INTO id_du_run FROM public.pcb_runs
    WHERE user_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
   RESET ROLE;
 
@@ -1318,7 +1326,7 @@ BEGIN
   SET LOCAL ROLE authenticated;
   BEGIN
     INSERT INTO public.pcb_run_events (run_id, kind, payload)
-    VALUES (run_id, 'done', '{}'::jsonb);
+    VALUES (id_du_run, 'done', '{}'::jsonb);
   EXCEPTION WHEN OTHERS THEN code := SQLSTATE;
   END;
   RESET ROLE;
