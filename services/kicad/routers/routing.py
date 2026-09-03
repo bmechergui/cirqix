@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -671,6 +672,77 @@ def _api(method: str, path: str, payload: Optional[dict] = None,
     return json.loads(raw) if raw else {}
 
 
+# Session Freerouting du PROCESSUS. Une seule, gardee ouverte.
+#
+# ⚠️ MESURE DU 2026-09-03 : on creait une session PAR ROUTAGE et on n en
+# fermait aucune — `GET /v1/sessions/list` en rendait 14, pendant que la JVM
+# annoncait 417 Mo utilises sur 582. Son tas est FIXE (~400 Mo).
+#
+# ⚠️ ET L API NE SAIT PAS EN SUPPRIMER UNE. Verifie sur la v2.1.0 embarquee,
+# en-tetes d identite complets :
+#
+#     DELETE /v1/sessions/{id}        -> 500 « HTTP 405 Method Not Allowed »
+#     POST   /v1/sessions/{id}/delete -> 404
+#     GET    /v1/sessions/{id}        -> 200   (elle existe pourtant)
+#
+# Meme famille que `PUT /jobs/{id}/cancel` qui repond 501 : Freerouting cree,
+# il ne defait pas. Le seul levier est donc de ne pas en creer plus d une.
+#
+# 4 workers uvicorn = 4 processus, donc AU PLUS 4 sessions au lieu d une par
+# routage. Le compte devient borne — c est tout l objet du correctif.
+_SESSION_FREEROUTING: Optional[str] = None
+
+# ⚠️ Les routes du service sont declarees `def`, donc executees dans le POOL DE
+# THREADS de FastAPI : deux routages recus par le meme worker touchent la meme
+# variable de module. Sans verrou, tous deux passent le test « pas de session »
+# et en creent une chacun ; le perdant rend l id de l autre et sa propre
+# session devient ORPHELINE — on recreerait a petite echelle la fuite que ce
+# correctif elimine, avec des sessions que l API ne sait pas supprimer.
+_VERROU_SESSION = threading.Lock()
+
+
+def _session_freerouting(pre: str) -> str:
+    """Session du processus, creee au besoin, VERIFIEE avant reutilisation.
+
+    ⚠️ On verifie au lieu de supposer : une session morte reutilisee en
+    aveugle ferait echouer l enfilement du job plus loin, avec un message
+    sans rapport avec la cause. Et un cache qui survit a ce qu il cache
+    condamnerait tous les routages suivants apres un redemarrage de la JVM.
+
+    ⚠️ MESURE DU 2026-09-03, a lire avant de s inquieter du partage de
+    session : deux routages SIMULTANES dans un meme processus ne survivent
+    pas a cette machine, quel que soit le traitement des sessions. Un seul
+    routage monte a **6,2 Go de memoire residente** ; a deux, le noyau tue le
+    processus (`Out of memory: Killed process ... anon-rss:6247616kB`, crete
+    mesuree 7,2 Go pour 7,6 disponibles). La concurrence est donc bornee par
+    la MEMOIRE bien avant de l etre par Freerouting.
+    """
+    global _SESSION_FREEROUTING
+    with _VERROU_SESSION:
+        if _SESSION_FREEROUTING:
+            try:
+                _api("GET", f"{pre}/sessions/{_SESSION_FREEROUTING}")
+                return _SESSION_FREEROUTING
+            except Exception as exc:
+                # ⚠️ Journalise en AVERTISSEMENT, avec la cause. Un jeton
+                # d identite mal configure et une JVM redemarree menent tous
+                # deux ici ; sans le message, le premier se lit comme le
+                # second et passe pour normal a chaque routage.
+                logger.warning(
+                    "session Freerouting %s injoignable (%s) — on en ouvre "
+                    "une autre", _SESSION_FREEROUTING, exc)
+                _SESSION_FREEROUTING = None
+        cree = _api("POST", f"{pre}/sessions/create", {})
+        sid = cree.get("id") if isinstance(cree, dict) else None
+        if not sid:
+            # Message explicite plutot qu un `KeyError: 'id'` remonte tel quel
+            # dans « Freerouting API echoue ('id') », illisible en journal.
+            raise RuntimeError(
+                "Freerouting a cree une session sans identifiant : %r" % (cree,))
+        _SESSION_FREEROUTING = sid
+        return sid
+
+
 def _route_with_freerouting_api(
     pcb_bytes: bytes,
     timeout_s: int = _DEFAULT_TIMEOUT_S,
@@ -712,8 +784,7 @@ def _route_with_freerouting_api(
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
-        session = _appel("POST", f"{pre}/sessions/create", {})
-        session_id = session["id"]
+        session_id = _session_freerouting(pre)
 
         # ⚠️ On enfilait le job SANS le moindre reglage, donc avec les defauts
         # de Freerouting. Interroges le 2026-08-28 (`GET /jobs/<id>`), ils
