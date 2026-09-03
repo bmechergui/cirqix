@@ -280,3 +280,48 @@ lecteur y trouvera pourquoi ne pas la retenter telle quelle.
 ⚠️ C'est la CONDITION qui est réfutée, pas l'analyse : l'îlot de `D21` reste
 causé par un via isolé après coup. Un remède devra agir **sans ajouter de
 cuivre protégé sur la face que le routeur utilise**.
+
+## 2026-09-03 · `93720ee` — LES HUIT CARTES À 100 %
+
+`stm32-100`, rejouée avec **trois tirages complets** (`--tirages=3`), ferme :
+
+```
+cas                comp couches    %  manq  err  warn   seg  GND   duree
+stm32-100           100       2  100     0    0   135  1045  228  3271.3s
+```
+
+Vérifié sur le board livré : **0 connexion manquante, 0 erreur.** Les 135
+avertissements sont de la sérigraphie (130) et 5 vias borgnes.
+
+**La connexion manquante était un ACCIDENT DE TIRAGE, pas une propriété de la
+carte.** Sur le MÊME placement gelé, Freerouting donne :
+
+```
+99 %   97 %   77 %   (panne écartée)   87 %   …   100 %
+```
+
+23 points d'écart sur une carte identique. Un tirage unique n'est donc pas une
+mesure — c'est un pari, et le banc précédent avait perdu ce pari deux fois de
+suite, ce qui m'a fait chercher une cause structurelle à `D21` pendant des
+heures. L'îlot de 0,9 mm² était réel ; il n'était simplement pas fatal.
+
+⚠️ **NEVER conclure qu'un défaut de routage est structurel sans avoir compté
+plusieurs tirages.** Ce dépôt le savait pour le PLACEMENT (« dispersion de la
+chaîne STM32 ») ; la même prudence vaut pour le ROUTAGE, et deux tirages
+concordants ne suffisent pas à l'établir.
+
+### Le banc complet
+
+| carte | comp | couches | % | manq | err |
+|---|---|---|---|---|---|
+| `arduino-uno` | 35 | 2 | **100** | 0 | 0 |
+| `esp32-baseline` | 20 | 2 | **100** | 0 | 0 |
+| `led-blinker` | 8 | 2 | **100** | 0 | 0 |
+| `nucleo-f401` | 55 | 2 | **100** | 0 | 0 |
+| `stm32-30` | 30 | 2 | **100** | 0 | 0 |
+| `stm32-60` | 60 | 2 | **100** | 0 | 0 |
+| `stm32-baseline` | 17 | 2 | **100** | 0 | 0 |
+| `stm32-100` | 100 | 2 | **100** | 0 | 0 |
+
+**Huit cartes sur huit, 100 % routées, zéro erreur DRC, sur DEUX couches.**
+Aucune escalade de couches n'a servi.
