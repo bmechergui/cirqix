@@ -1203,13 +1203,43 @@ conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
 branche asynchrone de la route derrière drapeau, suivi de run côté client.
 
 Reste :
-- **Progression pendant le routage.** `kct_route.py` utilise
-  `subprocess.run(capture_output=True)` : la sortie du routeur n'est lue qu'à la
-  FIN. Sur 20 minutes, l'utilisateur ne voit donc rien. Le passage en `Popen`
-  avec lecture incrémentale servirait deux fins — l'affichage, et la détection
-  de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
-  bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
-  non testable sans un routage réel de ~14 min.
+- ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03**, et pas
+  du tout là où cette entrée l'annonçait.
+
+  Elle prescrivait de passer `kct_route.py` en `Popen` pour lire la sortie du
+  routeur au fil de l'eau. ⚠️ **`kct_route.py` appartient au Niveau 4, que
+  PERSONNE n'emprunte** : le comptage du 2026-08-30 donne 16 routages sur 16
+  par l'API Freerouting, zéro par `kicad-tools`. Le refactor aurait amélioré un
+  chemin mort. C'est le même piège que `kct build-native`, deux fois proposé
+  comme correctif prioritaire sur la foi d'une ligne de ce fichier.
+
+  Le chemin réel MESURAIT déjà son avancement : `_route_with_freerouting_api`
+  relit le journal de la JVM toutes les deux secondes pour en tirer le numéro
+  de passe et le nombre de nets non routés — c'est ce qui lui sert à couper
+  l'attente d'un job figé. Cette mesure ne SORTAIT pas du service.
+
+      route_auto  →  fichier /tmp/cirqix-progres/<clé>.json
+                  →  GET /route/progress/{clé}
+                  →  worker (sondage pendant l'étape ROUTING)
+                  →  pcb_run_events  →  Realtime  →  Timeline
+
+  Un FICHIER, pas une variable de module : les 4 workers uvicorn sont des
+  processus séparés, et la requête qui route n'est pas celle qui répond au
+  sondage. Écriture atomique, publication seulement sur changement, purge à
+  une heure.
+
+  ⚠️ La clé vient du CLIENT et nomme un fichier : elle est validée des deux
+  côtés, et le client RENONCE à l'affichage plutôt que d'envoyer une clé que le
+  service refuserait en 422 — un 422 ferait échouer le routage lui-même.
+
+  ⚠️ Toute panne de la progression est avalée, à chaque frontière. C'est le
+  pendant exact du fail-fast des handlers, dans l'autre sens : un résultat
+  FABRIQUÉ est interdit, une mesure ABSENTE est acceptable.
+
+  Limite connue : la clé nomme le PROJET, pas le run. Deux runs simultanés sur
+  le même projet mélangeraient leur affichage. Aucun routage n'en échoue.
+  Gardes : `tests/test_progres_routage.py`, `tests/test_progres_expose.py`,
+  `tests/routing-progress.test.ts`, `tests/routing-progress-cablage.test.ts`.
 - ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
   s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
   le catch-up. Publication : migration `020`. Le drapeau
@@ -1479,10 +1509,11 @@ kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
 - **Valider la moitié « journal + Realtime »** avec une vraie
   `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
   les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
-- **Progression pendant le routage** — `kct_route.py` utilise
-  `subprocess.run(capture_output=True)` : rien ne s'affiche pendant 20 minutes.
-  Le passage en `Popen` servirait aussi à détecter un blocage par ABSENCE DE
-  PROGRESSION plutôt que par temps écoulé.
+- ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03.** Voir la
+  section « Pipeline asynchrone » : la mesure existait déjà dans le chemin
+  Freerouting, elle ne sortait pas du service. **NEVER** prescrire un refactor
+  sur `kct_route.py` sans avoir compté qui route : 16 routages sur 16 passent
+  par Freerouting.
 
 ⚠️ **`TEXT-FLOW PLACEMENT FAILED` n'est PAS un blocage** (vérifié le
 2026-09-03). Le message apparaît sur toute carte d'environ 55 composants ou

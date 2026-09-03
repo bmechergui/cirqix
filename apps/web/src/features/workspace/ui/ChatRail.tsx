@@ -25,6 +25,7 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
   const appendMessage = useAppStore((s) => s.appendMessage);
   const patchLastAssistantMessage = useAppStore((s) => s.patchLastAssistantMessage);
   const setAgentStep = useAppStore((s) => s.setAgentStep);
+  const setStepProgress = useAppStore((s) => s.setStepProgress);
   const setAgentBusy = useAppStore((s) => s.setAgentBusy);
   const setPcbState = useAppStore((s) => s.setPcbState);
   const setSelectedStage = useAppStore((s) => s.setSelectedStage);
@@ -70,9 +71,23 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
             break;
           case 'step':
             setAgentStep(ev.step);
+            // La progression appartient a UNE etape : la garder afficherait
+            // l'avancement du routage pendant le DRC qui le suit.
+            setStepProgress(null);
             break;
           case 'pcb_state':
             setPcbState(projectId, ev.state);
+            break;
+          case 'progress':
+            // ⚠️ Le routage dure de 5 s a 20 min et son appel est bloquant :
+            // sans cette ligne, l'utilisateur ne voit rien entre le debut et
+            // la fin. Le service mesure son avancement depuis toujours, il ne
+            // le disait a personne.
+            setStepProgress({
+              step: ev.step,
+              percent: ev.percent,
+              ...(ev.detail ? { detail: ev.detail } : {}),
+            });
             break;
           case 'reasoning': {
             // Reasoner IA — affiche les actions de déblocage du routage en direct
