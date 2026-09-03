@@ -395,6 +395,72 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         ⑤ plans re-coulés + remplis, fanout des pastilles isolées
         ⑥ couture des îlots de plan, RÉPÉTÉE jusqu'à épuisement
 
+     ⚠️ **L'ÉTAPE ② VISE TOUTE PASTILLE CMS D'UN NET DE PLAN** (2026-09-02),
+     plus seulement les boîtiers denses. Elle ne visait qu'eux, sur la prémisse
+     que « le plan atteint sans peine la masse d'une résistance ». Mesure sur
+     `stm32-100` : `U1.8`, `C12.2` et `C2.2` finissent orphelines du plan, et
+     AUCUNE n'appartient à un boîtier assez dense pour être visée — deux
+     condensateurs et une broche de MCU. Elles étaient collées au plan F.Cu
+     AVANT le routage ; ce sont les pistes de signal qui ont découpé le plan
+     autour d'elles. C'est un EFFET du routage, pas un état initial.
+
+     Compte par carte : **3 à 57 dogbones**, des dizaines et non des centaines.
+     Les traversantes restent exclues — leur perçage atteint déjà le plan d'en
+     face, et le doublon a déjà coûté à ce dépôt le rejet TOUT-OU-RIEN de
+     vingt et un vias. Garde : `tests/test_dogbone_gnd_sur_toute_pastille_cms.py`.
+
+     ⚠️ **UN DOGBONE, PAS UN VIA DANS LA PASTILLE.** Avis de Grok, qui tranche
+     entre les deux : un via sous chaque capa occuperait B.Cu **pile sous le
+     composant**, c'est-à-dire le meilleur canal de signal sur deux couches.
+
+     ⚠️ **AMORCE SUR LA FACE OPPOSÉE : ESSAYÉE, RÉFUTÉE** (2026-09-02). Poser
+     avec le via une courte piste de masse sur l'autre face, protégée dans le
+     DSN, pour que le plan re-coulé rejoigne toujours le via. GLM validait le
+     principe et avertissait du bouchon de routage ; c'est le bouchon qui l'a
+     emporté :
+
+        | | % | manq | seg | segments GND | durée |
+        |---|---|---|---|---|---|
+        | sans amorce | 99 | 1 | 779 | **57** | 901 s |
+        | avec amorce | 99 | 1 | 732 | **6** | 2798 s |
+
+     Aucun gain, **trois fois plus lent**, et les segments GND survivant au
+     round-trip s'effondrent de 57 à 6 : les amorces protégées gênent le
+     routeur au point de lui faire perdre les dogbones eux-mêmes. Retirée ; la
+     réfutation vit à son site dans `_escape_pads`.
+
+     ### Banc du 2026-09-03 — les huit cartes à 100 %
+
+     ```
+     carte             comp  couches    %    manq   err     témoin
+     arduino-uno         35     2      100     0     0        —
+     esp32-baseline      20     2      100     0     0        —
+     led-blinker          8     2      100     0     0        —
+     nucleo-f401         55     2      100     0     0    98 % · 2 manq
+     stm32-30            30     2      100     0     0    96 % · 3 manq
+     stm32-60            60     2      100     0     0    98 % · 3 manq
+     stm32-baseline      17     2      100     0     0        —
+     stm32-100          100     2      100     0     0    99 % · 8 manq
+     ```
+
+     **Huit sur huit, zéro erreur, sur DEUX couches** — et trois à six fois plus
+     vite (`stm32-60` 2795 → 444 s, `stm32-100` 3907 → 901 s). Donner au routeur
+     ses vias de masse d'avance lui épargne le travail qu'il refaisait ensuite
+     en pure perte. **Aucune escalade de couches n'a servi.**
+
+     ⚠️ **NEVER conclure qu'un défaut de routage est STRUCTUREL sans avoir
+     compté plusieurs tirages.** `stm32-100` gardait une connexion manquante ;
+     j'ai cherché une cause structurelle pendant des heures — îlot de 0,9 mm²
+     autour de la masse de `D21`, réel et correctement diagnostiqué. Rejouée
+     avec `--tirages=3`, la MÊME carte au MÊME placement gelé donne :
+
+        99 %   97 %   77 %   (panne écartée)   87 %   …   **100 %**
+
+     23 points d'écart. **Deux tirages concordants ne prouvent rien** — c'est
+     exactement ce sur quoi je m'étais appuyé pour conclure. Ce dépôt le savait
+     pour le PLACEMENT (« dispersion de la chaîne STM32 ») ; la même prudence
+     vaut pour le ROUTAGE.
+
      ⚠️ **LE PLAN EST COULÉ AVANT LE ROUTAGE, PAS APRÈS.** On le coulait après :
      le routeur ne voyait donc jamais le cuivre de masse et routait comme si la
      carte était vide. Mesure sur la Nucleo, même placement : 68-71 % (plan
@@ -1566,6 +1632,51 @@ utilisait déjà ailleurs. Compléter le faux, jamais affaiblir le code pour lui
 propre garde cherchait `"repli GND retenu"` par `index()` et tombait sur la
 docstring de la règle, en amont du site d'appel. `rindex()`, ou un ancrage sur
 ce qui ne bouge pas.
+
+### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
+
+**NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
+posé dans une pastille était exempté de dégagement, au motif juste qu'il
+« hérite de l'isolement de sa pastille ». Vrai **sur la couche de la
+pastille** : une pastille CMS n'existe que sur une face, le via traverse
+jusqu'à l'autre, et y pose du cuivre que rien ne vouche. Mesuré à **0,048 mm**
+d'une piste GPIO46 sur B.Cu, pour 0,2 mm exigés. La dispense est désormais
+bornée à la couche de la pastille ; les autres sont vérifiées.
+Garde : `tests/test_via_in_pad_traverse_les_couches.py`.
+
+**NEVER faire confiance à une docstring qui promet de suivre une autre
+fonction.** `_poser_via_dans_pastille` affirmait « réutilise exactement les
+règles du fanout ». La phrase était vraie quand elle a été écrite ; le
+renforcement du fanout, le matin même, l'a rendue fausse **sans que rien ne le
+signale**, et le défaut ci-dessus a survécu une demi-journée de plus dans la
+sœur. Quand deux fonctions doivent appliquer la même règle, **extraire la
+règle** et poser une garde qui compare les deux — `_via_gene_par` existe pour
+ça. Un prédicat inline dans deux fonctions ne peut être testé que par leurs
+effets, et c'est ainsi qu'elles divergent.
+
+**NEVER calibrer une règle sur `expected/` quand le code lit `output/`.** Ma
+règle de dogbone trouvait 3 à 57 cibles sous Windows et **zéro** dans le
+conteneur : `/app/examples` est CUIT DANS L'IMAGE, pas monté, et le banc
+accepte une racine explicite (`banc_exemples.py /tmp/ex`) précisément pour ça.
+Un banc entier perdu, sept cartes sur huit jamais mesurées. C'est la deuxième
+fois que ce dépôt paie « calibrer sur une source voisine de celle que le code
+lit » — la première était le plancher d'échappement.
+
+**NEVER bâtir un diagnostic sur une sonde qu'on vient d'écrire sans la
+confronter à une vérité connue.** Ma sonde d'îlots annonçait « tous les îlots
+non reliés » sur un board que le DRC déclarait à une seule connexion près :
+absurde, donc la sonde était fausse — `_touche_le_net_en_face` attend un NOM de
+couche, je lui passais un identifiant. Trois sondes fausses dans la même
+session, toutes détectées par l'invraisemblance de leur résultat, jamais par
+leur code.
+
+**NEVER conclure qu'un défaut de routage est STRUCTUREL sans plusieurs
+tirages.** Voir la section routage : 23 points d'écart sur la même carte au même
+placement, et deux tirages concordants qui ne prouvaient rien.
+
+**ALWAYS sortir du conteneur ce qu'on veut garder.** `examples/` n'y est pas
+monté : un board produit par le banc n'existe QUE dans le conteneur et part au
+premier redémarrage — la leçon des worktrees vidés, transposée.
 
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
