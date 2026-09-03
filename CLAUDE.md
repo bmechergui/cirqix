@@ -1157,6 +1157,44 @@ tous les `dépôt de l artefact échoué` et `persistance intermédiaire échou�
 journal sont attendus. La moitié « journal + Realtime » reste à valider avec une
 vraie `SUPABASE_SERVICE_KEY`.
 
+### Validation du 2026-09-03 — ce qui manquait vraiment
+
+⚠️ **La migration `020` n'était PAS appliquée en production.** Mesuré avant :
+
+```
+pcb_run_events   replica_identity = d   dans supabase_realtime = non
+```
+
+`followRun` s'abonne aux INSERT de cette table : **aucun événement ne pouvait
+parvenir au navigateur**. Le repli par sondage HTTP masquait le défaut — les
+utilisateurs voyaient des mises à jour, jamais par Realtime. Appliquée et
+vérifiée : `REPLICA IDENTITY FULL`, table publiée. `pcb_runs` reste hors
+publication, conformément à la migration.
+
+Vérifié ensuite sur les données RÉELLES de production :
+
+| | mesure |
+|---|---|
+| persistance | 9 runs · 765 événements · 8 projets, déjà écrits |
+| isolation RLS | propriétaire **765**, autre utilisateur **0** |
+| abonnement Realtime | `SUBSCRIBED` depuis l'hôte avec la clé publique |
+| advisors | aucun nouvel avertissement lié à la migration |
+
+⚠️ **Un abonnement avec la clé de SERVICE depuis le conteneur rend
+`TIMED_OUT`** ; le même abonnement avec la clé publique depuis l'hôte rend
+`SUBSCRIBED`. Ne pas en conclure que Realtime est cassé : c'est le chemin du
+navigateur qui compte, et il fonctionne.
+
+⚠️ **Le drapeau aurait été INERTE.** `REDIS_URL` était vide dans
+`apps/web/.env.local`, et `cirqix-redis` n'exposait aucun port : la route, qui
+tourne sur l'hôte, ne pouvait pas joindre la file. Le fail-closed refusait donc
+une file inatteignable — il fonctionnait exactement comme prévu. Redis est
+désormais publié sur `127.0.0.1` uniquement (il n'a pas de mot de passe).
+
+**Reste à prouver** : qu'un utilisateur CONNECTÉ reçoit bien l'événement — la
+combinaison RLS + Realtime. Cela exige une vraie session ; tout le reste de la
+chaîne est vérifié.
+
 ### État
 
 Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
