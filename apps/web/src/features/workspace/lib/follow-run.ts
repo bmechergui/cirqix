@@ -32,6 +32,7 @@ export const POLL_IDLE_MS = 3_000;
 const KNOWN_KINDS = new Set([
   'token',
   'step',
+  'progress',
   'status',
   'pcb_state',
   'reasoning',

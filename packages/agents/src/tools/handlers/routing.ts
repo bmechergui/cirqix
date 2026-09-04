@@ -2,6 +2,7 @@ import { pcbStateCache, log, getProjectPlan } from '../shared';
 import { maxLayersForPlan } from '@cirqix/types';
 import { runPCBEngine } from '../../engines/engine-router';
 import { runRealRouting, RoutingServiceUnavailableError } from '../../engines/routing-service';
+import { progressKeyFor } from '../../engines/routing-progress';
 import { stripTrackSegments, addGroundPlane } from '../pcb-helpers';
 
 /**
@@ -78,9 +79,17 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
   // Try Freerouting via the FastAPI microservice. On any failure, fall
   // back to a clean (no dangling tracks) PCB with a GND copper pour.
   try {
+    const progressKey = progressKeyFor(projectId);
     const service = await runRealRouting({
       kicadPcbContent: cleanPcbContent,
       layers: decidedLayers,
+      // Sous quel nom le service publie son avancement, pour que le
+      // worker puisse le lire pendant les minutes que dure cet appel.
+      // `progressKeyFor` renonce plutot que d envoyer une cle que le
+      // service refuserait en 422 — ce qui ferait echouer LE ROUTAGE
+      // pour un simple indicateur. Le champ est OMIS quand il renonce
+      // (`exactOptionalPropertyTypes`), jamais pose a `undefined`.
+      ...(progressKey ? { progressKey } : {}),
     });
 
     if (service.skipped) {
