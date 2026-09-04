@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import functools
 import logging
 import os
 import math
@@ -38,6 +39,7 @@ from tools.progres_routage import (
     publier_progres,
 )
 from tools.sexp_quote import unquote_keepout_values
+from tools.verrou_routage import RoutageOccupe, verrou_de_routage
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -4624,7 +4626,51 @@ def _armer_abandon(actif: bool) -> None:
     _ABANDON_AUTORISE = actif
 
 
+def _un_seul_routage_a_la_fois(fonction):
+    """Serialise les routages sur toute la machine.
+
+    ⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire
+    residente** (`stm32-baseline`, le plus petit board du banc) ; deux en
+    parallele font tuer le processus par le noyau — `Out of memory: Killed
+    process (python3) anon-rss:6247616kB`, crete 7,2 Go pour 7,6 disponibles.
+    Le service tourne pourtant avec `--workers 4` : il annonce quatre requetes
+    simultanees quand la memoire n en autorise qu une. Le client voyait un
+    `RemoteDisconnected` sans message, le journal un `Child process died` :
+    rien ne designait la cause.
+
+    ⚠️ POURQUOI PAS UN SEUL WORKER, qui reglerait la memoire d un mot : parce
+    que `GET /route/progress` — la progression livree le meme jour — et
+    `GET /health`, dont Docker se sert pour juger le conteneur, attendraient
+    alors la fin d un routage de vingt minutes. On garde les quatre workers
+    pour les requetes legeres, on serialise le seul point couteux.
+
+    ⚠️ POURQUOI UN DECORATEUR et non un `with` dans le corps : celui-ci compte
+    580 lignes et DIX gardes le lisent par `inspect.getsource(route_auto)`.
+    Le scinder les ferait toutes lire une enveloppe de trois lignes — l erreur
+    deja commise le jour meme sur ce fichier. `functools.wraps` laisse
+    `getsource` suivre `__wrapped__` et rendre le corps reel.
+
+    Decision produit D-2026-09-03-b (`docs/DECISIONS.md`).
+    """
+    @functools.wraps(fonction)
+    def enveloppe(req: RouteAutoRequest) -> RouteAutoResponse:
+        # Pris AVANT l echeance calculee dans le corps : l attente ne doit pas
+        # etre deduite du budget de recherche, sinon un appelant qui patiente
+        # verrait son routage tronque par la faute d un autre.
+        try:
+            with verrou_de_routage():
+                return fonction(req)
+        except RoutageOccupe as exc:
+            # 503 et non 500 : le service va bien, il est occupe. Et jamais un
+            # faux succes — un `skipped` ou un `routed_percent: 0` se lirait
+            # comme un verdict de routage alors qu aucun n a eu lieu.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return enveloppe
+
+
 @router.post("/route/auto", response_model=RouteAutoResponse)
+@_un_seul_routage_a_la_fois
 def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     """Route en escaladant les couches jusqu'a obtenir 100 %.
 
