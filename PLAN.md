@@ -842,7 +842,12 @@ test d'import/version et build CI bloquant (`test_docker_build_context.py`).
 
 ---
 
-### Étape 4.4 — Paiement Lemon Squeezy
+### Étape 4.4 — Paiement Lemon Squeezy ✅ LIVRÉE (vérifiée le 2026-09-03)
+
+> Webhook (5 événements), page de facturation, signature de checkout,
+> migrations `008`/`009`/`013`/`016`, **39 tests verts**. Voir CLAUDE.md.
+> Cette section décrivait un travail à faire alors qu'il était fait.
+
 
 **Fichiers :**
 - `apps/web/src/app/api/webhooks/lemon-squeezy/route.ts`

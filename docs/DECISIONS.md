@@ -26,6 +26,19 @@
   `tools/placement.py::auto_place`, gardes `tests/test_placement_bypass_snap.py`,
   `tests/test_snap_apres_geometre.py`.
 
+### D-2026-09-03-a — Seed de placement (rejouabilité du GA)
+- **Ce qui était prévu (handoff `2026-08-28-placement-seed-snap`) :** semer `random`
+  depuis les octets du board et forcer `EvolutionaryConfig.parallel=False`, pour que
+  « même board ⇒ même suite de tirages » (`seed + essai` par tirage).
+- **Pourquoi ce n'est pas implémenté :** le GA séquentiel est plus lent que le
+  ProcessPool, et un placement rejouable change la stratégie livrée (les re-tirages
+  pilotés par le DRC reposent aujourd'hui sur le hasard non semé). Coût de placement
+  contre reproductibilité des bancs : choix produit.
+- **Ce que l'utilisateur doit arbitrer :** implémenter le seed (au prix d'un placement
+  plus lent), ou renoncer et garder le placement non semé.
+- **Trace :** le test RED `tests/test_placement_seed.py` a été retiré le 2026-09-03 ;
+  `tools/placement_seed.py` n'a jamais existé.
+
 ### D-2026-08-21-a — kicad-tools devant Freerouting dans la cascade
 - **Ce qui a été décidé sans validation :** « Décision produit du 2026-08-21 » —
   kicad-tools reste le Niveau 1 car seul chemin d'escalade de couches (plans Pro 4/8),

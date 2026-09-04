@@ -1157,6 +1157,44 @@ tous les `dépôt de l artefact échoué` et `persistance intermédiaire échou�
 journal sont attendus. La moitié « journal + Realtime » reste à valider avec une
 vraie `SUPABASE_SERVICE_KEY`.
 
+### Validation du 2026-09-03 — ce qui manquait vraiment
+
+⚠️ **La migration `020` n'était PAS appliquée en production.** Mesuré avant :
+
+```
+pcb_run_events   replica_identity = d   dans supabase_realtime = non
+```
+
+`followRun` s'abonne aux INSERT de cette table : **aucun événement ne pouvait
+parvenir au navigateur**. Le repli par sondage HTTP masquait le défaut — les
+utilisateurs voyaient des mises à jour, jamais par Realtime. Appliquée et
+vérifiée : `REPLICA IDENTITY FULL`, table publiée. `pcb_runs` reste hors
+publication, conformément à la migration.
+
+Vérifié ensuite sur les données RÉELLES de production :
+
+| | mesure |
+|---|---|
+| persistance | 9 runs · 765 événements · 8 projets, déjà écrits |
+| isolation RLS | propriétaire **765**, autre utilisateur **0** |
+| abonnement Realtime | `SUBSCRIBED` depuis l'hôte avec la clé publique |
+| advisors | aucun nouvel avertissement lié à la migration |
+
+⚠️ **Un abonnement avec la clé de SERVICE depuis le conteneur rend
+`TIMED_OUT`** ; le même abonnement avec la clé publique depuis l'hôte rend
+`SUBSCRIBED`. Ne pas en conclure que Realtime est cassé : c'est le chemin du
+navigateur qui compte, et il fonctionne.
+
+⚠️ **Le drapeau aurait été INERTE.** `REDIS_URL` était vide dans
+`apps/web/.env.local`, et `cirqix-redis` n'exposait aucun port : la route, qui
+tourne sur l'hôte, ne pouvait pas joindre la file. Le fail-closed refusait donc
+une file inatteignable — il fonctionnait exactement comme prévu. Redis est
+désormais publié sur `127.0.0.1` uniquement (il n'a pas de mot de passe).
+
+**Reste à prouver** : qu'un utilisateur CONNECTÉ reçoit bien l'événement — la
+combinaison RLS + Realtime. Cela exige une vraie session ; tout le reste de la
+chaîne est vérifié.
+
 ### État
 
 Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
@@ -1294,7 +1332,7 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 
 **Phase 4 — 3D + JLCPCB + Paiement** (en cours). Voir `PLAN.md`.
 
-Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · Phase 4.1 ✓ · **Phase 4.2 ✓ · Phase 4.3 ✓**
+Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · Phase 4.1 ✓ · **Phase 4.2 ✓ · Phase 4.3 ✓ · Phase 4.4 ✓**
 
 ### Phase 2 — Réalisations ✅
 - ✅ Auth Supabase + middleware JWT (`/dashboard/*`)
@@ -1409,9 +1447,54 @@ Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ �
   - **Fix `route_with_llm`** (TDD, commit 34be8ae) : `_refresh_agent` resync l'état (PCBReasoningAgent ne remet pas à jour `PCBState` en session → sinon pct=0% sur board routé à 100% + boucle jusqu'à max_steps). Bug trouvé en testant le reasoner « moi = le LLM »
   - Docs : `notefinal.md` (entrées 2026-06-02 + 2026-06-03), `PLAN.md`, `CLAUDE.md`, `cirqix-full-resume.md` (commits 32027cd, a7f7b21)
 
+### Phase 4.4 — Paiement Lemon Squeezy ✅ (vérifié le 2026-09-03)
+
+⚠️ **Cette étape était annoncée « à faire » alors qu'elle était LIVRÉE.** Le
+2026-09-03, en démarrant le travail, j'ai trouvé le webhook, la page de
+facturation, la signature de checkout, cinq migrations et 39 tests verts. Rien
+à construire. Une ligne « prochaine étape » périmée fait recommencer du travail
+fait — c'est le pendant de la section d'ordre d'exécution périmée du routage.
+
+- `apps/web/src/app/api/webhooks/lemon-squeezy/route.ts` — cinq événements :
+  `order_created` (top-ups), `subscription_created`, `subscription_renewed`,
+  `subscription_cancelled` (seulement si plus d'accès restant), `subscription_expired`
+- `apps/web/src/shared/lib/checkout-signature.ts` — l'`user_id` voyage **signé**
+  dans l'URL de checkout : sans cela, n'importe qui créditerait le compte d'autrui
+- `apps/web/src/app/(dashboard)/dashboard/billing/page.tsx` — packs de top-up
+  20 / 100 / 300 crédits, plans Pro et Pro Max
+- Migrations `008` (idempotence webhook), `009` (verrouillage RPC crédits),
+  `013` (crédit atomique), `016` (expiration d'abonnement)
+- Tests : `lemon-squeezy-webhook` (23) · `lemon-squeezy-subscription-end` (8) ·
+  `checkout-signature` (8) — **39 passed**
+
 ### Prochaine étape Phase 4
-- **4.4** — Paiement Lemon Squeezy (webhook + page billing + top-ups)
-- (validation) End-to-end reasoner dans Docker : `kct build-native` (C++) + `ANTHROPIC_API_KEY` → vrai Claude Haiku débloque + `reasoning_steps` au ChatRail
+
+⚠️ L'ancienne entrée citait `kct build-native` comme validation attendue. Elle
+est **caduque** : le comptage du 2026-08-30 montre 16 routages, **0 par
+kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
+
+- **Allumer `CIRQIX_ASYNC_PIPELINE`** là où Redis ET le worker tournent. Le
+  drapeau reste fail-closed dans le code, et sans file un `202` accepterait un
+  job que personne ne consomme.
+- **Valider la moitié « journal + Realtime »** avec une vraie
+  `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
+  les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
+- **Progression pendant le routage** — `kct_route.py` utilise
+  `subprocess.run(capture_output=True)` : rien ne s'affiche pendant 20 minutes.
+  Le passage en `Popen` servirait aussi à détecter un blocage par ABSENCE DE
+  PROGRESSION plutôt que par temps écoulé.
+
+⚠️ **`TEXT-FLOW PLACEMENT FAILED` n'est PAS un blocage** (vérifié le
+2026-09-03). Le message apparaît sur toute carte d'environ 55 composants ou
+plus — `nucleo-f401`, `stm32-100` — jamais sur `stm32-30`. Je l'ai d'abord
+annoncé comme « au-delà de 55 composants la génération de schéma échoue ». Faux :
+la ligne SUIVANTE du journal dit
+
+    🔄 PLACE_COMPONENTS: Using fallback grid placement
+
+Le schéma EST produit, avec un placement en grille au lieu du flux de texte.
+C'est une dégradation de lisibilité, pas une panne. **NEVER relayer le message
+d'une garde comme un diagnostic** — et lire la ligne suivante avant de conclure.
 
 ---
 
