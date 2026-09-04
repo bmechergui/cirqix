@@ -839,6 +839,49 @@ ce schéma.
 **NEVER** conclure qu'un appel `pcbnew` est isolé au seul motif que le service
 tourne avec plusieurs workers uvicorn.
 
+### ⚠️ UN ROUTAGE COÛTE 6,2 Go — les 4 workers sont une promesse que la RAM ne tient pas (2026-09-03)
+
+Deux routages lancés **simultanément dans le même processus** (`stm32-baseline`,
+17 composants, le plus petit board du banc) ne survivent pas :
+
+```
+Out of memory: Killed process (python3)  anon-rss:6247616kB
+crête du cgroup : 7,2 Go        WSL en offre : 7,6
+```
+
+**Un seul routage monte à 6,2 Go de mémoire résidente.** La concurrence du
+service est donc bornée par la MÉMOIRE, bien avant de l'être par Freerouting,
+par le pool de threads ou par `--workers 4`. Sur cette machine, deux requêtes
+de routage qui se recouvrent tuent le worker qui les traite — et le symptôme
+est un `RemoteDisconnected` côté client, un `Child process died` côté journal,
+sans le moindre message applicatif.
+
+⚠️ Ce défaut est INTERMITTENT et se lit comme un bug de code. Quatre
+hypothèses ont été réfutées par la mesure avant d'arriver là ; ne pas les
+re-tester :
+
+| hypothèse | test | verdict |
+|---|---|---|
+| exécution hors thread principal | appel dans un `threading.Thread` | route à 100 % |
+| sondage concurrent d'une autre route | échecs aussi sans sondage | écartée |
+| nombre de workers | 1 worker, puis 4 | les deux réussissent |
+| origine de l'appel | hôte, puis intérieur du conteneur | les deux réussissent |
+
+⚠️ Les asserts `PROPERTY_ENUM` du journal sont du **BRUIT** : 10947 occurrences
+dans l'historique, présentes aussi quand tout va bien. Je les ai d'abord pris
+pour l'indice principal. **NEVER** lire un message répété comme un diagnostic.
+
+⚠️ **Le banc ne voit RIEN de tout cela** : `banc_exemples.py` importe
+`route_auto` en Python et n'exerce donc JAMAIS la voie HTTP. Les huit cartes à
+100 % du 2026-09-03 étaient vertes pendant que la voie HTTP mourait une fois
+sur deux. Seuls le worker et l'orchestrateur passent par HTTP.
+
+⚠️ Défaut voisin, corrigé : un `/tmp/.X99-lock` orphelin empêchait Xvfb de
+redémarrer après un `docker restart`, privant `pcbnew` d'affichage. Vérifier
+`pgrep Xvfb` après tout redémarrage du conteneur.
+
+Dimensionnement : décision produit `D-2026-09-03-b`, **en attente**.
+
 **Variables obligatoires dans Docker :**
 ```
 KICAD_SYMBOL_DIR=/usr/share/kicad/symbols

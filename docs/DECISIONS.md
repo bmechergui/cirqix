@@ -26,6 +26,27 @@
   `tools/placement.py::auto_place`, gardes `tests/test_placement_bypass_snap.py`,
   `tests/test_snap_apres_geometre.py`.
 
+### D-2026-09-03-b — Dimensionnement : 4 workers pour une machine qui tient un seul routage
+- **Le fait mesuré :** un routage monte à **6,2 Go de mémoire résidente**
+  (`stm32-baseline`, le plus petit board du banc). Deux en parallèle dépassent
+  les 7,6 Go de la machine et le noyau tue le processus
+  (`Out of memory: Killed process ... anon-rss:6247616kB`, crête 7,2 Go).
+- **La contradiction :** `docker-entrypoint.sh` lance `uvicorn --workers 4`.
+  Quatre workers annoncent quatre requêtes simultanées ; la mémoire n'en
+  autorise qu'une. Le service accepte donc des requêtes qu'il ne peut pas
+  honorer, et le symptôme (`Child process died`) ne désigne pas sa cause.
+- **Ce que l'utilisateur doit arbitrer**, entre autres voies :
+  1. ramener le service à 1 worker et sérialiser les routages en amont (la file
+     BullMQ le fait déjà, `worker` en concurrence 1) ;
+  2. garder 4 workers mais poser un sémaphore sur `/route/auto`, pour refuser
+     ou faire attendre plutôt que mourir ;
+  3. donner plus de mémoire à la machine et mesurer le vrai plafond.
+- **Pourquoi ce n'est pas un correctif technique :** chacune de ces voies
+  change le débit annoncé du service et le comportement vu par l'utilisateur
+  (attente contre refus), donc la promesse produit.
+- **Code concerné :** `services/kicad/docker-entrypoint.sh`,
+  `services/kicad/routers/routing.py`.
+
 ### D-2026-09-03-a — Seed de placement (rejouabilité du GA)
 - **Ce qui était prévu (handoff `2026-08-28-placement-seed-snap`) :** semer `random`
   depuis les octets du board et forcer `EvolutionaryConfig.parallel=False`, pour que
