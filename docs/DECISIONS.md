@@ -65,6 +65,47 @@
 
 ## Validées par l'utilisateur
 
+### D-2026-09-05-a — La retenue de crédit suit le travail réel (fenêtre glissante)
+**Tranchée le 2026-09-05 : l'utilisateur a validé cette action précise** (« ok »
+sur la recommandation « aligner la retenue de crédits sur la durée réelle »).
+
+- **Le défaut :** `PIPELINE_RESERVATION_TTL_S` valait 360 s, calibré sur la
+  route SYNCHRONE plafonnée à 300 s. Le pipeline ASYNCHRONE dure **19 minutes
+  mesurées** (run `4290007c`). Passé la sixième, la retenue expirait sous un job
+  qui tournait : `available_credits` cessait de la compter, un second projet
+  pouvait démarrer sur le même solde, et les deux consommaient Sonnet et le
+  service KiCad sans engagement — exactement la fenêtre que la migration `015`
+  avait fermée. Le drapeau `CIRQIX_ASYNC_PIPELINE` étant allumé, elle était
+  ACTIVE. Relevé par Grok en consultation, vérifié ligne à ligne.
+- **Ce que ce n'est pas :** un vol de crédits. La contrainte
+  `credits_balance_nonnegative` interdit un solde négatif ; le prix est de la
+  ressource brûlée et un second run qui échoue à la facturation après vingt
+  minutes de travail.
+- **Ce qui est retenu :** la retenue devient une **fenêtre glissante**. Chaque
+  battement de cœur du run (30 s) repousse son échéance de 600 s
+  (`extend_pipeline_reservation`, migration `021`). Un run vivant garde son
+  crédit engagé aussi longtemps qu'il travaille ; un run mort cesse d'être
+  rafraîchi et sa retenue expire d'elle-même.
+- **Pourquoi pas une simple valeur plus grande**, ce qui était mon premier
+  correctif : `reserve_pipeline_credits` refuse au-delà de 3600 s, et surtout
+  rien ne libérait la retenue d'un run ÉCHOUÉ — un seul échec aurait gelé le
+  solde une heure. La revue de sécurité l'a relevé. La libération à la clôture
+  est livrée dans le même lot (`services/worker/src/reservations.ts`).
+- ⚠️ **Découverte au passage :** `pcb_runs.heartbeat_at` était écrit toutes les
+  30 s depuis la migration `019`, index compris, et **aucun code ne le lisait**.
+  Les commentaires de `run-job.ts` et `run-repository.ts` annonçaient un
+  réconciliateur des runs muets qui **n'a jamais été écrit**. C'est son premier
+  usage réel.
+- ⚠️ **La migration `021` n'est PAS appliquée.** Le code est fail-safe : sans
+  elle, la prolongation échoue en silence et le comportement retombe sur
+  l'échéance fixe (3600 s), qui couvre déjà les 19 minutes mesurées. À appliquer
+  pour obtenir la fenêtre glissante.
+- **Code :** `apps/web/src/app/api/agent/lib/credits.ts`,
+  `services/worker/src/reservations.ts`, `services/worker/src/adapters.ts`,
+  `packages/db/supabase/migrations/021_extend_pipeline_reservation.sql`.
+  Gardes : `apps/web/src/test/credits-reservation.test.ts`,
+  `services/worker/src/tests/liberation-reservation.test.ts`.
+
 ### D-2026-09-03-b — Un seul routage a la fois (verrou), 4 workers conserves
 **Tranchee le 2026-09-04 par DELEGATION EXPLICITE de l'utilisateur** (« ok decide toi »).
 Claude a choisi ; l'utilisateur peut inverser a tout moment.
