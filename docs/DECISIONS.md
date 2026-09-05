@@ -15,6 +15,16 @@
 ## En attente de validation
 
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
+> ⚠️ **CETTE DÉCISION EST APPLIQUÉE EN PRODUCTION DEPUIS LE 2026-08-29**, alors
+> qu'elle figure ici « en attente ». Le snap tourne à chaque placement
+> (`tools/placement.py::auto_place`, étape ⑤) et a été fusionné dans `main`
+> par la PR #143. Relevé par GLM en consultation le 2026-09-05.
+>
+> Ce n'est PAS une validation : seul l'utilisateur peut la donner. C'est le
+> constat, écrit ici pour qu'un lecteur ne croie plus qu'il suffit de trancher
+> AVANT d'implémenter — l'implémentation a précédé, contrairement à la règle
+> d'autonomie bornée de `CLAUDE.md`. Arbitrer revient donc à **garder ou
+> retirer** du code livré, pas à autoriser ou refuser un travail à venir.
 - **Ce qui a été décidé sans validation :** la limite acceptée le 2026-06-18
   (« clusters à 13-28 mm du MCU, routable, adjacence serrée → Phase 6 RL_PCB ») a été
   levée via `tools/placement_bypass.py::snap_cluster_members` (étape ⑤ du placement).

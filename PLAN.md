@@ -45,9 +45,24 @@ cirqix/
 | Microservice KiCad | Python FastAPI + pcbnew — Docker headless (DigitalOcean) |
 | Agents | Claude SDK — Orchestrateur Sonnet 4.6 + 8 agents Haiku 4.5 |
 | DB | PostgreSQL + Supabase + pgvector (uuid-ossp, pgvector) |
-| Queue | Redis + BullMQ (10 PCBs simultanés) |
+| Queue | Redis + BullMQ — **1 PCB à la fois** (voir ci-dessous) |
 | Stockage | Supabase Storage (`/storage/{userId}/{projectId}/`) |
 | Auth | Supabase Auth (email + Google OAuth) |
+
+> ⚠️ **« 10 PCBs simultanés » était une promesse que rien ne tient**, et elle a
+> figuré ici jusqu'au 2026-09-05. Le worker est réglé sur `concurrency: 1`
+> (`packages/agents/src/pipeline/job.ts`) et le service KiCad n'accepte qu'un
+> routage à la fois depuis la décision `D-2026-09-03-b` — deux routages
+> concurrents font tuer le processus par le noyau.
+>
+> Ce n'est pas un défaut à corriger : le goulot est le routage, qui sature un
+> cœur pendant des minutes. Dix en parallèle ne rendraient pas dix cartes plus
+> vite, ils rendraient dix cartes plus lentement, ou aucune. BullMQ sert donc de
+> FILE D'ATTENTE — ce qui est sa vraie valeur ici : personne n'est refusé, tout
+> le monde attend son tour, et la progression du routage remonte pendant
+> l'attente.
+>
+> Relevé par Grok en consultation le 2026-09-05.
 | Paiement | Lemon Squeezy (MVP) → Stripe (V2) |
 | Viewer Schéma | KiCanvas (rendu natif .kicad_sch en browser) |
 | Viewer PCB 2D | KiCanvas (rendu natif .kicad_pcb) |
@@ -955,7 +970,7 @@ proxy n'apparaît dans le dépôt.
 | Unit | Vitest | Crédits (atomicité), parsing netlist, engine router |
 | Integration | Vitest + Supertest | API routes, webhooks, DB |
 | E2E | Playwright | Signup → projet → chat → viewer → export → billing |
-| Load | k6 | BullMQ 10 PCBs simultanés |
+| Load | k6 | BullMQ — file d'attente, PAS de parallélisme (voir §Queue) |
 | Sécurité | Manuel | RLS isolation, injection, XSS, CSRF |
 
 **Cible : 80%+ couverture**
