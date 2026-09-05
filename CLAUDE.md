@@ -60,6 +60,17 @@ parfaitement intégrée, puisque les PR sont fusionnées en **squash**. Vérifie
 
 ## Projet
 SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
+
+⚠️ **LA COMMANDE JLCPCB N'ENVOIE RIEN** (vérifié le 2026-09-05).
+`POST /api/jlcpcb/order` valide le gate, produit une référence et répond
+`submitted: false`, `status: 'ready_for_manual_submission'`, avec le message
+« No order was sent to JLCPCB ». C'est une PRÉPARATION de dossier, pas une
+commande — et c'est un choix sûr, puisqu'aucun envoi accidentel n'est possible.
+
+Mais la tagline, la ligne ci-dessus et `PLAN.md` §4.3 disent « commande
+JLCPCB » sans réserve. Un lecteur — humain ou agent — en conclut que la boucle
+est fermée. Elle ne l'est pas : la dernière étape est manuelle.
+Relevé par Grok en consultation le 2026-09-05.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
 
 ## graphify
