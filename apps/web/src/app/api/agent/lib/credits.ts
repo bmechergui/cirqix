@@ -21,12 +21,29 @@ export function hasEnoughPipelineCredits(balance: number): boolean {
 /**
  * Durée de vie d'une retenue, en secondes.
  *
- * `maxDuration = 300` côté route : un TTL plus court libérerait le crédit
- * pendant que le pipeline tourne encore, ce qui rouvrirait exactement la
- * fenêtre que la retenue ferme. La marge absorbe l'écart entre la fin du
- * pipeline et la libération effective.
+ * ⚠️ VALAIT 360 s JUSQU'AU 2026-09-05, calibré sur `maxDuration = 300` de la
+ * route SYNCHRONE. Le pipeline ASYNCHRONE, lui, dure **19 minutes mesurées**
+ * (run `4290007c`) : passé la sixième, la retenue expirait alors que le job
+ * tournait encore. `available_credits` cesse alors de la compter, un second
+ * projet démarre sur le même solde, et les deux consomment le modèle et le
+ * service KiCad sans que rien ne soit engagé — exactement la fenêtre que la
+ * migration `015_credit_reservations.sql` a été écrite pour fermer.
+ *
+ * Le solde ne peut pas devenir négatif (contrainte `credits_balance_nonnegative`),
+ * donc ce n'est pas un vol de crédits : c'est de la ressource brûlée, et un
+ * second run qui échoue à la facturation après vingt minutes de travail.
+ *
+ * Relevé par Grok en consultation, vérifié ligne à ligne.
+ *
+ * ⚠️ Une heure est le PLAFOND accepté par `reserve_pipeline_credits`
+ * (`1..3600`). Aller au-delà demanderait une migration.
+ *
+ * ⚠️ Allonger cette durée n'était PAS sans risque : le worker ne libérait rien
+ * sur échec, malgré un commentaire de `run-job.ts` qui l'affirmait. Un seul run
+ * raté aurait gelé le solde une heure. C'est corrigé dans le même lot
+ * (`services/worker/src/reservations.ts`) — les deux vont ensemble.
  */
-export const PIPELINE_RESERVATION_TTL_S = 360;
+export const PIPELINE_RESERVATION_TTL_S = 3600;
 
 /** Le solde ne couvre pas un pipeline de plus — l'appelant doit répondre 402. */
 export class InsufficientCreditsError extends Error {

@@ -27,7 +27,13 @@ const log = logger.child({ module: 'worker.run-job' });
  *
  * C'est la SEULE preuve qu'un run vit encore : sans plafond de durée, un job de
  * 30 minutes est indiscernable d'un worker figé. Un run `running` sans battement
- * récent est réconcilié en `failed`, ce qui libère aussi sa réservation.
+ * récent est réconcilié en `failed`.
+ *
+ * ⚠️ Cette phrase se terminait par « ce qui libère aussi sa réservation ».
+ * C'ÉTAIT FAUX : `finish()` ne fait qu'un `UPDATE pcb_runs`, et aucun
+ * déclencheur ne relie les deux tables. La libération est désormais explicite
+ * (`adapters.ts` → `releaseReservationForRun`), donc la phrase est redevenue
+ * vraie — mais par le code, pas par la promesse.
  */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
