@@ -69,10 +69,15 @@
 **Tranchee le 2026-09-04 par DELEGATION EXPLICITE de l'utilisateur** (« ok decide toi »).
 Claude a choisi ; l'utilisateur peut inverser a tout moment.
 
-- **Le fait qui force la main :** un routage monte a **6,2 Go de memoire
-  residente** (`stm32-baseline`, le plus petit board du banc). Deux en parallele
-  depassent les 7,6 Go de la machine et le noyau tue le processus
-  (`Out of memory: Killed process ... anon-rss:6247616kB`, crete 7,2 Go).
+- **Le fait qui force la main :** deux routages SIMULTANES dans un meme
+  processus le font tuer par le noyau (`Out of memory: Killed process ...
+  anon-rss:6247616kB`, crete 7,2 Go pour 7,6 disponibles).
+- ⚠️ **RECTIFICATION DU 2026-09-05 :** cette entree affirmait qu'« un routage
+  monte a 6,2 Go ». C'etait une generalisation depuis cette seule mesure, faite
+  sur un cas pathologique. Echantillonne au cgroup pendant trois routages
+  reussis, le conteneur ENTIER crete a **1,84 Go** contre 1,67 au repos, soit
+  **~0,2 Go par routage**. La decision reste valide — la concurrence emballe
+  bien la memoire — mais son motif chiffre etait faux.
   Le service tournait avec `--workers 4` : il annoncait quatre requetes
   simultanees quand la memoire n'en autorise qu'une.
 - **Choix retenu :** garder les 4 workers, serialiser le SEUL point couteux par

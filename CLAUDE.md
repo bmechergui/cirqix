@@ -839,33 +839,59 @@ ce schéma.
 **NEVER** conclure qu'un appel `pcbnew` est isolé au seul motif que le service
 tourne avec plusieurs workers uvicorn.
 
-### ⚠️ UN ROUTAGE COÛTE 6,2 Go — les 4 workers sont une promesse que la RAM ne tient pas (2026-09-03)
+### ⚠️ RECRÉER LE CONTENEUR, PAS LE REDÉMARRER (2026-09-05)
 
-Deux routages lancés **simultanément dans le même processus** (`stm32-baseline`,
-17 composants, le plus petit board du banc) ne survivent pas :
+Le service KiCad mourait par intermittence pendant un routage HTTP : un sur deux
+rendait un `RemoteDisconnected` côté client et un `Child process died` côté
+journal, sans la moindre ligne applicative. Après un `docker rm` + `docker run`
+— conteneur **NEUF**, `/tmp` vierge — **9 routages sur 9** passent à 100 %, en
+**21 à 27 s** au lieu de 40.
 
-```
-Out of memory: Killed process (python3)  anon-rss:6247616kB
-crête du cgroup : 7,2 Go        WSL en offre : 7,6
-```
+`docker restart` **conserve `/tmp`** : verrou X orphelin (l'un datait du
+2026-09-01 et empêchait Xvfb de repartir, privant `pcbnew` d'affichage),
+fichiers de session, jobs Freerouting zombies. Un conteneur recréé repart propre.
 
-**Un seul routage monte à 6,2 Go de mémoire résidente.** La concurrence du
-service est donc bornée par la MÉMOIRE, bien avant de l'être par Freerouting,
-par le pool de threads ou par `--workers 4`. Sur cette machine, deux requêtes
-de routage qui se recouvrent tuent le worker qui les traite — et le symptôme
-est un `RemoteDisconnected` côté client, un `Child process died` côté journal,
-sans le moindre message applicatif.
+**ALWAYS** recréer le conteneur avant d'investiguer le code sur une instabilité
+du service.
 
-⚠️ Ce défaut est INTERMITTENT et se lit comme un bug de code. Quatre
-hypothèses ont été réfutées par la mesure avant d'arriver là ; ne pas les
-re-tester :
+⚠️ **`docker-compose` v1 est CASSÉ avec Docker 29** (`KeyError:
+'ContainerConfig'`) et **supprime le conteneur AVANT d'échouer** : il laisse le
+service mort. Passer par un `docker run` explicite.
 
-| hypothèse | test | verdict |
+### ⚠️ « UN ROUTAGE COÛTE 6,2 Go » ÉTAIT FAUX — il en coûte 0,2 (rectifié le 2026-09-05)
+
+Ce fichier a porté pendant deux jours, avec le code et le journal des décisions,
+l'affirmation qu'un routage consommait 6,2 Go. **C'était une généralisation
+depuis UNE mesure**, celle du RSS d'un processus tué en lançant DEUX routages
+concurrents dans le même processus Python. J'en ai déduit le coût d'UN routage.
+
+Échantillonnage du cgroup, un point par seconde pendant trois routages réussis :
+
+| | mémoire du conteneur ENTIER |
+|---|---|
+| au repos | 1,67 Go |
+| **crête pendant 3 routages** | **1,84 Go** |
+| processus tué, 2 routages concurrents | 6,2 Go |
+| machine | 7,6 Go |
+
+Un routage coûte donc **~0,2 Go**, pas 6,2. La concurrence produit bien un
+emballement — le verrou de `tools/verrou_routage.py` reste justifié — mais le
+motif inscrit était trompeur, et un chiffre faux dans ce fichier est pire qu'un
+chiffre absent : il sert de prémisse à la décision suivante.
+
+⚠️ Ce défaut est INTERMITTENT. Quatre hypothèses ont été écartées, mais Grok,
+consulté le 2026-09-05, a relevé la faute de méthode : **« 1 worker et 4 workers
+réussissent tous deux » ne RÉFUTE rien sur un défaut intermittent — il faut un
+TAUX d'échec, pas un succès isolé.** Ce dépôt le savait déjà pour le routage
+(« deux tirages concordants ne prouvent rien ») ; je ne l'ai pas appliqué à mon
+propre diagnostic. Ces quatre pistes valent comme INDICES, jamais comme preuves :
+
+| piste | ce qui a été observé | statut |
 |---|---|---|
-| exécution hors thread principal | appel dans un `threading.Thread` | route à 100 % |
-| sondage concurrent d'une autre route | échecs aussi sans sondage | écartée |
-| nombre de workers | 1 worker, puis 4 | les deux réussissent |
-| origine de l'appel | hôte, puis intérieur du conteneur | les deux réussissent |
+| exécution hors thread principal | un appel dans un `threading.Thread` a routé à 100 % | indice |
+| sondage concurrent d'une autre route | échecs aussi sans sondage | indice |
+| nombre de workers | 1 worker et 4 workers ont réussi | indice |
+| origine de l'appel | hôte et intérieur du conteneur ont réussi | indice |
 
 ⚠️ Les asserts `PROPERTY_ENUM` du journal sont du **BRUIT** : 10947 occurrences
 dans l'historique, présentes aussi quand tout va bien. Je les ai d'abord pris
