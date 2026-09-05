@@ -714,7 +714,8 @@ def _session_freerouting(pre: str) -> str:
     ⚠️ MESURE DU 2026-09-03, a lire avant de s inquieter du partage de
     session : deux routages SIMULTANES dans un meme processus ne survivent
     pas a cette machine, quel que soit le traitement des sessions. Un seul
-    routage monte a **6,2 Go de memoire residente** ; a deux, le noyau tue le
+    ⚠️ RECTIFIE LE 2026-09-05 : « 6,2 Go par routage » etait FAUX (~0,2 Go
+    reels, cgroup echantillonne). A deux routages concurrents, le noyau tue le
     processus (`Out of memory: Killed process ... anon-rss:6247616kB`, crete
     mesuree 7,2 Go pour 7,6 disponibles). La concurrence est donc bornee par
     la MEMOIRE bien avant de l etre par Freerouting.
@@ -4629,8 +4630,9 @@ def _armer_abandon(actif: bool) -> None:
 def _un_seul_routage_a_la_fois(fonction):
     """Serialise les routages sur toute la machine.
 
-    ⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire
-    residente** (`stm32-baseline`, le plus petit board du banc) ; deux en
+    ⚠️ MESURE DU 2026-09-03, RECTIFIEE LE 2026-09-05 : deux routages
+    concurrents emballent la memoire (« 6,2 Go par routage » etait faux,
+    ~0,2 Go reels) (`stm32-baseline`, le plus petit board du banc) ; deux en
     parallele font tuer le processus par le noyau — `Out of memory: Killed
     process (python3) anon-rss:6247616kB`, crete 7,2 Go pour 7,6 disponibles.
     Le service tourne pourtant avec `--workers 4` : il annonce quatre requetes

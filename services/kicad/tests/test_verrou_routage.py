@@ -1,8 +1,12 @@
 """Un seul routage a la fois — verrou entre PROCESSUS.
 
-⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire residente**
-(`stm32-baseline`, le plus petit board du banc). Deux en parallele depassent les
-7,6 Go de la machine et le noyau tue le processus :
+⚠️ MESURE RECTIFIEE LE 2026-09-05. Deux routages SIMULTANES dans un meme
+processus font tuer celui-ci par le noyau (`Out of memory: Killed process
+... anon-rss:6247616kB`). On en avait deduit « un routage coute 6,2 Go » :
+C ETAIT FAUX. Echantillonne au cgroup pendant trois routages reussis, le
+conteneur ENTIER crete a 1,84 Go contre 1,67 au repos — ~0,2 Go par routage.
+Ce qui reste vrai : la CONCURRENCE emballe la memoire. Ce qui etait faux :
+que chaque routage en soit responsable a lui seul.
 
     Out of memory: Killed process (python3)  anon-rss:6247616kB
 

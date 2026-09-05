@@ -1,11 +1,19 @@
 """Un seul routage a la fois, sur toute la machine.
 
-⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire residente**
-(`stm32-baseline`, 17 composants, le PLUS PETIT board du banc). Deux en
-parallele depassent les 7,6 Go disponibles et le noyau tue le processus :
+⚠️ MESURE DU 2026-09-03, RECTIFIEE LE 2026-09-05. Deux routages lances
+SIMULTANEMENT dans le meme processus font tuer celui-ci par le noyau :
 
     Out of memory: Killed process (python3)  anon-rss:6247616kB
-    crete du cgroup : 7,2 Go
+    crete du cgroup : 7,2 Go        machine : 7,6 Go
+
+⚠️ On en avait deduit « un routage coute 6,2 Go ». C ETAIT FAUX : echantillonne
+au cgroup pendant trois routages reussis, le conteneur ENTIER crete a 1,84 Go
+contre 1,67 au repos — soit ~0,2 Go par routage. Le chiffre venait d UNE mesure
+sur un cas pathologique, generalisee au cas normal.
+
+Ce qui reste vrai, et qui justifie ce verrou : la CONCURRENCE emballe la
+memoire jusqu a faire tuer le processus. Ce qui est faux : que chaque routage
+en soit responsable a lui seul.
 
 Le service tourne pourtant avec `--workers 4` : il annonce quatre requetes
 simultanees quand la memoire n en autorise qu une. Le symptome, cote client,
@@ -83,8 +91,8 @@ class RoutageOccupe(RuntimeError):
     def __init__(self, attente_s: float = 0.0) -> None:
         super().__init__(
             "un autre routage occupe la machine — un seul tient a la fois, "
-            "car un routage consomme jusqu a 6,2 Go de memoire et deux en "
-            "parallele font tuer le processus"
+            "car deux routages concurrents emballent la memoire jusqu a "
+            "faire tuer le processus"
             + (" (attendu %.0f s)" % attente_s if attente_s else ""))
 
 
