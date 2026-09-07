@@ -47,6 +47,7 @@ const email = `${marque}@cirqix.invalid`;
 const motDePasse = `Preuve!${Math.random().toString(36).slice(2)}Aa1`;
 
 let userId = null;
+let autreId = null;
 let projectId = null;
 let runId = null;
 const constats = [];
@@ -57,16 +58,42 @@ function dire(ok, texte) {
 }
 
 async function nettoyer() {
-  try {
-    if (runId) await admin.from('pcb_run_events').delete().eq('run_id', runId);
-    if (runId) await admin.from('pcb_runs').delete().eq('id', runId);
-    if (projectId) await admin.from('projects').delete().eq('id', projectId);
-    if (userId) await admin.auth.admin.deleteUser(userId);
-    console.log('\nnettoyage : compte, projet, run et evenements supprimes');
-  } catch (e) {
-    console.log(`\n⚠️ nettoyage incomplet : ${e.message}`);
-    console.log(`   a supprimer a la main — user ${userId}, run ${runId}, projet ${projectId}`);
+  // ⚠️ TROIS PIEGES, tous payes le 2026-09-07 : quinze comptes de test se sont
+  // accumules dans le projet pendant que ce script annoncait « supprimes ».
+  //
+  // 1. `deleteUser` RENVOIE une erreur, il ne la LEVE pas. Un `try/catch`
+  //    autour ne voit rien. Il faut lire `error`.
+  // 2. Une inscription cree une ligne dans `credits` par declencheur, et
+  //    `credits_user_id_fkey` est en NO ACTION : la suppression du compte
+  //    echoue avec « Database error deleting user » tant qu elle est la.
+  // 3. Le SECOND compte n etait supprime que sur le chemin de succes, donc
+  //    jamais quand la preuve echouait — c est-a-dire quand on en a le plus
+  //    besoin.
+  //
+  // Ce nettoyage DIT ce qu il a fait, et le verifie.
+  const restes = [];
+  for (const id of [userId, autreId].filter(Boolean)) {
+    for (const p of (await admin.from('projects').select('id').eq('user_id', id)).data ?? []) {
+      for (const r of (await admin.from('pcb_runs').select('id').eq('project_id', p.id)).data ?? []) {
+        await admin.from('pcb_run_events').delete().eq('run_id', r.id);
+        await admin.from('pcb_runs').delete().eq('id', r.id);
+      }
+      await admin.from('projects').delete().eq('id', p.id);
+    }
+    for (const table of ['credit_reservations', 'credit_transactions', 'credits', 'footprints']) {
+      await admin.from(table).delete().eq('user_id', id);
+    }
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) restes.push(`${id} (${error.message})`);
   }
+  if (restes.length === 0) {
+    console.log('\nnettoyage : comptes, projets, runs et evenements supprimes');
+    return;
+  }
+  console.log(`\n⚠️ NETTOYAGE INCOMPLET — ${restes.length} compte(s) subsistent :`);
+  for (const r of restes) console.log(`   ${r}`);
+  console.log('   les supprimer a la main avant de relancer.');
+  constats.push({ ok: false, texte: 'nettoyage complet' });
 }
 
 async function main() {
@@ -100,7 +127,7 @@ async function main() {
     email: `${marque}-autre@cirqix.invalid`, password: motDePasse, email_confirm: true,
   });
   if (eAutre) throw eAutre;
-  const autreId = autre.user.id;
+  autreId = autre.user.id;
 
   // 4. connexion par la cle PUBLIQUE — le chemin du navigateur
   const client = createClient(URL, ANON, { auth: { persistSession: false } });
@@ -173,9 +200,6 @@ async function main() {
   dire(!eVole && (vole?.length ?? -1) === 0,
        `un AUTRE utilisateur connecte ne voit rien (${
          eVole ? 'ERREUR : ' + eVole.message : vole.length})`);
-
-  // le second compte s en va aussi
-  await admin.auth.admin.deleteUser(autreId);
 
   await client.removeChannel(canal);
 }

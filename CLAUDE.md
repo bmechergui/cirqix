@@ -1305,6 +1305,25 @@ comptés à zéro, `via_count` jamais calculé rendu à zéro. **NEVER** laisser
 échec rendre la même valeur que son cas normal, y compris dans une sonde
 jetable écrite pour dix minutes.
 
+⚠️ **Et mon NETTOYAGE mentait aussi.** Le script annonçait « comptes supprimés »
+alors que **quinze comptes de test s'accumulaient** dans le projet. Trois causes
+cumulées :
+
+1. `admin.auth.admin.deleteUser` **renvoie** une erreur, il ne la **lève** pas.
+   Le `try/catch` autour ne voyait rien.
+2. Une inscription crée une ligne dans `credits` par déclencheur, et
+   `credits_user_id_fkey` est en `NO ACTION` : la suppression échoue avec
+   « Database error deleting user » tant que cette ligne est là.
+3. Le second compte n'était supprimé que sur le chemin de **succès** — donc
+   jamais quand la preuve échouait, c'est-à-dire quand on en a le plus besoin.
+
+C'est la même faute que ci-dessus, dans l'autre sens : là une erreur passait pour
+une preuve, ici un échec passait pour un nettoyage. Le script vérifie désormais
+ce qu'il a supprimé, et le DIT quand il n'y arrive pas.
+
+**NEVER** annoncer qu'un nettoyage a eu lieu sans avoir relu ce qui reste. Un
+effet de bord silencieux sur une vraie base coûte plus cher qu'un test raté.
+
 ### État
 
 Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
