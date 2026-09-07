@@ -55,6 +55,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   const ctx = {
     supabase: {} as never,
     createStore: vi.fn(() => ({}) as never),
+    // ⚠️ Le faux doit etre AUSSI RICHE que le vrai. Un faux plus pauvre ne
+    // peut pas reveler un contrat rompu — c est ainsi que l appel errone a
+    // `finalize_pipeline_success` a survecu : les tests remplacaient le
+    // client Supabase par un objet qui accepte n importe quels arguments.
+    readAgentMode: vi.fn().mockResolvedValue('orchestrator'),
     createEventWriter: vi.fn(() => ({ insert: vi.fn().mockResolvedValue(undefined) })),
     markRunning: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),

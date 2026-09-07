@@ -24,6 +24,7 @@ export {
 // Pipeline orchestrateur, decouple de Supabase et du flux SSE : executable
 // aussi bien dans la route web que dans le worker persistant.
 export { runOrchestratorPipeline } from './pipeline/run-orchestrator';
+export { runDriver } from './pipeline/run-driver';
 export type { RunPipelineOptions } from './pipeline/run-orchestrator';
 export type { KicadArtifactName, PipelineStore, StoredArtifact } from './pipeline/store';
 // File BullMQ.
