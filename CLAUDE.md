@@ -459,6 +459,63 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ses vias de masse d'avance lui épargne le travail qu'il refaisait ensuite
      en pure perte. **Aucune escalade de couches n'a servi.**
 
+     ⚠️ **CE TABLEAU A ÉTÉ ÉCRIT SANS QUE SES BOARDS EXISTENT** (relevé le
+     2026-09-07, par l'utilisateur : « je n'ai trouvé l'output d'aucune carte de
+     routage »). Comptage du cuivre des boards VERSIONNÉS, ce jour-là :
+
+         arduino-uno · esp32-baseline · nucleo-f401 · stm32-30
+         stm32-60 · stm32-100 · stm32-baseline · stm32-validation
+             expected/2_placement_valide.kicad_pcb  →  0 segment, 0 via
+
+     Les huit cartes annoncées ici à 100 % ne portaient que leur PLACEMENT. Les
+     boards routés étaient restés dans le conteneur et sont partis au premier
+     redémarrage — la faute que ce fichier s'interdit pourtant en toutes lettres
+     (« `examples/` n'y est pas monté »). Un lecteur ne pouvait ni le vérifier ni
+     s'en apercevoir : le tableau se lisait comme une preuve.
+
+     **Réparé** : chaque carte porte désormais `expected/3_route.kicad_pcb`, routé
+     depuis son placement déjà versionné, par la voie HTTP réelle — 100 %,
+     0 erreur, de 42 à 808 segments. Rejouable par
+     `scripts/router_les_placements.py`.
+
+     ⚠️ **NEVER annoncer un résultat dont l'artefact n'est pas dans le dépôt.**
+     Un tableau sans board est une affirmation, pas une mesure.
+
+     ### L'escalade de couches fonctionne — prouvé le 2026-09-07
+
+     Toutes les cartes du dépôt sortent sur DEUX couches, ce qui posait la
+     question : l'échelle 2 → 4 → 6 → 8 sert-elle jamais ? Aucune trace
+     d'exécution n'existait, et **l'absence de besoin n'est pas une preuve de
+     bon fonctionnement**.
+
+     `examples/carte-11-croisements` a été construite pour la mettre à
+     l'épreuve : deux connecteurs 2×20 face à face, 32 signaux câblés en ordre
+     INVERSE. Ce n'est pas la densité qui force l'échec — `stm32-100` porte cent
+     composants et route à 100 % sur deux couches — mais la NON-PLANARITÉ : un
+     faisceau inversé impose ~N²/2 croisements, et sur deux couches la face
+     arrière porte le plan de masse, donc il ne reste qu'UNE face de signal.
+
+     ```
+     palier 2 couches  → figé
+     palier 4 couches  → figé      « la carte n'en déclare que 4 »
+     palier 6 couches  → figé      « la carte n'en déclare que 6 »
+     escalade arrêtée — 7 paliers sans gain, le meilleur est déjà acquis
+     ```
+
+     L'échelle monte, garde le meilleur palier, et s'arrête au bon moment.
+
+     ⚠️ **Le PLANCHER reste un simple message de journal, et c'est voulu.**
+     `_couches_pour_echapper` rend 4 pour `stm32-100` ; le service tente quand
+     même 2 d'abord — « on escalade sur PREUVE, pas sur prévision », parce qu'une
+     carte 2 couches coûte moins cher. La mesure lui donne raison : cette carte
+     route à 100 % sur DEUX couches en 208 s.
+
+     ⚠️ **Rien ne configurait la journalisation avant le 2026-09-07.** Le logger
+     racine restait à `WARNING` et uvicorn ne configure que SES loggers : toutes
+     les décisions d'escalade — qui coûtent du cuivre, donc de l'argent au
+     client — étaient indéchiffrables, `docker logs` ne montrant que Freerouting.
+     Corrigé dans `main.py`, niveau pilotable par `LOG_LEVEL`.
+
      ⚠️ **NEVER conclure qu'un défaut de routage est STRUCTUREL sans avoir
      compté plusieurs tirages.** `stm32-100` gardait une connexion manquante ;
      j'ai cherché une cause structurelle pendant des heures — îlot de 0,9 mm²
@@ -1550,7 +1607,27 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 - `stm32-validation/` — agents ④→⑥b sur un board donné (`run_agent_chain.py`, `run_feedback_loop.py`) ; fournit la fixture pytest `expected/stm32_final.kicad_pcb` ; cas de **stress DFM** (LQFP-48 fine-pitch)
 - `led-blinker-full-pipeline/` — pipeline **complet** ①→⑧ description → Gerbers (`run_pipeline.py`) ; board simple NE555+LED (8 composants, **6 nets** dans `input/schema.json`, 60×45 mm) ; `expected/led_blinker_final.kicad_pcb` = 100 % routé / DRC-clean (2026-07-27). **Terrain d'apprentissage RL routing** documenté dans `docs/rl/routing/` — ne plus écrire que la fixture « n'existe pas »
 
+- `carte-01-diviseur/` … `carte-10-maximale/` — **le banc du driver LLM**, de 5 à
+  70 composants, toutes 100 % routées et 0 erreur sur deux couches. Leur schéma
+  est ÉCRIT PAR LE DRIVER (Claude Code joue l'Ingénieur Schéma) : c'est le seul
+  chemin qui n'appelle aucun modèle, et il couvre l'angle mort du banc
+  historique, dont les huit cartes partent d'un `circuit.json` FIGÉ. Voir
+  `examples/BANC_DRIVER_LLM.md`.
+- `carte-11-croisements/` — livrée **NON FABRICABLE**, et c'est son objet : elle
+  existe pour éprouver l'escalade de couches (32 signaux en ordre inversé, que
+  deux couches ne peuvent pas router). Ne pas la « réparer ».
+
+⚠️ Les huit cartes historiques portent désormais `expected/3_route.kicad_pcb` en
+plus de leur placement — voir l'avertissement du « Banc du 2026-09-03 ».
+
+⚠️ **`output/` est gitignoré, et les Gerbers n'y sont donc PAS versionnés.** Ils
+se régénèrent depuis le board livré par `scripts/exporter_les_cartes.py` — 20
+fichiers par carte, par la route `/export/all`, celle de la production. Question
+posée le 2026-09-07 : « leur sortie est où ? ». Le board routé EST livré ; les
+fichiers de fabrication se refont à la demande.
+
 (`stm32-full-pipeline/` supprimé au commit `8faf685` — ne plus y faire référence.)
+(`parcours-driver-llm/` jamais fusionné — supplanté par les onze cartes.)
 
 ---
 
@@ -1706,10 +1783,17 @@ kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
 - ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **fait le 2026-09-07.** Le drapeau
   reste fail-closed dans le code ; il est allumé dans `apps/web/.env.local`, où
   Redis et le worker tournent, et le worker a consommé un job pour de bon.
-- **Le solde de l'API du modèle** est le SEUL point qui reste. Un run enfilé
-  échoue en 5 s sur `Your credit balance is too low`. L'orchestrateur étant la
-  première étape, aucun pipeline ne peut aboutir par la voie normale tant que ce
-  solde n'est pas rechargé — et ce n'est pas un défaut de code.
+- **Le solde de l'API du modèle** reste épuisé : un run enfilé par la voie
+  NORMALE échoue en 5 s sur `Your credit balance is too low`, l'orchestrateur
+  étant la première étape. Ce n'est pas un défaut de code.
+  ⚠️ Mais ce n'est **plus un blocage total** depuis le 2026-09-07 : la chaîne du
+  driver (`pipeline/run-driver.ts`) livre un PCB complet par la file, sans
+  appeler le moindre modèle — `call_agent_schema` était le seul maillon qui en
+  appelait un. Ces boards sont réels et fabricables, mais **non commandables**
+  (provenance `driver`, le gate JLCPCB exige `orchestrator`) et non facturés.
+- **Faire relire les onze cartes du banc par un œil humain.** Elles sont
+  mesurées 100 % routées et 0 erreur, mais aucune n'a été ouverte dans KiCad ni
+  envoyée à un fabricant. « DRC-clean » n'est pas « bien conçu ».
 - ~~**Valider la moitié « journal + Realtime »**~~ — **faite le 2026-09-07.**
   Voir « Le parcours asynchrone est prouvé de bout en bout ». Les essais
   précédents tournaient avec une URL Supabase bidon et ne prouvaient rien ;
@@ -1997,6 +2081,55 @@ placement, et deux tirages concordants qui ne prouvaient rien.
 **ALWAYS sortir du conteneur ce qu'on veut garder.** `examples/` n'y est pas
 monté : un board produit par le banc n'existe QUE dans le conteneur et part au
 premier redémarrage — la leçon des worktrees vidés, transposée.
+
+### Leçons inscrites le 2026-09-07 — cinq compteurs qui inventaient un succès
+
+Une même faute, trouvée cinq fois en la cherchant volontairement : **un échec
+rend la même valeur que son cas normal.** Elle était déjà inscrite ici, corrigée
+au cas par cas ; c'est la première fois qu'elle est traquée comme une FAMILLE.
+
+| où | ce qui était rendu | conséquence |
+|---|---|---|
+| `parse_routed_pct`, sortie illisible | `100` | « 100 % routé » sur 4 segments |
+| `parse_routed_pct`, dénominateur nul | `100` | idem |
+| `tools/reasoning.py`, `nets_total = 0` | `100` | idem |
+| `_rapport_drc` indisponible | `{}` → 0 erreur | **5 gardes acceptaient tout** |
+| escalade, palier illisible | 0 erreur | un palier faux gagnait |
+| `handleReason`, pas de board | `success` + `ROUTING_DONE` | statut fantôme persisté |
+
+**NEVER laisser un défaut corrigé dans une fonction sans chercher ses SŒURS.**
+`_measured_routed_percent` portait déjà, mot pour mot, « un dénominateur nul
+n'est pas une victoire — on renvoyait 100 ici ». Deux jumelles vivaient à côté,
+intactes. Ce dépôt l'avait déjà payé avec `livrer_boards.py`, puis avec le
+`_poser_via_dans_pastille` qui promettait de suivre le fanout.
+
+**NEVER se contenter de JOURNALISER un défaut qu'on a compris.** `_rapport_drc`
+avouait le sien en commentaire : « les appelants lisent le dict vide comme "rien
+à signaler" — TANT QU'ILS LE FONT, ce journal est le seul endroit où l'absence
+de verdict est visible ». Le journal a tenu la place du correctif pendant des
+semaines, et cinq gardes « ne peut qu'améliorer » acceptaient n'importe quoi dès
+que le DRC était muet — c'est-à-dire quand le board est justement suspect.
+
+**NEVER écrire cinq fois la même comparaison.** Elles étaient identiques, donc
+fausses identiquement. Une règle vit à UN endroit : `_aggrave_le_board`, qui
+échoue fermé. Corollaire mesuré le jour même : **centraliser une règle ne doit
+pas multiplier son coût** — ma première version re-jugeait le board de référence
+à chaque tour de boucle, et c'est un test existant qui l'a attrapé.
+
+**NEVER laisser une phrase rassurante tenir lieu d'audit.** L'en-tête de
+`handler-reason.test.ts` affirmait que ce handler « n'a PAS été modifié » et
+qu'il était « sûr par construction ». C'est exactement ce qui l'a soustrait à
+l'examen, alors qu'il était le seul des huit sans garde fail-fast.
+
+**Fermer une branche inatteignable vaut la peine.** Celle de `handleReason` ne
+l'était que par une coïncidence entre deux fonctions qui ne se connaissent pas —
+`shouldRescueRouting` exige un routage réussi, lequel écrit le cache. « Pas
+atteignable aujourd'hui » n'est pas une garantie.
+
+Trois candidats vérifiés SAINS, à ne pas ré-auditer : `_collect_violations`
+refuse déjà de lire un rapport inconnu comme zéro violation ; les `return 0` de
+`placement.py` comptent des composants DÉPLACÉS (« rien n'a bougé », pas « tout
+va bien ») ; `reasoning-service.ts` échoue honnêtement à 0 % avec un warning.
 
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
