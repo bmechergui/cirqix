@@ -1,0 +1,24 @@
+{
+  "routed_percent": 100,
+  "couches": 2,
+  "vias": 50,
+  "longueur_mm": 596.983,
+  "moteur": "freerouting-api",
+  "note": "",
+  "duree_s": 37.6,
+  "drc_du_board": {
+    "violations": 23,
+    "non_connectes": 0,
+    "types": "silk_over_copper:11,silk_overlap:12",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  },
+  "tirage": 1,
+  "tirages": 1,
+  "board": {
+    "segments": 205,
+    "vias": 51,
+    "empreintes": 31
+  }
+}
