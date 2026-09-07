@@ -90,9 +90,17 @@ class TestCablage:
         assert "repli GND REFUSE" in bloc and "logger.warning" in bloc
 
     def test_toutes_les_etapes_qui_remplacent_le_board_comparent(self):
-        """⚠️ Invariant de la chaine, verifie sur les CINQ mecanismes."""
+        """⚠️ Invariant de la chaine, verifie sur les CINQ mecanismes.
+
+        L ancre a du bouger le 2026-09-07 : la comparaison etait ecrite cinq
+        fois a l identique — et donc fausse cinq fois, un DRC muet rendant zero
+        des deux cotes et laissant passer un candidat non juge. Elle vit
+        desormais dans `_aggrave_le_board`, qui echoue ferme. On accepte les
+        deux formes : c est l INTENTION qu on garde, pas un nom.
+        """
         for nom in ("_recoudre_les_zones", "_recoudre_les_ilots",
                     "_fanout_pads_isolees", "_reposer_vias_reserves"):
             i = self.SOURCE.index("def %s(" % nom)
             j = self.SOURCE.index(chr(10) + "def ", i + 5)
-            assert "_compte_erreurs" in self.SOURCE[i:j], nom
+            corps = self.SOURCE[i:j]
+            assert "_aggrave_le_board" in corps or "_compte_erreurs" in corps, nom

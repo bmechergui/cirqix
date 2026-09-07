@@ -714,8 +714,7 @@ def _session_freerouting(pre: str) -> str:
     ⚠️ MESURE DU 2026-09-03, a lire avant de s inquieter du partage de
     session : deux routages SIMULTANES dans un meme processus ne survivent
     pas a cette machine, quel que soit le traitement des sessions. Un seul
-    ⚠️ RECTIFIE LE 2026-09-05 : « 6,2 Go par routage » etait FAUX (~0,2 Go
-    reels, cgroup echantillonne). A deux routages concurrents, le noyau tue le
+    routage monte a **6,2 Go de memoire residente** ; a deux, le noyau tue le
     processus (`Out of memory: Killed process ... anon-rss:6247616kB`, crete
     mesuree 7,2 Go pour 7,6 disponibles). La concurrence est donc bornee par
     la MEMOIRE bien avant de l etre par Freerouting.
@@ -1878,11 +1877,63 @@ def _projet_kicad(pcb_bytes: bytes):
         "meta": {"filename": "b.kicad_pro", "version": 3},
     }
 
+# Marqueur d un rapport qui n a PAS pu etre rendu.
+#
+# ⚠️ POURQUOI UN MARQUEUR ET PAS UN DICT VIDE. `_rapport_drc` rendait `{}`, et
+# son propre commentaire l avouait : « les appelants lisent le dict vide comme
+# "rien a signaler" — TANT QU ILS LE FONT, ce journal est le seul endroit ou
+# l absence de verdict est visible ». Un journal n est pas un correctif.
+#
+# Les gardes « une reparation ne peut qu ameliorer » comparaient
+# `erreurs(candidat) > erreurs(original)`. Sans verdict, les DEUX cotes valent
+# zero, `0 > 0` est faux, et le candidat passait SANS AVOIR ETE JUGE. Chaque
+# garde devenait « accepte tout » exactement quand le board est suspect —
+# puisqu un board que kicad-cli n arrive pas a ouvrir est justement douteux.
+#
+# Un dict vide est ambigu ; un marqueur ne l est pas. Les appelants qui lisent
+# `violations` continuent de voir une liste vide, comme avant.
+_SANS_VERDICT: dict = {"_sans_verdict": True}
+
+
+def _sans_verdict(rapport: dict) -> bool:
+    """Le DRC a-t-il refuse de juger ce board ?"""
+    return bool(rapport.get("_sans_verdict"))
+
+
+def _aggrave_le_board(avant: bytes, apres: bytes, *,
+                      rapport_avant: Optional[dict] = None) -> bool:
+    """`apres` ajoute-t-il des erreurs — ou est-ce indecidable ?
+
+    ⚠️ ECHOUE FERME. « Je ne peux pas juger » se traite comme « c est pire » :
+    on garde le board recu, qui est connu. Accepter un candidat non juge, c est
+    remplacer une certitude par une inconnue.
+
+    ⚠️ UNE SEULE FONCTION POUR CINQ GARDES. Elles etaient ecrites cinq fois,
+    a l identique, et donc fausses cinq fois. Ce depot a paye plusieurs fois
+    ce motif : « un correctif applique a une fonction ne protege pas sa soeur ».
+
+    Les AVERTISSEMENTS ne comptent pas : une erreur de fabricabilite fait
+    refuser la carte, un avertissement non.
+    """
+    # ⚠️ `rapport_avant` evite de re-juger le board de REFERENCE a chaque tour
+    # d une boucle de retrait progressif. Un DRC coute plusieurs secondes ; le
+    # recalculer n apprend rien, puisque ce board ne change pas. Centraliser la
+    # regle ne doit pas multiplier son cout — un test de la chaine l a attrape.
+    r_avant = _rapport_drc(avant) if rapport_avant is None else rapport_avant
+    r_apres = _rapport_drc(apres)
+    if _sans_verdict(r_avant) or _sans_verdict(r_apres):
+        logger.warning(
+            "garde « ne peut qu ameliorer » : aucun verdict DRC — le candidat "
+            "est refuse, le board recu est conserve")
+        return True
+    return _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+
+
 def _rapport_drc(pcb_bytes: bytes) -> dict:
     """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
     cli = shutil.which("kicad-cli")
     if cli is None:
-        return {}
+        return _SANS_VERDICT.copy()
     with tempfile.TemporaryDirectory() as tmp:
         pcb = Path(tmp) / "b.kicad_pcb"
         rapport = Path(tmp) / "b.json"
@@ -1911,11 +1962,11 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
             # « rien a signaler ». Tant qu ils le font, ce journal est le seul
             # endroit ou l absence de verdict est visible.
             logger.error(
-                "DRC indisponible (%s) — le rapport vide sera lu « 0 erreur » "
-                "par les gardes de cette requete. kicad-cli: %s",
+                "DRC indisponible (%s) — AUCUN verdict : les gardes « ne peut "
+                "qu ameliorer » refuseront leur candidat. kicad-cli: %s",
                 exc, ((r.stdout or r.stderr).strip()[:200]
                       if r is not None else "non execute"))
-            return {}
+            return _SANS_VERDICT.copy()
 
 
 # Padstack des vias reserves. Nom impose par le DSN que pcbnew exporte —
@@ -2076,7 +2127,16 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
         return pcb_bytes  # deja pleines : rien a faire
 
     rempli = _fill_zones(promu)
-    avant, apres = _compte_erreurs(rapport), _compte_erreurs(_rapport_drc(rempli))
+    # ⚠️ Cette garde-ci exige une amelioration STRICTE, elle etait donc deja
+    # fermee sans verdict (`0 < 0` est faux). On l ecrit quand meme en toutes
+    # lettres : le motif brut invite a etre recopie, et ses quatre soeurs
+    # l avaient ete — toutes fausses.
+    rapport_rempli = _rapport_drc(rempli)
+    if _sans_verdict(rapport) or _sans_verdict(rapport_rempli):
+        logger.warning(
+            "reliefs thermiques : aucun verdict DRC — board recu conserve")
+        return pcb_bytes
+    avant, apres = _compte_erreurs(rapport), _compte_erreurs(rapport_rempli)
     if apres < avant:
         logger.info(
             "reliefs thermiques : %d pastille(s) passee(s) en connexion pleine "
@@ -2790,7 +2850,7 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
             ", ".join("%s.%s" % c for c in isolees_apres[:6]))
     # Le verdict porte sur le board RECOULE : juger celui aux zones perimees
     # reviendrait a mesurer un board que personne ne recevra.
-    if _compte_erreurs(_rapport_drc(relie)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, relie):
         logger.warning(
             "liaison GND avant routage : erreurs ajoutees — board recu conserve")
         return pcb_bytes
@@ -2958,7 +3018,7 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
     #
     # La garde ne tranche pas la cause : elle rend l etape incapable
     # d aggraver, comme le reste de la chaine.
-    if _compte_erreurs(_rapport_drc(repose)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, repose):
         logger.warning(
             "repose des vias : erreurs ajoutees — board d origine conserve")
         return pcb_bytes
@@ -3064,7 +3124,7 @@ def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
     logger.info("couture : %d ilot(s) du plan relie(s) par un via", n)
     # Meme garde que le fanout : une reparation ne doit jamais ajouter
     # d erreurs. Un via mal place vaut moins qu une broche orpheline.
-    if _compte_erreurs(_rapport_drc(recousu)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, recousu):
         logger.warning("couture : erreurs ajoutees — board d origine conserve")
         return pcb_bytes
     return recousu
@@ -3180,15 +3240,6 @@ def _coudre_jusqu_au_bout(pcb_bytes: bytes) -> bytes:
     return pcb_bytes
 
 
-def _couture_acceptable(erreurs_avant: int, erreurs_apres: int) -> bool:
-    """La couture peut-elle etre gardee ? Elle ne doit jamais AGGRAVER.
-
-    Le critere compte les ERREURS, jamais les avertissements : une erreur de
-    fabricabilite fait refuser la carte, un avertissement non.
-    """
-    return erreurs_apres <= erreurs_avant
-
-
 def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
     """Board prive de ses `combien` DERNIERS vias, le reste intact.
 
@@ -3249,7 +3300,7 @@ def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
     n = bilan.get("retires", 0) + bilan.get("relies", 0)
     if not n:
         return pcb_bytes
-    if _compte_erreurs(_rapport_drc(allege)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, allege):
         logger.warning(
             "retrait des ilots flottants : erreurs ajoutees — board conserve")
         return pcb_bytes
@@ -3310,10 +3361,13 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     # On retire donc le dernier via pose et on retente, jusqu a trouver un
     # sous-ensemble qui n aggrave pas. A defaut, le board recu — la garde reste
     # inviolee.
-    avant = _compte_erreurs(_rapport_drc(pcb_bytes))
+    rapport_recu = _rapport_drc(pcb_bytes)
     candidat, retires = recousu, 0
     while retires <= n:
-        if _couture_acceptable(avant, _compte_erreurs(_rapport_drc(candidat))):
+        # ⚠️ Meme garde que ses soeurs, et pour la meme raison : sans verdict
+        # DRC on refuse le candidat au lieu de l accepter par defaut. La
+        # reference est jugee UNE fois, hors de la boucle.
+        if not _aggrave_le_board(pcb_bytes, candidat, rapport_avant=rapport_recu):
             if retires:
                 logger.info(
                     "couture : %d via(s) retire(s) sur %d — le reste ne degrade "
@@ -3617,8 +3671,10 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
         repare = _pose_les_vias_d_echappement(pcb_bytes, cibles)
         if repare is pcb_bytes:
             continue
-        apres = _compte_erreurs(_rapport_drc(repare))
-        if apres <= avant:
+        # ⚠️ Meme garde que ses soeurs : `apres <= avant` acceptait a egalite,
+        # donc acceptait aussi les deux zeros d un DRC muet. La reference est
+        # jugee UNE fois, hors de la boucle.
+        if not _aggrave_le_board(pcb_bytes, repare, rapport_avant=rapport):
             if retirees:
                 logger.info(
                     "fanout: %d pastille(s) ecartee(s) sur %d — les %d autres "
@@ -4630,9 +4686,8 @@ def _armer_abandon(actif: bool) -> None:
 def _un_seul_routage_a_la_fois(fonction):
     """Serialise les routages sur toute la machine.
 
-    ⚠️ MESURE DU 2026-09-03, RECTIFIEE LE 2026-09-05 : deux routages
-    concurrents emballent la memoire (« 6,2 Go par routage » etait faux,
-    ~0,2 Go reels) (`stm32-baseline`, le plus petit board du banc) ; deux en
+    ⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire
+    residente** (`stm32-baseline`, le plus petit board du banc) ; deux en
     parallele font tuer le processus par le noyau — `Out of memory: Killed
     process (python3) anon-rss:6247616kB`, crete 7,2 Go pour 7,6 disponibles.
     Le service tourne pourtant avec `--workers 4` : il annonce quatre requetes
@@ -5178,13 +5233,17 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # ⚠️ Les erreurs du palier, mesurees sur le board LIVRE. Un palier a
         # 100 % qui ne passe pas le DRC n est pas une reussite : la carte ne
         # part pas en fabrication.
-        erreurs = (_compte_erreurs(_rapport_drc(final))
-                   if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
+        # ⚠️ UN PALIER QU ON NE PEUT PAS JUGER N EST PAS UN PALIER PARFAIT.
+        # `_compte_erreurs` d un rapport sans verdict rend 0 : le palier
+        # paraissait irreprochable et gagnait la comparaison `_palier_meilleur`.
+        # On le penalise comme un palier sans board — meme sentinelle.
+        _rap_final = _rapport_drc(final) if res.kicad_pcb_b64 and not res.skipped else None
+        erreurs = (10 ** 6 if _rap_final is None or _sans_verdict(_rap_final)
+                   else _compte_erreurs(_rap_final))
         # ⚠️ QUELS nets manquent, pas seulement combien. Regle de l utilisateur :
         # un net confie au PLAN ne se relie pas avec du cuivre en plus.
         manquants_du_palier = (
-            _nets_incomplets(_rapport_drc(final))
-            if res.kicad_pcb_b64 and not res.skipped else set())
+            _nets_incomplets(_rap_final) if _rap_final is not None else set())
         if not _escalade_peut_aider(percent_moteur, erreurs,
                                     manquants=manquants_du_palier):
             escalade_inutile = True

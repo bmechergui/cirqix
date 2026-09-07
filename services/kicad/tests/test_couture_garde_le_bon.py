@@ -33,13 +33,13 @@ from routers import routing as R  # noqa: E402
 
 class TestChoix:
     def test_un_lot_qui_n_aggrave_pas_est_garde(self):
-        assert R._couture_acceptable(erreurs_avant=3, erreurs_apres=3) is True
+        assert _aggrave(R, avant=3, apres=3) is False   # egalite : acceptee
 
     def test_un_lot_qui_ameliore_est_garde(self):
-        assert R._couture_acceptable(erreurs_avant=5, erreurs_apres=2) is True
+        assert _aggrave(R, avant=5, apres=2) is False   # amelioration
 
     def test_un_lot_qui_aggrave_est_refuse(self):
-        assert R._couture_acceptable(erreurs_avant=3, erreurs_apres=4) is False
+        assert _aggrave(R, avant=3, apres=4) is True    # degradation : refusee
 
 
 class TestRetraitProgressif:
@@ -63,6 +63,27 @@ class TestRetraitProgressif:
         assert b"(via " not in s
 
 
+def _aggrave(R, *, avant: int, apres: int) -> bool:
+    """Exerce `_aggrave_le_board` avec des comptes d erreurs imposes.
+
+    ⚠️ On passe par de VRAIS rapports plutot que par un compteur nu : c est
+    precisement la difference qui comptait. L ancienne regle recevait deux
+    entiers et ne pouvait PAS savoir s ils venaient d un verdict ou de son
+    absence — un DRC muet rendait zero des deux cotes, et « 0 <= 0 » acceptait
+    un candidat jamais juge.
+    """
+    faux = {
+        b"avant": {"violations": [{"severity": "error"}] * avant},
+        b"apres": {"violations": [{"severity": "error"}] * apres},
+    }
+    reel = R._rapport_drc
+    R._rapport_drc = lambda b: faux[b]
+    try:
+        return R._aggrave_le_board(b"avant", b"apres")
+    finally:
+        R._rapport_drc = reel
+
+
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
@@ -72,4 +93,8 @@ class TestCablage:
         corps = self.SOURCE[i:j]
         assert "_sans_derniers_vias(" in corps, (
             "la couture jette encore les sept vias parce qu un seul gene")
-        assert "_couture_acceptable(" in corps
+        # L ancre a bouge le 2026-09-07 : `_couture_acceptable` disait la meme
+        # regle que ses quatre soeurs, chacune ecrite a la main et donc chacune
+        # aveugle a un DRC muet. Une seule survit, `_aggrave_le_board`, qui
+        # echoue ferme.
+        assert "_aggrave_le_board(" in corps
