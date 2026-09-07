@@ -43,22 +43,43 @@ class TestInventaire:
         j = self.SOURCE.index(chr(10) + "def ", i + 5)
         return self.SOURCE[i:j]
 
+    # ⚠️ L ANCRE A DU BOUGER LE 2026-09-07, et c est instructif. Ces gardes
+    # cherchaient le texte `_compte_erreurs` DANS le corps de chaque fonction.
+    # La comparaison etait alors ecrite cinq fois a l identique — et donc
+    # fausse cinq fois : sans verdict DRC les deux cotes valaient zero et le
+    # candidat passait sans jugement. Elle vit desormais dans UNE fonction,
+    # `_aggrave_le_board`, qui echoue fermé.
+    #
+    # L intention de ces gardes est inchangee : une etape qui pose du cuivre
+    # doit verifier qu elle n aggrave rien. On s ancre donc sur l INTENTION —
+    # l une ou l autre forme — plutot que sur un nom qui peut encore bouger.
+    _GARDES = ("_aggrave_le_board", "_compte_erreurs")
+
+    def _a_la_garde(self, corps: str) -> bool:
+        return any(g in corps for g in self._GARDES)
+
+    def _index_garde(self, corps: str) -> int:
+        for g in self._GARDES:
+            if g in corps:
+                return corps.index(g)
+        raise AssertionError("aucune garde de non-degradation dans ce corps")
+
     def test_toutes_les_etapes_qui_posent_du_cuivre_ont_la_garde(self):
         """⚠️ Invariant de la chaine : une etape de reparation ne degrade
         JAMAIS. Trois l avaient, une ne l avait pas."""
         for nom in ("_recoudre_les_zones", "_recoudre_les_ilots",
                     "_fanout_pads_isolees", "_reposer_vias_reserves"):
-            assert "_compte_erreurs" in self._corps(nom), (
+            assert self._a_la_garde(self._corps(nom)), (
                 "%s ajoute du cuivre sans verifier qu elle n aggrave rien" % nom)
 
     def test_la_repose_rend_le_board_RECU_si_elle_aggrave(self):
         corps = self._corps("_reposer_vias_reserves")
-        i = corps.index("_compte_erreurs")
+        i = self._index_garde(corps)
         assert "return pcb_bytes" in corps[i:i + 600], (
             "la garde compte les erreurs mais ne rend pas le board d origine")
 
     def test_le_refus_est_DIT(self):
         # Un refus silencieux ferait croire que la repose a eu lieu.
         corps = self._corps("_reposer_vias_reserves")
-        i = corps.index("_compte_erreurs")
+        i = self._index_garde(corps)
         assert "logger.warning" in corps[i:i + 600]
