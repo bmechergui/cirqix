@@ -5,14 +5,31 @@ export async function handleReason(projectId: string): Promise<Record<string, un
   const cached = pcbStateCache.get(projectId);
   const pcbContent = cached?.kicad_pcb_content;
   if (!pcbContent || pcbContent.length === 0) {
+    // ⚠️ ECHEC FERME. Ce handler etait le SEUL des huit a rendre encore
+    // `status:'success'` et a promouvoir `pcb_status:'ROUTING_DONE'` sur un
+    // board qui n existe pas — les sept autres ont recu ce correctif le
+    // 2026-07-27.
+    //
+    // L enjeu : `orchestrator-bridge` persiste `pcb_status` dans
+    // `projects.status`. Un projet pouvait donc porter ROUTING_DONE sans
+    // qu aucun board n ait ete produit.
+    //
+    // La branche est aujourd hui INATTEIGNABLE : `shouldRescueRouting` exige
+    // un `routed_percent` numerique, donc un routage reussi, qui a lui-meme
+    // ecrit le cache. On la ferme quand meme — elle est a un changement de
+    // declencheur pres de s ouvrir, et « inatteignable aujourd hui » n est pas
+    // une garantie, c est une coincidence.
+    //
+    // La fusion (`mergeRescueIntoRouting`) n en souffre pas : sans
+    // `kicad_pcb_content` elle conserve deja le routage d origine, et le
+    // `status` du routage l emporte.
     return {
-      status: 'success',
-      pcb_status: 'ROUTING_DONE',
+      status: 'error',
+      error: 'No .kicad_pcb in cache — run call_agent_routing first.',
       routed_percent: 0,
       reasoning_steps: [],
       engine: 'fallback-skip',
-      warning: 'No .kicad_pcb in cache — run call_agent_routing first.',
-      note: 'Reasoner sauté — pas de PCB en cache.',
+      note: 'Reasoner impossible — aucun PCB en cache, aucun statut promu.',
     };
   }
 
