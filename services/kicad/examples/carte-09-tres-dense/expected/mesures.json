@@ -6,28 +6,26 @@
     130,
     100
   ],
-  "duree_s": 532,
-  "git": "4c45c7a",
+  "duree_s": 2321,
+  "git": "29caf3e",
   "routed_percent": 100,
-  "drc_violations": 110,
-  "drc_clean": false,
+  "drc_violations": 86,
+  "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:62,silk_overlap:44,unconnected_items:2,track_dangling:1,via_dangling:1",
-  "abouti": false,
+  "types_violations": "silk_over_copper:50,silk_overlap:36",
+  "abouti": true,
   "board": {
-    "segments": 518,
-    "vias": 136,
+    "segments": 603,
+    "vias": 132,
     "zones": 3,
     "empreintes": 63
   },
   "drc_du_board": {
-    "violations": 61,
-    "non_connectes": 1,
-    "types": "silk_over_copper:31,silk_overlap:22,track_dangling:1,unconnected_items:1,via_dangling:6",
-    "erreurs": [
-      "unconnected_items"
-    ],
-    "nb_erreurs": 1,
-    "fabricable": false
+    "violations": 43,
+    "non_connectes": 0,
+    "types": "silk_over_copper:25,silk_overlap:18",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
   }
 }

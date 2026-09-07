@@ -1,6 +1,6 @@
 # carte-05-capteur-i2c
 
-> **Version git** `4c45c7a` (2026-09-03) — le schema, le board et ces chiffres viennent
+> **Version git** `61ebbae` (2026-09-07) — le schema, le board et ces chiffres viennent
 > tous de ce commit. ⚠️ Un README recopie a la main derive de ses mesures des la
 > premiere relance : celui-ci est GENERE par `scripts/readme_banc_driver.py`.
 

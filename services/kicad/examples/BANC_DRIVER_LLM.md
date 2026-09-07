@@ -158,6 +158,43 @@ lui-même, ce qui déclarait non fabricables des cartes qui le sont.
 et jusqu'à 280 quand la boucle de correction itère. La cause de l'écart n'est
 pas établie ; ce qui l'est, c'est lequel des deux juge le board qu'on livre.
 
+## Les dix cartes tiennent sur DEUX couches
+
+Compte des couches cuivre dans les boards livrés : `F.Cu` et `B.Cu`, rien
+d'autre, y compris pour les 70 composants de la `carte-10`.
+
+La `carte-09` est la seule à porter un plafond à quatre couches
+(`max_layers: 4` dans son schéma), et **elle ne s'en est pas servie** : elle a
+réussi au premier palier. C'est le comportement attendu — le plafond ne
+PRESCRIT rien, le service part toujours de 2 et n'escalade que sur preuve
+d'échec, en gardant toujours le meilleur tirage et jamais le dernier.
+
+Deux couches coûtent moins cher à fabriquer que quatre. Une escalade qui ne se
+déclenche pas est donc un succès, pas une capacité inemployée. Le banc des huit
+cartes historiques avait fait le même constat le 2026-09-03 : *« aucune escalade
+de couches n'a servi »*.
+
+⚠️ Avant le 2026-09-07, **aucun schéma ne déclarait `max_layers`** : les dix
+cartes tournaient toutes à deux couches, et la description de la `carte-09`
+annonçait pourtant « plafond 4 couches ». La documentation promettait une
+capacité que le fichier ne déclarait pas. C'est la faute déjà inscrite dans
+`CLAUDE.md` à propos d'une section d'ordre d'exécution laissée périmée, et qui
+avait fait conclure à une cascade mal ordonnée.
+
+## Deux tirages ne prouvent rien
+
+Les deux cartes qui ont résisté le montrent, chacune à sa manière.
+
+La `carte-07` a rendu 5, puis 2, puis 3 erreurs, puis 0 % routé, avant
+d'atteindre zéro. La `carte-09` a rendu 1 erreur, puis 2 au tirage suivant, puis
+zéro — **sur le même schéma**, à ceci près qu'on lui avait ouvert un plafond
+qu'elle n'a finalement pas utilisé.
+
+Le placement et le routage sont tous deux stochastiques. Ce dépôt mesure déjà
+23 points d'écart entre deux tirages d'une même carte au même placement. Un
+résultat isolé ne dit donc rien, ni en bien ni en mal — et c'est exactement sur
+deux tirages concordants que j'avais conclu, à tort, à un défaut structurel.
+
 ## Rejouer
 
 ```
@@ -186,6 +223,6 @@ sérialise. Le banc ne lance donc jamais deux cartes en parallèle.
 | `carte-06-io-etendu` | 35 | 27 | 100 % | 0 | **oui** |
 | `carte-07-multi-io` | 44 | 37 | 100 % | 0 | **oui** |
 | `carte-08-dense` | 56 | 49 | 100 % | 0 | **oui** |
-| `carte-09-tres-dense` | 62 | 49 | 100 % | 2 | **NON** |
+| `carte-09-tres-dense` | 62 | 49 | 100 % | 0 | **oui** |
 | `carte-10-maximale` | 70 | 49 | 100 % | 0 | **oui** |
 <!-- FIN TABLEAU GENERE -->

@@ -1,6 +1,6 @@
 # carte-09-tres-dense
 
-> **Version git** `4c45c7a` (2026-09-03) — le schema, le board et ces chiffres viennent
+> **Version git** `61ebbae` (2026-09-07) — le schema, le board et ces chiffres viennent
 > tous de ce commit. ⚠️ Un README recopie a la main derive de ses mesures des la
 > premiere relance : celui-ci est GENERE par `scripts/readme_banc_driver.py`.
 
@@ -24,18 +24,18 @@ aucune d'une description en langage naturel — la promesse du produit.
 | nets | 49 |
 | surface | 130 x 100 mm (210 mm2 par composant) |
 | **routage** | **100 %** |
-| DRC du pipeline | `clean=False`, 110 violation(s) |
-| **DRC du board livre** | **1 erreur(s)**, 61 violation(s) au total |
-| types (board livre) | silk_over_copper:31 · silk_overlap:22 · track_dangling:1 · unconnected_items:1 · via_dangling:6 |
-| **fabricable** | **NON** — 1 erreur(s) : unconnected_items |
+| DRC du pipeline | `clean=True`, 86 violation(s) |
+| **DRC du board livre** | **0 erreur(s)**, 43 violation(s) au total |
+| types (board livre) | silk_over_copper:25 · silk_overlap:18 |
+| **fabricable** | **oui** — aucune violation de severite `error` sur le board livre |
 | fichiers exportes | 20 |
-| duree du pipeline | 532 s |
+| duree du pipeline | 2321 s |
 
 Cuivre reellement pose sur le board livre :
 
 | segments | vias | zones | empreintes |
 |---|---|---|---|
-| 518 | 136 | 3 | 63 |
+| 603 | 132 | 3 | 63 |
 
 ⚠️ Ces quatre nombres sont comptes **dans le board**, pas rapportes par un
 compteur de progression. Ce depot a paye trois fois la difference : un rapport DRC
@@ -45,6 +45,12 @@ vide lu « 0 erreur », des nets KiCad 10 comptes a zero, et un driver annoncant
 ## Note de conception
 
 62 composants. ⚠️ PROFIL ETABLI le 2026-09-06 apres mesure : les versions qui ajoutaient des SORTIES (LED, connecteurs) finissaient avec des `via_dangling` et quelques connexions manquantes — chaque sortie tire un net de plus depuis le LQFP-48. La progression se fait donc par des condensateurs de DECOUPLAGE : ils ne portent que `+3V3` et `GND`, deux nets desservis par le PLAN, donc ils n ajoutent aucune liaison a router. Les broches d E/S restent prises sur les QUATRE cotes du boitier.
+
+⚠️ PLAFOND A QUATRE COUCHES (2026-09-07), et c est la seule carte du banc a en avoir un. Elle a rendu 1 puis 2 erreurs sur deux couches, en deux tirages successifs du meme schema — le routage est stochastique, ce depot le mesure a 23 points d ecart sur une meme carte.
+
+Le plafond ne PRESCRIT rien : le service part toujours de 2 couches et n escalade que sur preuve d echec, en gardant TOUJOURS le meilleur tirage et jamais le dernier. Il ouvre simplement la porte que les neuf autres cartes n ont pas eu besoin d ouvrir.
+
+⚠️ La documentation du banc annoncait deja « plafond 4 couches » pour cette carte alors qu AUCUN schema ne portait `max_layers` : les dix cartes tournaient toutes a deux couches. La description promettait une capacite que le fichier ne declarait pas — la meme faute qu une section d ordre d execution laissee perimee dans CLAUDE.md, et qui avait fait conclure a une cascade mal ordonnee.
 
 ## Rejouer
 

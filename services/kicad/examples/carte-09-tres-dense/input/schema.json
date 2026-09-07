@@ -1,6 +1,6 @@
 {
   "_comment": "Schema ecrit par le driver LLM (Claude Code joue l agent Schema). Description : une carte tres dense : seize sorties commandees, cinq connecteurs et un decouplage renforce",
-  "_board_size_note": "62 composants. ⚠️ PROFIL ETABLI le 2026-09-06 apres mesure : les versions qui ajoutaient des SORTIES (LED, connecteurs) finissaient avec des `via_dangling` et quelques connexions manquantes — chaque sortie tire un net de plus depuis le LQFP-48. La progression se fait donc par des condensateurs de DECOUPLAGE : ils ne portent que `+3V3` et `GND`, deux nets desservis par le PLAN, donc ils n ajoutent aucune liaison a router. Les broches d E/S restent prises sur les QUATRE cotes du boitier.",
+  "_board_size_note": "62 composants. ⚠️ PROFIL ETABLI le 2026-09-06 apres mesure : les versions qui ajoutaient des SORTIES (LED, connecteurs) finissaient avec des `via_dangling` et quelques connexions manquantes — chaque sortie tire un net de plus depuis le LQFP-48. La progression se fait donc par des condensateurs de DECOUPLAGE : ils ne portent que `+3V3` et `GND`, deux nets desservis par le PLAN, donc ils n ajoutent aucune liaison a router. Les broches d E/S restent prises sur les QUATRE cotes du boitier.\n\n⚠️ PLAFOND A QUATRE COUCHES (2026-09-07), et c est la seule carte du banc a en avoir un. Elle a rendu 1 puis 2 erreurs sur deux couches, en deux tirages successifs du meme schema — le routage est stochastique, ce depot le mesure a 23 points d ecart sur une meme carte.\n\nLe plafond ne PRESCRIT rien : le service part toujours de 2 couches et n escalade que sur preuve d echec, en gardant TOUJOURS le meilleur tirage et jamais le dernier. Il ouvre simplement la porte que les neuf autres cartes n ont pas eu besoin d ouvrir.\n\n⚠️ La documentation du banc annoncait deja « plafond 4 couches » pour cette carte alors qu AUCUN schema ne portait `max_layers` : les dix cartes tournaient toutes a deux couches. La description promettait une capacite que le fichier ne declarait pas — la meme faute qu une section d ordre d execution laissee perimee dans CLAUDE.md, et qui avait fait conclure a une cascade mal ordonnee.",
   "board_width_mm": 130,
   "board_height_mm": 100,
   "components": [
@@ -1362,5 +1362,7 @@
         }
       ]
     }
-  ]
+  ],
+  "max_layers": 4,
+  "route_budget_s": 2400
 }
