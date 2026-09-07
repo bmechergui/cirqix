@@ -225,4 +225,5 @@ sérialise. Le banc ne lance donc jamais deux cartes en parallèle.
 | `carte-08-dense` | 56 | 49 | 100 % | 0 | **oui** |
 | `carte-09-tres-dense` | 62 | 49 | 100 % | 0 | **oui** |
 | `carte-10-maximale` | 70 | 49 | 100 % | 0 | **oui** |
+| `carte-11-croisements` | 6 | 34 | 3 % | 42 | **NON** |
 <!-- FIN TABLEAU GENERE -->
