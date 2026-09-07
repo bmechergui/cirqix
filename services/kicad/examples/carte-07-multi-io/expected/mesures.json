@@ -1,17 +1,31 @@
 {
   "exemple": "carte-07-multi-io",
-  "composants": 48,
-  "nets": 41,
+  "composants": 44,
+  "nets": 37,
   "board_mm": [
-    115,
-    88
+    110,
+    80
   ],
-  "duree_s": 1592,
-  "git": "4c45c7a",
-  "routed_percent": null,
-  "drc_violations": null,
-  "drc_clean": null,
-  "fichiers_exportes": null,
-  "types_violations": "",
-  "abouti": false
+  "duree_s": 1103,
+  "git": "1614670",
+  "routed_percent": 100,
+  "drc_violations": 52,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_overlap:30,silk_over_copper:22",
+  "abouti": true,
+  "board": {
+    "segments": 350,
+    "vias": 75,
+    "zones": 3,
+    "empreintes": 45
+  },
+  "drc_du_board": {
+    "violations": 29,
+    "non_connectes": 0,
+    "types": "silk_over_copper:11,silk_overlap:15,via_dangling:3",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
 }
