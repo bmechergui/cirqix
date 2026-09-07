@@ -1,0 +1,31 @@
+{
+  "exemple": "carte-05-capteur-i2c",
+  "composants": 26,
+  "nets": 13,
+  "board_mm": [
+    70,
+    50
+  ],
+  "duree_s": 327,
+  "git": "4c45c7a",
+  "routed_percent": 100,
+  "drc_violations": 20,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_overlap:12,silk_over_copper:8",
+  "abouti": true,
+  "board": {
+    "segments": 143,
+    "vias": 36,
+    "zones": 3,
+    "empreintes": 26
+  },
+  "drc_du_board": {
+    "violations": 10,
+    "non_connectes": 0,
+    "types": "silk_over_copper:4,silk_overlap:6",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
+}

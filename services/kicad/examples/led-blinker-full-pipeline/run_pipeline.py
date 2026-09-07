@@ -33,7 +33,20 @@ from typing import Any
 
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_OUT = _HERE / "output"
-_TIMEOUT_S = 600
+# ⚠️ VALAIT 600 s JUSQU AU 2026-09-06, pour TOUTES les requetes. Le placement
+# d une carte de 47 composants (`carte-07-multi-io`) le depasse : le client a
+# raccroche sur `TimeoutError` pendant que le service travaillait encore, et le
+# pipeline est sorti en echec sur un placement qui allait aboutir.
+#
+# C est la famille de defaut deja inscrite dans CLAUDE.md — « le plafond n etait
+# pas UN endroit, mais QUATRE » : un budget client plus serre que le service
+# rend inatteignable tout ce qui est plus lent que lui. Le service, lui,
+# s accorde 900 s pour le placement et jusqu a 3600 s pour le routage.
+#
+# ⚠️ Ce n est PAS une limite de patience mais une RESSOURCE : `kct route` rend
+# la main des 100 % atteint. La relever ne coute rien sur une carte simple —
+# `carte-01` finit en 50 s.
+_TIMEOUT_S = 3600
 
 
 def _service() -> tuple[str, str]:
@@ -156,7 +169,25 @@ def main() -> int:
 
     # ⑥ Routage --------------------------------------------------------------
     t = _step(6, "call_agent_routing → POST /route/auto")
-    res = _post("/route/auto", {"kicad_pcb_b64": _b64(pcb), "layers": 2})
+    # ⚠️ `layers` est un PLAFOND, pas une consigne : le service part de 2 et
+    # escalade sur PREUVE d echec. Le coder en dur a 2 privait donc les
+    # cartes denses de toute escalade — `carte-09` (61 composants, 55 nets)
+    # est sortie a « 0 %, tous les tirages ont stagne », faute de pouvoir
+    # monter a 4 couches. Le schema peut desormais lever le plafond, et le
+    # defaut reste 2 : on ne vend pas du cuivre a une carte simple.
+    plafond = int(schema.get("max_layers", 2))
+    # ⚠️ SANS `timeout_s`, le service retombe sur son defaut de 300 s alors
+    # qu il en accepte 3600. Mesure du 2026-09-06 : `carte-09` (61
+    # composants, 55 nets) sortait a « 0 %, tous les tirages ont stagne »
+    # apres 310 s — trois tirages par palier n y tiennent pas.
+    #
+    # C est la QUATRIEME frontiere de la meme famille rencontree ce jour,
+    # apres le plafond client de 600 s et les couches codees en dur. Le
+    # budget n est PAS une limite de patience : le routeur rend la main
+    # des 100 % atteint, et `carte-01` finit toujours en 50 s.
+    budget = int(schema.get("route_budget_s", 1800))
+    res = _post("/route/auto", {"kicad_pcb_b64": _b64(pcb),
+                                "layers": plafond, "timeout_s": budget})
     routed = res.get("routed_percent", 0)
     if res.get("kicad_pcb_b64"):
         pcb = _unb64(res["kicad_pcb_b64"])

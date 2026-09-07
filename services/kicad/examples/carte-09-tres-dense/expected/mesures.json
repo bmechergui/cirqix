@@ -1,0 +1,31 @@
+{
+  "exemple": "carte-09-tres-dense",
+  "composants": 62,
+  "nets": 49,
+  "board_mm": [
+    130,
+    100
+  ],
+  "duree_s": 2321,
+  "git": "29caf3e",
+  "routed_percent": 100,
+  "drc_violations": 86,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_over_copper:50,silk_overlap:36",
+  "abouti": true,
+  "board": {
+    "segments": 603,
+    "vias": 132,
+    "zones": 3,
+    "empreintes": 63
+  },
+  "drc_du_board": {
+    "violations": 43,
+    "non_connectes": 0,
+    "types": "silk_over_copper:25,silk_overlap:18",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
+}

@@ -176,7 +176,20 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
 
         agent.save(str(out))
         prog = agent.get_progress()
-        pct = round(prog.nets_routed / prog.nets_total * 100) if prog.nets_total else 100
+        # ⚠️ UN DENOMINATEUR NUL N EST PAS UNE VICTOIRE. On rendait 100 ici :
+        # un board dont l agent ne voit AUCUN net etait annonce parfaitement
+        # route. C est la troisieme soeur de la meme faute — les deux autres
+        # sont `_measured_routed_percent` (deja corrigee, meme phrase) et
+        # `parse_routed_pct` (corrigee le 2026-09-07, apres qu un 100 % invente
+        # eut traverse toute la chaine sur un board de 4 segments).
+        #
+        # Un correctif applique a une fonction ne protege pas sa soeur.
+        if not prog.nets_total:
+            raise RuntimeError(
+                "reasoner : l agent ne voit aucun net routable — le routage "
+                "ne peut pas etre mesure, et « je ne sais pas » n est pas 100 %"
+            )
+        pct = round(prog.nets_routed / prog.nets_total * 100)
         return out.read_bytes(), pct, steps_log
 
 

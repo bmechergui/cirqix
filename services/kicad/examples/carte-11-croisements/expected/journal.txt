@@ -1,0 +1,78 @@
+SchÃ©ma (driver LLM) : 6 composants, 34 nets, board 90x60mm
+
+==============================================================
+[1] call_agent_schema â†’ POST /schematic/generate
+==============================================================
+    -> taille=60211o  (6.6s)
+
+==============================================================
+[2] call_agent_erc â†’ POST /erc
+==============================================================
+    -> clean=False Â· violations=176 Â· fixed=225 Â· skipped=False Â· engine=kicad-cli  (1.8s)
+
+==============================================================
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
+==============================================================
+    -> taille=28669o  (0.2s)
+
+==============================================================
+[5] call_agent_placement â†’ POST /place/auto
+==============================================================
+    -> placÃ©s=6 Â· status=None  (12.2s)
+
+==============================================================
+[6] call_agent_routing â†’ POST /route/auto
+==============================================================
+    -> routÃ©=3% Â· couches=2 Â· vias=3 Â· skipped=False Â· warning=tous les tirages ont stagne â€” board recupere d un job abandonne, incomplet mais reel  (484.0s)
+
+==============================================================
+[6.5] shouldRescueRouting â†’ POST /reason/auto
+==============================================================
+       Â· â™» DÃ©-routage complet avant routage (13 segments, 3 vias, 0 zones)
+       Â· ItÃ©ration 1/3 : routage 0%
+       Â· âš  Appel IA Ã©chouÃ© : Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'}, 'request_id': 'req_011CepVCMRieb8Kxw333xGoY'}
+    -> routÃ©=3% Â· llm=True Â· warning=None  (17.3s)
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto
+==============================================================
+    -> clean=False Â· violations=104 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (2.5s)
+       ! copper_edge_clearance: Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0
+       ! copper_edge_clearance: Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0
+       ! copper_edge_clearance: Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0
+       ! copper_edge_clearance: Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
+
+==============================================================
+[8] call_agent_export â†’ POST /export/all
+==============================================================
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (5.6s)
+       + led-blinker-B_Adhesive.gba
+       + led-blinker-B_Courtyard.gbr
+       + led-blinker-B_Cu.gbl
+       + led-blinker-B_Fab.gbr
+       + led-blinker-B_Mask.gbs
+       + led-blinker-B_Paste.gbp
+       + led-blinker-B_Silkscreen.gbo
+       + led-blinker-Edge_Cuts.gm1
+       + led-blinker-F_Adhesive.gta
+       + led-blinker-F_Courtyard.gbr
+       + led-blinker-F_Cu.gtl
+       + led-blinker-F_Fab.gbr
+       + led-blinker-F_Mask.gts
+       + led-blinker-F_Paste.gtp
+       + led-blinker-F_Silkscreen.gto
+       + led-blinker-Margin.gbr
+       + led-blinker-User_Drawings.gbr
+       + led-blinker-job.gbrjob
+       + led-blinker.drl
+       + pos.csv
+
+==============================================================
+SUMMARY routed=3 drc_violations=104 drc_clean=False files=20 types=unconnected_items:80,hole_to_hole:8,copper_edge_clearance:4,silk_edge_clearance:4,track_dangling:4,silk_overlap:2,via_dangling:2
+VERDICT : routage 3% Â· DRC clean=False (skipped=False) Â· 20 fichiers exportÃ©s
+PIPELINE INCOMPLET â€” voir les Ã©tapes ci-dessus
+Artefacts : /tmp/banc-carte-11-croisements-1788802203/output

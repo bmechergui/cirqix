@@ -7,8 +7,30 @@ Endpoints actifs (tous via routers/) :
   /place/auto · /erc · /route/auto · /drc/auto · /export/all · /simulate/auto
 """
 
+import logging as _logging
 import os
 import sys as _sys
+
+# ⚠️ SANS CECI, LES DECISIONS DU ROUTEUR SONT INVISIBLES.
+#
+# Rien ne configurait la journalisation : le logger racine restait a WARNING,
+# et uvicorn ne configure que SES propres loggers. Or `routers/routing.py`
+# journalise en INFO tout ce qui compte — le palier de couches essaye, le
+# passage a 4 couches, l abandon des tirages d un palier hors d atteinte,
+# l arret de l escalade faute de budget.
+#
+# Consequence mesuree le 2026-09-07 : `docker logs` ne montrait QUE la sortie
+# de Freerouting. Impossible de repondre a « le pipeline escalade-t-il les
+# couches ? » autrement qu en lisant le code et en supposant. Une decision qui
+# coute du cuivre — donc de l argent au client — ne doit pas etre indechiffrable
+# apres coup.
+#
+# Le niveau reste pilotable par `LOG_LEVEL` ; le defaut devient INFO.
+_logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    stream=_sys.stdout,
+)
 
 # Use Cirqix-patched copies of circuit_synth and kicad_tools (in services/kicad/).
 # These contain bug fixes and extensions not in the original packages.

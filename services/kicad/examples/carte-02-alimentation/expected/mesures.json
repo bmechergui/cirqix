@@ -1,0 +1,31 @@
+{
+  "exemple": "carte-02-alimentation",
+  "composants": 12,
+  "nets": 5,
+  "board_mm": [
+    55,
+    40
+  ],
+  "duree_s": 126,
+  "git": "4c45c7a",
+  "routed_percent": 100,
+  "drc_violations": 4,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_over_copper:4",
+  "abouti": true,
+  "board": {
+    "segments": 64,
+    "vias": 16,
+    "zones": 2,
+    "empreintes": 12
+  },
+  "drc_du_board": {
+    "violations": 2,
+    "non_connectes": 0,
+    "types": "silk_over_copper:2",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
+}

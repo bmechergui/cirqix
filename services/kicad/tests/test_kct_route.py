@@ -594,3 +594,110 @@ def test_route_kct_explicit_planes_mode_never_double_routes(monkeypatch):
     kct_route.route_kct(b"(kicad_pcb)", vcc_as_traces=False)
 
     assert fake.calls == [False]            # déjà en plans → pas de re-route
+
+
+# ---------------------------------------------------------------------------
+# « Rien de reconnaissable » n'est pas « tout est route »
+# ---------------------------------------------------------------------------
+#
+# ⚠️ DEFAUT MESURE LE 2026-09-07, sur `examples/carte-11-croisements`.
+# Le routage a rendu 0 % ; le reasoner a de-route le board (4 segments, 2 vias)
+# puis rappele `kct route`, dont la sortie ne portait AUCUN compte
+# reconnaissable. `parse_routed_pct` a rendu 100 par defaut, et ce 100 a
+# traverse toute la chaine :
+#
+#     [6]   routage    ->   0 %
+#     [6.5] reasoner    -> 100 %   sur un board de 4 segments pour 33 nets
+#     [7]   DRC        ->  42 connexions manquantes
+#
+# C'est la TROISIEME soeur de la meme famille. Deux etaient deja corrigees :
+# `_measured_routed_percent` (« un denominateur nul n'est pas une victoire »)
+# et `reasoning.py` (`if prog.nets_total else 100`). Un correctif applique a
+# une fonction ne protege pas sa soeur.
+#
+# La sortie qui DIT « rien a router » reste legitime et rend 100 : elle est
+# explicite. Tout le reste rend None — « je ne sais pas » — et l'appelant doit
+# alors mesurer le BOARD, qui lui ne ment pas.
+
+_SORTIE_MUETTE = "Loading board...\nDone.\n"
+_SORTIE_VIDE = ""
+_SORTIE_PLANTEE = "Traceback (most recent call last):\n  RuntimeError: boom\n"
+
+
+def test_une_sortie_muette_ne_vaut_pas_100():
+    assert parse_routed_pct(_SORTIE_MUETTE) is None
+
+
+def test_une_sortie_vide_ne_vaut_pas_100():
+    assert parse_routed_pct(_SORTIE_VIDE) is None
+
+
+def test_une_sortie_plantee_ne_vaut_pas_100():
+    assert parse_routed_pct(_SORTIE_PLANTEE) is None
+
+
+def test_un_denominateur_nul_ne_vaut_pas_100():
+    # 0/0 n'est pas une victoire : c'est l'absence de mesure.
+    assert parse_routed_pct("  Nets routed: 0/0\n") is None
+
+
+def test_rien_a_router_reste_reconnu():
+    # Le seul cas ou 100 est legitime : le routeur le DIT.
+    assert parse_routed_pct(_NO_ROUTE_STDOUT) == 100
+    assert parse_routed_pct("Nothing to route.\n") == 100
+
+
+def test_les_comptes_reels_sont_inchanges():
+    assert parse_routed_pct(_PARTIAL_STDOUT) == 56
+    assert parse_routed_pct(_COMPLETE_STDOUT) == 100
+    assert parse_routed_pct(_OLD_FORMAT_STDOUT) == 100
+    assert parse_routed_pct("Best result 73%\n") == 73
+
+
+# ---------------------------------------------------------------------------
+# Quand le parser ne sait pas, on MESURE le board
+# ---------------------------------------------------------------------------
+
+def test_pct_du_routage_prefere_le_compte_quand_il_existe(monkeypatch):
+    import routers.routing as routage
+
+    def jamais_appele(_):
+        raise AssertionError("le board ne doit pas etre mesure si le compte existe")
+
+    monkeypatch.setattr(routage, "_measure_routing", jamais_appele)
+    assert kct_route.pct_du_routage(_PARTIAL_STDOUT, b"") == 56
+
+
+def test_pct_du_routage_mesure_le_board_quand_la_sortie_est_muette(monkeypatch):
+    import routers.routing as routage
+
+    # 33 nets, 33 non relies : le board de `carte-11` apres de-routage.
+    monkeypatch.setattr(routage, "_measure_routing", lambda _: (33, 33))
+    assert kct_route.pct_du_routage(_SORTIE_MUETTE, b"(kicad_pcb)") == 0
+
+
+def test_pct_du_routage_rend_le_vrai_pourcentage_mesure(monkeypatch):
+    import routers.routing as routage
+
+    monkeypatch.setattr(routage, "_measure_routing", lambda _: (10, 3))
+    assert kct_route.pct_du_routage(_SORTIE_MUETTE, b"(kicad_pcb)") == 70
+
+
+def test_pct_du_routage_echoue_ferme_si_rien_n_est_mesurable(monkeypatch):
+    import pytest
+    import routers.routing as routage
+
+    # Ni compte dans la sortie, ni net dans le board : on ne SAIT pas. Rendre
+    # 100 ici serait exactement le defaut qu on corrige.
+    monkeypatch.setattr(routage, "_measure_routing", lambda _: (0, 0))
+    with pytest.raises(RuntimeError):
+        kct_route.pct_du_routage(_SORTIE_MUETTE, b"(kicad_pcb)")
+
+
+def test_les_appelants_passent_bien_le_board(monkeypatch):
+    """Une regle correcte jamais appelee est indistinguable d une regle absente."""
+    import inspect
+    src = inspect.getsource(kct_route.route_kct) + inspect.getsource(kct_route)
+    # Plus aucun appelant ne doit lire le pourcentage sans le board sous la main.
+    assert "parse_routed_pct(result.stdout)" not in src
+    assert "pct_du_routage(result.stdout" in src
