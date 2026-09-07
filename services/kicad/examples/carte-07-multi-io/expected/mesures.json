@@ -1,0 +1,17 @@
+{
+  "exemple": "carte-07-multi-io",
+  "composants": 48,
+  "nets": 41,
+  "board_mm": [
+    115,
+    88
+  ],
+  "duree_s": 1592,
+  "git": "4c45c7a",
+  "routed_percent": null,
+  "drc_violations": null,
+  "drc_clean": null,
+  "fichiers_exportes": null,
+  "types_violations": "",
+  "abouti": false
+}

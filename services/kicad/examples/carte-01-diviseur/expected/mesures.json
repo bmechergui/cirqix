@@ -1,0 +1,31 @@
+{
+  "exemple": "carte-01-diviseur",
+  "composants": 5,
+  "nets": 4,
+  "board_mm": [
+    25,
+    20
+  ],
+  "duree_s": 50,
+  "git": "4c45c7a",
+  "routed_percent": 100,
+  "drc_violations": 6,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_overlap:4,silk_over_copper:2",
+  "abouti": true,
+  "board": {
+    "segments": 17,
+    "vias": 11,
+    "zones": 2,
+    "empreintes": 5
+  },
+  "drc_du_board": {
+    "violations": 3,
+    "non_connectes": 0,
+    "types": "silk_over_copper:1,silk_overlap:2",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
+}

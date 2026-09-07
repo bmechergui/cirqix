@@ -1,0 +1,61 @@
+SchÃ©ma (driver LLM) : 48 composants, 41 nets, board 115x88mm
+
+==============================================================
+[1] call_agent_schema â†’ POST /schematic/generate
+==============================================================
+    -> taille=170005o  (3.0s)
+
+==============================================================
+[2] call_agent_erc â†’ POST /erc
+==============================================================
+    -> clean=False Â· violations=361 Â· fixed=297 Â· skipped=False Â· engine=kicad-cli  (7.2s)
+
+==============================================================
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
+==============================================================
+    -> taille=132051o  (1.2s)
+
+==============================================================
+[5] call_agent_placement â†’ POST /place/auto
+==============================================================
+    -> placÃ©s=48 Â· status=None  (1560.5s)
+
+==============================================================
+[6] call_agent_routing â†’ POST /route/auto
+==============================================================
+Traceback (most recent call last):
+  File "/tmp/banc-carte-07-multi-io-1788740478/run_pipeline.py", line 258, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/tmp/banc-carte-07-multi-io-1788740478/run_pipeline.py", line 189, in main
+    res = _post("/route/auto", {"kicad_pcb_b64": _b64(pcb),
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/banc-carte-07-multi-io-1788740478/run_pipeline.py", line 72, in _post
+    with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1348, in do_open
+    r = h.getresponse()
+        ^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/http/client.py", line 1457, in getresponse
+    response.begin()
+  File "/usr/lib/python3.12/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/http/client.py", line 305, in _read_status
+    raise RemoteDisconnected("Remote end closed connection without"
+http.client.RemoteDisconnected: Remote end closed connection without response

@@ -1,0 +1,72 @@
+SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
+
+==============================================================
+[1] call_agent_schema â†’ POST /schematic/generate
+==============================================================
+    -> taille=204511o  (2.7s)
+
+==============================================================
+[2] call_agent_erc â†’ POST /erc
+==============================================================
+    -> clean=False Â· violations=428 Â· fixed=327 Â· skipped=False Â· engine=kicad-cli  (1.5s)
+
+==============================================================
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
+==============================================================
+    -> taille=163771o  (1.4s)
+
+==============================================================
+[5] call_agent_placement â†’ POST /place/auto
+==============================================================
+    -> placÃ©s=62 Â· status=None  (84.7s)
+
+==============================================================
+[6] call_agent_routing â†’ POST /route/auto
+==============================================================
+    -> routÃ©=100% Â· couches=2 Â· vias=135 Â· skipped=False Â· warning=None  (399.4s)
+
+[6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto
+==============================================================
+    -> clean=False Â· violations=110 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (3.6s)
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+
+==============================================================
+[8] call_agent_export â†’ POST /export/all
+==============================================================
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.6s)
+       + led-blinker-B_Adhesive.gba
+       + led-blinker-B_Courtyard.gbr
+       + led-blinker-B_Cu.gbl
+       + led-blinker-B_Fab.gbr
+       + led-blinker-B_Mask.gbs
+       + led-blinker-B_Paste.gbp
+       + led-blinker-B_Silkscreen.gbo
+       + led-blinker-Edge_Cuts.gm1
+       + led-blinker-F_Adhesive.gta
+       + led-blinker-F_Courtyard.gbr
+       + led-blinker-F_Cu.gtl
+       + led-blinker-F_Fab.gbr
+       + led-blinker-F_Mask.gts
+       + led-blinker-F_Paste.gtp
+       + led-blinker-F_Silkscreen.gto
+       + led-blinker-Margin.gbr
+       + led-blinker-User_Drawings.gbr
+       + led-blinker-job.gbrjob
+       + led-blinker.drl
+       + pos.csv
+
+==============================================================
+SUMMARY routed=100 drc_violations=110 drc_clean=False files=20 types=silk_over_copper:62,silk_overlap:44,unconnected_items:2,track_dangling:1,via_dangling:1
+VERDICT : routage 100% Â· DRC clean=False (skipped=False) Â· 20 fichiers exportÃ©s
+PIPELINE INCOMPLET â€” voir les Ã©tapes ci-dessus
+Artefacts : /tmp/banc-carte-09-tres-dense-1788722217/output

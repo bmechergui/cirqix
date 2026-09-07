@@ -1,0 +1,106 @@
+{
+  "_comment": "Schema ecrit par le driver LLM (Claude Code joue l agent Schema). Description : un diviseur de tension avec une LED temoin et un connecteur d entree",
+  "_board_size_note": "5 composants : 25 x 20 mm suffit largement, et une petite surface reduit l espace de recherche du routeur.",
+  "board_width_mm": 25,
+  "board_height_mm": 20,
+  "components": [
+    {
+      "ref": "J1",
+      "value": "IN",
+      "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+      "symbol": "Connector_Generic:Conn_01x02"
+    },
+    {
+      "ref": "R1",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "symbol": "Device:R"
+    },
+    {
+      "ref": "R2",
+      "value": "10k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "symbol": "Device:R"
+    },
+    {
+      "ref": "R3",
+      "value": "1k",
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "symbol": "Device:R"
+    },
+    {
+      "ref": "D1",
+      "value": "LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric",
+      "symbol": "Device:LED"
+    }
+  ],
+  "nets": [
+    "GND",
+    "LED_A",
+    "MID",
+    "VIN"
+  ],
+  "connections": [
+    {
+      "name": "VIN",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 1
+        },
+        {
+          "ref": "R1",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "MID",
+      "pins": [
+        {
+          "ref": "R1",
+          "pin": 2
+        },
+        {
+          "ref": "R2",
+          "pin": 1
+        },
+        {
+          "ref": "R3",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED_A",
+      "pins": [
+        {
+          "ref": "R3",
+          "pin": 2
+        },
+        {
+          "ref": "D1",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "GND",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 2
+        },
+        {
+          "ref": "R2",
+          "pin": 2
+        },
+        {
+          "ref": "D1",
+          "pin": 1
+        }
+      ]
+    }
+  ]
+}
