@@ -1,0 +1,31 @@
+{
+  "exemple": "carte-10-maximale",
+  "composants": 70,
+  "nets": 49,
+  "board_mm": [
+    140,
+    105
+  ],
+  "duree_s": 1585,
+  "git": "4c45c7a",
+  "routed_percent": 100,
+  "drc_violations": 104,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "types_violations": "silk_over_copper:70,silk_overlap:34",
+  "abouti": true,
+  "board": {
+    "segments": 620,
+    "vias": 167,
+    "zones": 3,
+    "empreintes": 71
+  },
+  "drc_du_board": {
+    "violations": 52,
+    "non_connectes": 0,
+    "types": "silk_over_copper:35,silk_overlap:17",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  }
+}

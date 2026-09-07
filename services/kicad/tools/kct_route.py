@@ -286,7 +286,7 @@ def stamp_mfr_tier(pcb_bytes: bytes, tier: str) -> bytes:
             + f'\n  (property "{_MFR_TIER_PROPERTY}" "{tier}")\n)\n').encode("utf-8")
 
 
-def parse_routed_pct(stdout: str) -> int:
+def parse_routed_pct(stdout: str) -> Optional[int]:
     """Parse routing completion % from kct route/reason output.
 
     kct route emits a definitive final tally ``Nets routed: N/M`` (the last
@@ -300,7 +300,10 @@ def parse_routed_pct(stdout: str) -> int:
       1. last ``Nets routed: N/M`` (current kct wording)
       2. last ``Routed: N/M nets`` (older kct wording, back-compat)
       3. ``Best result NN%`` / ``(NN% connected|completion)`` summary
-      4. default 100 when nothing needed routing (all power poured as zones)
+      4. explicit ``Nothing to route`` (all power poured as zones) -> 100
+
+    Returns ``None`` when the output says nothing recognisable: that is
+    « I cannot tell », not « everything is routed ». See the guard below.
 
     Note: ``Unrouted: 1/9`` contains the substring "routed" — the explicit
     ``Nets routed`` / ``Routed: ... nets`` anchors avoid matching it.
@@ -310,7 +313,10 @@ def parse_routed_pct(stdout: str) -> int:
         tally = re.findall(r'Routed:\s*(\d+)\s*/\s*(\d+)\s+nets', stdout)
     if tally:
         done, total = tally[-1]
-        return round(int(done) / int(total) * 100) if int(total) > 0 else 100
+        # ⚠️ Un denominateur nul n est pas une victoire, c est l ABSENCE de
+        # mesure. On rendait 100 ici. Meme faute, meme phrase, que dans
+        # `_measured_routed_percent` ou elle est deja corrigee.
+        return round(int(done) / int(total) * 100) if int(total) > 0 else None
 
     m = re.search(r'Best result\s+(\d+)%', stdout)
     if m:
@@ -318,7 +324,58 @@ def parse_routed_pct(stdout: str) -> int:
     m = re.search(r'\((\d+)%\s*(?:connected|completion)\)', stdout)
     if m:
         return int(m.group(1))
-    return 100
+
+    # Le SEUL cas ou 100 est legitime sans compte : le routeur DIT qu il n y
+    # avait rien a router — tous les nets de puissance coules en zones.
+    if re.search(r'[Nn]othing to route', stdout):
+        return 100
+
+    # ⚠️ TOUT LE RESTE EST INCONNU, PAS COMPLET. On rendait 100 par defaut,
+    # au motif que « rien n avait besoin d etre route » — indistinguable de
+    # « le routeur n a rien fait ». L appelant doit mesurer le BOARD.
+    return None
+
+
+def pct_du_routage(stdout: str, board_bytes: bytes) -> int:
+    """Le pourcentage de routage, lu dans la sortie OU mesure sur le board.
+
+    ⚠️ POURQUOI CETTE FONCTION EXISTE. `parse_routed_pct` ne voit qu un texte.
+    Quand le routeur n imprime rien de reconnaissable, il est impossible de
+    distinguer « il n y avait rien a router » de « il n a rien fait » — et
+    l ancien defaut choisissait la premiere lecture, en rendant 100.
+
+    Mesure du 2026-09-07 sur `examples/carte-11-croisements` : le reasoner a
+    de-route le board (4 segments, 2 vias pour 33 nets), rappele `kct route`,
+    et le 100 % invente a traverse toute la chaine jusqu au verdict livre —
+    pendant que le DRC comptait 42 connexions manquantes.
+
+    Le board, lui, ne ment pas. C est la regle de ce depot : « un compteur
+    ment, un board non ».
+
+    L import est LOCAL a dessein : `routers.routing` importe `tools.kct_route`,
+    donc un import de module creerait un cycle. On garde ainsi UNE seule
+    mesure de connectivite, au lieu d une soeur qui divergera.
+    """
+    pct = parse_routed_pct(stdout)
+    if pct is not None:
+        return pct
+
+    from routers.routing import _measure_routing  # noqa: PLC0415 — cycle
+
+    total, non_routes = _measure_routing(board_bytes)
+    if total <= 0:
+        # ⚠️ Echouer ferme. Un board sans net routable ne se mesure pas, et
+        # « je ne peux pas mesurer » ne doit jamais se lire « tout est route ».
+        raise RuntimeError(
+            "kct route: sortie illisible ET board sans net routable — "
+            "impossible de mesurer le routage"
+        )
+    mesure = ((total - non_routes) * 100) // total
+    logger.warning(
+        "kct route: sortie sans compte reconnaissable — pourcentage MESURE "
+        "sur le board : %d%% (%d net(s) non relie(s) sur %d)",
+        mesure, non_routes, total)
+    return mesure
 
 
 def extract_failure_analysis(stdout: str) -> str:
@@ -1622,7 +1679,7 @@ def _route_once(
                                      min_completion=_MIN_COMPLETION_RESCUE,
                                      only_nets=only_nets)
             if dst.exists():
-                pct_reel = parse_routed_pct(result.stdout)
+                pct_reel = pct_du_routage(result.stdout, dst.read_bytes())
                 logger.warning(
                     "kct route: board partiel récupéré à %d%% (le routage "
                     "complet a échoué) — transmis au sauvetage", pct_reel)
@@ -1635,7 +1692,7 @@ def _route_once(
                 f"{result.stderr[:200] or result.stdout[-200:]}"
             )
 
-        routed_pct = parse_routed_pct(result.stdout)
+        routed_pct = pct_du_routage(result.stdout, dst.read_bytes())
         analysis = "" if routed_pct >= 100 else extract_failure_analysis(result.stdout)
 
         routed = dst.read_bytes()

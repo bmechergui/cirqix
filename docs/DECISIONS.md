@@ -232,3 +232,38 @@ au commit c312c07 : le budget réduit livrait une carte NON fabricable
 ### D-2026-06-18-a — Limite « 13-28 mm » ACCEPTÉE
 Limitation de `detect_functional_clusters` acceptée faute de levier. **Levée sans
 validation** le 2026-08-29 → voir D-2026-08-29-a ci-dessus (à ratifier ou non).
+
+## D-2026-09-07-a — Arreter Freerouting sur absence de progression
+
+**Statut : en attente de validation.**
+
+**Constat mesure.** Comptage sur le journal du service KiCad, cinq travaux
+Freerouting distincts :
+
+    996 passes  score 815.45  (40 non routes)
+    996 passes  score 701.71  (50 non routes)
+    996 passes  score 685.09  (42 non routes)
+    996 passes  score 650.03  (43 non routes)
+    992 passes  score 770.97  (34 non routes)
+
+Le score ET le nombre de connexions manquantes sont identiques sur toute la
+serie. Ces travaux n'ont rien ameliore apres leurs premieres passes et ont
+consomme environ 1,2 s par passe jusqu'au plafond de mille, soit ~20 minutes
+chacun. Avec `_TIRAGES_ROUTAGE_PAR_PALIER = 3`, un palier peut donc bruler une
+heure sans produire un seul segment de plus.
+
+**Proposition.** Arreter un travail apres N passes consecutives sans
+amelioration du score, au lieu d'attendre le plafond de passes.
+
+**Pourquoi ce n'est PAS applique.** C'est un seuil chiffre qui change le
+comportement livre — categorie qui exige une validation explicite selon
+`CLAUDE.md`. Une carte difficile peut rester longtemps sur un palier avant de
+debloquer : couper trop tot rendrait des cartes moins bien routees, et ce depot
+a deja paye ce genre d'arbitrage (« NEVER partager le budget entre les
+essais », qui avait mis tous les paliers a 0 %).
+
+**Ce qui manque pour trancher.** Une mesure de la duree typique d'un plateau qui
+finit par ceder, sur plusieurs tirages — exactement la prudence deja inscrite :
+deux tirages concordants ne prouvent rien.
+
+**Une mesure etaye une proposition ; elle ne la valide pas.**

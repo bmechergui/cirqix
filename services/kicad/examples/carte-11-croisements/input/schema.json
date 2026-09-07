@@ -1,0 +1,558 @@
+{
+  "_comment": "Carte 11 du banc driver LLM. Description : deux connecteurs 2x20 face a face, relies par un faisceau de 32 signaux cable EN ORDRE INVERSE — chaque liaison croise toutes les autres.",
+  "_board_size_note": "6 composants sur 90 x 60 mm. La densite n est PAS le sujet : cette carte est peu peuplee et route pourtant mal sur deux couches.\n\n⚠️ ELLE EXISTE POUR METTRE L ESCALADE DE COUCHES A L EPREUVE. Aucune carte de ce depot n avait jamais declenche le passage a 4 couches — non parce que le mecanisme serait casse, mais parce qu aucune n en avait besoin : meme `stm32-100`, que `_couches_pour_echapper` declare a 4 couches, route a 100 % sur DEUX en 208 s. L absence de besoin n est pas une preuve de bon fonctionnement.\n\nCe qui rend deux couches insuffisantes ici n est pas le nombre de pistes mais leur NON-PLANARITE : un faisceau inverse de N signaux impose ~N²/2 croisements, et sur deux couches la face arriere porte le plan de masse — il ne reste qu UNE face de signal. Deux pistes qui se croisent ne tiennent pas sur une meme face.\n\nResultat attendu : echec net a 2 couches, puis passage a 4.",
+  "board_width_mm": 90,
+  "board_height_mm": 60,
+  "components": [
+    {
+      "ref": "J1",
+      "value": "BUS_A",
+      "footprint": "Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical",
+      "symbol": "Connector_Generic:Conn_02x20_Odd_Even"
+    },
+    {
+      "ref": "J2",
+      "value": "BUS_B",
+      "footprint": "Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical",
+      "symbol": "Connector_Generic:Conn_02x20_Odd_Even"
+    },
+    {
+      "ref": "C1",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "symbol": "Device:C"
+    },
+    {
+      "ref": "C2",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "symbol": "Device:C"
+    },
+    {
+      "ref": "C3",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "symbol": "Device:C"
+    },
+    {
+      "ref": "C4",
+      "value": "100nF",
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "symbol": "Device:C"
+    }
+  ],
+  "nets": [
+    "X01",
+    "X02",
+    "X03",
+    "X04",
+    "X05",
+    "X06",
+    "X07",
+    "X08",
+    "X09",
+    "X10",
+    "X11",
+    "X12",
+    "X13",
+    "X14",
+    "X15",
+    "X16",
+    "X17",
+    "X18",
+    "X19",
+    "X20",
+    "X21",
+    "X22",
+    "X23",
+    "X24",
+    "X25",
+    "X26",
+    "X27",
+    "X28",
+    "X29",
+    "X30",
+    "X31",
+    "X32",
+    "GND",
+    "+3V3"
+  ],
+  "connections": [
+    {
+      "name": "X01",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 1
+        },
+        {
+          "ref": "J2",
+          "pin": 32
+        }
+      ]
+    },
+    {
+      "name": "X02",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 2
+        },
+        {
+          "ref": "J2",
+          "pin": 31
+        }
+      ]
+    },
+    {
+      "name": "X03",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 3
+        },
+        {
+          "ref": "J2",
+          "pin": 30
+        }
+      ]
+    },
+    {
+      "name": "X04",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 4
+        },
+        {
+          "ref": "J2",
+          "pin": 29
+        }
+      ]
+    },
+    {
+      "name": "X05",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 5
+        },
+        {
+          "ref": "J2",
+          "pin": 28
+        }
+      ]
+    },
+    {
+      "name": "X06",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 6
+        },
+        {
+          "ref": "J2",
+          "pin": 27
+        }
+      ]
+    },
+    {
+      "name": "X07",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 7
+        },
+        {
+          "ref": "J2",
+          "pin": 26
+        }
+      ]
+    },
+    {
+      "name": "X08",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 8
+        },
+        {
+          "ref": "J2",
+          "pin": 25
+        }
+      ]
+    },
+    {
+      "name": "X09",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 9
+        },
+        {
+          "ref": "J2",
+          "pin": 24
+        }
+      ]
+    },
+    {
+      "name": "X10",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 10
+        },
+        {
+          "ref": "J2",
+          "pin": 23
+        }
+      ]
+    },
+    {
+      "name": "X11",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 11
+        },
+        {
+          "ref": "J2",
+          "pin": 22
+        }
+      ]
+    },
+    {
+      "name": "X12",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 12
+        },
+        {
+          "ref": "J2",
+          "pin": 21
+        }
+      ]
+    },
+    {
+      "name": "X13",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 13
+        },
+        {
+          "ref": "J2",
+          "pin": 20
+        }
+      ]
+    },
+    {
+      "name": "X14",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 14
+        },
+        {
+          "ref": "J2",
+          "pin": 19
+        }
+      ]
+    },
+    {
+      "name": "X15",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 15
+        },
+        {
+          "ref": "J2",
+          "pin": 18
+        }
+      ]
+    },
+    {
+      "name": "X16",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 16
+        },
+        {
+          "ref": "J2",
+          "pin": 17
+        }
+      ]
+    },
+    {
+      "name": "X17",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 17
+        },
+        {
+          "ref": "J2",
+          "pin": 16
+        }
+      ]
+    },
+    {
+      "name": "X18",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 18
+        },
+        {
+          "ref": "J2",
+          "pin": 15
+        }
+      ]
+    },
+    {
+      "name": "X19",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 19
+        },
+        {
+          "ref": "J2",
+          "pin": 14
+        }
+      ]
+    },
+    {
+      "name": "X20",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 20
+        },
+        {
+          "ref": "J2",
+          "pin": 13
+        }
+      ]
+    },
+    {
+      "name": "X21",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 21
+        },
+        {
+          "ref": "J2",
+          "pin": 12
+        }
+      ]
+    },
+    {
+      "name": "X22",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 22
+        },
+        {
+          "ref": "J2",
+          "pin": 11
+        }
+      ]
+    },
+    {
+      "name": "X23",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 23
+        },
+        {
+          "ref": "J2",
+          "pin": 10
+        }
+      ]
+    },
+    {
+      "name": "X24",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 24
+        },
+        {
+          "ref": "J2",
+          "pin": 9
+        }
+      ]
+    },
+    {
+      "name": "X25",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 25
+        },
+        {
+          "ref": "J2",
+          "pin": 8
+        }
+      ]
+    },
+    {
+      "name": "X26",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 26
+        },
+        {
+          "ref": "J2",
+          "pin": 7
+        }
+      ]
+    },
+    {
+      "name": "X27",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 27
+        },
+        {
+          "ref": "J2",
+          "pin": 6
+        }
+      ]
+    },
+    {
+      "name": "X28",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 28
+        },
+        {
+          "ref": "J2",
+          "pin": 5
+        }
+      ]
+    },
+    {
+      "name": "X29",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 29
+        },
+        {
+          "ref": "J2",
+          "pin": 4
+        }
+      ]
+    },
+    {
+      "name": "X30",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 30
+        },
+        {
+          "ref": "J2",
+          "pin": 3
+        }
+      ]
+    },
+    {
+      "name": "X31",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 31
+        },
+        {
+          "ref": "J2",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "X32",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 32
+        },
+        {
+          "ref": "J2",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "GND",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 33
+        },
+        {
+          "ref": "J2",
+          "pin": 33
+        },
+        {
+          "ref": "C1",
+          "pin": 2
+        },
+        {
+          "ref": "C2",
+          "pin": 2
+        },
+        {
+          "ref": "C3",
+          "pin": 2
+        },
+        {
+          "ref": "C4",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "+3V3",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 34
+        },
+        {
+          "ref": "J2",
+          "pin": 34
+        },
+        {
+          "ref": "C1",
+          "pin": 1
+        },
+        {
+          "ref": "C2",
+          "pin": 1
+        },
+        {
+          "ref": "C3",
+          "pin": 1
+        },
+        {
+          "ref": "C4",
+          "pin": 1
+        }
+      ]
+    }
+  ],
+  "max_layers": 8,
+  "route_budget_s": 3600
+}
