@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -40,8 +41,9 @@ def remesurer(dossier: Path, conteneur: str) -> dict | None:
     # Le board vit cote Windows : on le pousse dans le conteneur pour que
     # `kicad-cli` le juge, puis on lit son verdict.
     dist = "/tmp/remesure-%s.kicad_pcb" % dossier.name
-    r = _wsl("cp '%s' /tmp/rm.kicad_pcb && docker cp /tmp/rm.kicad_pcb %s:%s"
-             % (_wslifier(board), conteneur, dist), 300)
+    q = shlex.quote
+    r = _wsl("cp %s /tmp/rm.kicad_pcb && docker cp /tmp/rm.kicad_pcb %s"
+             % (q(_wslifier(board)), q("%s:%s" % (conteneur, dist))), 300)
     if r.returncode != 0:
         print("%-24s copie impossible" % dossier.name)
         return None

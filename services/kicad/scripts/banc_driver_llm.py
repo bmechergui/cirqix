@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -56,6 +57,21 @@ def _wsl(commande: str, delai: int = _DELAI_S) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=delai)
 
 
+_NOM_SUR = re.compile(r"\A[A-Za-z0-9_.-]{1,96}\Z")
+
+
+def _sur(nom: str) -> str:
+    """Refuse un nom de carte qui ne peut pas voyager sans danger dans `sh`.
+
+    Le guillemetage suffirait ; ce filtre est une seconde barriere, et il
+    documente ce qu un nom de dossier a le droit d etre. Un banc qui refuse
+    tot vaut mieux qu un banc qui produit une commande surprenante.
+    """
+    if not _NOM_SUR.match(nom):
+        raise SystemExit("nom de carte refuse : %r" % nom)
+    return nom
+
+
 def _wslifier(chemin: Path) -> str:
     """`C:\\x\\y` -> `/mnt/c/x/y`."""
     s = str(chemin.resolve()).replace("\\", "/")
@@ -67,12 +83,18 @@ def _mesurer_board(conteneur: str, chemin: str) -> dict:
     board, non — ce depot l'a paye trois fois."""
     sortie = _wsl(
         "docker exec %s sh -c \"for m in segment via zone footprint; do "
-        "printf '%%s ' \\$(grep -c \\\"(\\$m\\\" %s); done\"" % (conteneur, chemin), 120)
+        "printf '%%s ' \\$(grep -c \\\"(\\$m\\\" %s); done\"" % (shlex.quote(conteneur), shlex.quote(chemin)), 120)
     try:
         seg, via, zone, fp = (int(x) for x in sortie.stdout.split()[:4])
         return {"segments": seg, "vias": via, "zones": zone, "empreintes": fp}
     except Exception:
-        return {"segments": 0, "vias": 0, "zones": 0, "empreintes": 0}
+        # ⚠️ ECHOUER FERME. Rendre des zeros ici rendrait un board NON MESURE
+        # indistinguable d un board reellement vide de cuivre — et un zero est
+        # plausible, donc rien ne les separerait. C est litteralement le defaut
+        # que la docstring de cette fonction dit vouloir eviter, et que ce depot
+        # a deja paye trois fois : rapport DRC vide lu « 0 erreur », nets
+        # KiCad 10 comptes a zero, `via_count` jamais calcule rendu a zero.
+        return {"mesure_echouee": True}
 
 
 def _drc_du_board(conteneur: str, chemin: str) -> dict:
@@ -95,9 +117,15 @@ def _drc_du_board(conteneur: str, chemin: str) -> dict:
     """
     lecture = _wsl(
         "docker exec %s sh -c \"kicad-cli pcb drc --format json -o /tmp/banc_drc.json %s "
-        ">/dev/null 2>&1; cat /tmp/banc_drc.json\"" % (conteneur, chemin), 900)
+        ">/dev/null 2>&1; cat /tmp/banc_drc.json\"" % (shlex.quote(conteneur), shlex.quote(chemin)), 900)
     try:
         rapport = json.loads(lecture.stdout)
+        # ⚠️ Un JSON VALIDE mais d une autre forme (liste, null, chaine) faisait
+        # lever `AttributeError` sur le `.get` d apres — hors du try. Cet appel
+        # a lieu APRES le pipeline entier, jusqu a 3600 s, et AVANT l ecriture
+        # de mesures.json : une forme inattendue perdait donc tout le run.
+        if not isinstance(rapport, dict):
+            return {}
     except Exception:
         return {}
     par_type: dict = {}
@@ -130,7 +158,7 @@ def _drc_du_board(conteneur: str, chemin: str) -> dict:
 
 
 def _sha_git() -> str:
-    r = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+    r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], timeout=15,
                        cwd=str(_SERVICE), capture_output=True, text=True)
     return r.stdout.strip() or "inconnu"
 
@@ -147,15 +175,26 @@ def executer(dossier: Path, conteneur: str) -> dict:
     # ⚠️ Chemin UNIQUE par execution : un `rm -rf` du dossier precedent a
     # echoue en « Operation not permitted » cote WSL, et bloquait toute
     # relance. Un nom neuf coute moins cher qu un nettoyage capricieux.
-    dist = "/tmp/banc-%s-%d" % (nom, int(time.time()))
+    dist = "/tmp/banc-%s-%d" % (_sur(nom), int(time.time()))
+    # ⚠️ TOUT CE QUI ENTRE DANS UNE CHAINE `sh -c` EST GUILLEMETE. Le nom du
+    # dossier et le nom du conteneur viennent de la ligne de commande, et cette
+    # chaine est executee en root dans WSL, puis suivie d un `chmod -R 777` en
+    # root dans le conteneur. Un nom portant une apostrophe, un `;` ou un
+    # `$(...)` cassait la commande ou injectait. Le meme defaut avait deja ete
+    # trouve et corrige dans `livrer_boards.py`, du meme dossier.
+    #
+    # Le commentaire d en-tete disait « la racine est passee a `sh` en ARGUMENT,
+    # jamais interpolee » : vrai de l appel `_wsl`, faux de ces deux noms-la.
+    q = shlex.quote
     prep = (
         "rm -rf {d} && mkdir -p {d}/input && "
-        "cp '{s}' {d}/input/schema.json && cp '{p}' {d}/run_pipeline.py && "
-        "docker exec {c} rm -rf {d} && docker cp {d} {c}:{d} && "
+        "cp {s} {d}/input/schema.json && cp {p} {d}/run_pipeline.py && "
+        "docker exec {c} rm -rf {d} && docker cp {d} {c}:{dn} && "
         # ⚠️ Le conteneur tourne en `cirqix` (uid 10001) et un dossier copie
         # appartient a root : sans ceci, la creation de `output/` echoue.
         "docker exec -u root {c} chmod -R 777 {d}"
-    ).format(d=dist, s=_wslifier(schema_local), p=_wslifier(_PIPELINE), c=conteneur)
+    ).format(d=q(dist), dn=dist, s=q(_wslifier(schema_local)),
+             p=q(_wslifier(_PIPELINE)), c=q(conteneur))
     r = _wsl(prep, 300)
     if r.returncode != 0:
         raise SystemExit("preparation echouee : %s" % (r.stderr[-400:] or r.stdout[-400:]))
@@ -166,15 +205,17 @@ def executer(dossier: Path, conteneur: str) -> dict:
     # le pipeline CONTINUE cote conteneur mais sa sortie est perdue — mesure
     # du 2026-09-06 sur `carte-06`, dont les artefacts existaient sans
     # verdict. Un `tee` coute une redirection et rend le banc reprenable.
-    r = _wsl("docker exec %s sh -c 'cd /app && python3 %s/run_pipeline.py "
-             "%s/output 2>&1 | tee %s/journal.txt'" % (conteneur, dist, dist, dist))
+    interne = ("cd /app && python3 %s/run_pipeline.py %s/output 2>&1 | tee %s/journal.txt"
+               % (q(dist), q(dist), q(dist)))
+    r = _wsl("docker exec %s sh -c %s" % (q(conteneur), q(interne)))
     duree = time.time() - debut
     journal = "\n".join(l for l in (r.stdout + r.stderr).splitlines()
                         if "PROPERTY_ENUM" not in l)
 
     if "SUMMARY" not in journal:
         # Reprise : la sortie directe est perdue, le journal du conteneur non.
-        repris = _wsl("docker exec %s cat %s/journal.txt" % (conteneur, dist), 180)
+        repris = _wsl("docker exec %s cat %s"
+                      % (q(conteneur), q(dist + "/journal.txt")), 180)
         if "SUMMARY" in repris.stdout:
             journal = chr(10).join(
                 l for l in repris.stdout.splitlines()
@@ -199,8 +240,9 @@ def executer(dossier: Path, conteneur: str) -> dict:
 
     (dossier / "expected").mkdir(parents=True, exist_ok=True)
     board = "%s/output/6_routed.kicad_pcb" % dist
-    extrait = _wsl("docker cp %s:%s /tmp/f.kicad_pcb && cp /tmp/f.kicad_pcb '%s'"
-                   % (conteneur, board, _wslifier(dossier / "expected" / "final.kicad_pcb")), 300)
+    extrait = _wsl("docker cp %s /tmp/f.kicad_pcb && cp /tmp/f.kicad_pcb %s"
+                   % (shlex.quote("%s:%s" % (conteneur, board)),
+                      shlex.quote(_wslifier(dossier / "expected" / "final.kicad_pcb"))), 300)
     if extrait.returncode == 0:
         mesures["board"] = _mesurer_board(conteneur, board)
         # ⚠️ LE VERDICT VIENT DU BOARD, pas du resume du pipeline.

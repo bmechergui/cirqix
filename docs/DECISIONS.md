@@ -26,6 +26,40 @@
   `tools/placement.py::auto_place`, gardes `tests/test_placement_bypass_snap.py`,
   `tests/test_snap_apres_geometre.py`.
 
+### D-2026-09-03-b — Dimensionnement : 4 workers pour une machine qui tient un seul routage
+- **Le fait mesuré :** un routage monte à **6,2 Go de mémoire résidente**
+  (`stm32-baseline`, le plus petit board du banc). Deux en parallèle dépassent
+  les 7,6 Go de la machine et le noyau tue le processus
+  (`Out of memory: Killed process ... anon-rss:6247616kB`, crête 7,2 Go).
+- **La contradiction :** `docker-entrypoint.sh` lance `uvicorn --workers 4`.
+  Quatre workers annoncent quatre requêtes simultanées ; la mémoire n'en
+  autorise qu'une. Le service accepte donc des requêtes qu'il ne peut pas
+  honorer, et le symptôme (`Child process died`) ne désigne pas sa cause.
+- **Ce que l'utilisateur doit arbitrer**, entre autres voies :
+  1. ramener le service à 1 worker et sérialiser les routages en amont (la file
+     BullMQ le fait déjà, `worker` en concurrence 1) ;
+  2. garder 4 workers mais poser un sémaphore sur `/route/auto`, pour refuser
+     ou faire attendre plutôt que mourir ;
+  3. donner plus de mémoire à la machine et mesurer le vrai plafond.
+- **Pourquoi ce n'est pas un correctif technique :** chacune de ces voies
+  change le débit annoncé du service et le comportement vu par l'utilisateur
+  (attente contre refus), donc la promesse produit.
+- **Code concerné :** `services/kicad/docker-entrypoint.sh`,
+  `services/kicad/routers/routing.py`.
+
+### D-2026-09-03-a — Seed de placement (rejouabilité du GA)
+- **Ce qui était prévu (handoff `2026-08-28-placement-seed-snap`) :** semer `random`
+  depuis les octets du board et forcer `EvolutionaryConfig.parallel=False`, pour que
+  « même board ⇒ même suite de tirages » (`seed + essai` par tirage).
+- **Pourquoi ce n'est pas implémenté :** le GA séquentiel est plus lent que le
+  ProcessPool, et un placement rejouable change la stratégie livrée (les re-tirages
+  pilotés par le DRC reposent aujourd'hui sur le hasard non semé). Coût de placement
+  contre reproductibilité des bancs : choix produit.
+- **Ce que l'utilisateur doit arbitrer :** implémenter le seed (au prix d'un placement
+  plus lent), ou renoncer et garder le placement non semé.
+- **Trace :** le test RED `tests/test_placement_seed.py` a été retiré le 2026-09-03 ;
+  `tools/placement_seed.py` n'a jamais existé.
+
 ### D-2026-08-21-a — kicad-tools devant Freerouting dans la cascade
 - **Ce qui a été décidé sans validation :** « Décision produit du 2026-08-21 » —
   kicad-tools reste le Niveau 1 car seul chemin d'escalade de couches (plans Pro 4/8),
@@ -51,6 +85,48 @@
 ---
 
 ## Validées par l'utilisateur
+
+### D-2026-09-05-a — La retenue de crédit suit le travail réel (fenêtre glissante)
+**Tranchée le 2026-09-05 : l'utilisateur a validé cette action précise** (« ok »
+sur la recommandation « aligner la retenue de crédits sur la durée réelle »).
+
+- **Le défaut :** `PIPELINE_RESERVATION_TTL_S` valait 360 s, calibré sur la
+  route SYNCHRONE plafonnée à 300 s. Le pipeline ASYNCHRONE dure **19 minutes
+  mesurées** (run `4290007c`). Passé la sixième, la retenue expirait sous un job
+  qui tournait : `available_credits` cessait de la compter, un second projet
+  pouvait démarrer sur le même solde, et les deux consommaient Sonnet et le
+  service KiCad sans engagement — exactement la fenêtre que la migration `015`
+  avait fermée. Le drapeau `CIRQIX_ASYNC_PIPELINE` étant allumé, elle était
+  ACTIVE. Relevé par Grok en consultation, vérifié ligne à ligne.
+- **Ce que ce n'est pas :** un vol de crédits. La contrainte
+  `credits_balance_nonnegative` interdit un solde négatif ; le prix est de la
+  ressource brûlée et un second run qui échoue à la facturation après vingt
+  minutes de travail.
+- **Ce qui est retenu :** la retenue devient une **fenêtre glissante**. Chaque
+  battement de cœur du run (30 s) repousse son échéance de 600 s
+  (`extend_pipeline_reservation`, migration `021`). Un run vivant garde son
+  crédit engagé aussi longtemps qu'il travaille ; un run mort cesse d'être
+  rafraîchi et sa retenue expire d'elle-même.
+- **Pourquoi pas une simple valeur plus grande**, ce qui était mon premier
+  correctif : `reserve_pipeline_credits` refuse au-delà de 3600 s, et surtout
+  rien ne libérait la retenue d'un run ÉCHOUÉ — un seul échec aurait gelé le
+  solde une heure. La revue de sécurité l'a relevé. La libération à la clôture
+  est livrée dans le même lot (`services/worker/src/reservations.ts`).
+- ⚠️ **Découverte au passage :** `pcb_runs.heartbeat_at` était écrit toutes les
+  30 s depuis la migration `019`, index compris, et **aucun code ne le lisait**.
+  Les commentaires de `run-job.ts` et `run-repository.ts` annonçaient un
+  réconciliateur des runs muets qui **n'a jamais été écrit**. C'est son premier
+  usage réel.
+- ⚠️ **La migration `021` n'est PAS appliquée.** Le code est fail-safe : sans
+  elle, la prolongation échoue en silence et le comportement retombe sur
+  l'échéance fixe (3600 s), qui couvre déjà les 19 minutes mesurées. À appliquer
+  pour obtenir la fenêtre glissante.
+- **Code :** `apps/web/src/app/api/agent/lib/credits.ts`,
+  `services/worker/src/reservations.ts`, `services/worker/src/adapters.ts`,
+  `packages/db/supabase/migrations/021_extend_pipeline_reservation.sql`.
+  Gardes : `apps/web/src/test/credits-reservation.test.ts`,
+  `services/worker/src/tests/liberation-reservation.test.ts`.
+
 
 ### D-2026-08-29-v1 — Séquence intérieure d'un palier de routage
 Plan de masse coulé ET rempli avant routage (mesuré : 68-71 % → 94 % sur Nucleo),
@@ -130,3 +206,38 @@ au commit c312c07 : le budget réduit livrait une carte NON fabricable
 ### D-2026-06-18-a — Limite « 13-28 mm » ACCEPTÉE
 Limitation de `detect_functional_clusters` acceptée faute de levier. **Levée sans
 validation** le 2026-08-29 → voir D-2026-08-29-a ci-dessus (à ratifier ou non).
+
+## D-2026-09-07-a — Arreter Freerouting sur absence de progression
+
+**Statut : en attente de validation.**
+
+**Constat mesure.** Comptage sur le journal du service KiCad, cinq travaux
+Freerouting distincts :
+
+    996 passes  score 815.45  (40 non routes)
+    996 passes  score 701.71  (50 non routes)
+    996 passes  score 685.09  (42 non routes)
+    996 passes  score 650.03  (43 non routes)
+    992 passes  score 770.97  (34 non routes)
+
+Le score ET le nombre de connexions manquantes sont identiques sur toute la
+serie. Ces travaux n'ont rien ameliore apres leurs premieres passes et ont
+consomme environ 1,2 s par passe jusqu'au plafond de mille, soit ~20 minutes
+chacun. Avec `_TIRAGES_ROUTAGE_PAR_PALIER = 3`, un palier peut donc bruler une
+heure sans produire un seul segment de plus.
+
+**Proposition.** Arreter un travail apres N passes consecutives sans
+amelioration du score, au lieu d'attendre le plafond de passes.
+
+**Pourquoi ce n'est PAS applique.** C'est un seuil chiffre qui change le
+comportement livre — categorie qui exige une validation explicite selon
+`CLAUDE.md`. Une carte difficile peut rester longtemps sur un palier avant de
+debloquer : couper trop tot rendrait des cartes moins bien routees, et ce depot
+a deja paye ce genre d'arbitrage (« NEVER partager le budget entre les
+essais », qui avait mis tous les paliers a 0 %).
+
+**Ce qui manque pour trancher.** Une mesure de la duree typique d'un plateau qui
+finit par ceder, sur plusieurs tirages — exactement la prudence deja inscrite :
+deux tirages concordants ne prouvent rien.
+
+**Une mesure etaye une proposition ; elle ne la valide pas.**

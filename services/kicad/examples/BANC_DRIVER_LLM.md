@@ -39,7 +39,7 @@ version git. Voir `scripts/readme_banc_driver.py`.
 | `carte-04-mcu-minimal` | **premier LQFP-48 fine-pitch**, SWD |
 | `carte-05-capteur-i2c` | bus I2C, capteur LGA-8, tirages |
 | `carte-06-io-etendu` | huit sorties, deux connecteurs |
-| `carte-07-multi-io` | douze sorties, quatre connecteurs |
+| `carte-07-multi-io` | douze sorties **sur les quatre côtés**, cinq connecteurs |
 | `carte-08-dense` | seize sorties, cinq connecteurs |
 | `carte-09-tres-dense` | huit connecteurs, **plafond 4 couches** |
 | `carte-10-maximale` | toutes les broches libres du LQFP-48 |
@@ -110,6 +110,32 @@ mesure ici qu'elle porte aussi sur la DURÉE, et dans un rapport de douze.
 Conséquence pratique : le temps d'un pipeline n'est pas prévisible à partir du
 nombre de composants, et un budget client calibré sur une moyenne coupera
 certaines cartes en plein travail.
+
+**6. Freerouting tourne mille passes pour rien** (2026-09-07). Comptage sur le
+journal du service, cinq travaux distincts :
+
+    996 passes  score 815.45  (40 non routes)
+    996 passes  score 701.71  (50 non routes)
+    996 passes  score 685.09  (42 non routes)
+    996 passes  score 650.03  (43 non routes)
+    992 passes  score 770.97  (34 non routes)
+
+Le score et le nombre de connexions manquantes sont **identiques d'un bout a
+l'autre** : ces travaux n'ont rien ameliore apres leur premiere passe, et ont
+consomme ~1,2 s chacune jusqu'au plafond de mille. Environ vingt minutes par
+travail, entierement perdues — multipliees par les trois tirages de chaque
+palier.
+
+Le levier evident serait d'arreter sur absence de progression plutot que sur un
+compte de passes. ⚠️ C'est un **seuil chiffre qui change le comportement
+livre** : decision produit, donc proposee et non appliquee. Consignee dans
+`docs/DECISIONS.md`.
+
+⚠️ Ce que ce comptage ne dit PAS : que la machine etait saturee. Je l'ai cru en
+voyant une JVM a 211 %% de processeur depuis sept heures. Mesure : **12
+processeurs, charge moyenne 4,00**, et la liste des sessions du serveur est
+vide. La lenteur de la `carte-07` n'est donc pas une contention — c'est bien son
+placement, comme le disent les 1560 s.
 
 ## Ce qui compte comme « fabricable »
 

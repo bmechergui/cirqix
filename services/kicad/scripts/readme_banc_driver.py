@@ -30,7 +30,7 @@ _COSMETIQUES = {"silk_overlap", "silk_over_copper", "silk_edge_clearance",
 def _git(dossier: Path) -> tuple[str, str]:
     """SHA court et date du dernier commit touchant ce dossier, ou HEAD."""
     def q(args: list[str]) -> str:
-        r = subprocess.run(["git"] + args, cwd=str(_SERVICE),
+        r = subprocess.run(["git"] + args, cwd=str(_SERVICE), timeout=15,
                            capture_output=True, text=True)
         return r.stdout.strip()
     sha = q(["log", "-1", "--format=%h", "--", str(dossier)]) or q(["rev-parse", "--short", "HEAD"])
@@ -125,8 +125,9 @@ def ecrire(dossier: Path) -> None:
         "",
         "| segments | vias | zones | empreintes |",
         "|---|---|---|---|",
-        "| %s | %s | %s | %s |" % (board.get("segments"), board.get("vias"),
-                                   board.get("zones"), board.get("empreintes")),
+        ("| **non mesure** | — | — | — |" if board.get("mesure_echouee")
+         else "| %s | %s | %s | %s |" % (board.get("segments"), board.get("vias"),
+                                         board.get("zones"), board.get("empreintes"))),
         "",
         "⚠️ Ces quatre nombres sont comptes **dans le board**, pas rapportes par un",
         "compteur de progression. Ce depot a paye trois fois la difference : un rapport DRC",
