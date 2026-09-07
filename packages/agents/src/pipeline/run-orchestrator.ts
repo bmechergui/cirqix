@@ -18,6 +18,7 @@
 import type { PCBState, PCBStatus, SimulationData } from '@cirqix/types';
 import { followRoutingProgress, progressKeyFor } from '../engines/routing-progress';
 import { runOrchestrator } from '../orchestrator';
+import type { SSEEvent } from '../orchestrator';
 import type { RunSink } from './run-sink';
 import type { PipelineStore } from './store';
 
@@ -49,6 +50,21 @@ export interface RunPipelineOptions {
   projectId: string;
   prompt: string;
   iterationStart: number;
+  /**
+   * Source des evenements. Par defaut l orchestrateur Sonnet.
+   *
+   * ⚠️ POURQUOI UNE INJECTION PLUTOT QU UN SECOND PIPELINE. Tout ce qui suit —
+   * depot des artefacts, fusion d etat, persistance, suivi du routage,
+   * finalisation, facturation — doit rester ecrit UNE fois. `local-pipeline.ts`
+   * a redit a sa facon ce que les handlers disaient deja : il ecrivait un
+   * statut CODE EN DUR par etape et persistait `DRC_CLEAN` sur un DRC en
+   * erreur. Un second chemin est un second endroit a corriger, et on en oublie
+   * toujours un.
+   *
+   * La chaine du driver (`run-driver.ts`) passe par ici : le porteur ne sait
+   * pas, et n a pas besoin de savoir, si les evenements viennent d un modele.
+   */
+  source?: AsyncGenerator<SSEEvent>;
 }
 
 type OrchestratorPcbState = Record<string, unknown> & {
@@ -89,7 +105,9 @@ export async function runOrchestratorPipeline(
   };
 
   try {
-    for await (const ev of runOrchestrator({ userMessage: prompt, projectId, history: [] })) {
+    const evenements = opts.source
+      ?? runOrchestrator({ userMessage: prompt, projectId, history: [] });
+    for await (const ev of evenements) {
       switch (ev.type) {
         case 'text':
           await sink.emit({ type: 'token', content: ev.delta });

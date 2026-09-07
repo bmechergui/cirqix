@@ -1323,6 +1323,76 @@ ce qu'il a supprimé, et le DIT quand il n'y arrive pas.
 
 **NEVER** annoncer qu'un nettoyage a eu lieu sans avoir relu ce qui reste. Un
 effet de bord silencieux sur une vraie base coûte plus cher qu'un test raté.
+### La chaîne du driver — un PCB complet sans le moindre appel au modèle (2026-09-07)
+
+Le solde de l'API Anthropic est épuisé. L'orchestrateur étant la première
+étape, plus aucun PCB ne pouvait aboutir. Or **`call_agent_schema` est le SEUL
+maillon de la chaîne qui appelle un modèle** : le banc des dix cartes a mesuré
+que tout le reste va jusqu'aux Gerbers sans lui.
+
+`handleSchema` accepte donc un `schema_json` écrit par le driver, et
+`pipeline/run-driver.ts` enchaîne les VRAIS handlers. Mesuré de bout en bout,
+par la file et le worker :
+
+```
++  4s SCHEMA   + 17s ERC   + 99s PLACEMENT   + 142s ROUTING   + 149s EXPORT
+run succeeded · PCB_LIVRÉ · provenance driver · 50 Ko de Gerbers · 0 crédit
+```
+
+⚠️ **Ce n'est PAS le simulateur.** `simulator.ts` fabrique des états ; ici tout
+est réel — vrai `.kicad_sch`, vrai board, vrai DRC, vrais Gerbers. Ce qui change
+est la PROVENANCE du schéma, pas la qualité du résultat.
+
+⚠️ **Ces boards ne sont PAS commandables.** `POST /api/jlcpcb/order` exige
+`agent_mode = 'orchestrator'` et échoue fermé. Un schéma écrit à la main n'a pas
+traversé la boucle autonome que le produit vend. **NEVER** assouplir ce gate
+pour laisser passer un board du driver. Un run du driver n'est pas facturé non
+plus : aucun modèle n'a tourné.
+
+⚠️ **Le porteur est INJECTÉ, il n'est pas dupliqué.** `run-driver.ts` rend un
+générateur de la même forme que `runOrchestrator` ; dépôt des artefacts, fusion
+d'état, persistance, suivi du routage et finalisation restent écrits UNE fois.
+`local-pipeline.ts` avait redit à sa façon ce que les handlers disaient déjà, et
+persistait `DRC_CLEAN` sur un DRC en erreur. Un second chemin est un second
+endroit à corriger, et on en oublie toujours un.
+
+⚠️ **`handleSchema` plafonnait la carte à 50 × 40 mm** au-delà de 12 composants.
+Le banc a mesuré que la SURFACE est le levier — `carte-08` passe de 216
+connexions manquantes à ZÉRO en l'agrandissant. Le driver peut donc dimensionner
+la carte ; le chemin Haiku garde exactement son comportement.
+
+#### Deux défauts du worker, révélés par le PREMIER run réel
+
+Aucun des deux n'était visible en test, et les deux touchaient à l'argent ou à
+la sécurité.
+
+**1. La provenance était une CONSTANTE.** `createWorkerStore` écrivait
+`agent_mode: 'orchestrator'` en dur. Exact tant que le worker ne savait faire que
+l'orchestrateur ; devenu un mensonge exécutoire dès qu'il a su faire autre chose.
+Premier run du driver : `projet : PCB_LIVRÉ · provenance orchestrator` — un board
+au schéma écrit à la main était **commandable chez JLCPCB**. Elle est désormais
+relue dans `pcb_runs.agent_mode`, exactement comme le contrat du job le
+prescrivait déjà, et une provenance introuvable fait échouer le run.
+
+**2. `finalize_pipeline_success` était appelée avec les MAUVAIS arguments.** Elle
+est déclarée `(uuid, uuid, integer, jsonb, text)` depuis la migration 018 —
+`p_iteration_count`, et **pas** de `p_status`. Le worker envoyait
+`p_pcb_state, p_status` : Postgres ne trouvait aucune surcharge, et **tout run
+arrivé jusqu'à `done` échouait à la finalisation**, donc sans débit et sans
+provenance. La route web, elle, appelait correctement.
+
+⚠️ Pourquoi les tests ne voyaient rien : ils remplacent le client Supabase par un
+faux qui accepte n'importe quel objet d'arguments. **Un faux plus pauvre que le
+vrai ne peut pas révéler un contrat rompu** — la même leçon que le faux `pcbnew`
+qui n'exposait pas `GetFootprints()`. La garde compare désormais les NOMS des
+paramètres à ceux que la migration déclare.
+Gardes : `services/worker/src/tests/provenance-et-finalisation.test.ts`.
+
+Rejouer : `node services/worker/scripts/enfiler-driver.mjs <schema.json>`.
+
+**Reste à prouver** : qu'un utilisateur CONNECTÉ reçoit bien l'événement — la
+combinaison RLS + Realtime. Cela exige une vraie session ; tout le reste de la
+chaîne est vérifié.
 
 ### État
 

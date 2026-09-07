@@ -35,6 +35,18 @@ export const PipelineJobPayload = z
     userId: z.string().uuid(),
     prompt: z.string().min(1),
     iterationStart: z.number().int().min(0),
+    /**
+     * Schema ecrit par le driver, quand le run ne doit appeler aucun modele.
+     *
+     * ⚠️ C est une DONNEE, jamais une PROVENANCE. Le schema dit QUOI router ;
+     * il ne dit pas d ou vient l autorite du resultat. `agent_mode` reste
+     * absent de ce payload et pose par la ROUTE dans `pcb_runs` : sans quoi
+     * enfiler un job reviendrait a decerner la commandabilite.
+     *
+     * Present  → la chaine deterministe de `run-driver.ts` (aucun modele).
+     * Absent   → l orchestrateur Sonnet, comme avant.
+     */
+    schema: z.record(z.unknown()).optional(),
   })
   .strict();
 
