@@ -1271,6 +1271,58 @@ tourne sur l'hôte, ne pouvait pas joindre la file. Le fail-closed refusait donc
 une file inatteignable — il fonctionnait exactement comme prévu. Redis est
 désormais publié sur `127.0.0.1` uniquement (il n'a pas de mot de passe).
 
+### Le parcours asynchrone est prouvé de bout en bout (2026-09-07)
+
+Le drapeau `CIRQIX_ASYNC_PIPELINE` est **allumé** (`1` dans
+`apps/web/.env.local`), Redis répond sur `127.0.0.1:6379`, et le worker a
+réellement **consommé un job** — `job reçu`, `runId 965a6fd6`, puis échec sur
+le seul point qui reste : le solde de l'API du modèle.
+
+La dernière moitié non prouvée l'est désormais : **un utilisateur CONNECTÉ
+reçoit bien ses événements par Realtime, et seulement les siens.**
+
+    abonnement Realtime (clé publique + jeton utilisateur)   SUBSCRIBED
+    événement reçu, charge utile conforme                    oui
+    le propriétaire lit ses événements                       1
+    un AUTRE utilisateur connecté en voit                    0
+
+Rejouable : `node packages/db/scripts/preuve-realtime.mjs apps/web/.env.local`.
+Deux comptes de test sont créés puis supprimés, succès ou échec.
+
+⚠️ **Mesuré sur 5 tirages : 4 succès, 1 fois l'événement non reçu dans les
+20 s.** Realtime n'est donc PAS une garantie à 100 % : le repli par sondage
+HTTP de `followRun` reste nécessaire, et c'est ainsi qu'il est écrit. Un tirage
+isolé n'aurait rien prouvé, dans un sens comme dans l'autre — c'est la règle
+déjà inscrite pour le routage, appliquée ici.
+
+⚠️ **Ma sonde a failli conclure à tort.** `pcb_run_events` n'a pas de colonne
+`id` — sa clé est `seq`. Ma sonde demandait `id` : le propriétaire recevait une
+erreur 42703, **et l'autre utilisateur aussi**, donc `data` valait `null` des
+deux côtés et mon test « il ne voit rien (0) » PASSAIT sans rien prouver. Une
+erreur se lisait exactement comme une isolation réussie. C'est le défaut que ce
+dépôt poursuit partout — rapport DRC vide lu « 0 erreur », nets KiCad 10
+comptés à zéro, `via_count` jamais calculé rendu à zéro. **NEVER** laisser un
+échec rendre la même valeur que son cas normal, y compris dans une sonde
+jetable écrite pour dix minutes.
+
+⚠️ **Et mon NETTOYAGE mentait aussi.** Le script annonçait « comptes supprimés »
+alors que **quinze comptes de test s'accumulaient** dans le projet. Trois causes
+cumulées :
+
+1. `admin.auth.admin.deleteUser` **renvoie** une erreur, il ne la **lève** pas.
+   Le `try/catch` autour ne voyait rien.
+2. Une inscription crée une ligne dans `credits` par déclencheur, et
+   `credits_user_id_fkey` est en `NO ACTION` : la suppression échoue avec
+   « Database error deleting user » tant que cette ligne est là.
+3. Le second compte n'était supprimé que sur le chemin de **succès** — donc
+   jamais quand la preuve échouait, c'est-à-dire quand on en a le plus besoin.
+
+C'est la même faute que ci-dessus, dans l'autre sens : là une erreur passait pour
+une preuve, ici un échec passait pour un nettoyage. Le script vérifie désormais
+ce qu'il a supprimé, et le DIT quand il n'y arrive pas.
+
+**NEVER** annoncer qu'un nettoyage a eu lieu sans avoir relu ce qui reste. Un
+effet de bord silencieux sur une vraie base coûte plus cher qu'un test raté.
 ### La chaîne du driver — un PCB complet sans le moindre appel au modèle (2026-09-07)
 
 Le solde de l'API Anthropic est épuisé. L'orchestrateur étant la première
@@ -1390,7 +1442,8 @@ Reste :
 - ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
   s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
   le catch-up. Publication : migration `020`. Le drapeau
-  `CIRQIX_ASYNC_PIPELINE` reste à allumer là où Redis + worker tournent.
+  `CIRQIX_ASYNC_PIPELINE` est **allumé** depuis le 2026-09-07, et la
+  combinaison RLS + Realtime est prouvée pour un utilisateur connecté.
 - ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
   ci-dessous : c'était notre compteur qui était aveugle.
 - **Budget par niveau** — voir l'avertissement ci-dessus.
@@ -1650,12 +1703,18 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
 est **caduque** : le comptage du 2026-08-30 montre 16 routages, **0 par
 kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
 
-- **Allumer `CIRQIX_ASYNC_PIPELINE`** là où Redis ET le worker tournent. Le
-  drapeau reste fail-closed dans le code, et sans file un `202` accepterait un
-  job que personne ne consomme.
-- **Valider la moitié « journal + Realtime »** avec une vraie
-  `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
-  les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
+- ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **fait le 2026-09-07.** Le drapeau
+  reste fail-closed dans le code ; il est allumé dans `apps/web/.env.local`, où
+  Redis et le worker tournent, et le worker a consommé un job pour de bon.
+- **Le solde de l'API du modèle** est le SEUL point qui reste. Un run enfilé
+  échoue en 5 s sur `Your credit balance is too low`. L'orchestrateur étant la
+  première étape, aucun pipeline ne peut aboutir par la voie normale tant que ce
+  solde n'est pas rechargé — et ce n'est pas un défaut de code.
+- ~~**Valider la moitié « journal + Realtime »**~~ — **faite le 2026-09-07.**
+  Voir « Le parcours asynchrone est prouvé de bout en bout ». Les essais
+  précédents tournaient avec une URL Supabase bidon et ne prouvaient rien ;
+  celui-ci tourne contre le vrai projet, avec de vrais comptes, et distingue une
+  isolation réussie d'une erreur de lecture.
 - ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03.** Voir la
   section « Pipeline asynchrone » : la mesure existait déjà dans le chemin
   Freerouting, elle ne sortait pas du service. **NEVER** prescrire un refactor

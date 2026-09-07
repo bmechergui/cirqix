@@ -64,9 +64,13 @@ class TestCablage:
         """⚠️ Une broche orpheline bloque la commande au DRC ; un
         court-circuit peut partir en fabrication. Au moindre doute on rend le
         board recu."""
+        # L ancre a du bouger le 2026-09-07 : la comparaison, ecrite cinq fois
+        # a l identique, vit maintenant dans `_aggrave_le_board`, qui echoue
+        # ferme quand le DRC ne rend aucun verdict. On garde l INTENTION.
         corps = self._corps()
-        assert "_compte_erreurs" in corps
-        i = corps.index("_compte_erreurs")
+        gardes = [g for g in ("_aggrave_le_board", "_compte_erreurs") if g in corps]
+        assert gardes, "aucune garde de non-degradation dans cette etape"
+        i = corps.index(gardes[0])
         assert "return pcb_bytes" in corps[i:i + 700]
 
     def test_elle_journalise_sa_TENTATIVE(self):
