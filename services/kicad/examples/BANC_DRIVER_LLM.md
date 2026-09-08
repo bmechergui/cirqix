@@ -219,7 +219,7 @@ sérialise. Le banc ne lance donc jamais deux cartes en parallèle.
 | `carte-02-alimentation` | 12 | 5 | 100 % | 0 | **oui** |
 | `carte-03-oscillateur` | 15 | 9 | 100 % | 0 | **oui** |
 | `carte-04-mcu-minimal` | 15 | 7 | 100 % | 0 | **oui** |
-| `carte-05-capteur-i2c` | 26 | 13 | 100 % | 0 | **oui** |
+| `carte-05-capteur-i2c` | 26 | 13 | 100 % | 5 | **NON** |
 | `carte-06-io-etendu` | 35 | 27 | 100 % | 0 | **oui** |
 | `carte-07-multi-io` | 44 | 37 | 100 % | 0 | **oui** |
 | `carte-08-dense` | 56 | 49 | 100 % | 0 | **oui** |
