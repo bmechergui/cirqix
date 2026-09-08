@@ -10,6 +10,7 @@ generate_pcb(components, connections, board_w, board_h) -> str
 from __future__ import annotations
 
 import logging
+import re as _re
 import math
 import re
 import sys
@@ -812,6 +813,38 @@ def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
     return patched
 
 
+def _refs_du_board(contenu: str) -> set:
+    """Les references reellement POSEES sur un board, lues dans son texte.
+
+    ⚠️ On lit le BOARD, jamais un compteur intermediaire. Le workflow de
+    kicad-tools annonce 26 composants, sa netlist en porte 26, et le fichier
+    ecrit n en contient que 25 : seul le fichier dit ce qui a ete pose.
+    """
+    return set(_re.findall(r'\(property\s+"Reference"\s+"([^"]+)"', contenu or ""))
+
+
+def _composants_perdus(contenu: str, attendus) -> list:
+    """Les references DECLAREES que le board ne porte pas.
+
+    ⚠️ MESURE DU 2026-09-08, `examples/carte-05-capteur-i2c`. Cette carte est
+    livree « 100 % routee, 0 erreur » et SON CAPTEUR N Y EST PAS : le BME280
+    `U3` est declare au schema, connecte a +3V3, GND, SCL et SDA, et absent du
+    board. La perte est dans `place_all_components`, qui n emet aucun message
+    meme en DEBUG.
+
+    ⚠️ POURQUOI RIEN NE L AVAIT VU. Un composant absent n a AUCUNE connexion
+    manquante — il n a rien a relier. Le DRC juge ce qui est sur la carte,
+    jamais ce qui devrait y etre. L absence se lisait donc comme un succes,
+    exactement la famille de defauts que ce depot poursuit.
+
+    On ne suppose rien de la cause : on COMPTE. Et on ne refuse que ce qui
+    MANQUE — un pave thermique ou un logo ajoute par le generateur n est pas
+    un composant perdu.
+    """
+    poses = _refs_du_board(contenu)
+    return sorted(r for r in dict.fromkeys(attendus) if r not in poses)
+
+
 def generate_pcb(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -844,8 +877,20 @@ def generate_pcb(
                         "generate_pcb: %d valeur(s) de propriété requotée(s) — "
                         "sans ce garde KiCad refuse le board entier", requoted,
                     )
-                logger.info("generate_pcb: niveau 1 kicad-tools OK")
-                return content
+                perdus = _composants_perdus(content, [c.ref for c in components])
+                if perdus:
+                    # ⚠️ ON N ACCEPTE PAS UN BOARD AMPUTE. `carte-05` sortait a
+                    # « 100 % route, 0 erreur » sans son capteur BME280 : un
+                    # composant absent n a aucune connexion manquante, donc le
+                    # DRC ne peut pas le voir. On laisse le niveau suivant
+                    # tenter sa chance plutot que de livrer un board faux.
+                    logger.error(
+                        "generate_pcb: niveau 1 a PERDU %d composant(s) (%s) — "
+                        "board refuse, on tente le niveau suivant",
+                        len(perdus), ", ".join(perdus[:8]))
+                else:
+                    logger.info("generate_pcb: niveau 1 kicad-tools OK")
+                    return content
         except Exception as exc:
             logger.warning("generate_pcb: kicad-tools échoué (%s) — niveau 2", exc)
 
@@ -856,12 +901,24 @@ def generate_pcb(
             if content:
                 content = propager_nets_pastilles_homonymes(content)
                 content, _ = _quote_bare_property_values(content)
-                logger.info("generate_pcb: niveau 2 pcbnew OK")
-                return content
+                perdus = _composants_perdus(content, [c.ref for c in components])
+                if perdus:
+                    logger.error(
+                        "generate_pcb: niveau 2 a PERDU %d composant(s) (%s) — "
+                        "board refuse",
+                        len(perdus), ", ".join(perdus[:8]))
+                else:
+                    logger.info("generate_pcb: niveau 2 pcbnew OK")
+                    return content
         except Exception as exc:
             logger.warning("generate_pcb: pcbnew échoué (%s) — TypeScript fallback", exc)
 
     # Niveau 3 : '' → router retourne success=False → TypeScript prend le relais
+    #
+    # ⚠️ Un board AMPUTE arrive ici comme un board absent, et c est voulu : on
+    # prefere rendre la main au niveau suivant plutot que livrer une carte a
+    # laquelle il manque une piece. Livrer 25 composants sur 26 sans le dire
+    # est pire que ne rien livrer — le second echec se voit, le premier non.
     logger.warning("generate_pcb: tous les niveaux Python ont échoué")
     return ""
 
