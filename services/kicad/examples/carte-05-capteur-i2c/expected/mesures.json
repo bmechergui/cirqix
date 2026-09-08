@@ -6,26 +6,29 @@
     70,
     50
   ],
-  "duree_s": 327,
-  "git": "4c45c7a",
+  "duree_s": 1052,
+  "git": "6fb7359",
   "routed_percent": 100,
-  "drc_violations": 20,
-  "drc_clean": true,
-  "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:12,silk_over_copper:8",
-  "abouti": true,
+  "drc_violations": 43,
+  "drc_clean": false,
+  "fichiers_exportes": 27,
+  "types_violations": "silk_over_copper:20,track_dangling:10,silk_overlap:6,item_on_disabled_layer:4,via_dangling:2,invalid_outline:1",
+  "abouti": false,
   "board": {
-    "segments": 143,
-    "vias": 36,
-    "zones": 3,
+    "segments": 290,
+    "vias": 29,
+    "zones": 0,
     "empreintes": 26
   },
   "drc_du_board": {
-    "violations": 10,
+    "violations": 30,
     "non_connectes": 0,
-    "types": "silk_over_copper:4,silk_overlap:6",
-    "erreurs": [],
-    "nb_erreurs": 0,
-    "fabricable": true
+    "types": "invalid_outline:1,item_on_disabled_layer:4,silk_over_copper:10,silk_overlap:3,track_dangling:10,via_dangling:2",
+    "erreurs": [
+      "invalid_outline",
+      "item_on_disabled_layer"
+    ],
+    "nb_erreurs": 5,
+    "fabricable": false
   }
 }
