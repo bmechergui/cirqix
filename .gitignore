@@ -118,3 +118,7 @@ services/kicad/examples/*/output/
 
 # Captures d ecran de session (jamais commitees)
 services/kicad/.captures/
+
+# Carte de reference EXTERNE, sans licence : jamais versionnee.
+# Voir services/kicad/examples/reference-astra-pinas/README.md
+services/kicad/examples/reference-astra-pinas/input/

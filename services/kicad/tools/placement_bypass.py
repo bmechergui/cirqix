@@ -383,6 +383,36 @@ def _degrade_une_autre_attache(par_ref: dict, attaches: dict, ref: str,
     return False
 
 
+class _PaireEnSerie:
+    """Une paire a deux bornes, presentee comme un cluster.
+
+    ⚠️ MESURE DU 2026-09-08. Le snap ne traite que les clusters de
+    `detect_functional_clusters` — POWER, TIMING, DRIVER, INTERFACE. Une LED
+    et sa resistance serie n appartiennent a AUCUN de ces types : elles
+    n etaient jamais regardees, et finissaient a **101 mm** l une de l autre
+    sur `carte-09`, pour un net qui ne touche qu ELLES DEUX.
+
+    Les contraintes natives passees au workflow le meme jour ont ramene la
+    moyenne de 55 a 36 mm — un vrai gain, mais ce sont des FORCES, et le depot
+    mesure deja que les ressorts de groupe sont domines par les rails GND.
+    Le serrage DUR de fin de chaine reste necessaire.
+
+    On ne reecrit pas le snap : il porte deja tout ce qui compte — recherche
+    de place libre, garde « ne peut qu ameliorer », refus de degrader une
+    autre attache. La boucle ne lit que trois attributs d un cluster ; on les
+    fournit. Ajouter un chemin parallele aurait duplique ces trois gardes, et
+    c est ainsi qu elles divergent.
+    """
+
+    __slots__ = ("anchor", "members", "max_distance_mm", "cluster_type")
+
+    def __init__(self, ancre: str, membre: str, plafond_mm: float) -> None:
+        self.anchor = ancre
+        self.members = [membre]
+        self.max_distance_mm = plafond_mm
+        self.cluster_type = "PAIRE"
+
+
 def snap_cluster_members(
     pcb,
     *,
@@ -390,6 +420,8 @@ def snap_cluster_members(
     figes: Optional[Iterable[str]] = None,
     denses: Optional[Iterable[str]] = None,
     marge_dense_mm: float = 5.0,
+    paires: Optional[Iterable] = None,
+    plafond_paire_mm: float = 5.0,
 ) -> int:
     """Ramene chaque membre de cluster a portee de son ancre. Modifie ``pcb``.
 
@@ -403,7 +435,58 @@ def snap_cluster_members(
     # ⚠️ `_clusters_natifs` et non la detection brute : le nom de rail doit
     # etre normalise avant, sinon `+3.3V` n'est pas reconnu comme une
     # alimentation et AUCUN cluster POWER n'est construit.
-    clusters = _clusters_natifs(_composants(pcb))
+    clusters = list(_clusters_natifs(_composants(pcb)))
+
+    # ⚠️ LES PAIRES EN SERIE REJOIGNENT LES CLUSTERS, elles ne forment pas
+    # un second passage. Deux passages successifs se defont l un l autre : le
+    # depot a deja mesure ce piege entre le clamp et le centrage des dominants,
+    # puis entre le halo et le snap. Un seul parcours, une seule table
+    # d attaches, une seule garde « ne peut qu ameliorer ».
+    #
+    # ⚠️ L ANCRE EST CELLE QUI A D AUTRES ATTACHES, et ce choix decide de
+    # tout. Premiere version, mesuree sur `carte-09` : ancre = la premiere par
+    # ordre alphabetique, donc `D10` pour la paire `(D10, R10)`. Resultat :
+    #
+    #     snap R10 -> D10 : eloignerait une autre ancre, ignore
+    #     ... les SEIZE paires refusees, sans exception
+    #
+    # La raison est juste : chaque `R<n>` appartient deja au cluster de `U1`.
+    # Le rapprocher de sa LED l eloignerait du MCU, et la garde « ne peut
+    # qu ameliorer » refuse — elle fait exactement son travail.
+    #
+    # C est l ancre qui etait fausse. La resistance est tenue par le MCU ; la
+    # LED, elle, n a AUCUNE autre attache. C est donc elle qui doit venir. On
+    # ancre sur le membre le plus contraint, et on deplace le plus libre :
+    # les deux intentions sont alors satisfaites au lieu d une seule.
+    #
+    # ⚠️ Ce choix se fait APRES la construction des clusters natifs, parce
+    # qu il a besoin de savoir qui y appartient. Le faire avant reviendrait a
+    # deviner ce qu on peut lire.
+    figes_init = set(figes or ())
+    membres_de_clusters = {m for c in clusters for m in c.members}
+    membres_de_clusters |= {c.anchor for c in clusters}
+
+    def _ancre_de_paire(a: str, b: str) -> tuple[str, str]:
+        # 1. Un composant fige ne bouge pas : il est l ancre, sans discussion.
+        if a in figes_init and b not in figes_init:
+            return a, b
+        if b in figes_init and a not in figes_init:
+            return b, a
+        # 2. Celui qui porte d autres attaches ancre l autre.
+        a_tenu, b_tenu = a in membres_de_clusters, b in membres_de_clusters
+        if a_tenu and not b_tenu:
+            return a, b
+        if b_tenu and not a_tenu:
+            return b, a
+        # 3. A egalite, l ordre alphabetique — stable d un tirage a l autre.
+        #    Un ancrage instable rendrait le placement irreproductible pour une
+        #    raison sans rapport avec le GA.
+        return (a, b) if a < b else (b, a)
+
+    for _nom, _a, _b in (paires or ()):
+        ancre_p, membre_p = _ancre_de_paire(_a, _b)
+        clusters.append(_PaireEnSerie(ancre_p, membre_p, plafond_paire_mm))
+
     if not clusters:
         return 0
 

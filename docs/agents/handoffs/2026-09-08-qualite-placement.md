@@ -151,3 +151,101 @@ Ce que les captures montrent et qui ressemble à ces défauts est la **dispersio
 
 - **2026-09-08** — diagnostic ci-dessus, mesuré sur les 18 cartes. Aucun
   correctif encore appliqué.
+
+---
+
+## Ce qui est LIVRÉ (2026-09-08, soir)
+
+### B1 — la cause racine du net perdu : un piège de FORME, le onzième
+
+`_patch_floating_nets` (`tools/pcb.py`) répare les nets orphelins. Elle ne
+réparait rien, dans **trois expressions indépendantes** :
+
+    (net 3 "GND")     ← kicad-tools, et KiCad ≤ 9      ← la seule acceptée
+    (net "GND")       ← pcbnew de KiCad 10             ← ce que produisent TOUS nos boards
+
+Mesure : `carte-02` numérotés=0 nus=93 · `carte-07` 0/570 · `carte-10` 0/988,
+`generator_version "10.0"` partout. `net_id_to_name` était donc TOUJOURS vide et
+la fonction rendait son entrée inchangée, sans un mot.
+
+⚠️ C'est le MÊME piège que `_NET_DECL_RE` le 2026-08-20 — corrigé là-bas, jamais
+ici. **Quand une forme de fichier trompe une expression, chercher SES SŒURS.**
+
+⚠️ **UN SECOND DÉFAUT SE CACHAIT DERRIÈRE LE PREMIER.** Le découpage des
+pastilles s'arrêtait sur `\n\t)` — UNE tabulation. pcbnew 10 en écrit deux, et
+la dernière pastille d'un boîtier y est suivie de `(embedded_fonts no)` : la
+**dernière pastille de chaque empreinte** n'était jamais réparée. Ma première
+correction fut pire — s'arrêter au premier `\n\s*(` coupait le bloc AVANT le
+champ `(net …)`. Une expression trop large et une trop étroite échouent
+identiquement, en silence. On compte désormais les parenthèses.
+
+Vérifié sur les onze boards réels : **16 pastilles d'alimentation** retrouvent
+leur net, `carte-04/05/07/08/09/10` passent de 2-4 perdues à **0**.
+
+### A1 + A2 — les deux leviers natifs jamais passés
+
+`OptimizationWorkflow`, celui que nous appelons déjà :
+
+| levier | où | défaut | effet du défaut |
+|---|---|---|---|
+| `constraints=[GroupingConstraint]` | `optim/workflow.py:244` → `add_grouping_constraints` (333) | jamais passé | paires à 101 mm |
+| `WorkflowConfig.grid` | `optim/workflow.py:187` → `snap_to_grid` (348) | `0.0` = aucun snap | 2/62 alignés |
+
+Les contraintes ne sont pas décoratives : `compute_constraint_forces`
+(`optim/placement.py:1297`) entre à l'**étape 5** du calcul de forces (1783).
+Vérifié dans le code, pas supposé.
+
+Jamais appelés non plus, et à explorer ensuite : `optim/alignment.py`
+(`align_components`, `distribute_components`), `optim/constraint_loader.py` —
+dont l'exemple de documentation est littéralement `status_leds` alignées et
+ordonnées — et `optim/bottom_up_placement.py`, une méthode **non-génétique** qui
+groupe par motif, dispose dans chaque groupe, puis pose les groupes en blocs.
+C'est la méthode d'un ingénieur, elle est dans la bibliothèque, rien ne l'utilise.
+
+### Trois restrictions, chacune payée par une mesure
+
+- **Pas les rails d'alimentation** — `GND` relie tout à tout.
+- **Pas les concentrateurs** (`_PADS_MAX_PAIRE = 4`) — `carte-09` a 38 paires
+  dont **20 de la forme `R<n>-U1`** : coller le MCU à vingt résistances est
+  insatisfiable, le solveur aurait arbitré au hasard entre des ressorts
+  contradictoires. Un placement pire, pas meilleur.
+- **Pas les nets à trois bornes** — pas de « bonne » distance évidente.
+
+### L'ORDRE, encore
+
+`grid=0.5` transmis n'a **rien changé** : 2/62 avant, 2/62 après. Le natif aligne
+en fin d'optimisation, puis le Géomètre, le halo, le snap et l'Inspecteur
+déplacent tout. L'alignement est donc reposé **en dernier**
+(`aligner_sur_grille`), avec le filet du snap — réparation native, retour arrière
+si le compte d'erreurs monte.
+
+Mesuré sur le board placé réel de `carte-09` : **2/62 → 62/62**, et
+**0 erreur avant comme après**.
+
+Les paires, elles, entrent dans le **même parcours** que le snap des clusters
+(`_PaireEnSerie`), jamais en second passage : deux passages successifs se
+défont l'un l'autre, piège déjà mesuré deux fois dans ce dépôt.
+
+### Effet des contraintes seules, mesuré avant le snap dur
+
+    paires   moyenne 55,3 → 35,7 mm      max 100,9 → 62,7 mm
+
+Un vrai gain (−35 %), et insuffisant seul : ce sont des forces, et le dépôt
+mesure déjà qu'elles sont dominées par les rails GND. D'où le serrage dur.
+
+## Décisions produit EN ATTENTE de validation
+
+Deux seuils chiffrés qui changent le comportement livré. Posés pour permettre la
+mesure, **non validés** :
+
+- `_GRILLE_MM = 0.5` — pas de la grille de placement
+- `_RAYON_PAIRE_MM = 5.0` — rayon de rappel d'une paire en série
+
+## Reste à faire
+
+- **C1** — livrer `expected/placement.kicad_pcb` pour les onze cartes (le
+  mécanisme existe, `scripts/livrer_placements.py` ; seules 05 et 06 sont
+  couvertes, les autres attendent leur régénération).
+- **A3** — espacer la sérigraphie (`silk_over_copper`, `silk_overlap`).
+- **D1** — la carte de référence réelle, type `astra_piNas`.
+- Régénérer les onze cartes avec les correctifs.

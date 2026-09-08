@@ -241,3 +241,112 @@ finit par ceder, sur plusieurs tirages — exactement la prudence deja inscrite 
 deux tirages concordants ne prouvent rien.
 
 **Une mesure etaye une proposition ; elle ne la valide pas.**
+
+---
+
+## D-2026-09-08-a — Pas de grille du placement (`_GRILLE_MM = 0.5`)
+
+**Statut : en attente.**
+
+**Constat mesure.** Aucune carte livree n'a ses composants sur une grille :
+
+    carte-04    1 / 15        nucleo-f401    0 / 55
+    carte-07    2 / 44        stm32-100      1 / 100
+    carte-10    2 / 70
+
+Les orientations, elles, sont toutes cardinales (55/55 sur `nucleo-f401`). Ce
+sont les POSITIONS qui tombent au centieme de millimetre, la ou le GA les a
+laissees. C'est la signature visuelle que l'utilisateur designe le 2026-09-08 :
+« le placement, c'est un placement d'amateur ».
+
+**Le levier est natif et n'etait pas passe.** `WorkflowConfig.grid`
+(`optim/workflow.py:187`, defaut `0.0` = aucun snap) declenche
+`optimizer.snap_to_grid(grid, 90.0)` (ligne 348).
+
+⚠️ Le transmettre ne suffit PAS : le natif aligne en fin d'optimisation, puis le
+Geometre, le halo, le snap et l'Inspecteur deplacent tout. Mesure avec
+`grid=0.5` bien transmis : **2/62 avant, 2/62 apres**. L'alignement doit etre
+repose EN DERNIER (`aligner_sur_grille`).
+
+**Mesure du remede**, board place reel de `carte-09` :
+
+    grille 0,5 mm    2 / 62  ->  62 / 62
+    erreurs DRC      0       ->  0
+
+**Proposition.** `_GRILLE_MM = 0.5` — pas usuel d'un placement manuel en CMS.
+Une valeur nulle desactive le snap et rend le comportement d'avant.
+
+**Pourquoi ce n'est PAS acquis.** Seuil chiffre qui change le comportement
+livre. La mesure ci-dessus etaye la proposition ; elle ne la valide pas.
+
+---
+
+## D-2026-09-08-b — Rayon d'adjacence d'une paire en serie (`_RAYON_PAIRE_MM = 5.0`)
+
+**Statut : en attente.**
+
+**Constat mesure.** Une LED et sa resistance serie partagent un net qui ne
+touche qu'ELLES DEUX — la paire la plus serrable qui existe sur une carte :
+
+    carte-09   D12 ↔ R13   100,9 mm      carte-08   D14 ↔ R15   76,7 mm
+    carte-10   D9  ↔ R10    86,8 mm      carte-07   D2  ↔ R3    40,8 mm
+
+Moyenne par carte : 3 mm a 5 composants, **55 mm a 62**. La dispersion suit la
+taille de la carte.
+
+**Proposition.** Contraindre ces paires a 5 mm entre origines — ce qu'un
+ingenieur fait a la main, en laissant au routeur de quoi passer entre les deux.
+
+⚠️ Ce n'est PAS une distance de courtyard : `max_distance` se mesure entre
+positions, le snap dur entre CORPS. Confondre les deux est une erreur deja
+commise dans ce depot.
+
+**Effet mesure des contraintes natives seules** (avant serrage dur) :
+
+    paires   moyenne 55,3 -> 35,7 mm      max 100,9 -> 62,7 mm
+
+**Pourquoi ce n'est PAS acquis.** Seuil chiffre qui change le comportement
+livre.
+
+---
+
+## D-2026-09-08-c — Abandonner les attaches PROUVABLEMENT insatisfiables
+
+**Statut : en attente.** ⚠️ C'est la decision la plus lourde des trois : elle
+touche la STRATEGIE de placement, pas un reglage.
+
+**Constat mesure.** `detect_functional_clusters` attache un meme composant a
+PLUSIEURS ancres, et ces ancres sont incompatibles entre elles :
+
+    carte-07   15 composants a plusieurs ancres — les 15 insatisfiables
+    carte-09   19 sur 19        carte-10   19 sur 19        carte-04   3 sur 3
+
+    D10 (carte-09) appartient a SEPT clusters : J1, J10..J14 et U1
+    D6  tenu par J7 et J1, distants de 123 mm pour 16 mm de plafonds cumules
+
+Aucune position ne satisfait « a 8 mm de J1 » ET « a 8 mm de J7 » quand les deux
+sont a 123 mm l'un de l'autre.
+
+**Consequence : le gel complet.** La garde « ne peut qu'ameliorer » refuse tout
+mouvement, puisque se rapprocher d'une ancre eloigne d'une autre. Elle fait
+exactement son travail — et le resultat est que RIEN ne bouge :
+
+    snap R10 -> D10 : eloignerait une autre ancre, ignore
+    snap R11 -> D11 : eloignerait une autre ancre, ignore   ← les 16, sans exception
+
+C'est l'explication de fond du reproche « placement d'amateur » : le serrage ne
+manque pas, il est systematiquement refuse par des contraintes qu'aucune
+position ne peut honorer.
+
+⚠️ Corriger le choix d'ancre ne suffit pas — essaye et mesure le 2026-09-08 :
+35,7 -> 32,5 mm seulement, parce que la contradiction demeure des deux cotes.
+
+**Proposition.** Quand les ancres d'un composant sont plus eloignees entre elles
+que la somme de leurs plafonds, l'ensemble est PROUVABLEMENT insatisfiable : ne
+garder que l'attache la plus proche, et journaliser explicitement les abandons.
+
+**Pourquoi ce n'est PAS applique.** Decision de strategie de placement, la
+categorie qui exige une validation explicite. Et le risque est reel :
+abandonner une attache peut degrader une adjacence que le routage utilisait.
+
+**Une mesure etaye une proposition ; elle ne la valide pas.**

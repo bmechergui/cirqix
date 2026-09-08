@@ -1647,6 +1647,19 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 #
 # Ce qui SURVIT de l experience : `_placement_meilleur`, qui departage deux
 # tirages legaux par la longueur de fil. Il ne coute rien et reste juste.
+# Pas de la grille de placement, en millimetres.
+#
+# ⚠️ SEUIL CHIFFRE QUI CHANGE LE COMPORTEMENT LIVRE — decision produit.
+#
+# 0,5 mm est le pas usuel d un placement manuel en CMS : il aligne les rangees
+# de passifs sans contraindre les boitiers fins. Le natif arrondit AUSSI les
+# rotations au multiple de 90 degres — sans effet ici, nos orientations sont
+# deja toutes cardinales (mesure : 55/55 sur `nucleo-f401`).
+#
+# Une valeur nulle desactive le snap : c est le comportement d avant, et c est
+# ce que la lib fait par defaut.
+_GRILLE_MM = 0.5
+
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
 _WF_POPULATION: int = 50
@@ -1978,6 +1991,36 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
+        # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
+        #
+        # `WorkflowConfig.grid` (defaut 0.0 = aucun snap) declenche
+        # `optimizer.snap_to_grid(grid, 90.0)` en fin d optimisation
+        # (`optim/workflow.py:348`). Sans lui, les positions restent la ou le
+        # GA les a laissees, au centieme de millimetre : mesure du 2026-09-08,
+        # **0 composant sur 55** aligne sur `nucleo-f401`, 1 sur 100 sur
+        # `stm32-100`. C est la premiere chose qu un oeil humain voit.
+        #
+        # `constraints=` (`optim/workflow.py:244`) transmet des
+        # `GroupingConstraint` a `optimizer.add_grouping_constraints`
+        # (ligne 333). Elles ne sont PAS decoratives :
+        # `compute_constraint_forces` (`optim/placement.py:1297`) produit des
+        # forces de rappel integrees a l etape 5 du calcul de forces
+        # (ligne 1783) — verifie dans le code, pas suppose.
+        #
+        # Sans elles, une LED et sa resistance serie — qui partagent un net ne
+        # touchant qu ELLES DEUX — finissent a 101 mm (`carte-09`, D12-R13).
+        #
+        # C est la troisieme fois que ce depot paie la meme erreur, apres
+        # `FunctionalCluster.max_distance_mm` et `anchor_pin` : le levier
+        # existait, public, et personne ne lisait ce que la lib rendait.
+        #
+        # ⚠️ Ce sont des FORCES, donc franchissables : elles ne remplacent pas
+        # le snap dur de fin de chaine, elles lui laissent moins a rattraper.
+        # Et le snap sur grille peut creer un chevauchement — l Inspecteur
+        # repasse derriere, comme apres toute etape qui deplace.
+        from tools.placement_contraintes import contraintes_du_board
+        contraintes = contraintes_du_board(pcb, refs_ancrees=conn)
+
         cfg = WorkflowConfig(
             strategy="hybrid",
             enable_clustering=True,
@@ -1985,8 +2028,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             iterations=_WF_ITERATIONS,
             generations=_WF_GENERATIONS,
             population=_WF_POPULATION,
+            grid=_GRILLE_MM,
         )
-        workflow = OptimizationWorkflow(pcb=pcb, config=cfg)
+        workflow = OptimizationWorkflow(pcb=pcb, config=cfg,
+                                        constraints=contraintes)
         result = workflow.run()
         # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
@@ -2128,8 +2173,13 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # sur sa pastille 1 (courtyard ESP32-WROOM : y de -30,74 a +10,51) ;
         # snapper « a 3 mm de l origine » poserait la capa DANS le module.
         pcb_snap = PCB.load(str(out))
+        # Les paires en serie entrent dans LE MEME parcours de snap : deux
+        # passages successifs se defont l un l autre (piege deja mesure entre
+        # le clamp et le centrage, puis entre le halo et le snap).
+        from tools.placement_contraintes import paires_du_board
         n_snap = snap_cluster_members(
-            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap))
+            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap),
+            paires=paires_du_board(pcb_snap))
         if n_snap:
             # ⚠️ FILET OBLIGATOIRE, meme forme que celui du Geometre. Le snap
             # a ete livre le 2026-08-29 SANS filet, sur l hypothese que
@@ -2257,6 +2307,37 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # On ne LEVE pas : un board imparfait vaut mieux qu aucun board, et
         # l orchestrateur sait deja re-tirer. Mais on ne ment plus par
         # omission.
+        # ── Alignement sur grille — LA DERNIERE ETAPE QUI DEPLACE ──────────
+        #
+        # ⚠️ `WorkflowConfig.grid` aligne deja, mais A LA FIN DE L OPTIMISATION,
+        # avant le Geometre, le halo, le snap et l Inspecteur — qui deplacent
+        # tous. Mesure du 2026-09-08 sur `carte-09`, `grid=0.5` bien transmis :
+        #
+        #     grille 0,5 mm   2/62 avant   ->   2/62 apres
+        #
+        # Aucun changement. Le natif avait aligne ; les quatre etapes suivantes
+        # avaient tout defait. « L ordre fait partie du correctif. »
+        #
+        # ⚠️ MEME FILET QUE LE SNAP : l arrondi deplace de moins d un demi-pas,
+        # mais deux boitiers a la limite peuvent se toucher. On repare avec
+        # l outil natif, et on revient au board d avant si le compte d erreurs
+        # monte — un alignement est un CONFORT, il ne peut pas coûter une
+        # erreur de fabrication.
+        if _GRILLE_MM > 0:
+            _rendre_lisible(out)
+            avant_grille = out.read_bytes()
+            err_avant_grille = _compter_conflits_erreur(out)
+            from tools.placement_contraintes import aligner_sur_grille
+            n_grille = aligner_sur_grille(out, _GRILLE_MM, figes=conn)
+            if n_grille:
+                _resolve_remaining_conflicts(out, conn)
+                _rendre_lisible(out)
+                if _compter_conflits_erreur(out) > err_avant_grille:
+                    out.write_bytes(avant_grille)
+                    logger.info("auto_place: alignement sur grille annule "
+                                "(%d -> %d erreurs)", err_avant_grille,
+                                _compter_conflits_erreur(out))
+
         _rendre_lisible(out)
         conflits_restants = _compter_conflits_erreur(out)
         if conflits_restants:
