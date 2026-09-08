@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import functools
 import logging
 import os
 import math
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -30,7 +32,14 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 
 from tools import kct_route
+from tools.progres_routage import (
+    CleInvalide,
+    lire_progres,
+    oublier_progres,
+    publier_progres,
+)
 from tools.sexp_quote import unquote_keepout_values
+from tools.verrou_routage import RoutageOccupe, verrou_de_routage
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -102,6 +111,10 @@ class RouteAutoRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description=".kicad_pcb encoded as base64")
     layers: int = Field(default=2, description="Copper layer count (2, 4, or 8)")
     timeout_s: int = Field(default=_DEFAULT_TIMEOUT_S, ge=30, le=_MAX_TIMEOUT_S)
+    # Sous quel nom publier l avancement, pour qu une AUTRE requete puisse le
+    # lire pendant que celle-ci route. Optionnelle : un appelant qui ne la
+    # fournit pas route exactement comme avant, sans rien publier.
+    progress_key: Optional[str] = Field(default=None)
 
     def model_post_init(self, _context: Any) -> None:
         # ⚠️ `layers` est un PLAFOND depuis le 2026-08-21, plus une consigne :
@@ -114,6 +127,16 @@ class RouteAutoRequest(BaseModel):
             raise ValueError(
                 f"layers must be an even count between 2 and {_MAX_LAYERS}"
             )
+        # ⚠️ La cle vient du client et NOMME UN FICHIER. Non validee, une
+        # valeur comme `../../etc/passwd` ecrirait hors du dossier. On la
+        # refuse a l entree (422) plutot qu au moment d ecrire, ou l echec
+        # surviendrait au milieu d un routage deja paye.
+        if self.progress_key is not None:
+            from tools.progres_routage import chemin_du_progres
+            try:
+                chemin_du_progres(self.progress_key)
+            except CleInvalide as exc:
+                raise ValueError(str(exc)) from exc
 
 
 class RouteAutoResponse(BaseModel):
@@ -651,10 +674,83 @@ def _api(method: str, path: str, payload: Optional[dict] = None,
     return json.loads(raw) if raw else {}
 
 
+# Session Freerouting du PROCESSUS. Une seule, gardee ouverte.
+#
+# ⚠️ MESURE DU 2026-09-03 : on creait une session PAR ROUTAGE et on n en
+# fermait aucune — `GET /v1/sessions/list` en rendait 14, pendant que la JVM
+# annoncait 417 Mo utilises sur 582. Son tas est FIXE (~400 Mo).
+#
+# ⚠️ ET L API NE SAIT PAS EN SUPPRIMER UNE. Verifie sur la v2.1.0 embarquee,
+# en-tetes d identite complets :
+#
+#     DELETE /v1/sessions/{id}        -> 500 « HTTP 405 Method Not Allowed »
+#     POST   /v1/sessions/{id}/delete -> 404
+#     GET    /v1/sessions/{id}        -> 200   (elle existe pourtant)
+#
+# Meme famille que `PUT /jobs/{id}/cancel` qui repond 501 : Freerouting cree,
+# il ne defait pas. Le seul levier est donc de ne pas en creer plus d une.
+#
+# 4 workers uvicorn = 4 processus, donc AU PLUS 4 sessions au lieu d une par
+# routage. Le compte devient borne — c est tout l objet du correctif.
+_SESSION_FREEROUTING: Optional[str] = None
+
+# ⚠️ Les routes du service sont declarees `def`, donc executees dans le POOL DE
+# THREADS de FastAPI : deux routages recus par le meme worker touchent la meme
+# variable de module. Sans verrou, tous deux passent le test « pas de session »
+# et en creent une chacun ; le perdant rend l id de l autre et sa propre
+# session devient ORPHELINE — on recreerait a petite echelle la fuite que ce
+# correctif elimine, avec des sessions que l API ne sait pas supprimer.
+_VERROU_SESSION = threading.Lock()
+
+
+def _session_freerouting(pre: str) -> str:
+    """Session du processus, creee au besoin, VERIFIEE avant reutilisation.
+
+    ⚠️ On verifie au lieu de supposer : une session morte reutilisee en
+    aveugle ferait echouer l enfilement du job plus loin, avec un message
+    sans rapport avec la cause. Et un cache qui survit a ce qu il cache
+    condamnerait tous les routages suivants apres un redemarrage de la JVM.
+
+    ⚠️ MESURE DU 2026-09-03, a lire avant de s inquieter du partage de
+    session : deux routages SIMULTANES dans un meme processus ne survivent
+    pas a cette machine, quel que soit le traitement des sessions. Un seul
+    routage monte a **6,2 Go de memoire residente** ; a deux, le noyau tue le
+    processus (`Out of memory: Killed process ... anon-rss:6247616kB`, crete
+    mesuree 7,2 Go pour 7,6 disponibles). La concurrence est donc bornee par
+    la MEMOIRE bien avant de l etre par Freerouting.
+    """
+    global _SESSION_FREEROUTING
+    with _VERROU_SESSION:
+        if _SESSION_FREEROUTING:
+            try:
+                _api("GET", f"{pre}/sessions/{_SESSION_FREEROUTING}")
+                return _SESSION_FREEROUTING
+            except Exception as exc:
+                # ⚠️ Journalise en AVERTISSEMENT, avec la cause. Un jeton
+                # d identite mal configure et une JVM redemarree menent tous
+                # deux ici ; sans le message, le premier se lit comme le
+                # second et passe pour normal a chaque routage.
+                logger.warning(
+                    "session Freerouting %s injoignable (%s) — on en ouvre "
+                    "une autre", _SESSION_FREEROUTING, exc)
+                _SESSION_FREEROUTING = None
+        cree = _api("POST", f"{pre}/sessions/create", {})
+        sid = cree.get("id") if isinstance(cree, dict) else None
+        if not sid:
+            # Message explicite plutot qu un `KeyError: 'id'` remonte tel quel
+            # dans « Freerouting API echoue ('id') », illisible en journal.
+            raise RuntimeError(
+                "Freerouting a cree une session sans identifiant : %r" % (cree,))
+        _SESSION_FREEROUTING = sid
+        return sid
+
+
 def _route_with_freerouting_api(
     pcb_bytes: bytes,
     timeout_s: int = _DEFAULT_TIMEOUT_S,
     nets_routables: int = 0,
+    progress_key: Optional[str] = None,
+    palier: int = 0,
 ) -> bytes:
     """Route via Freerouting persistent REST API server (1 JVM for all users).
 
@@ -690,8 +786,7 @@ def _route_with_freerouting_api(
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
-        session = _appel("POST", f"{pre}/sessions/create", {})
-        session_id = session["id"]
+        session_id = _session_freerouting(pre)
 
         # ⚠️ On enfilait le job SANS le moindre reglage, donc avec les defauts
         # de Freerouting. Interroges le 2026-08-28 (`GET /jobs/<id>`), ils
@@ -730,6 +825,8 @@ def _route_with_freerouting_api(
         depart_silence = time.time()
         derniere_passe = 0
         dernier_unrouted = 0
+        # Derniere mesure REELLEMENT publiee, pour ne pas reecrire a l identique.
+        dernier_publie: tuple = (-1, -1)
         # ⚠️ Horloge du temps SANS PROGRES — jamais du temps total. Remise a
         # zero a chaque avancee reelle ; c est elle qui coupe un routeur
         # BAVARD mais bloque, cas que `_routeur_muet` ne pouvait pas voir.
@@ -784,6 +881,28 @@ def _route_with_freerouting_api(
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
                 passe = _numero_de_passe(derniere, short_name)
+                # ⚠️ La mesure existait deja — elle servait uniquement, en
+                # interne, a couper l attente d un job fige. Elle ne
+                # sortait pas du service : l utilisateur voyait « routage
+                # en cours » pendant vingt minutes alors que le routeur
+                # savait a chaque instant ou il en etait.
+                # ⚠️ N ECRIRE QUE SUR CHANGEMENT. La boucle tourne toutes
+                # les deux secondes pendant vingt minutes : republier a
+                # l identique ferait ~600 ecritures atomiques (mkstemp +
+                # replace + purge) pour zero information nouvelle. Le
+                # lecteur deduplique deja de son cote ; ecrire quand meme
+                # ne servirait qu a user /tmp, partage par 4 workers.
+                if progress_key and (passe, unrouted) != dernier_publie:
+                    dernier_publie = (passe, unrouted)
+                    try:
+                        publier_progres(
+                            progress_key, passe=passe,
+                            non_routes=unrouted, nets=nets_routables,
+                            palier=palier)
+                    except Exception:
+                        # L affichage ne doit JAMAIS faire echouer le
+                        # routage : un disque plein perdrait une carte.
+                        pass
                 if passe > derniere_passe:
                     if premiere_passe_a is None:
                         premiere_passe_a = time.time()
@@ -1758,11 +1877,63 @@ def _projet_kicad(pcb_bytes: bytes):
         "meta": {"filename": "b.kicad_pro", "version": 3},
     }
 
+# Marqueur d un rapport qui n a PAS pu etre rendu.
+#
+# ⚠️ POURQUOI UN MARQUEUR ET PAS UN DICT VIDE. `_rapport_drc` rendait `{}`, et
+# son propre commentaire l avouait : « les appelants lisent le dict vide comme
+# "rien a signaler" — TANT QU ILS LE FONT, ce journal est le seul endroit ou
+# l absence de verdict est visible ». Un journal n est pas un correctif.
+#
+# Les gardes « une reparation ne peut qu ameliorer » comparaient
+# `erreurs(candidat) > erreurs(original)`. Sans verdict, les DEUX cotes valent
+# zero, `0 > 0` est faux, et le candidat passait SANS AVOIR ETE JUGE. Chaque
+# garde devenait « accepte tout » exactement quand le board est suspect —
+# puisqu un board que kicad-cli n arrive pas a ouvrir est justement douteux.
+#
+# Un dict vide est ambigu ; un marqueur ne l est pas. Les appelants qui lisent
+# `violations` continuent de voir une liste vide, comme avant.
+_SANS_VERDICT: dict = {"_sans_verdict": True}
+
+
+def _sans_verdict(rapport: dict) -> bool:
+    """Le DRC a-t-il refuse de juger ce board ?"""
+    return bool(rapport.get("_sans_verdict"))
+
+
+def _aggrave_le_board(avant: bytes, apres: bytes, *,
+                      rapport_avant: Optional[dict] = None) -> bool:
+    """`apres` ajoute-t-il des erreurs — ou est-ce indecidable ?
+
+    ⚠️ ECHOUE FERME. « Je ne peux pas juger » se traite comme « c est pire » :
+    on garde le board recu, qui est connu. Accepter un candidat non juge, c est
+    remplacer une certitude par une inconnue.
+
+    ⚠️ UNE SEULE FONCTION POUR CINQ GARDES. Elles etaient ecrites cinq fois,
+    a l identique, et donc fausses cinq fois. Ce depot a paye plusieurs fois
+    ce motif : « un correctif applique a une fonction ne protege pas sa soeur ».
+
+    Les AVERTISSEMENTS ne comptent pas : une erreur de fabricabilite fait
+    refuser la carte, un avertissement non.
+    """
+    # ⚠️ `rapport_avant` evite de re-juger le board de REFERENCE a chaque tour
+    # d une boucle de retrait progressif. Un DRC coute plusieurs secondes ; le
+    # recalculer n apprend rien, puisque ce board ne change pas. Centraliser la
+    # regle ne doit pas multiplier son cout — un test de la chaine l a attrape.
+    r_avant = _rapport_drc(avant) if rapport_avant is None else rapport_avant
+    r_apres = _rapport_drc(apres)
+    if _sans_verdict(r_avant) or _sans_verdict(r_apres):
+        logger.warning(
+            "garde « ne peut qu ameliorer » : aucun verdict DRC — le candidat "
+            "est refuse, le board recu est conserve")
+        return True
+    return _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+
+
 def _rapport_drc(pcb_bytes: bytes) -> dict:
     """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
     cli = shutil.which("kicad-cli")
     if cli is None:
-        return {}
+        return _SANS_VERDICT.copy()
     with tempfile.TemporaryDirectory() as tmp:
         pcb = Path(tmp) / "b.kicad_pcb"
         rapport = Path(tmp) / "b.json"
@@ -1791,11 +1962,11 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
             # « rien a signaler ». Tant qu ils le font, ce journal est le seul
             # endroit ou l absence de verdict est visible.
             logger.error(
-                "DRC indisponible (%s) — le rapport vide sera lu « 0 erreur » "
-                "par les gardes de cette requete. kicad-cli: %s",
+                "DRC indisponible (%s) — AUCUN verdict : les gardes « ne peut "
+                "qu ameliorer » refuseront leur candidat. kicad-cli: %s",
                 exc, ((r.stdout or r.stderr).strip()[:200]
                       if r is not None else "non execute"))
-            return {}
+            return _SANS_VERDICT.copy()
 
 
 # Padstack des vias reserves. Nom impose par le DSN que pcbnew exporte —
@@ -1956,7 +2127,16 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
         return pcb_bytes  # deja pleines : rien a faire
 
     rempli = _fill_zones(promu)
-    avant, apres = _compte_erreurs(rapport), _compte_erreurs(_rapport_drc(rempli))
+    # ⚠️ Cette garde-ci exige une amelioration STRICTE, elle etait donc deja
+    # fermee sans verdict (`0 < 0` est faux). On l ecrit quand meme en toutes
+    # lettres : le motif brut invite a etre recopie, et ses quatre soeurs
+    # l avaient ete — toutes fausses.
+    rapport_rempli = _rapport_drc(rempli)
+    if _sans_verdict(rapport) or _sans_verdict(rapport_rempli):
+        logger.warning(
+            "reliefs thermiques : aucun verdict DRC — board recu conserve")
+        return pcb_bytes
+    avant, apres = _compte_erreurs(rapport), _compte_erreurs(rapport_rempli)
     if apres < avant:
         logger.info(
             "reliefs thermiques : %d pastille(s) passee(s) en connexion pleine "
@@ -2670,7 +2850,7 @@ def _relier_gnd_avant_routage(pcb_bytes: bytes, nets_plan: set) -> bytes:
             ", ".join("%s.%s" % c for c in isolees_apres[:6]))
     # Le verdict porte sur le board RECOULE : juger celui aux zones perimees
     # reviendrait a mesurer un board que personne ne recevra.
-    if _compte_erreurs(_rapport_drc(relie)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, relie):
         logger.warning(
             "liaison GND avant routage : erreurs ajoutees — board recu conserve")
         return pcb_bytes
@@ -2838,7 +3018,7 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
     #
     # La garde ne tranche pas la cause : elle rend l etape incapable
     # d aggraver, comme le reste de la chaine.
-    if _compte_erreurs(_rapport_drc(repose)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, repose):
         logger.warning(
             "repose des vias : erreurs ajoutees — board d origine conserve")
         return pcb_bytes
@@ -2944,7 +3124,7 @@ def _recoudre_les_ilots(pcb_bytes: bytes) -> bytes:
     logger.info("couture : %d ilot(s) du plan relie(s) par un via", n)
     # Meme garde que le fanout : une reparation ne doit jamais ajouter
     # d erreurs. Un via mal place vaut moins qu une broche orpheline.
-    if _compte_erreurs(_rapport_drc(recousu)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, recousu):
         logger.warning("couture : erreurs ajoutees — board d origine conserve")
         return pcb_bytes
     return recousu
@@ -3060,15 +3240,6 @@ def _coudre_jusqu_au_bout(pcb_bytes: bytes) -> bytes:
     return pcb_bytes
 
 
-def _couture_acceptable(erreurs_avant: int, erreurs_apres: int) -> bool:
-    """La couture peut-elle etre gardee ? Elle ne doit jamais AGGRAVER.
-
-    Le critere compte les ERREURS, jamais les avertissements : une erreur de
-    fabricabilite fait refuser la carte, un avertissement non.
-    """
-    return erreurs_apres <= erreurs_avant
-
-
 def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
     """Board prive de ses `combien` DERNIERS vias, le reste intact.
 
@@ -3129,7 +3300,7 @@ def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
     n = bilan.get("retires", 0) + bilan.get("relies", 0)
     if not n:
         return pcb_bytes
-    if _compte_erreurs(_rapport_drc(allege)) > _compte_erreurs(_rapport_drc(pcb_bytes)):
+    if _aggrave_le_board(pcb_bytes, allege):
         logger.warning(
             "retrait des ilots flottants : erreurs ajoutees — board conserve")
         return pcb_bytes
@@ -3190,10 +3361,13 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
     # On retire donc le dernier via pose et on retente, jusqu a trouver un
     # sous-ensemble qui n aggrave pas. A defaut, le board recu — la garde reste
     # inviolee.
-    avant = _compte_erreurs(_rapport_drc(pcb_bytes))
+    rapport_recu = _rapport_drc(pcb_bytes)
     candidat, retires = recousu, 0
     while retires <= n:
-        if _couture_acceptable(avant, _compte_erreurs(_rapport_drc(candidat))):
+        # ⚠️ Meme garde que ses soeurs, et pour la meme raison : sans verdict
+        # DRC on refuse le candidat au lieu de l accepter par defaut. La
+        # reference est jugee UNE fois, hors de la boucle.
+        if not _aggrave_le_board(pcb_bytes, candidat, rapport_avant=rapport_recu):
             if retires:
                 logger.info(
                     "couture : %d via(s) retire(s) sur %d — le reste ne degrade "
@@ -3338,6 +3512,7 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
             kicad_pcb_b64=base64.b64encode(pcb_bytes).decode("ascii"),
             layers=req.layers,
             timeout_s=max(budget_s, _MIN_LEVEL_BUDGET_S),
+            progress_key=req.progress_key,
         )
         res = _route_auto_once(tentative)
         if not res.kicad_pcb_b64 or res.skipped:
@@ -3496,8 +3671,10 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
         repare = _pose_les_vias_d_echappement(pcb_bytes, cibles)
         if repare is pcb_bytes:
             continue
-        apres = _compte_erreurs(_rapport_drc(repare))
-        if apres <= avant:
+        # ⚠️ Meme garde que ses soeurs : `apres <= avant` acceptait a egalite,
+        # donc acceptait aussi les deux zeros d un DRC muet. La reference est
+        # jugee UNE fois, hors de la boucle.
+        if not _aggrave_le_board(pcb_bytes, repare, rapport_avant=rapport):
             if retirees:
                 logger.info(
                     "fanout: %d pastille(s) ecartee(s) sur %d — les %d autres "
@@ -4338,6 +4515,8 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
             new_pcb = _route_with_freerouting_api(
                 pcb_bytes, _remaining_budget_s(deadline),
                 nets_routables=net_count,
+                progress_key=req.progress_key,
+                palier=req.layers,
             )
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-api")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
@@ -4504,7 +4683,51 @@ def _armer_abandon(actif: bool) -> None:
     _ABANDON_AUTORISE = actif
 
 
+def _un_seul_routage_a_la_fois(fonction):
+    """Serialise les routages sur toute la machine.
+
+    ⚠️ MESURE DU 2026-09-03 : un routage monte a **6,2 Go de memoire
+    residente** (`stm32-baseline`, le plus petit board du banc) ; deux en
+    parallele font tuer le processus par le noyau — `Out of memory: Killed
+    process (python3) anon-rss:6247616kB`, crete 7,2 Go pour 7,6 disponibles.
+    Le service tourne pourtant avec `--workers 4` : il annonce quatre requetes
+    simultanees quand la memoire n en autorise qu une. Le client voyait un
+    `RemoteDisconnected` sans message, le journal un `Child process died` :
+    rien ne designait la cause.
+
+    ⚠️ POURQUOI PAS UN SEUL WORKER, qui reglerait la memoire d un mot : parce
+    que `GET /route/progress` — la progression livree le meme jour — et
+    `GET /health`, dont Docker se sert pour juger le conteneur, attendraient
+    alors la fin d un routage de vingt minutes. On garde les quatre workers
+    pour les requetes legeres, on serialise le seul point couteux.
+
+    ⚠️ POURQUOI UN DECORATEUR et non un `with` dans le corps : celui-ci compte
+    580 lignes et DIX gardes le lisent par `inspect.getsource(route_auto)`.
+    Le scinder les ferait toutes lire une enveloppe de trois lignes — l erreur
+    deja commise le jour meme sur ce fichier. `functools.wraps` laisse
+    `getsource` suivre `__wrapped__` et rendre le corps reel.
+
+    Decision produit D-2026-09-03-b (`docs/DECISIONS.md`).
+    """
+    @functools.wraps(fonction)
+    def enveloppe(req: RouteAutoRequest) -> RouteAutoResponse:
+        # Pris AVANT l echeance calculee dans le corps : l attente ne doit pas
+        # etre deduite du budget de recherche, sinon un appelant qui patiente
+        # verrait son routage tronque par la faute d un autre.
+        try:
+            with verrou_de_routage():
+                return fonction(req)
+        except RoutageOccupe as exc:
+            # 503 et non 500 : le service va bien, il est occupe. Et jamais un
+            # faux succes — un `skipped` ou un `routed_percent: 0` se lirait
+            # comme un verdict de routage alors qu aucun n a eu lieu.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return enveloppe
+
+
 @router.post("/route/auto", response_model=RouteAutoResponse)
+@_un_seul_routage_a_la_fois
 def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     """Route en escaladant les couches jusqu'a obtenir 100 %.
 
@@ -4533,6 +4756,21 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         raise HTTPException(status_code=422, detail=f"invalid base64: {exc}") from exc
 
     deadline = _now() + req.timeout_s
+    # ⚠️ EFFACER LA PROGRESSION RESIDUELLE AVANT DE COMMENCER. Le routage
+    # precedent a pu laisser la sienne — echec, annulation, redemarrage du
+    # conteneur. Un sondeur qui interroge avant la premiere passe de CE
+    # routage lirait alors l avancement du PRECEDENT, et rien ne le
+    # distinguerait d une mesure fraiche. Un chiffre perime est pire
+    # qu un chiffre absent.
+    #
+    # A l entree plutot qu a la sortie : la fonction compte plusieurs
+    # `return` et une dizaine de gardes lisent son corps ; l envelopper
+    # dans un `try/finally` les ferait toutes lire l enveloppe.
+    if req.progress_key:
+        try:
+            oublier_progres(req.progress_key)
+        except Exception:
+            logger.warning("progression %s non effacee", req.progress_key)
     # ⚠️ VIDER la memoire des replis GND a chaque appel : deux cartes
     # differentes ne doivent pas se contaminer, sinon la seconde heriterait
     # des echecs de la premiere et sauterait un repli jamais tente sur elle.
@@ -4800,6 +5038,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # sur les grandes cartes n est pas la repartition, c est le budget
             # TOTAL — un parametre de l appelant.
             timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
+            progress_key=req.progress_key,
         )
         try:
             res = _route_auto_once(tentative)
@@ -4994,13 +5233,17 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # ⚠️ Les erreurs du palier, mesurees sur le board LIVRE. Un palier a
         # 100 % qui ne passe pas le DRC n est pas une reussite : la carte ne
         # part pas en fabrication.
-        erreurs = (_compte_erreurs(_rapport_drc(final))
-                   if res.kicad_pcb_b64 and not res.skipped else 10 ** 6)
+        # ⚠️ UN PALIER QU ON NE PEUT PAS JUGER N EST PAS UN PALIER PARFAIT.
+        # `_compte_erreurs` d un rapport sans verdict rend 0 : le palier
+        # paraissait irreprochable et gagnait la comparaison `_palier_meilleur`.
+        # On le penalise comme un palier sans board — meme sentinelle.
+        _rap_final = _rapport_drc(final) if res.kicad_pcb_b64 and not res.skipped else None
+        erreurs = (10 ** 6 if _rap_final is None or _sans_verdict(_rap_final)
+                   else _compte_erreurs(_rap_final))
         # ⚠️ QUELS nets manquent, pas seulement combien. Regle de l utilisateur :
         # un net confie au PLAN ne se relie pas avec du cuivre en plus.
         manquants_du_palier = (
-            _nets_incomplets(_rapport_drc(final))
-            if res.kicad_pcb_b64 and not res.skipped else set())
+            _nets_incomplets(_rap_final) if _rap_final is not None else set())
         if not _escalade_peut_aider(percent_moteur, erreurs,
                                     manquants=manquants_du_palier):
             escalade_inutile = True
@@ -5089,3 +5332,34 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             routed_percent=0, layers=req.layers, skipped=True,
             warning="tous les tirages ont stagne ou echoue — aucun routage")
     return meilleur
+
+
+class RouteProgressResponse(BaseModel):
+    """Avancement d un routage en cours, tel qu une AUTRE requete peut le lire."""
+
+    connu: bool = False
+    passe: int = 0
+    non_routes: int = 0
+    nets: int = 0
+    palier: int = 0
+    pourcentage: int = 0
+    mis_a_jour: float = 0.0
+
+
+@router.get("/route/progress/{cle}", response_model=RouteProgressResponse)
+def route_progress(cle: str) -> RouteProgressResponse:
+    """Avancement du routage publie sous `cle`, ou `connu=False`.
+
+    ⚠️ Une progression absente n est PAS une erreur : le sondeur interroge
+    avant que le routeur ait publie sa premiere passe, et sur une carte lente
+    cela dure plusieurs minutes. Un 404 repete ferait passer un demarrage
+    normal pour une panne — la confusion que ce depot a deja payee en lisant
+    « 0 % » comme un verdict de routage alors que c etait une panne.
+    """
+    try:
+        vu = lire_progres(cle)
+    except CleInvalide as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if vu is None:
+        return RouteProgressResponse(connu=False)
+    return RouteProgressResponse(connu=True, **vu)
