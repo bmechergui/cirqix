@@ -45,11 +45,20 @@ describe('reservePipelineCredits', () => {
     });
   });
 
-  it('couvre la durée maximale du pipeline avec une marge', () => {
-    // maxDuration = 300 s. Un TTL plus court libérerait la réservation pendant
-    // que le pipeline tourne encore — précisément la fenêtre que cette issue
-    // vise à fermer.
-    expect(PIPELINE_RESERVATION_TTL_S).toBeGreaterThan(300);
+  it('couvre la durée du pipeline ASYNCHRONE, pas celle de la route', () => {
+    // ⚠️ Ce test exigeait « > 300 s », la borne de la route SYNCHRONE, et
+    // 360 s le satisfaisait. Le pipeline asynchrone dure 19 MINUTES mesurées
+    // (run 4290007c) : la retenue expirait à la sixième, le crédit se libérait
+    // pendant que le job tournait, et un second projet pouvait démarrer sur le
+    // même solde. Le test passait au vert sur la mauvaise référence.
+    const DUREE_PIPELINE_MESUREE_S = 19 * 60;
+    expect(PIPELINE_RESERVATION_TTL_S).toBeGreaterThan(DUREE_PIPELINE_MESUREE_S);
+  });
+
+  it('ne dépasse pas le plafond accepté par la base', () => {
+    // `reserve_pipeline_credits` refuse hors de 1..3600 (`invalid_ttl`) : une
+    // valeur plus grande ferait échouer TOUTE réservation, donc tout pipeline.
+    expect(PIPELINE_RESERVATION_TTL_S).toBeLessThanOrEqual(3600);
   });
 
   it('distingue le refus pour solde insuffisant de toute autre panne', async () => {
