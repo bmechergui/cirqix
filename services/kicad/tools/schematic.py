@@ -370,10 +370,28 @@ def _generate_with_cs_lib(
         comps: dict[str, CSComponent] = {}
         for comp in components:
             symbol = _safe_symbol(_map_symbol(comp))
-            ref_prefix = comp.ref.rstrip("0123456789") or comp.ref
+            # ⚠️ LA REFERENCE COMPLETE, PAS SON PREFIXE.
+            #
+            # On transmettait `comp.ref.rstrip("0123456789")` — donc « C » pour
+            # « C12 » — et circuit_synth renumerotait alors dans son ordre de
+            # creation. Le board livre portait C1..C8 la ou le schema declarait
+            # C1, C2, C3, C10..C13, C20 : un utilisateur cherchant `C12` sur sa
+            # carte ne le trouvait pas, et le BOM heritait de ces noms.
+            #
+            # Verifie dans le conteneur : `CSComponent(ref="C12").ref == "C12"`.
+            # La bibliotheque acceptait la reference complete depuis toujours ;
+            # c est nous qui la lui retirions.
+            #
+            # ⚠️ Cela supprime aussi une NON-DETERMINISME visible. La cascade a
+            # trois niveaux et le premier est borne par un timeout de 20 s :
+            # quand circuit_synth tenait, ses references renumerotees
+            # l emportaient ; quand il depassait, kicad-tools prenait la main et
+            # preservait les references. Le resultat dependait d une course.
+            # Les deux niveaux s accordent desormais — on supprime la course au
+            # lieu de la gagner.
             c = CSComponent(
                 symbol=symbol,
-                ref=ref_prefix,
+                ref=comp.ref,
                 value=comp.value,
                 footprint=_expand_footprint(comp),
             )
