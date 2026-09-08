@@ -282,7 +282,8 @@ def _dans_le_contour(boite: tuple, contour: Optional[tuple],
 
 def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
                  direction: tuple, marge: float, ref: str,
-                 ecart_actuel: Optional[float] = None):
+                 ecart_actuel: Optional[float] = None,
+                 marge_voisins: Optional[float] = None):
     """Premier point libre pour le CENTRE du corps de `fp`, ou ``None``.
 
     ⚠️ Sans cette recherche, deux membres de directions voisines atterrissent
@@ -295,6 +296,24 @@ def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
     de placement qu on ne veut pas jeter. On ne s en ecarte que si la place
     est prise, et par le plus petit ecart qui convient.
     """
+    # ⚠️ DEUX MARGES, ET ELLES NE PROTEGENT PAS LA MEME CHOSE.
+    #
+    # `marge` est l ecart radial a l ANCRE : sur un boitier fine-pitch c est le
+    # halo d escape, 5 mm, et il ne doit pas etre rebouche.
+    #
+    # `marge_voisins` est le degagement exige des AUTRES composants. Rien ne
+    # justifie d y imposer le halo : entre deux 0603 la marge normale est
+    # `_MARGE_MM` = 0,3 mm. En imposant 5 mm, l anneau proche de l ancre
+    # devenait inhabitable des qu un autre membre du cluster s y trouvait — et
+    # ils y sont tous, par construction. La recherche partait au large.
+    #
+    # Mesure du 2026-09-08, `carte-04-mcu-minimal` : les cinq decouplages du
+    # cluster POWER restaient a 3,4 / 5,5 / 6,1 / 9,5 / 11,4 mm, sur une carte
+    # occupee a 30 %.
+    #
+    # Le defaut reste `marge` : un appelant qui ne distingue pas les deux
+    # obtient exactement le comportement anterieur.
+    marge_v = marge if marge_voisins is None else marge_voisins
     acx, acy = centre_ancre
     ahw, ahh = demi_ancre
     ux, uy = direction
@@ -321,7 +340,7 @@ def _cible_libre(pcb, fp, centre_ancre: tuple, demi_ancre: tuple,
                 # qui se touchent passent un test de recouvrement et echouent
                 # l analyseur, dont les regles portent sur un ecart reel.
                 if (_dans_le_contour(boite, contour)
-                        and _libre(boite, obstacles, marge)):
+                        and _libre(boite, obstacles, marge_v)):
                     return cx, cy
     return None
 
@@ -431,8 +450,12 @@ def snap_cluster_members(
 
             # ⚠️ TRANSMETTRE l ecart actuel : sans lui, la recherche retombe
             # sur sa fenetre d origine de 4,5 mm et le correctif serait inerte.
+            # ⚠️ La marge du HALO ne vaut que pour l ancre. Les voisins gardent
+            # la marge ordinaire : imposer 5 mm entre deux 0603 rendait
+            # l anneau proche inhabitable et poussait la recherche au large.
             place = _cible_libre(pcb, fp, (acx, acy), (ahw, ahh), (ux, uy),
-                                 marge, ref, ecart_actuel=dist - portee)
+                                 marge, ref, ecart_actuel=dist - portee,
+                                 marge_voisins=marge_mm)
             if place is None:
                 # ⚠️ Mieux vaut laisser un membre LOIN que le poser sur un
                 # voisin : un court-circuit coute plus cher qu un decouplage
