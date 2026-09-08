@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   PgSink,
   runOrchestratorPipeline,
+  runDriver,
   type PipelineJobPayload,
   type PipelineStore,
   type RunEventWriter,
@@ -27,14 +28,28 @@ const log = logger.child({ module: 'worker.run-job' });
  *
  * C'est la SEULE preuve qu'un run vit encore : sans plafond de durée, un job de
  * 30 minutes est indiscernable d'un worker figé. Un run `running` sans battement
- * récent est réconcilié en `failed`, ce qui libère aussi sa réservation.
+ * récent est réconcilié en `failed`.
+ *
+ * ⚠️ Cette phrase se terminait par « ce qui libère aussi sa réservation ».
+ * C'ÉTAIT FAUX : `finish()` ne fait qu'un `UPDATE pcb_runs`, et aucun
+ * déclencheur ne relie les deux tables. La libération est désormais explicite
+ * (`adapters.ts` → `releaseReservationForRun`), donc la phrase est redevenue
+ * vraie — mais par le code, pas par la promesse.
  */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 export interface RunJobContext {
   supabase: SupabaseClient;
-  /** Fabrique le magasin de persistance pour ce run. */
-  createStore: (userId: string, projectId: string) => PipelineStore;
+  /**
+   * Fabrique le magasin de persistance pour ce run.
+   *
+   * ⚠️ `agentMode` est la PROVENANCE, et elle vient de `pcb_runs` — jamais du
+   * payload du job, jamais d une constante. Elle gouverne le gate de
+   * `POST /api/jlcpcb/order`, c est-a-dire une commande reelle et payante.
+   */
+  createStore: (userId: string, projectId: string, agentMode: string) => PipelineStore;
+  /** Relit la provenance enregistree du run. */
+  readAgentMode: (runId: string) => Promise<string | null>;
   /** Écrit les lignes du journal de ce run. */
   createEventWriter: (runId: string) => RunEventWriter;
   markRunning: (runId: string) => Promise<void>;
@@ -58,7 +73,7 @@ export async function runJob(
   payload: PipelineJobPayload,
   ctx: RunJobContext,
 ): Promise<void> {
-  const { runId, projectId, userId, prompt, iterationStart } = payload;
+  const { runId, projectId, userId, prompt, iterationStart, schema } = payload;
 
   const writer = ctx.createEventWriter(runId);
   const sink = new PgSink(runId, writer);
@@ -73,13 +88,39 @@ export async function runJob(
     });
   }, HEARTBEAT_INTERVAL_MS);
 
+  // ⚠️ ECHEC FERME SUR UNE PROVENANCE INCONNUE. Elle decide de la
+  // commandabilite du board chez JLCPCB : « inconnu » n est pas « verifie ».
+  // Le run est refuse plutot que mene avec une provenance devinee.
+  const agentMode = await ctx.readAgentMode(runId);
+  if (!agentMode) {
+    clearInterval(beat);
+    await sink.close();
+    await ctx.finish(runId, 'failed', 'provenance introuvable pour ce run');
+    log.error({ runId, projectId }, 'provenance introuvable — run refuse');
+    return;
+  }
+
   try {
+    // ⚠️ La PRESENCE D UN SCHEMA choisit la chaine, et rien d autre.
+    //
+    // Le solde de l API du modele est epuise depuis le 2026-09-06 :
+    // l orchestrateur etant la premiere etape, plus aucun PCB ne peut aboutir
+    // par la voie normale. Un schema fourni par le driver contourne ce seul
+    // maillon — tout le reste de la chaine est deterministe, et le banc des dix
+    // cartes l a mesure jusqu aux Gerbers.
+    //
+    // ⚠️ Ce choix ne touche PAS a la provenance. `agent_mode` vit dans
+    // `pcb_runs`, pose par la route, et le gate JLCPCB exige `orchestrator` :
+    // un board du driver reste non commandable, quelle que soit sa qualite.
     const outcome = await runOrchestratorPipeline({
       sink,
-      store: ctx.createStore(userId, projectId),
+      store: ctx.createStore(userId, projectId, agentMode),
       projectId,
       prompt,
       iterationStart,
+      // `exactOptionalPropertyTypes` interdit un `undefined` explicite :
+      // la propriete est posee, ou elle n existe pas.
+      ...(schema ? { source: runDriver({ schema, projectId }) } : {}),
     });
 
     // Le pipeline ne lève pas sur annulation : il s'arrête simplement de relancer

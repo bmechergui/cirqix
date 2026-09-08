@@ -4,12 +4,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  * handleReason — sauvetage de routage, déclenché DÉTERMINISTIQUEMENT par
  * l'orchestrateur quand routed_percent < 100 (jamais par Sonnet).
  *
- * Contrairement aux autres handlers, celui-ci est sûr par construction et n'a
- * PAS été modifié : `runReasoner` n'échoue jamais (il intercepte fetch/non-2xx et
- * renvoie {routedPercent: 0}), et l'anti-régression de mergeRescueIntoRouting
- * empêche un reasoner en échec de dégrader un routage existant. Ces tests
- * verrouillent ces deux propriétés — c'est précisément parce qu'elles sont
- * implicites qu'elles méritent d'être explicitées.
+ * Deux proprietes le rendent sur : `runReasoner` n'echoue jamais (il intercepte
+ * fetch/non-2xx et renvoie {routedPercent: 0}), et l'anti-regression de
+ * `mergeRescueIntoRouting` empeche un reasoner en echec de degrader un routage
+ * existant. Ces tests les verrouillent — c'est precisement parce qu'elles sont
+ * implicites qu'elles meritent d'etre explicitees.
+ *
+ * ⚠️ Cet en-tete a longtemps affirme que ce handler « n'a PAS ete modifie » et
+ * qu'il etait « sur par construction ». C'etait faux sur un point, releve le
+ * 2026-09-07 : sans board en cache il rendait `status:'success'` ET promouvait
+ * `pcb_status:'ROUTING_DONE'`, que `orchestrator-bridge` persiste dans
+ * `projects.status`. Il etait le SEUL des huit a ne pas avoir recu le correctif
+ * fail-fast du 2026-07-27.
+ *
+ * La branche etait inatteignable — `shouldRescueRouting` exige un routage
+ * reussi, qui a lui-meme ecrit le cache — mais « inatteignable aujourd'hui »
+ * n'est pas une garantie, c'est une coincidence. Elle est fermee.
  */
 
 vi.hoisted(() => {
@@ -99,12 +109,41 @@ describe('sauvetage nominal', () => {
 });
 
 describe('reasoner indisponible', () => {
-  it('cache vide → saute proprement sans appeler le service', async () => {
+  it('cache vide → ECHOUE FERME, sans promouvoir de statut', async () => {
+    // ⚠️ Ce handler etait le SEUL des huit a ne pas avoir recu le correctif
+    // fail-fast du 2026-07-27. Sans board en cache il rendait
+    // `status:'success'` ET `pcb_status:'ROUTING_DONE'` — or
+    // `orchestrator-bridge` persiste `pcb_status` dans `projects.status`.
+    // Un projet pouvait donc etre marque ROUTING_DONE sans qu aucun board
+    // n existe.
+    //
+    // La branche est aujourd hui inatteignable — `shouldRescueRouting` exige
+    // un `routed_percent` numerique, donc un routage REUSSI, qui a lui-meme
+    // ecrit le cache. Elle est a un changement de declencheur pres de
+    // s ouvrir, et la fermer coute trois lignes.
     const result = await handleReason(PROJECT);
 
-    expect(result['routed_percent']).toBe(0);
-    expect(result['engine']).toBe('fallback-skip');
+    expect(result['status']).toBe('error');
+    expect(result['pcb_status']).toBeUndefined();
     expect(reasoningMock.runReasoner).not.toHaveBeenCalled();
+  });
+
+  it('son echec ne degrade PAS le routage deja obtenu', async () => {
+    // La garde de fusion doit continuer de tenir avec un resultat en erreur :
+    // « le reasoner ne peut qu AMELIORER ».
+    const routage = {
+      status: 'success',
+      pcb_status: 'ROUTING_DONE',
+      routed_percent: 95,
+      kicad_pcb_content: PCB,
+      note: 'routage',
+    };
+    const fusion = mergeRescueIntoRouting(routage, await handleReason(PROJECT));
+
+    expect(fusion['routed_percent']).toBe(95);
+    expect(fusion['kicad_pcb_content']).toBe(PCB);
+    expect(fusion['status']).toBe('success');
+    expect(fusion['pcb_status']).toBe('ROUTING_DONE');
   });
 
   it('remonte le warning du service et un pourcentage honnête', async () => {

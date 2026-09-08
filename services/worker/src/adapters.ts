@@ -21,6 +21,8 @@ import type {
   StoredArtifact,
 } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
+
+import { extendReservationForRun, releaseReservationForRun } from './reservations.js';
 import type { RunJobContext } from './run-job.js';
 
 export { createPipelineWorker } from '@cirqix/agents';
@@ -67,11 +69,28 @@ async function uploadArtifact(
   return { signedUrl: data?.signedUrl };
 }
 
-/** Magasin de persistance d'un run, côté worker. */
+/**
+ * Magasin de persistance d'un run, côté worker.
+ *
+ * ⚠️ LA PROVENANCE EST UN PARAMÈTRE, PLUS UNE CONSTANTE. Elle valait
+ * `'orchestrator'` en dur, aux deux endroits qui écrivent dans `projects` — ce
+ * qui était exact tant que le worker ne savait faire QUE l'orchestrateur.
+ *
+ * Depuis qu'il sait aussi exécuter la chaîne du driver (`run-driver.ts`), cette
+ * constante devenait un mensonge exécutoire : `POST /api/jlcpcb/order` autorise
+ * la commande sur `agent_mode = 'orchestrator'`, donc un board dont le schéma a
+ * été écrit à la main devenait COMMANDABLE chez JLCPCB. Mesuré le 2026-09-07 sur
+ * le premier run du driver : `projet : PCB_LIVRÉ · provenance orchestrator`.
+ *
+ * Elle est désormais lue dans `pcb_runs.agent_mode`, exactement comme le
+ * contrat du job le prescrit : « posée par la ROUTE, relue depuis la base par
+ * le worker ». Le payload ne la transporte toujours pas.
+ */
 export function createWorkerStore(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,
+  agentMode: string,
 ): PipelineStore {
   return {
     uploadArtifact: (name, content) =>
@@ -87,9 +106,8 @@ export function createWorkerStore(
           // de finalisation, dont la garde `stale_iteration` exige
           // p_iteration_count = iteration_count + 1.
           //
-          // Provenance : pipeline réel → board commandable (gate JLCPCB). Elle
-          // est posée par l'ADAPTATEUR, jamais par le pipeline.
-          agent_mode: 'orchestrator',
+          // Provenance : celle du RUN, jamais une constante. Voir l'en-tête.
+          agent_mode: agentMode,
           updated_at: new Date().toISOString(),
         })
         .eq('id', projectId);
@@ -97,12 +115,28 @@ export function createWorkerStore(
     },
 
     async finalizeSuccess(status: PCBStatus, state: PCBState): Promise<void> {
+      // ⚠️ LES ARGUMENTS NE CORRESPONDAIENT PAS À LA FONCTION. Elle est
+      // déclarée `(uuid, uuid, integer, jsonb, text)` depuis la migration 018 :
+      // `p_iteration_count`, et PAS de `p_status`. Cet appel envoyait
+      // `p_pcb_state, p_status` — Postgres ne trouvait donc aucune surcharge, et
+      // TOUT run arrivé jusqu'à `done` échouait à la finalisation, sans débit et
+      // sans provenance. Mesuré le 2026-09-07 : « Could not find the function
+      // public.finalize_pipeline_success(p_agent_mode, p_pcb_state,
+      // p_project_id, p_status, p_user_id) ».
+      //
+      // Invisible aux tests : ils remplacent le client Supabase par un faux qui
+      // accepte n'importe quel objet d'arguments. Un faux plus pauvre que le
+      // vrai ne peut pas révéler un contrat rompu — la leçon est déjà inscrite
+      // dans CLAUDE.md à propos d'un faux `pcbnew`.
+      //
+      // `status` reste le statut publié ; l'itération vient de l'état, comme
+      // dans l'appel de la route web (`credits.ts`), qui lui était correct.
       const { error } = await supabase.rpc('finalize_pipeline_success', {
         p_user_id: userId,
         p_project_id: projectId,
-        p_pcb_state: state,
-        p_status: status,
-        p_agent_mode: 'orchestrator',
+        p_iteration_count: state.iteration,
+        p_pcb_state: { ...state, status },
+        p_agent_mode: agentMode,
       });
       if (error) {
         // Ici, en revanche, on lève : ne pas finaliser signifie ne pas débiter
@@ -129,8 +163,17 @@ function createEventWriter(supabase: SupabaseClient, runId: string): RunEventWri
 export function createRunEventWriterFactory(supabase: SupabaseClient): RunJobContext {
   return {
     supabase,
-    createStore: (userId: string, projectId: string) =>
-      createWorkerStore(supabase, userId, projectId),
+    createStore: (userId: string, projectId: string, agentMode: string) =>
+      createWorkerStore(supabase, userId, projectId, agentMode),
+    readAgentMode: async (runId: string) => {
+      const { data, error } = await supabase
+        .from('pcb_runs').select('agent_mode').eq('id', runId).single();
+      if (error) {
+        log.error({ err: error, runId }, 'provenance illisible');
+        return null;
+      }
+      return (data?.agent_mode as string | undefined) ?? null;
+    },
     createEventWriter: (runId: string) => createEventWriter(supabase, runId),
 
     async markRunning(runId: string): Promise<void> {
@@ -151,6 +194,17 @@ export function createRunEventWriterFactory(supabase: SupabaseClient): RunJobCon
         .update({ heartbeat_at: new Date().toISOString() })
         .eq('id', runId);
       if (error) log.warn({ err: error, runId }, 'heartbeat échoué');
+
+      // ⚠️ Le battement prouve que le run VIT : on s'en sert pour repousser
+      // l'échéance de sa retenue de crédit. Sans cela, l'échéance est un pari
+      // posé au démarrage — trop courte elle libère le crédit sous un job qui
+      // tourne, trop longue elle le gèle après un crash. Ici la fenêtre suit le
+      // travail réel.
+      //
+      // `heartbeat_at` était écrit depuis la migration 019 et AUCUN code ne le
+      // lisait ; le réconciliateur que deux commentaires annonçaient n'a jamais
+      // été écrit. C'est son premier usage.
+      await extendReservationForRun(supabase, runId);
     },
 
     async finish(
@@ -167,6 +221,18 @@ export function createRunEventWriterFactory(supabase: SupabaseClient): RunJobCon
         })
         .eq('id', runId);
       if (error) log.error({ err: error, runId, status }, 'clôture du run échouée');
+
+      // ⚠️ Un run ÉCHOUÉ ou ANNULÉ doit rendre le crédit qu'il retenait. Seuls
+      // la route (avant l'enfilement) et `finalize_pipeline_success` (au
+      // succès) posaient `released_at` : sur un échec, le crédit restait
+      // retenu jusqu'à l'expiration. Supportable à 6 minutes, plus du tout
+      // depuis que la retenue couvre la durée du pipeline réel.
+      //
+      // Au succès, `finalize_pipeline_success` a déjà libéré dans la même
+      // transaction que le débit ; l'appel est alors sans effet.
+      if (status !== 'succeeded') {
+        await releaseReservationForRun(supabase, runId);
+      }
     },
 
     async isCancelled(runId: string): Promise<boolean> {

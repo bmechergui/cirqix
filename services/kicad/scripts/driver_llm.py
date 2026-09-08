@@ -33,6 +33,22 @@ def show_state(agent: PCBReasoningAgent) -> None:
     print(agent.get_prompt(max_history=3))
 
 
+def _resync(agent: PCBReasoningAgent, board: Path) -> PCBReasoningAgent:
+    """Re-derive l etat depuis le board ecrit, en gardant le journal d actions.
+
+    Recopie de `tools/reasoning.py::_refresh_agent`, dont ce driver etait reste
+    prive. Sans elle, `get_progress()` sous-evalue le routage, et un LLM pilote
+    par ce chiffre ne s arrete jamais.
+    """
+    agent.save(str(board))
+    fresh = PCBReasoningAgent.from_pcb(str(board))
+    fresh.history = agent.history
+    fresh.step_count = agent.step_count
+    fresh.initial_unrouted = agent.initial_unrouted
+    fresh.initial_violations = agent.initial_violations
+    return fresh
+
+
 def main() -> int:
     mode, board = sys.argv[1], sys.argv[2]
     agent = PCBReasoningAgent.from_pcb(board)
@@ -49,6 +65,18 @@ def main() -> int:
         print(f"    success={result.success}  msg={result.message}")
         if diagnosis:
             print(f"    DIAGNOSIS:\n{diagnosis}")
+    # ⚠️ RESYNCHRONISER AVANT DE MESURER. L interpreteur ecrit les pistes dans
+    # l editeur mais NE remet PAS a jour `PCBState.nets[*].traces` :
+    # `NetState.is_routed` reste False en session, et `get_progress` annonce
+    # « 0/16 route » sur un board qui porte 62 segments et 10 vias — mesure
+    # du 2026-09-05 sur `stm32-baseline`.
+    #
+    # Le SERVICE corrige cela depuis le commit 34be8ae
+    # (`tools/reasoning.py::_refresh_agent`) parce qu un LLM pilote par ce
+    # compteur boucle jusqu a `max_steps` en croyant n avoir rien fait. Ce
+    # driver manuel n avait jamais recu le correctif : il rendait le meme
+    # chiffre faux a l humain qui joue le role du LLM.
+    agent = _resync(agent, Path(out).with_suffix('.resync.kicad_pcb'))
     p = agent.get_progress()
     print(f"\n=== PROGRESS: routed {p.nets_routed}/{p.nets_total} | violations {p.violations_current} (init {p.violations_initial}) ===")
     agent.save(out)
