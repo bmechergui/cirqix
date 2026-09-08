@@ -1,6 +1,6 @@
 # carte-05-capteur-i2c
 
-> **Version git** `61ebbae` (2026-09-07) — le schema, le board et ces chiffres viennent
+> **Version git** `e74648b` (2026-09-07) — le schema, le board et ces chiffres viennent
 > tous de ce commit. ⚠️ Un README recopie a la main derive de ses mesures des la
 > premiere relance : celui-ci est GENERE par `scripts/readme_banc_driver.py`.
 
@@ -24,18 +24,18 @@ aucune d'une description en langage naturel — la promesse du produit.
 | nets | 13 |
 | surface | 70 x 50 mm (135 mm2 par composant) |
 | **routage** | **100 %** |
-| DRC du pipeline | `clean=True`, 20 violation(s) |
-| **DRC du board livre** | **0 erreur(s)**, 10 violation(s) au total |
-| types (board livre) | silk_over_copper:4 · silk_overlap:6 |
-| **fabricable** | **oui** — aucune violation de severite `error` sur le board livre |
-| fichiers exportes | 20 |
-| duree du pipeline | 327 s |
+| DRC du pipeline | `clean=False`, 43 violation(s) |
+| **DRC du board livre** | **5 erreur(s)**, 30 violation(s) au total |
+| types (board livre) | invalid_outline:1 · item_on_disabled_layer:4 · silk_over_copper:10 · silk_overlap:3 · track_dangling:10 · via_dangling:2 |
+| **fabricable** | **NON** — 5 erreur(s) : invalid_outline, item_on_disabled_layer |
+| fichiers exportes | 27 |
+| duree du pipeline | 1052 s |
 
 Cuivre reellement pose sur le board livre :
 
 | segments | vias | zones | empreintes |
 |---|---|---|---|
-| 143 | 36 | 3 | 26 |
+| 290 | 29 | 0 | 26 |
 
 ⚠️ Ces quatre nombres sont comptes **dans le board**, pas rapportes par un
 compteur de progression. Ce depot a paye trois fois la difference : un rapport DRC

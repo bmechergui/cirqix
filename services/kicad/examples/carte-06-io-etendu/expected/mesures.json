@@ -6,25 +6,24 @@
     80,
     60
   ],
-  "duree_s": 624,
-  "git": "4c45c7a",
+  "duree_s": 675,
+  "git": "6fb7359",
   "routed_percent": 100,
-  "drc_violations": 13,
+  "drc_violations": 70,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:9,silk_over_copper:2,silk_edge_clearance:1,track_dangling:1",
+  "types_violations": "silk_over_copper:44,silk_overlap:26",
   "abouti": true,
   "board": {
-    "segments": 242,
-    "vias": 43,
+    "segments": 283,
+    "vias": 71,
     "zones": 3,
-    "empreintes": 35
+    "empreintes": 36
   },
-  "_note_mesure": "journal perdu — le lancement precede l ajout du `tee`. Les chiffres viennent d un `kicad-cli pcb drc` rejoue SUR LE BOARD livre : 0 connexion manquante, 13 violations toutes cosmetiques.",
   "drc_du_board": {
-    "violations": 13,
+    "violations": 35,
     "non_connectes": 0,
-    "types": "silk_edge_clearance:1,silk_over_copper:2,silk_overlap:9,track_dangling:1",
+    "types": "silk_over_copper:22,silk_overlap:13",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true

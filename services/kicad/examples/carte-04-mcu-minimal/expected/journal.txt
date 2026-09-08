@@ -3,46 +3,47 @@ SchÃ©ma (driver LLM) : 15 composants, 7 nets, board 60x45mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=88823o  (13.7s)
+    -> taille=88833o  (16.4s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=170 Â· fixed=156 Â· skipped=False Â· engine=kicad-cli  (1.3s)
+    -> clean=False Â· violations=170 Â· fixed=156 Â· skipped=False Â· engine=kicad-cli  (2.6s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=49893o  (0.4s)
+    -> taille=49898o  (0.7s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto
 ==============================================================
-    -> placÃ©s=15 Â· status=None  (103.3s)
+    -> placÃ©s=15 Â· status=None  (107.9s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=30 Â· skipped=False Â· warning=None  (23.0s)
+    -> routÃ©=100% Â· couches=2 Â· vias=14 Â· skipped=False Â· warning=None  (22.5s)
 
 [6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto
 ==============================================================
-    -> clean=True Â· violations=7 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (1.3s)
+    -> clean=True Â· violations=20 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (1.5s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! track_dangling: Track has unconnected end
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
 
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.7s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.8s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -65,7 +66,7 @@ SchÃ©ma (driver LLM) : 15 composants, 7 nets, board 60x45mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=7 drc_clean=True files=20 types=silk_overlap:4,silk_over_copper:2,track_dangling:1
+SUMMARY routed=100 drc_violations=20 drc_clean=True files=20 types=silk_over_copper:12,silk_overlap:8
 VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-04-mcu-minimal-1788697470/output
+Artefacts : /tmp/banc-carte-04-mcu-minimal-1788854024/output

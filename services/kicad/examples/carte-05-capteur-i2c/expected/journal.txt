@@ -3,7 +3,7 @@ SchÃ©ma (driver LLM) : 26 composants, 13 nets, board 70x50mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=122913o  (1.0s)
+    -> taille=122925o  (1.1s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
@@ -13,29 +13,29 @@ SchÃ©ma (driver LLM) : 26 composants, 13 nets, board 70x50mm
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=73202o  (0.5s)
+    -> taille=99779o  (2.3s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto
 ==============================================================
-    -> placÃ©s=25 Â· status=None  (275.1s)
+    -> placÃ©s=26 Â· status=None  (625.6s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=35 Â· skipped=False Â· warning=None  (23.7s)
+    -> routÃ©=100% Â· couches=2 Â· vias=29 Â· skipped=False Â· warning=None  (416.0s)
 
 [6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto
 ==============================================================
-    -> clean=True Â· violations=20 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (1.5s)
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
+    -> clean=False Â· violations=43 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (1.6s)
+       ! invalid_outline: Board has malformed outline (no edges found on Edge.Cuts layer)
+       ! item_on_disabled_layer: Item on a disabled copper layer (layer In21.Cu)
+       ! item_on_disabled_layer: Item on a disabled copper layer (layer In21.Cu)
+       ! item_on_disabled_layer: Item on a disabled copper layer (layer In21.Cu)
+       ! item_on_disabled_layer: Item on a disabled copper layer (layer In21.Cu)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
@@ -43,7 +43,7 @@ SchÃ©ma (driver LLM) : 26 composants, 13 nets, board 70x50mm
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.7s)
+    -> fichiers=27 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.0s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -60,13 +60,20 @@ SchÃ©ma (driver LLM) : 26 composants, 13 nets, board 70x50mm
        + led-blinker-F_Paste.gtp
        + led-blinker-F_Silkscreen.gto
        + led-blinker-Margin.gbr
+       + led-blinker-User_1.gbr
+       + led-blinker-User_2.gbr
+       + led-blinker-User_3.gbr
+       + led-blinker-User_4.gbr
+       + led-blinker-User_Comments.gbr
        + led-blinker-User_Drawings.gbr
+       + led-blinker-User_Eco1.gbr
+       + led-blinker-User_Eco2.gbr
        + led-blinker-job.gbrjob
        + led-blinker.drl
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=20 drc_clean=True files=20 types=silk_overlap:12,silk_over_copper:8
-VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
-PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-05-capteur-i2c-1788697632/output
+SUMMARY routed=100 drc_violations=43 drc_clean=False files=27 types=silk_over_copper:20,track_dangling:10,silk_overlap:6,item_on_disabled_layer:4,via_dangling:2,invalid_outline:1
+VERDICT : routage 100% Â· DRC clean=False (skipped=False) Â· 27 fichiers exportÃ©s
+PIPELINE INCOMPLET â€” voir les Ã©tapes ci-dessus
+Artefacts : /tmp/banc-carte-05-capteur-i2c-1788865835/output
