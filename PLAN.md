@@ -919,8 +919,12 @@ re-tirages · file BullMQ · pipeline découplé de Supabase · worker · route 
 1. ~~Client Realtime (`startRun` + souscription)~~ — **livré.** `followRun`
    s'abonne aux INSERT ; le sondage HTTP est le repli et le catch-up.
    Allumer `CIRQIX_ASYNC_PIPELINE=1` seulement avec Redis + worker.
-2. Passage en `Popen` côté Python — la sortie du routeur n'est lue qu'à la fin,
-   donc 20 minutes d'attente muette pour l'utilisateur.
+2. ~~Passage en `Popen` côté Python~~ — **sans objet, et la progression est
+   livrée** (2026-09-03). `kct_route.py` est le Niveau 4, emprunté par 0 des
+   16 routages comptés le 2026-08-30. Le chemin réel (API Freerouting)
+   mesurait déjà son avancement sans le publier : il l'écrit désormais dans un
+   fichier, `GET /route/progress/{clé}` l'expose, le worker le sonde pendant
+   l'étape de routage et l'émet dans `pcb_run_events`.
 3. ~~Application de la migration `019` en base.~~ Appliquée (`20260820095437 pcb_runs`).
    Migration `020` (publication Realtime) à appliquer sur l'instance Supabase.
 4. ~~**Validation réelle** : un routage > 300 s de bout en bout.~~ Mesuré
