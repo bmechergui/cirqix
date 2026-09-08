@@ -28,6 +28,13 @@ interface PcbStateApiResponse {
   error?: string;
 }
 
+/** Avancement publie par une etape longue — aujourd'hui le seul routage. */
+export interface StepProgress {
+  step: AgentStep;
+  percent: number;
+  detail?: string;
+}
+
 interface AppState {
   user: AuthUser | null;
   credits: Credits | null;
@@ -40,6 +47,13 @@ interface AppState {
   pcbStateByProject: Record<string, PCBState | null>;
 
   agentStep: AgentStep;
+  /**
+   * Avancement de l'etape en cours, quand elle en publie un.
+   *
+   * `null` est l'etat normal : la plupart des etapes sont trop courtes pour
+   * en avoir un. Seul le routage, qui dure de 5 s a 20 min, en produit.
+   */
+  stepProgress: StepProgress | null;
   agentBusy: boolean;
   selectedStage: Record<string, PcbStage>;
 
@@ -59,6 +73,7 @@ interface AppState {
   setMessages: (projectId: string, msgs: Message[]) => void;
 
   setAgentStep: (step: AgentStep) => void;
+  setStepProgress: (progress: StepProgress | null) => void;
   setAgentBusy: (busy: boolean) => void;
   setSelectedStage: (projectId: string, stage: PcbStage) => void;
 }
@@ -75,6 +90,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pcbStateByProject: {},
 
   agentStep: null,
+  stepProgress: null,
   agentBusy: false,
   selectedStage: {},
 
@@ -205,6 +221,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   setAgentStep: (step) => set({ agentStep: step }),
+  setStepProgress: (progress) => set({ stepProgress: progress }),
   setAgentBusy: (busy) => set({ agentBusy: busy }),
   setSelectedStage: (projectId, stage) =>
     set((s) => ({

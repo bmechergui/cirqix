@@ -45,6 +45,7 @@ const STEP_TO_STAGE: Partial<Record<string, PcbStage>> = {
 
 export function Timeline({ projectId, status }: TimelineProps) {
   const agentStep    = useAppStore((s) => s.agentStep);
+  const stepProgress = useAppStore((s) => s.stepProgress);
   const storedStage  = useAppStore((s) => s.selectedStage[projectId]);
   const setSelected  = useAppStore((s) => s.setSelectedStage);
 
@@ -61,6 +62,13 @@ export function Timeline({ projectId, status }: TimelineProps) {
         const isCurrent   = stage === currentStage;
         const isSelected  = stage === selectedStage;
         const isActive    = STEP_TO_STAGE[agentStep ?? ''] === stage;
+        // ⚠️ Le routage dure de 5 s a 20 min. Sans ce pourcentage, l'etape
+        // affiche la meme roue qui tourne du debut a la fin, et rien ne
+        // distingue « en cours » de « bloque ».
+        const progress    =
+          stepProgress && STEP_TO_STAGE[stepProgress.step ?? ''] === stage
+            ? stepProgress
+            : null;
 
         return (
           <div key={stage} className="flex items-center gap-1 shrink-0">
@@ -103,6 +111,14 @@ export function Timeline({ projectId, status }: TimelineProps) {
                 )}
               </span>
               <span className="hidden sm:inline">{meta.label}</span>
+              {progress && (
+                <span
+                  className="text-[10px] font-semibold tabular-nums text-primary"
+                  title={progress.detail ?? undefined}
+                >
+                  {progress.percent}%
+                </span>
+              )}
             </button>
 
             {/* FOOTPRINT mini-step — shown between SCHEMA and ERC when active */}

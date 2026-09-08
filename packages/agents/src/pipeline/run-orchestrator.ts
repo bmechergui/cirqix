@@ -16,7 +16,9 @@
  */
 
 import type { PCBState, PCBStatus, SimulationData } from '@cirqix/types';
+import { followRoutingProgress, progressKeyFor } from '../engines/routing-progress';
 import { runOrchestrator } from '../orchestrator';
+import type { SSEEvent } from '../orchestrator';
 import type { RunSink } from './run-sink';
 import type { PipelineStore } from './store';
 
@@ -48,6 +50,21 @@ export interface RunPipelineOptions {
   projectId: string;
   prompt: string;
   iterationStart: number;
+  /**
+   * Source des evenements. Par defaut l orchestrateur Sonnet.
+   *
+   * ⚠️ POURQUOI UNE INJECTION PLUTOT QU UN SECOND PIPELINE. Tout ce qui suit —
+   * depot des artefacts, fusion d etat, persistance, suivi du routage,
+   * finalisation, facturation — doit rester ecrit UNE fois. `local-pipeline.ts`
+   * a redit a sa facon ce que les handlers disaient deja : il ecrivait un
+   * statut CODE EN DUR par etape et persistait `DRC_CLEAN` sur un DRC en
+   * erreur. Un second chemin est un second endroit a corriger, et on en oublie
+   * toujours un.
+   *
+   * La chaine du driver (`run-driver.ts`) passe par ici : le porteur ne sait
+   * pas, et n a pas besoin de savoir, si les evenements viennent d un modele.
+   */
+  source?: AsyncGenerator<SSEEvent>;
 }
 
 type OrchestratorPcbState = Record<string, unknown> & {
@@ -73,8 +90,24 @@ export async function runOrchestratorPipeline(
   };
   let lastStatus: PCBStatus = 'INITIAL';
 
+  // ⚠️ SUIVI DE L'ETAPE LONGUE. Le routage dure de 5 s a 20 min selon la carte
+  // et l'appel HTTP est BLOQUANT : sans ce sondage, rien ne parvient a
+  // l'utilisateur entre le debut et la fin. Le service, lui, mesure son
+  // avancement depuis toujours — il relit le journal de la JVM toutes les deux
+  // secondes pour decider d'abandonner un job fige.
+  //
+  // Le suivi est ferme a CHAQUE changement d'etape et dans le `finally` : un
+  // sondeur oublie continuerait d'interroger le service apres la fin du run.
+  let suiviRoutage: AbortController | undefined;
+  const arreterLeSuivi = (): void => {
+    suiviRoutage?.abort();
+    suiviRoutage = undefined;
+  };
+
   try {
-    for await (const ev of runOrchestrator({ userMessage: prompt, projectId, history: [] })) {
+    const evenements = opts.source
+      ?? runOrchestrator({ userMessage: prompt, projectId, history: [] });
+    for await (const ev of evenements) {
       switch (ev.type) {
         case 'text':
           await sink.emit({ type: 'token', content: ev.delta });
@@ -84,6 +117,38 @@ export async function runOrchestratorPipeline(
           const validSteps: UiStep[] = ['SCHEMA', 'ERC', 'PLACEMENT', 'ROUTING', 'DRC', 'EXPORT'];
           if (validSteps.includes(ev.step as UiStep)) {
             await sink.emit({ type: 'step', step: ev.step as UiStep });
+          }
+          // Toute etape ferme le suivi precedent, y compris un second ROUTING :
+          // les re-tirages pilotes par le DRC repassent plusieurs fois ici.
+          arreterLeSuivi();
+          // ⚠️ LIMITE CONNUE : la cle nomme le PROJET, pas le run. Deux
+          // runs simultanes sur le meme projet partageraient donc leur
+          // fichier de progression, et leurs pourcentages se melangeraient a
+          // l affichage. Aucun routage n en echoue — c est un affichage, et
+          // toutes ses pannes sont avalees — et BullMQ deduplique deja par
+          // projet (`jobIdForProject`, worker en concurrence 1). La lever
+          // exigerait de faire descendre le `runId` jusqu au handler, a
+          // travers l orchestrateur et `executeToolStub` : une refonte de
+          // signature disproportionnee pour un melange d affichage.
+          const cle = progressKeyFor(projectId);
+          if (ev.step === 'ROUTING' && cle) {
+            suiviRoutage = new AbortController();
+            // Volontairement NON attendu : le suivi doit vivre PENDANT que la
+            // boucle consomme la suite. L'attendre bloquerait le run entier
+            // sur un sondeur qui ne s'arrete qu'a l'etape suivante.
+            void followRoutingProgress({
+              key: cle,
+              signal: suiviRoutage.signal,
+              onProgress: (p) =>
+                sink.emit({
+                  type: 'progress',
+                  step: 'ROUTING',
+                  percent: p.percent,
+                  detail:
+                    `passe ${p.pass} · ${p.unrouted} net(s) a relier sur ` +
+                    `${p.nets} · ${p.layers} couches`,
+                }),
+            });
           }
           break;
         }
@@ -202,6 +267,10 @@ export async function runOrchestratorPipeline(
     if (isCreditFailure(message)) throw err;
     await sink.emit({ type: 'error', message });
     return { ok: false, error: message };
+  } finally {
+    // Y compris sur l'echec et sur l'echappement par `throw` du cas credit :
+    // un sondeur survivant au run interrogerait le service indefiniment.
+    arreterLeSuivi();
   }
 
   return { ok: true };

@@ -31,6 +31,14 @@ export class RoutingServiceUnavailableError extends Error {
 export interface RealRoutingInput {
   kicadPcbContent: string;
   layers: 2 | 4 | 8;
+  /**
+   * Nom sous lequel le service publie l'avancement du routage, pour qu'une
+   * AUTRE requête puisse le lire pendant les vingt minutes que dure l'appel.
+   * Absente, le service ne publie rien et le routage se déroule à l'identique.
+   * La produire avec `progressKeyFor` : une clé hors alphabet ferait répondre
+   * 422 au service, donc échouer le routage pour un simple indicateur.
+   */
+  progressKey?: string;
 }
 
 export interface RealRoutingResult {
@@ -94,6 +102,9 @@ export async function runRealRouting(
     kicad_pcb_b64: Buffer.from(input.kicadPcbContent, 'utf-8').toString('base64'),
     layers: input.layers,
     timeout_s: timeoutS,
+    // Absente par defaut : un appelant qui ne suit pas la progression route
+    // exactement comme avant, et le service ne publie rien.
+    ...(input.progressKey ? { progress_key: input.progressKey } : {}),
   });
 
   let response: Response;

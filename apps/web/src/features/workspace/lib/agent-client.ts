@@ -7,6 +7,7 @@ export type AgentSseEvent =
   | { type: 'status'; status: PCBStatus }
   | { type: 'pcb_state'; state: PCBState }
   | { type: 'reasoning'; steps: string[] }
+  | { type: 'progress'; step: AgentStep; percent: number; detail?: string }
   | { type: 'error'; message: string }
   | { type: 'done' };
 

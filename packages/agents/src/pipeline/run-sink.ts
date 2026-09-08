@@ -30,6 +30,9 @@
 
 import type { AgentStep, PCBState, PCBStatus } from '@cirqix/types';
 
+/** Etapes visibles dans la Timeline (SPEC est interne). */
+type UiStep = 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
+
 /**
  * Événement de progression d'un run.
  *
@@ -42,6 +45,15 @@ export type RunEvent =
   | { type: 'status'; status: PCBStatus }
   | { type: 'pcb_state'; state: PCBState }
   | { type: 'reasoning'; steps: string[] }
+  /**
+   * Avancement d'une etape longue. Emis pendant, pas apres.
+   *
+   * ⚠️ Le routage dure 5 s a 20 min selon la carte, et le service en
+   * MESURE l'avancement depuis toujours — il relit le journal de la JVM
+   * toutes les deux secondes. Cette mesure ne sortait pas du service :
+   * l'utilisateur voyait « routage en cours » et rien d'autre.
+   */
+  | { type: 'progress'; step: UiStep; percent: number; detail?: string }
   | { type: 'error'; message: string }
   | { type: 'done' };
 
