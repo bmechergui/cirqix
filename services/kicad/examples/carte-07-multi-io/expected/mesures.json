@@ -9,10 +9,10 @@
   "duree_s": 1103,
   "git": "1614670",
   "routed_percent": 100,
-  "drc_violations": 52,
+  "drc_violations": 118,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:30,silk_over_copper:22",
+  "types_violations": "silk_over_copper:82,silk_overlap:36",
   "abouti": true,
   "board": {
     "segments": 350,
@@ -21,9 +21,9 @@
     "empreintes": 45
   },
   "drc_du_board": {
-    "violations": 29,
+    "violations": 118,
     "non_connectes": 0,
-    "types": "silk_over_copper:11,silk_overlap:15,via_dangling:3",
+    "types": "silk_over_copper:82,silk_overlap:36",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
