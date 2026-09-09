@@ -589,7 +589,36 @@ def _generate_with_pcbnew(
         # Board outline (Edge.Cuts)
         bw_iu = pcbnew.FromMM(board_w)
         bh_iu = pcbnew.FromMM(board_h)
-        edge_layer = 44  # Edge.Cuts
+        # ⚠️ LE NUMERO DE COUCHE A CHANGE ENTRE KiCAD 7 ET 10, et le nombre
+        # ecrit ici disait autre chose que son commentaire.
+        #
+        #     KiCad <= 7   Edge.Cuts = 44
+        #     KiCad 10     Edge.Cuts = 25   ·   44 = une couche interne
+        #
+        # Mesure du 2026-09-09 sur `carte-05-capteur-i2c` : les quatre segments
+        # du contour etaient ecrits sur `In21.Cu`, une couche que le board (a
+        # DEUX couches) ne declare meme pas. Consequences, toutes deux comptees
+        # comme des ERREURS de fabrication :
+        #
+        #     invalid_outline        1   il n y a RIEN sur Edge.Cuts
+        #     item_on_disabled_layer 4   les quatre segments, orphelins
+        #
+        # La carte n avait donc AUCUN CONTOUR. Elle sortait « 100 % routee »
+        # quand meme — le routeur travaille sur les pastilles, pas sur la forme
+        # du board — et c est ce qui a masque le defaut : encore une absence
+        # qui se lit comme un succes.
+        #
+        # ⚠️ ON NE CODE PLUS LE NUMERO EN DUR. `pcbnew` expose la constante,
+        # et elle suit la version installee. Un nombre est muet ; un commentaire
+        # qui le traduit peut mentir sans que rien ne le dise.
+        edge_layer = getattr(pcbnew, "Edge_Cuts", None)
+        if edge_layer is None:
+            # ⚠️ On le DIT, et on prend la valeur de KiCad 10 plutot que celle
+            # de KiCad 7 : se tromper de couche est ce qui vient de couter deux
+            # erreurs de fabrication sur une carte livree.
+            logger.error("generate_pcb: pcbnew n expose pas Edge_Cuts — "
+                         "repli sur 25 (KiCad 10) ; verifier le contour")
+            edge_layer = 25
         for x1, y1, x2, y2 in [
             (0, 0, bw_iu, 0), (bw_iu, 0, bw_iu, bh_iu),
             (bw_iu, bh_iu, 0, bh_iu), (0, bh_iu, 0, 0),

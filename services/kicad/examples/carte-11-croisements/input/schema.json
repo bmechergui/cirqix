@@ -1,8 +1,8 @@
 {
   "_comment": "Carte 11 du banc driver LLM. Description : deux connecteurs 2x20 face a face, relies par un faisceau de 32 signaux cable EN ORDRE INVERSE — chaque liaison croise toutes les autres.",
-  "_board_size_note": "6 composants sur 90 x 60 mm. La densite n est PAS le sujet : cette carte est peu peuplee et route pourtant mal sur deux couches.\n\n⚠️ ELLE EXISTE POUR METTRE L ESCALADE DE COUCHES A L EPREUVE. Aucune carte de ce depot n avait jamais declenche le passage a 4 couches — non parce que le mecanisme serait casse, mais parce qu aucune n en avait besoin : meme `stm32-100`, que `_couches_pour_echapper` declare a 4 couches, route a 100 % sur DEUX en 208 s. L absence de besoin n est pas une preuve de bon fonctionnement.\n\nCe qui rend deux couches insuffisantes ici n est pas le nombre de pistes mais leur NON-PLANARITE : un faisceau inverse de N signaux impose ~N²/2 croisements, et sur deux couches la face arriere porte le plan de masse — il ne reste qu UNE face de signal. Deux pistes qui se croisent ne tiennent pas sur une meme face.\n\nResultat attendu : echec net a 2 couches, puis passage a 4.",
-  "board_width_mm": 90,
-  "board_height_mm": 60,
+  "_board_size_note": "AGRANDIE le 2026-09-09, de 90x60 a 140x120 mm. Mesure : un connecteur 2x20 vertical rend un encombrement de 49,1 mm, soit une marge exigee de 51,1 mm. Sur 60 mm de haut, la plage de positions valides etait NEGATIVE (60 - 2x51,1 = -42) : aucune position n existait, la garde de placement renoncait a juste titre, et J1 sortait de 43,3 mm. Freerouting ne se figeait pas — il n avait rien a router. Resultat livre pendant des semaines : 3 % route, 42 erreurs. La carte doit depasser 102 mm dans chaque dimension ; 140x120 laisse en plus la place au faisceau de 32 signaux croises, qui est l objet de ce cas de test.",
+  "board_width_mm": 140,
+  "board_height_mm": 120,
   "components": [
     {
       "ref": "J1",
