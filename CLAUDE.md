@@ -1716,6 +1716,91 @@ propre garde cherchait `"repli GND retenu"` par `index()` et tombait sur la
 docstring de la règle, en amont du site d'appel. `rindex()`, ou un ancrage sur
 ce qui ne bouge pas.
 
+### Leçons inscrites le 2026-09-09 — quand l'INSTRUMENT ment
+
+L'utilisateur juge les placements le 2026-09-08, captures à l'appui : « le
+placement, c'est un placement d'amateur ». Il avait raison, et la journée a
+produit deux familles de leçons — sur le produit, puis sur les outils de mesure
+eux-mêmes.
+
+**NEVER corriger un piège de forme sans chercher SES SŒURS.** `_NET_DECL_RE` a
+été corrigé le 2026-08-20 pour la double écriture `(net 3 "GND")` /
+`(net "GND")`. Trois expressions de `_patch_floating_nets` portaient la même
+hypothèse et sont restées fausses **vingt jours de plus**. Or tous nos boards
+sortent de pcbnew 10 (`numérotés=0, nus=93..988`) : la réparation ne touchait
+RIEN, en silence, et six cartes sur onze livraient des broches
+d'**alimentation** sur des nets orphelins — dont la sortie d'un régulateur.
+Le DRC ne pouvait pas le voir : un net orphelin n'a aucune connexion manquante.
+
+**NEVER se satisfaire du premier défaut trouvé.** Sous celui-là s'en cachait un
+second : le découpage des pastilles s'arrêtait sur UNE tabulation, quand pcbnew
+10 en écrit deux — la **dernière pastille de chaque empreinte** n'était jamais
+réparée. Et ma première correction fut pire que le mal : s'arrêter au premier
+`(` coupait le bloc AVANT le champ `(net …)`. **Une expression trop large et une
+trop étroite échouent identiquement, en silence.** On compte les parenthèses.
+
+**NEVER supposer qu'un levier natif est appelé parce qu'il existe.** Quatre de
+plus trouvés ce jour-là, publics, documentés, jamais invoqués :
+`WorkflowConfig.grid`, `OptimizationWorkflow(constraints=…)`,
+`PCB.move_reference()`, `optim/bottom_up_placement.py`. Cela porte à **six** avec
+`FunctionalCluster.max_distance_mm` et `anchor_pin`. Mesure : `grid` non passé
+donnait **2 composants alignés sur 62**.
+
+**NEVER poser un alignement AVANT les étapes qui déplacent.** `grid=0.5`
+correctement transmis n'a rien changé — `2/62` avant, `2/62` après : le natif
+aligne en fin d'optimisation, puis le Géomètre, le halo, le snap et l'Inspecteur
+défont tout. Reposé EN DERNIER : **2/62 → 62/62, zéro erreur ajoutée**.
+« L'ordre fait partie du correctif » vaut aussi pour ce qui ne déplace que de
+0,25 mm.
+
+**NEVER ignorer ce que dit une référence EXTERNE.** `astra_piNas` (six couches,
+176 empreintes, routée à la main) a révélé une loi qu'aucune mesure interne ne
+pouvait montrer : **notre qualité se dégrade avec la TAILLE, la sienne non** —
+3,0 mm de serrage à 5 composants, 55,3 mm à 62, quand elle tient 9,8 mm à 176.
+Un banc qui ne compare que nos cartes entre elles mesure une dérive, pas un
+écart à l'état de l'art. ⚠️ Le dépôt source n'a **aucune licence** : la carte
+n'est pas versionnée, un script la récupère.
+
+#### Et trois fois, c'est l'INSTRUMENT qui a menti
+
+Chaque fois en rendant **« aucun effet »** — c'est-à-dire la réponse qu'on
+attendait peut-être. C'est la forme la plus coûteuse de la famille que ce dépôt
+traque, parce qu'elle est indiscernable d'un résultat légitime.
+
+**NEVER piloter le SERVICE par une variable d'environnement du pipeline.**
+`run_pipeline.py` est un client HTTP ; le placement tourne dans le service
+FastAPI, un processus séparé. Une campagne A/B entière a comparé deux bras
+identiques — `98 %` contre `98 %`. Le remède suit le motif du verrou de routage :
+un **fichier** (`tools/reglages_banc.py`), seule ressource que des processus
+séparés partagent, **relu à chaque appel** — un réglage figé à l'import ferait
+hériter le second bras du premier.
+
+**NEVER mesurer après avoir édité un module que le service a déjà importé.**
+Deuxième campagne, échec différent : le service tournait depuis **neuf heures**
+avec un `tools/placement.py` antérieur à la règle. `tools/` est monté à chaud —
+le FICHIER change, le MODULE importé non. Le dépôt connaissait l'exception (« le
+runner ENFANT relit à chaque appel ») ; le workflow de placement, lui, tourne
+DANS le worker. **Redémarrer le service avant toute mesure**, et vérifier que le
+`mtime` du module précède le démarrage du processus.
+
+**NEVER ancrer une garde sur une phrase de sa propre documentation.** Ma garde
+« on ne pousse jamais la référence en `F.Fab` » cherchait `F.Fab` dans le source
+et le trouvait… dans la docstring qui l'interdit. Piège déjà inscrit le
+2026-09-08 ; `_code_seul()` retire commentaires **et** docstrings.
+
+**NEVER relancer après une mise à mort sans nettoyer le conteneur.** Un pipeline
+tué côté Windows **continue** côté conteneur : quatre orphelins accumulés, deux
+encore à 380 % de CPU vingt minutes plus tard, consommant la mémoire qui faisait
+tuer la suivante. Une spirale alimentée par chaque relance. Lancer **détaché
+dans** le conteneur (`docker exec -d`, journal redirigé), et vérifier les
+orphelins avant de repartir.
+
+**NEVER généraliser depuis un journal de mise au point.** J'ai lu « les seize
+paires refusées, sans exception » et bâti une décision produit dessus. La mesure
+l'a réfutée : la garde ne gèle rien — sur les mêmes boards elle déplace déjà 19
+à 36 composants. `D-2026-09-08-c` retirée. Une mesure étaye une proposition ;
+elle peut aussi la tuer, et c'est son travail.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via

@@ -1675,8 +1675,17 @@ _GRILLE_MM = _GRILLE_MM_DEFAUT
 
 # Decision produit `D-2026-09-09-a`, EN ATTENTE. Desarmee par defaut.
 def _graine_hierarchique() -> bool:
-    from tools.reglages_banc import reglage
-    return bool(reglage("graine_hierarchique", False))
+    from tools.reglages_banc import (avertir_si_module_plus_recent_que_le_processus,
+                                     reglage)
+    actif = bool(reglage("graine_hierarchique", False))
+    if actif:
+        # ⚠️ Une regle demandee mais absente du code CHARGE rendrait le bras
+        # A/B identique au temoin — « aucun effet », la reponse qu on attendait.
+        # Mesure du 2026-09-09 : le service tournait depuis neuf heures avec un
+        # module anterieur a la regle.
+        import sys as _s
+        avertir_si_module_plus_recent_que_le_processus(_s.modules[__name__])
+    return actif
 
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)

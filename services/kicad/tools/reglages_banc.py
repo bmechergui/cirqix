@@ -97,3 +97,63 @@ def reglage(nom: str, defaut: Any) -> Any:
                          nom.upper(), brut)
             return defaut
     return brut
+
+# ⚠️ MESURE DU 2026-09-09, LE MEME JOUR QUE LE FICHIER DE REGLAGES. Une seconde
+# campagne A/B n a rien mesure non plus, pour une raison DIFFERENTE : le service
+# avait charge `tools/placement.py` a son demarrage, neuf heures avant que la
+# regle n y soit ecrite.
+#
+#     demarrage du service    07:03
+#     modification du module  16:15
+#
+# `tools/` est monte a chaud : le FICHIER change, le MODULE deja importe non.
+# Les quatre workers uvicorn executaient l ancien code, et la campagne comparait
+# encore deux bras identiques — « aucun effet », la reponse qu on attendait.
+#
+# Ce depot connaissait le piege (« Editions du service pendant un run — le
+# runner ENFANT relit le fichier a chaque appel »). L exception porte sur les
+# processus enfants ; le workflow de placement, lui, tourne DANS le worker.
+#
+# La regle : apres toute edition d un module que le service importe, il faut le
+# REDEMARRER avant de mesurer quoi que ce soit.
+
+
+def version_du_module(module) -> str:
+    """Le moment ou le fichier d un module a ete modifie, tel que le processus
+    COURANT le voit — pour comparer au demarrage du service.
+
+    Rend une chaine vide si le module n a pas de fichier sur disque.
+    """
+    import datetime
+    chemin = getattr(module, "__file__", None)
+    if not chemin:
+        return ""
+    try:
+        t = Path(chemin).stat().st_mtime
+    except OSError:
+        return ""
+    return datetime.datetime.fromtimestamp(t).isoformat(timespec="seconds")
+
+
+def avertir_si_module_plus_recent_que_le_processus(module) -> bool:
+    """Journalise une ERREUR si le fichier est plus recent que ce processus.
+
+    Rend `True` quand l ecart est detecte — c est-a-dire quand le code execute
+    n est probablement PAS celui du disque, et qu aucune mesure ne vaut.
+    """
+    import os
+    chemin = getattr(module, "__file__", None)
+    if not chemin:
+        return False
+    try:
+        mtime = Path(chemin).stat().st_mtime
+        debut = Path("/proc/self/stat").stat().st_mtime
+    except OSError:
+        return False
+    if mtime <= debut:
+        return False
+    logger.error(
+        "reglages: %s a ete modifie APRES le demarrage de ce processus "
+        "(pid %d) — le code execute n est pas celui du disque, redemarrer le "
+        "service avant toute mesure", chemin, os.getpid())
+    return True
