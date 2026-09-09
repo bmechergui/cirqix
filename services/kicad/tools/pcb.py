@@ -992,6 +992,40 @@ def generate_pcb(
     2. Python pur depuis .kicad_sch   — Schematic.load() + extract_netlist() + S-expr natif
     3. '' → router success=False      → TypeScript runCircuitSynthEngine() fallback
     """
+    # ⚠️ VERIFIER QUE CHAQUE EMPREINTE EXISTE, AVANT TOUTE GENERATION.
+    #
+    # Mesure du 2026-09-09 : `carte-05` declarait
+    # `Package_LGA:LGA-8_2.5x2.5mm_P0.65mm`, un nom qui N EXISTE PAS — KiCad
+    # livre celle du BME280 sous `Bosch_<...>_ClockwisePinNumbering`.
+    # `add_component` rendait `None`, le capteur disparaissait, et la carte
+    # sortait « 100 % routee, 0 erreur » SANS LUI.
+    #
+    # ⚠️ CORRIGER CE SCHEMA-LA NE CORRIGEAIT RIEN : le nom vient d un modele de
+    # langage, il sera plausible et faux aussi souvent qu on lui demandera. La
+    # verification est donc posee ICI, avant la cascade, pour TOUTES les cartes
+    # et tous ses niveaux — demande de l utilisateur : « je veux toujours une
+    # solution generale pour marcher avec tous les types de cartes ».
+    #
+    # ⚠️ Ce n est pas l agent Footprint. Lui RESOUT une empreinte manquante
+    # (cascade KiCad -> pgvector -> LCSC -> SnapMagic -> IA). Ici on traite le
+    # cas qu il ne voit pas : une empreinte DECLAREE, donc jamais signalee
+    # `unresolved`, mais qui n existe sous aucun nom.
+    try:
+        from tools.empreintes_reelles import verifier_et_corriger
+        corrigees, introuvables = verifier_et_corriger(components)
+        if corrigees:
+            logger.warning("generate_pcb: %d empreinte(s) inexistante(s) "
+                           "remplacee(s) par leur vrai nom", corrigees)
+        if introuvables:
+            logger.error("generate_pcb: %d empreinte(s) INTROUVABLE(S) — les "
+                         "composants seront perdus : %s",
+                         len(introuvables), ", ".join(introuvables))
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ On le DIT. Une verification silencieusement absente laisserait
+        # croire les empreintes valides — exactement l etat d avant.
+        logger.error("generate_pcb: verification des empreintes INDISPONIBLE "
+                     "(%s) — les noms ne sont pas verifies", e)
+
     # Niveau 1 : kicad-tools PCBFromSchematic
     if kicad_sch_content:
         try:
