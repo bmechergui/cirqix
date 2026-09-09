@@ -470,7 +470,29 @@ def _generate_with_kicad_tools(
         # Placement de départ par grille uniquement : l'agent placement (⑤) fait
         # le vrai placement en 2 phases — Phase 1 PlacementOptimizer (clustering +
         # connecteurs ancrés) puis Phase 2 EvolutionaryPlacementOptimizer (GA).
-        workflow.place_all_components(spacing=15.0, margin=5.0)
+        # ⚠️ ON LIT CE QUE LA BIBLIOTHEQUE REND. `place_all_components` rapporte
+        # chaque echec dans `result.failed`, avec sa raison — elle ne le
+        # JOURNALISE pas, et j avais conclu de ce silence qu elle ne disait
+        # rien. Mesure du 2026-09-09 sur `carte-05` :
+        #
+        #     RESULTAT places=25 echoues=1
+        #        ECHEC U3 -> Failed to add footprint
+        #
+        # La reponse etait la depuis toujours ; nous jetions la valeur de
+        # retour. Septieme fois que ce depot paie « ne pas lire ce que la lib
+        # rend », apres `FunctionalCluster.max_distance_mm`, `anchor_pin`,
+        # `WorkflowConfig.grid`, `constraints=`, `PCB.move_reference` et
+        # `bottom_up_placement`.
+        #
+        # ⚠️ On ne LEVE pas : la cascade sait deja retomber au niveau suivant,
+        # et `_composants_perdus` refuse le board incomplet. Mais un echec qui
+        # ne se nomme pas se rediagnostique a chaque fois — celui-ci a coute
+        # deux jours.
+        resultat = workflow.place_all_components(spacing=15.0, margin=5.0)
+        for ref, raison in (getattr(resultat, "failed", None) or []):
+            logger.error("generate_pcb niveau 1: %s NON POSE — %s", ref, raison)
+        for avertissement in (getattr(resultat, "warnings", None) or []):
+            logger.warning("generate_pcb niveau 1: %s", avertissement)
         workflow.assign_nets()
         workflow.save(pcb_path)
 
