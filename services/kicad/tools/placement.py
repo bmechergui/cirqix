@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import math
+import os
 import re
 import subprocess
 import sys
@@ -1658,7 +1659,24 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 #
 # Une valeur nulle desactive le snap : c est le comportement d avant, et c est
 # ce que la lib fait par defaut.
-_GRILLE_MM = 0.5
+# ⚠️ RELU A CHAQUE APPEL, jamais fige a l import — voir `tools/reglages_banc`.
+# Une constante d import rendrait tout A/B impossible : le service tourne depuis
+# le demarrage du conteneur, et un bras heriterait du precedent.
+_GRILLE_MM_DEFAUT = 0.5
+
+
+def _grille_mm() -> float:
+    from tools.reglages_banc import reglage
+    return float(reglage("grille_mm", _GRILLE_MM_DEFAUT))
+
+
+# Conserve pour les gardes qui verifient que le pas n est pas nul.
+_GRILLE_MM = _GRILLE_MM_DEFAUT
+
+# Decision produit `D-2026-09-09-a`, EN ATTENTE. Desarmee par defaut.
+def _graine_hierarchique() -> bool:
+    from tools.reglages_banc import reglage
+    return bool(reglage("graine_hierarchique", False))
 
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
@@ -2028,10 +2046,58 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             iterations=_WF_ITERATIONS,
             generations=_WF_GENERATIONS,
             population=_WF_POPULATION,
-            grid=_GRILLE_MM,
+            grid=_grille_mm(),
         )
         workflow = OptimizationWorkflow(pcb=pcb, config=cfg,
                                         constraints=contraintes)
+
+        # ⚠️ GRAINE HIERARCHIQUE — decision produit `D-2026-09-09-a`, EN ATTENTE.
+        # Desarmee par defaut ; armer avec `CIRQIX_GRAINE_HIERARCHIQUE=1`.
+        #
+        # `optim/bottom_up_placement.py` est une methode NON genetique, presente
+        # dans la lib et jamais appelee : elle groupe par motif fonctionnel,
+        # dispose DANS chaque groupe, puis pose les groupes comme des blocs.
+        #
+        # Mesure du 2026-09-09, distance moyenne des paires en serie :
+        #
+        #     carte-08   39,2 -> 24,3 mm   (-38 %)
+        #     carte-09   55,3 -> 26,0 mm   (-53 %)
+        #     carte-10   49,5 -> 32,1 mm   (-35 %)
+        #
+        # ⚠️ ET ELLE PERD SUR LES PETITES CARTES : 3,0 -> 3,5 sur `carte-01`,
+        # 10,4 -> 13,9 sur `carte-05`. La bascule est une question de TAILLE,
+        # pas de qualite absolue.
+        #
+        # ⚠️ LE HIERARCHIQUE SEUL EST LE PIRE DES TROIS (26,7 mm de moyenne,
+        # contre 23,1 pour notre chaine et 18,1 pour la combinaison). Ce n est
+        # pas un remplacant du snap, c est une meilleure GRAINE — le mesurer
+        # isolement aurait conduit a l ecarter a tort.
+        #
+        # ⚠️ AUCUNE MESURE DE ROUTAGE a ce jour. `carte-08`, `09` et `10`
+        # routent aujourd hui a 100 % : un placement plus serre pourrait le
+        # casser. C est precisement ce que la campagne A/B doit trancher.
+        if _graine_hierarchique():
+            try:
+                from kicad_tools.optim.bottom_up_placement import (
+                    HierarchicalPlacementConfig, place_hierarchical_from_pcb)
+                res_h = place_hierarchical_from_pcb(
+                    pcb, HierarchicalPlacementConfig(), fixed_refs=conn)
+                brut = getattr(res_h, "positions", None) or {}
+                poses = 0
+                for fp in pcb.footprints:
+                    v = brut.get(fp.reference)
+                    if v and fp.reference not in conn:
+                        fp.position = (v[0], v[1])
+                        poses += 1
+                logger.info("auto_place: GRAINE HIERARCHIQUE — %d position(s) "
+                            "posee(s) avant l optimisation", poses)
+            except Exception as e:  # noqa: BLE001
+                # ⚠️ On le DIT. Une graine silencieusement absente rendrait le
+                # bras A/B indistinguable du bras temoin — et la campagne
+                # conclurait « aucun effet » sur une regle jamais executee.
+                logger.error("auto_place: graine hierarchique INDISPONIBLE (%s) "
+                             "— la mesure de ce tirage ne vaut rien", e)
+
         result = workflow.run()
         # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
@@ -2176,10 +2242,12 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # Les paires en serie entrent dans LE MEME parcours de snap : deux
         # passages successifs se defont l un l autre (piege deja mesure entre
         # le clamp et le centrage, puis entre le halo et le snap).
-        from tools.placement_contraintes import paires_du_board
+        from tools.placement_contraintes import (paires_du_board,
+                                                  _rayon_paire_mm)
         n_snap = snap_cluster_members(
             pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap),
-            paires=paires_du_board(pcb_snap))
+            paires=(paires_du_board(pcb_snap)
+                    if _rayon_paire_mm() > 0 else []))
         if n_snap:
             # ⚠️ FILET OBLIGATOIRE, meme forme que celui du Geometre. Le snap
             # a ete livre le 2026-08-29 SANS filet, sur l hypothese que
@@ -2323,12 +2391,13 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # l outil natif, et on revient au board d avant si le compte d erreurs
         # monte — un alignement est un CONFORT, il ne peut pas coûter une
         # erreur de fabrication.
-        if _GRILLE_MM > 0:
+        _pas = _grille_mm()
+        if _pas > 0:
             _rendre_lisible(out)
             avant_grille = out.read_bytes()
             err_avant_grille = _compter_conflits_erreur(out)
             from tools.placement_contraintes import aligner_sur_grille
-            n_grille = aligner_sur_grille(out, _GRILLE_MM, figes=conn)
+            n_grille = aligner_sur_grille(out, _pas, figes=conn)
             if n_grille:
                 _resolve_remaining_conflicts(out, conn)
                 _rendre_lisible(out)

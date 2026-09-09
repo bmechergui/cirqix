@@ -63,6 +63,7 @@ réécrit pas.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,17 @@ logger = logging.getLogger(__name__)
 # mesure entre positions de composants, pas entre corps. Le snap dur, lui,
 # mesure entre CORPS (`_boite_locale_fp`) — les deux ne sont pas comparables,
 # et confondre les deux est une erreur déjà commise dans ce dépôt.
+# ⚠️ Pilotable par `CIRQIX_RAYON_PAIRE_MM` — une valeur NULLE desactive la
+# contrainte. C est ce qui permet le TEMOIN : sans moyen de desarmer une
+# regle sans editer le code, on ne peut pas prouver qu elle est en cause,
+# et ce depot a deja failli reverter un correctif innocent faute de temoin.
 _RAYON_PAIRE_MM = 5.0
+
+
+def _rayon_paire_mm() -> float:
+    """Relu A CHAQUE APPEL — voir `tools/reglages_banc`."""
+    from tools.reglages_banc import reglage
+    return float(reglage("rayon_paire_mm", _RAYON_PAIRE_MM))
 
 # Au-dela de ce nombre de pastilles, un boitier est un NOEUD du circuit et non
 # un element de chaine : on ne le contraint pas.
@@ -136,7 +147,7 @@ def paires_a_deux_bornes(connexions: list[Any]) -> list[tuple[str, str, str]]:
 
 def contraintes_de_paires(connexions: list[Any],
                           refs_ancrees: list[str] | None = None,
-                          rayon_mm: float = _RAYON_PAIRE_MM) -> list[Any]:
+                          rayon_mm: float | None = None) -> list[Any]:
     """Construit les `GroupingConstraint` natives des paires à deux bornes.
 
     ⚠️ L'ANCRE EST CELLE QUI NE BOUGE PAS. `SpatialConstraint.max_distance`
@@ -226,7 +237,7 @@ def paires_du_board(pcb) -> list[tuple[str, str, str]]:
     return paires
 
 
-def contraintes_du_board(pcb, refs_ancrees=None, rayon_mm: float = _RAYON_PAIRE_MM):
+def contraintes_du_board(pcb, refs_ancrees=None, rayon_mm=None):
     """`contraintes_de_paires`, mais alimentee par le board."""
     try:
         from kicad_tools.optim.constraints import (GroupingConstraint,
@@ -234,6 +245,14 @@ def contraintes_du_board(pcb, refs_ancrees=None, rayon_mm: float = _RAYON_PAIRE_
     except Exception:
         logger.warning("contraintes de paires indisponibles : kicad_tools.optim."
                        "constraints introuvable — placement non contraint")
+        return []
+
+    if rayon_mm is None:
+        rayon_mm = _rayon_paire_mm()
+    if rayon_mm <= 0:
+        # Temoin : la regle est desarmee, et on le DIT — un silence se
+        # confondrait avec « aucune paire trouvee ».
+        logger.info("placement: contraintes de paires DESARMEES (rayon=0)")
         return []
 
     ancrees = set(refs_ancrees or [])

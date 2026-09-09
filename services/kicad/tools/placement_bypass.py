@@ -34,6 +34,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import os
 import re
 from typing import Iterable, Optional
 
@@ -413,6 +414,85 @@ class _PaireEnSerie:
         self.cluster_type = "PAIRE"
 
 
+# ⚠️ DECISION PRODUIT `D-2026-09-08-c`, EN ATTENTE. Desarme par defaut.
+# Armer avec `CIRQIX_ABANDON_ATTACHES_IMPOSSIBLES=1`.
+_ABANDONNER_IMPOSSIBLES = os.environ.get(
+    "CIRQIX_ABANDON_ATTACHES_IMPOSSIBLES", "") not in ("", "0", "false")
+
+
+def _elaguer_attaches_impossibles(attaches: dict, plafonds: dict,
+                                  par_ref: dict) -> int:
+    """Retire les attaches qu AUCUNE position ne peut satisfaire.
+
+    ⚠️ MESURE DU 2026-09-08. `detect_functional_clusters` attache un meme
+    composant a PLUSIEURS ancres, et ces ancres sont incompatibles entre elles :
+
+        carte-07   15 composants a plusieurs ancres — les 15 insatisfiables
+        carte-09   19 sur 19        carte-10   19 sur 19        carte-04   3 sur 3
+
+        D10 (carte-09) appartient a SEPT clusters : J1, J10..J14 et U1
+        D6  tenu par J7 et J1, distants de 123 mm pour 16 mm de plafonds cumules
+
+    Aucune position ne satisfait « a 8 mm de J1 » ET « a 8 mm de J7 » quand les
+    deux sont a 123 mm l un de l autre.
+
+    CONSEQUENCE : LE GEL COMPLET. La garde « ne peut qu ameliorer » refuse tout
+    mouvement, puisque se rapprocher d une ancre eloigne d une autre. Elle fait
+    exactement son travail — et RIEN ne bouge :
+
+        snap R10 -> D10 : eloignerait une autre ancre, ignore
+        snap R11 -> D11 : eloignerait une autre ancre, ignore   (les seize)
+
+    C est l explication de fond du reproche « placement d amateur » : le serrage
+    ne manque pas, il est systematiquement refuse.
+
+    LA REGLE. On garde l ancre la PLUS PROCHE, et on abandonne toute autre ancre
+    prouvablement incompatible avec elle : `dist(A, B) > plafond(A) + plafond(B)`
+    signifie qu aucun point n est a portee des deux. Ce n est pas un arbitrage
+    de gout — c est de la geometrie.
+
+    ⚠️ ON N ABANDONNE QUE CE QUI EST PROUVE. Deux ancres compatibles restent
+    toutes deux en vigueur : la garde continue de proteger ce qui peut l etre.
+
+    ⚠️ Le risque assume : une attache abandonnee peut correspondre a une
+    adjacence que le routage utilisait. C est pourquoi la regle est desarmee par
+    defaut et journalise ce qu elle retire.
+
+    Rend le nombre d attaches retirees. Modifie `attaches` sur place.
+    """
+    retirees = 0
+    for ref, ancres in list(attaches.items()):
+        if len(ancres) < 2 or ref not in par_ref:
+            continue
+        cx, cy, _, _ = _centre_et_demi(par_ref[ref])
+        connues = [a for a in dict.fromkeys(ancres) if a in par_ref]
+        if len(connues) < 2:
+            continue
+
+        def _dist(a: str) -> float:
+            ax, ay, _, _ = _centre_et_demi(par_ref[a])
+            return math.hypot(ax - cx, ay - cy)
+
+        proche = min(connues, key=_dist)
+        px, py, _, _ = _centre_et_demi(par_ref[proche])
+        gardees = [proche]
+        for a in connues:
+            if a == proche:
+                continue
+            ax, ay, _, _ = _centre_et_demi(par_ref[a])
+            ecart = math.hypot(ax - px, ay - py)
+            if ecart > plafonds.get(proche, 0.0) + plafonds.get(a, 0.0):
+                logger.debug("snap: %s — attache %s abandonnee "
+                             "(%.0f mm de %s pour %.0f mm de plafonds)",
+                             ref, a, ecart, proche,
+                             plafonds.get(proche, 0.0) + plafonds.get(a, 0.0))
+                retirees += 1
+            else:
+                gardees.append(a)
+        attaches[ref] = gardees
+    return retirees
+
+
 def snap_cluster_members(
     pcb,
     *,
@@ -497,9 +577,18 @@ def snap_cluster_members(
     # mesure du 2026-08-29, rapprocher R2 de U2 (7,1 -> 6,5 mm) l eloignait de
     # J1 de 12,6 a 17,6. On tient la liste de TOUTES ses attaches.
     attaches: dict = {}
+    plafonds: dict = {}
     for c in clusters:
+        plafonds[c.anchor] = min(plafonds.get(c.anchor, 1e9), c.max_distance_mm)
         for m in c.members:
             attaches.setdefault(m, []).append(c.anchor)
+
+    if _ABANDONNER_IMPOSSIBLES:
+        abandons = _elaguer_attaches_impossibles(attaches, plafonds, par_ref)
+        if abandons:
+            logger.info("snap: %d attache(s) PROUVABLEMENT insatisfiable(s) "
+                        "abandonnee(s)", abandons)
+
     immobiles = set(figes or ())
     # Une ancre ne se deplace pas : elle est le repere de son propre cluster.
     immobiles |= {c.anchor for c in clusters}

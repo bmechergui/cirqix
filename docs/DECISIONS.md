@@ -350,3 +350,92 @@ categorie qui exige une validation explicite. Et le risque est reel :
 abandonner une attache peut degrader une adjacence que le routage utilisait.
 
 **Une mesure etaye une proposition ; elle ne la valide pas.**
+
+### D-2026-09-08-c — MESURE DU 2026-09-09 : la proposition est RÉFUTÉE
+
+Statut : **retirée**. Le drapeau reste en place, désarmé
+(`CIRQIX_ABANDON_ATTACHES_IMPOSSIBLES`), pour que la mesure soit rejouable.
+
+Deux bras sur les onze boards livrés, snap seul, sans router :
+
+| carte | garde actuelle | avec abandon |
+|---|---|---|
+| carte-02 | 10,2 → **10,2** mm | 10,2 → **4,8** mm |
+| carte-05 | 10,4 → 4,8 | 10,4 → 4,8 |
+| carte-06 | 17,5 → 14,2 | 17,5 → 13,7 |
+| carte-07 | 15,7 → **15,1** | 15,7 → **15,9** ← pire |
+| carte-08 | 39,2 → 29,6 | 39,2 → **23,9** |
+| carte-09 | 55,3 → 42,6 | 55,3 → 42,8 ← pire |
+| carte-10 | 49,5 → **32,7** | 49,5 → **35,8** ← pire |
+| **moyenne** | **17,7 mm** | **16,9 mm** |
+
+**0,8 mm de gain moyen, et trois cartes sur sept DÉGRADÉES**, pour 10 à 30 %
+de composants déplacés en plus. Ce n'est pas un compromis acceptable : on
+paierait un risque réel de routage pour un gain dans le bruit.
+
+⚠️ **MA PRÉMISSE ÉTAIT FAUSSE.** J'avais lu « les seize paires refusées, sans
+exception » et conclu que la garde gelait tout. Elle ne gèle pas : sur les mêmes
+boards, la garde actuelle déplace déjà 19 à 36 composants et ramène `carte-09`
+de 55,3 à 42,6 mm. Ce que j'avais observé était le refus des paires *LED-
+résistance en particulier*, sur un board intermédiaire — pas un gel général.
+
+**Généraliser depuis un journal de mise au point est exactement ce que ce dépôt
+s'interdit** (« NEVER relayer le message d'une garde comme un diagnostic »).
+J'ai bâti une décision produit sur une lecture partielle, et c'est la mesure qui
+l'a arrêtée.
+
+**Ce que la mesure désigne à la place.** L'écart à la référence humaine
+(9,8 mm) ne se joue pas dans le snap de fin de chaîne : celui-ci fait déjà le
+plus gros du travail. Il se joue **en amont**, dans la dispersion du GA — que
+les contraintes natives réduisent déjà de 55,3 à 35,7 mm. Le levier suivant est
+donc `optim/bottom_up_placement.py`, la méthode non génétique jamais appelée.
+
+---
+
+## D-2026-09-09-a — Placement hiérarchique en amont du snap, sur les grandes cartes
+
+**Statut : en attente.** ⚠️ Stratégie de placement — catégorie qui exige une
+validation explicite.
+
+**Constat.** `optim/bottom_up_placement.py` est une méthode **non génétique**,
+présente dans `kicad-tools` et **jamais appelée**. Elle groupe par motif
+fonctionnel, dispose *dans* chaque groupe, puis pose les groupes comme des
+blocs — la méthode d'un ingénieur. Son en-tête cite l'hypothèse d'origine :
+« 80 % du chemin rien qu'en procédant du bas vers le haut ».
+
+**Mesure du 2026-09-09**, distance moyenne des paires en série, placement seul,
+sans router :
+
+| carte | livré | hiérarchique seul | hiérarchique + notre snap |
+|---|---|---|---|
+| carte-01 | **3,0** | 10,2 | 3,5 |
+| carte-03 | **7,1** | 14,0 | 10,4 |
+| carte-05 | **10,4** | 34,3 | 13,9 |
+| carte-07 | **15,7** | 38,8 | 22,5 |
+| carte-08 | 39,2 | 35,8 | **24,3** (−38 %) |
+| carte-09 | 55,3 | 34,5 | **26,0** (−53 %) |
+| carte-10 | 49,5 | 39,0 | **32,1** (−35 %) |
+| **moyenne** | 23,1 | 26,7 | **18,1** |
+
+**La coupure est nette et elle est de TAILLE.** Notre GA gagne jusqu'à une
+trentaine de composants ; le hiérarchique gagne au-delà. C'est exactement la loi
+mesurée la veille — notre qualité se dégrade avec la taille, celle de la
+référence humaine non.
+
+⚠️ **Le hiérarchique SEUL est le pire des trois** (26,7 mm). Ce n'est pas un
+remplaçant du snap, c'est une meilleure GRAINE. Les deux mesures séparées
+auraient conduit à l'écarter.
+
+**Proposition.** Sur les cartes au-delà d'un seuil de composants, remplacer la
+graine du GA par `place_hierarchical_from_pcb`, puis dérouler la chaîne
+existante inchangée (Géomètre, halo, snap, grille, Inspecteur).
+
+**Pourquoi ce n'est PAS appliqué.**
+1. Stratégie de placement — validation explicite requise.
+2. Le seuil de bascule est un seuil chiffré.
+3. ⚠️ **La mesure porte sur le PLACEMENT, jamais sur le routage.** Un placement
+   plus serré peut router MOINS bien : `carte-08`, `09` et `10` routent
+   aujourd'hui à 100 %, et c'est ce qu'on risquerait. Aucune campagne de routage
+   n'a été faite — elle coûte plusieurs heures sur cette machine.
+
+**Une mesure étaye une proposition ; elle ne la valide pas.**
