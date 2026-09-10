@@ -545,7 +545,58 @@ les journaux, qui est un plantage NATIF de `pcbnew` — celui pour lequel
 
 ---
 
-## Diagnostic du 2026-09-10 — la cause reelle des `RemoteDisconnected`
+## Diagnostic du 2026-09-10, RECTIFIE le jour meme — la cause PROUVEE des `RemoteDisconnected`
+
+⚠️ La section qui suit celle-ci (« la cause reelle », pcbnew) est **FAUSSE**,
+troisieme diagnostic errone sur le meme symptome. Elle est conservee telle
+quelle : elle montre la faute — lire deux lignes voisines d un journal comme
+une cause et son effet, sans regarder leur ORDRE. Les asserts `PROPERTY_ENUM`
+sont imprimes 3 a 5 s **APRES** « Child process died », par le worker SUIVANT
+qui importe `pcbnew` au demarrage. Ils suivent la mort, ils ne la causent pas.
+
+**La cause, mesuree par une sonde et non lue dans un message :**
+
+    uvicorn 0.30.0, supervisors/multiprocess.py
+      :37   def ping(self, timeout: float = 5)
+      :170  process.kill()   # process is hung, kill it
+      :176  logger.info(f"Child process [{process.pid}] died")
+
+Le superviseur envoie un ping a chaque worker ; sans reponse en **5 s**, il
+l abat par SIGKILL — donc sans trace, `PYTHONFAULTHANDLER` compris. Le worker
+ne repond pas quand un appel C tient le GIL. Sonde
+(`faulthandler.dump_traceback_later` depuis un thread C, sans GIL) sur
+`carte-05`, 26 composants, appel direct de `route_auto` :
+
+    famines du thread de ping : 9,1 s · 6,0 s · 3,0 s · 3,0 s · 2,6 s
+    pile a cet instant        : <frozen codecs>.decode <- read_text
+                                <- routers/routing.py:850 _route_with_freerouting_api
+
+La boucle de sondage relisait le journal Freerouting ENTIER, deux fois par
+tour. Ce journal grossit toute la vie de la JVM : **564 Mo** ce jour-la. Le
+decodage UTF-8 tient le GIL 6 a 9 s. Le worker mourait 2 s apres la fin du
+routage — a la reprise de la sonde — et la carte n avait rien de dense :
+`carte-05` a perdu 3 essais sur 4 dans la campagne du matin.
+
+Pourquoi « seulement les cartes denses » : elles ecrivent plus de lignes ;
+le journal franchit plus vite la taille qui depasse 5 s. Le symptome
+suivait la TAILLE DU JOURNAL, pas la carte — d ou trois diagnostics faux
+(memoire, JVM, pcbnew), tous plausibles, aucun mesure.
+
+**Correctif** (`tools/journal_freerouting.py`, `LecteurIncremental`) : le
+journal est lu par increments depuis le depart du job, jamais relu. Mesure
+apres correctif, meme carte, meme sonde : **0 famine**, et le routage passe de
+165 s a 77 s — les relectures mangeaient aussi la moitie du temps.
+Gardes : `tests/test_journal_lu_par_increments.py` (comportement + cablage).
+
+**Trois lecons, toutes deja inscrites ailleurs et payees une fois de plus :**
+ne jamais relayer un message comme un diagnostic ; verifier l ORDRE de deux
+evenements avant d en faire une causalite ; **mesurer avec un instrument**
+(ici la sonde) avant de proposer un correctif — la piste « isoler pcbnew dans
+un enfant » etait deja en place depuis des semaines et n aurait rien change.
+
+---
+
+## Diagnostic du 2026-09-10 — « la cause reelle », REFUTE : ce n etait pas pcbnew
 
 **Ce n est PAS la memoire.** Je l ai cru toute la journee et j ai agi dessus :
 arret de Supabase, surveillance de `free -m`, recreation du conteneur, six

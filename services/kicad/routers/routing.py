@@ -802,6 +802,12 @@ def _route_with_freerouting_api(
         #
         # `_REGLAGES_FREEROUTING` vaut None par defaut : aucun changement de
         # comportement tant qu on n a pas mesure.
+        # ⚠️ Cree AVANT le depart du job : le lecteur ne rend que ce que le
+        # journal recoit ensuite, donc les lignes de CE job. Relire le journal
+        # entier (564 Mo apres deux jours de JVM) tenait le GIL 6 a 9 s et le
+        # superviseur uvicorn abattait le worker — voir `tools/journal_freerouting.py`.
+        from tools.journal_freerouting import LecteurIncremental
+        lecteur = LecteurIncremental(_FREEROUTING_LOG)
         charge = {"session_id": session_id}
         if _REGLAGES_FREEROUTING:
             charge["router_settings"] = _REGLAGES_FREEROUTING
@@ -845,16 +851,12 @@ def _route_with_freerouting_api(
             # politesse. Le journal est la seule fenetre sur l interieur ; s il
             # est illisible, on retombe sur l attente classique.
             if short_name and _FREEROUTING_LOG.is_file():
+                journal_du_job = lecteur.lire()
                 try:
-                    plat = _passes_sans_progres(
-                        _FREEROUTING_LOG.read_text(encoding="utf-8",
-                                                   errors="replace"),
-                        short_name)
+                    plat = _passes_sans_progres(journal_du_job, short_name)
                 except Exception:
                     plat = 0
-                derniere = _LIGNE_PASSE_RE.findall(
-                    _FREEROUTING_LOG.read_text(encoding="utf-8",
-                                               errors="replace"))
+                derniere = _LIGNE_PASSE_RE.findall(journal_du_job)
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
                                  if j == short_name), 0)
                 fenetre = _fenetre_effective(

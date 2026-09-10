@@ -1846,6 +1846,34 @@ placement, et deux tirages concordants qui ne prouvaient rien.
 monté : un board produit par le banc n'existe QUE dans le conteneur et part au
 premier redémarrage — la leçon des worktrees vidés, transposée.
 
+### Leçon inscrite le 2026-09-10 — le worker que son propre superviseur abat
+
+**NEVER lire deux lignes voisines d'un journal comme une cause et son effet
+sans vérifier leur ORDRE.** Les `RemoteDisconnected` (« Child process died »)
+ont reçu TROIS diagnostics faux en une journée — mémoire, JVM, plantage natif
+`pcbnew` — le dernier parce que l'assert `PROPERTY_ENUM` apparaissait « à côté »
+de la mort. Il apparaît 3 à 5 s **après**, imprimé par le worker SUIVANT qui
+importe `pcbnew` au démarrage.
+
+La cause, mesurée par une sonde (`faulthandler.dump_traceback_later`, thread C,
+sans GIL) : **uvicorn 0.30 tue par SIGKILL tout worker qui ne répond pas à son
+ping en 5 s** (`supervisors/multiprocess.py:170 process is hung, kill it`), donc
+tout worker dont un appel C tient le GIL 5 s. Ici `read_text()` du journal
+Freerouting — **564 Mo**, relu en entier deux fois par tour de sondage —
+tenait le GIL 6 à 9 s. Rien de « dense » là-dedans : le symptôme suivait la
+taille du journal, `carte-05` (26 composants) perdait 3 essais sur 4.
+
+Correctif : `tools/journal_freerouting.py::LecteurIncremental` — lu par
+incréments depuis le départ du job. Mesuré : 0 famine, routage 165 → 77 s.
+Garde : `tests/test_journal_lu_par_increments.py`.
+
+**NEVER** tenir le GIL plus de quelques secondes dans un worker uvicorn — un
+gros `read_text`, `json.loads`, `re` sur des mégaoctets — ou le faire dans un
+processus enfant. Le superviseur ne distingue pas « occupé » de « pendu ».
+
+**NEVER** proposer un correctif sans instrument : « isoler pcbnew dans un
+enfant » était en place depuis des semaines et n'aurait rien changé.
+
 ### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
 Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
 l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
