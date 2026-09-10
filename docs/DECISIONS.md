@@ -645,6 +645,35 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-10-d — un placement CONDAMNÉ n'est pas routé jusqu'au bout
+
+**Statut : validée** (utilisateur : « go » sur le levier « ne pas router un
+placement condamné », 2026-09-10). Le seuil chiffré est le mien.
+
+Mesure sur `carte-05`, essai 1 du pipeline : tirages figés à 62 / 23 / 0 %,
+puis « dernière chance » (10 min) et repli GND (8 min) — **21 min pour un
+board à 0 %**. L'essai suivant, autre placement, a routé à **100 % en 30 s**.
+Vingt minutes de routage ne rachètent pas un placement inroutable ; trois
+minutes de re-placement, si.
+
+Règle (`_placement_condamne`, `_CONDAMNE_PCT = 50`) : quand TOUS les tirages
+d'un appel ont figé et que le meilleur reste sous 50 %, `route_auto` rend la
+main sans dernière chance ni repli GND. Au-dessus, rien ne change — la
+dernière chance a sauvé `nucleo-f401` (tirages figés à 43-79 %). Réglage
+`condamne_pct` pour l'A/B. Gardes : `tests/test_placement_condamne.py`.
+
+## Superviseur uvicorn tolérant (même jour, technique)
+
+Second worker abattu à 15:28, sonde armée : pile dans un parseur pur Python
+de 0,15 s. Pas de GIL tenu, pas de throttling CPU (12 cœurs, charge 2,4) —
+**la VM WSL paginait** (234 Mo en swap, 570 000 pages écrites, pression
+mémoire `full` 5,8 h cumulées ; Supabase seul pèse 1,7 Go). `lancer_service.py`
+porte la tolérance du ping de 5 s (codée en dur dans uvicorn 0.30) à 30 s ;
+Supabase est arrêté pendant les campagnes. Gardes :
+`tests/test_superviseur_tolerant.py`.
+
+---
+
 ## D-2026-09-10-c — GND revient au PLAN par défaut (prise sous délégation)
 
 **Statut : validée sous la délégation de validation** confiée par l'utilisateur

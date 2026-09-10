@@ -72,4 +72,7 @@ java -jar /opt/freerouting/freerouting.jar \
 sleep 5
 
 # 4 workers = 4 processus séparés (pcbnew n'est PAS thread-safe — cf. CLAUDE.md)
-exec uvicorn main:app --host 0.0.0.0 --port 8766 --workers 4
+# Par le lanceur, pas `uvicorn` nu : le superviseur d uvicorn 0.30 abat en 5 s
+# un worker qui ne repond pas a son ping — un worker qui route, ou qui attend
+# ses pages quand la VM pagine, n est pas pendu. Voir lancer_service.py.
+exec python3 /app/lancer_service.py main:app --host 0.0.0.0 --port 8766 --workers 4

@@ -1389,6 +1389,34 @@ def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
 # entiers ; seuls ceux d un palier hors d atteinte sont abandonnes.
 _SEUIL_REDRAW_PCT: int = 80
 
+# En dessous de ce pourcentage, un placement dont TOUS les tirages ont fige
+# est CONDAMNE : ni « derniere chance », ni repli GND — on rend la main pour
+# que l appelant RE-PLACE. Mesure du 2026-09-10 sur carte-05, essai 1 :
+#
+#     tirages figes a 62 %, 23 %, 0 %        3 min
+#     derniere chance (job mene a son terme)  10 min   -> 0 %
+#     repli GND sur ce board                   8 min   -> 0 %
+#     total                                   21 min   pour un board a 0 %
+#
+# Le placement suivant, lui, a route a 100 % en 30 s. Vingt minutes de
+# routage ne rachetent pas un placement inroutable ; trois minutes de
+# re-placement, si. La derniere chance reste pour les cartes a portee (mesure
+# nucleo-f401 : tirages figes a 43-79 %, la derniere chance a rendu un board).
+# Decision D-2026-09-10-d (levier valide par l utilisateur : « ne pas router
+# un placement condamne »). Reglage `condamne_pct` pour l A/B.
+_CONDAMNE_PCT: int = 50
+
+
+def _placement_condamne(fige_max: int) -> bool:
+    """Tous les tirages ont fige et le meilleur d entre eux reste sous le
+    seuil : la carte n est pas a portee, on ne paie pas la derniere chance."""
+    try:
+        from tools.reglages_banc import reglage
+        seuil = int(reglage("condamne_pct", _CONDAMNE_PCT))
+    except Exception:  # noqa: BLE001
+        seuil = _CONDAMNE_PCT
+    return fige_max < seuil
+
 
 def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
     """Faut-il abandonner les tirages restants de ce palier et monter ?
@@ -4933,6 +4961,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
     derniere_chance_donnee = False
+    fige_max = 0  # meilleur pourcentage vu sur un tirage FIGE
     while True:
         if i_essai >= len(essais):
             # ⚠️ DERNIERE CHANCE. Tous les tirages ont fige et il ne reste
@@ -4952,6 +4981,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # sans fin.
             if (meilleur is not None or derniere_chance_donnee
                     or not _budget_suffisant(_remaining_budget_s(deadline))):
+                break
+            if _placement_condamne(fige_max):
+                logger.warning(
+                    "route_auto: placement CONDAMNE — meilleur tirage fige a "
+                    "%d%% (< %d%%) : ni derniere chance ni repli GND, on rend "
+                    "la main pour RE-PLACER (mesure carte-05 : 21 min pour 0 %%)",
+                    fige_max, _CONDAMNE_PCT)
                 break
             derniere_chance_donnee = True
             _armer_abandon(False)
@@ -5166,6 +5202,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             logger.warning(
                 "route_auto: tirage fige a ~%d%% au palier %d couches — "
                 "on passe au tirage suivant", fige.routed_percent, palier)
+            fige_max = max(fige_max, int(fige.routed_percent or 0))
             sans_gain += 1
             continue
 
