@@ -9,7 +9,7 @@
   "duree_s": 1052,
   "git": "6fb7359",
   "routed_percent": 100,
-  "drc_violations": 38,
+  "drc_violations": 59,
   "drc_clean": true,
   "fichiers_exportes": 27,
   "types_violations": "silk_over_copper:26,silk_overlap:12",
@@ -21,11 +21,13 @@
     "empreintes": 26
   },
   "drc_du_board": {
-    "violations": 38,
+    "violations": 59,
     "non_connectes": 0,
-    "types": "silk_over_copper:26,silk_overlap:12",
+    "types": "silk_over_copper:40,silk_overlap:18,track_dangling:1",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-05-capteur-i2c-t1"
 }

@@ -146,6 +146,41 @@ def _note_du_tirage(dossier: str, carte: str) -> tuple | None:
     return (perdus, err, -pct)
 
 
+_SUMMARY_RE = re.compile(r"SUMMARY routed=(\d+) drc_violations=(\d+) drc_clean=(\w+)(?: files=\d+)?(?: types=(\S*))?")
+
+
+def mesures_livrees(existantes: dict, resume: str, erreurs: int, tirage: str) -> dict:
+    """Le `mesures.json` d une carte livree, mis a jour depuis la ligne SUMMARY.
+
+    Mesure du 2026-09-10 : `carte-05` livree a 100 % / 59 violations gardait
+    un `mesures.json` a 38 violations — celui de la livraison precedente. Un
+    board et sa mesure qui ne se correspondent pas trompent le prochain
+    lecteur, et `livrer_campagne.py` lit lui-meme ce fichier dans git pour
+    juger la campagne suivante. On ne touche qu aux champs que le SUMMARY et
+    le DRC du conteneur mesurent ; le reste (taille, composants) est conserve.
+    """
+    m = _SUMMARY_RE.search(resume or "")
+    if not m:
+        return dict(existantes)
+    pct, violations, propre, types = int(m.group(1)), int(m.group(2)), m.group(3) == "True", m.group(4) or ""
+    non_connectes = 0
+    mm = re.search(r"unconnected_items:(\d+)", types)
+    if mm:
+        non_connectes = int(mm.group(1))
+    out = dict(existantes)
+    out.update({
+        "routed_percent": pct,
+        "drc_violations": violations,
+        "drc_clean": propre,
+        "drc_du_board": {
+            "violations": violations, "non_connectes": non_connectes, "types": types,
+            "erreurs": [], "nb_erreurs": int(erreurs), "fabricable": int(erreurs) == 0 and non_connectes == 0,
+        },
+        "livre_par": "livrer_campagne.py", "tirage": tirage,
+    })
+    return out
+
+
 def _lister(file_: str) -> dict[str, list[str]]:
     r = _wsl("docker exec %s sh -c %s"
              % (shlex.quote(_CONTENEUR),
@@ -219,6 +254,16 @@ def main(argv: list[str]) -> int:
             if t.returncode != 0 and cible == "final.kicad_pcb":
                 print("   ⚠️ copie du board ECHOUEE — rien n a ete ecrit")
                 break
+        else:
+            resume = _wsl("docker exec %s grep -a SUMMARY %s"
+                          % (q(_CONTENEUR), q(dossier + "/journal.txt")), 120).stdout
+            chemin_m = exp / "mesures.json"
+            try:
+                existantes = json.loads(chemin_m.read_text(encoding="utf-8")) if chemin_m.is_file() else {}
+            except Exception:
+                existantes = {}
+            chemin_m.write_text(json.dumps(mesures_livrees(existantes, resume, meilleur[1], Path(dossier).name),
+                                           indent=2, ensure_ascii=False) + chr(10), encoding="utf-8")
     return 0
 
 
