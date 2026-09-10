@@ -782,7 +782,7 @@ def _route_with_freerouting_api(
             dsn_path.write_text(_injecter_wiring(
                 dsn_path.read_text(encoding="utf-8", errors="replace"),
                 _VIAS_RESERVES,
-                _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                (_nets_confies_au_plan() or ("GND",))[0],
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
@@ -1170,7 +1170,7 @@ def _count_routable_nets(pcb_bytes: bytes) -> int:
     from collections import Counter
 
     text = pcb_bytes.decode("utf-8", errors="replace")
-    au_plan = set(_NETS_CONFIES_AU_PLAN)
+    au_plan = set(_nets_confies_au_plan())
 
     numerotes = Counter(nom for _, nom in _NET_NUMBERED_RE.findall(text) if nom)
     if numerotes:
@@ -1487,7 +1487,7 @@ def _escalade_peut_aider(percent_moteur: int, erreurs: int,
     # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
     # justifie l escalade ; dix nets de plan ne la justifient pas.
     if manquants:
-        plan = set(_NETS_CONFIES_AU_PLAN) or _NETS_DE_PLAN_CONNUS
+        plan = set(_nets_confies_au_plan()) or _NETS_DE_PLAN_CONNUS
         if set(manquants) <= plan:
             return False
     return percent_moteur < 100
@@ -1834,7 +1834,7 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
             # Paire pad <-> pad : on ne la retient que si le net est confie a un
             # plan, seul cas ou un via repare quelque chose.
             nets = {m.group(2) for m in pads}
-            if not nets or not nets.issubset(set(_NETS_CONFIES_AU_PLAN)):
+            if not nets or not nets.issubset(set(_nets_confies_au_plan())):
                 continue
         for m in pads:
             isolees.append((m.group(3), m.group(1)))
@@ -4133,7 +4133,78 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 # l echappement (`_fanout_pads_isolees`) et la couture, pas le renoncement au
 # plan. Le chiffre est consigne ici pour que la comparaison reste disponible —
 # il suffit de vider ce tuple pour la refaire.
-_NETS_CONFIES_AU_PLAN: tuple[str, ...] = ("GND",)
+# ⚠️ DECISION PRODUIT VALIDEE PAR L UTILISATEUR le 2026-09-10 : ON ROUTE GND.
+#
+# Il a montre une carte STM32 produite par un autre outil (Astra/Codex),
+# `examples/STM32-Test-2026-09-10`, **100 % routee, 0 non connecte, 0 erreur**,
+# et a releve qu elle route GND EN PISTES :
+#
+#     2 couches · 38 empreintes · 289 segments · 41 vias
+#     zone GND sur B.Cu (67 ko)  +  47 SEGMENTS de GND
+#
+# Elle a un plan ET des pistes. Ce n est pas l un OU l autre.
+#
+# ⚠️ LA RAISON EST GEOMETRIQUE. Sur deux couches, le plan B.Cu est DECOUPE par
+# les pistes de signal qui passent sur cette meme face. « Le plan relie tout »
+# est faux des que le routage le traverse — d ou nos ilots, nos
+# « 1 net incomplet ; net(s) : GND », et les DOUZE fonctions de rattrapage que
+# ce fichier porte : `_vias_gnd_preventifs`, `_vias_a_reserver`,
+# `_reposer_vias_reserves`, `_compte_ilots_de_plan`, `_recoudre_les_ilots`,
+# `_retirer_ilots_flottants`, `_sans_derniers_vias`...
+#
+# Router GND garantit la connectivite INDEPENDAMMENT de la fragmentation. Le
+# plan redevient ce qu il doit etre : une amelioration d impedance et de retour
+# de courant, pas la connexion elle-meme. On ne confie pas la connectivite a
+# quelque chose qu on va trouer.
+#
+# ⚠️ LA MESURE EXISTAIT DEJA ICI, du 2026-08-28, et elle allait dans ce sens :
+#
+#     carte          GND confie au plan        GND route en pistes
+#     arduino-uno    93 % · 1 manq · 0 err     100 % · 0 manq · 0 err
+#     nucleo-f401    81 % · 12 manq · 1 err     81 % · 12 manq · 0 err
+#
+# Router GND rendait l Arduino COMPLETE et supprimait une erreur sur la Nucleo.
+# La decision d alors fut neanmoins de garder le plan en charge — « le levier a
+# actionner est l echappement et la couture ». C est ce renoncement qui a
+# produit les douze fonctions ci-dessus, et le plantage natif de pcbnew qui
+# tue le worker sur les cartes denses (assertion `PROPERTY_ENUM`, mesuree neuf
+# fois en quarante minutes le 2026-09-10) : il tombe pendant CE
+# post-traitement.
+#
+# ⚠️ CE QUI RESTE A VERIFIER. Le depot a aussi mesure que couler le plan AVANT
+# le routage faisait passer la Nucleo de 68 % a 94 %. Il faut s assurer que ce
+# gain venait du plan lui-meme et non du fait que le routeur le VOYAIT — car un
+# GND route est vu de toute facon. Le plan reste coule avant, cette sequence ne
+# change pas.
+#
+# ⚠️ PILOTABLE, pour que l A/B reste possible sans editer ce fichier :
+# `{"gnd_confie_au_plan": true}` dans `/tmp/cirqix-reglages.json` restaure le
+# comportement precedent. Le defaut est desormais « on route GND ».
+def _nets_confies_au_plan() -> tuple[str, ...]:
+    """Les nets que le routeur NE route pas, laisses au plan.
+
+    ⚠️ Appelee A L IMPORT pour `_NETS_CONFIES_AU_PLAN`, et directement par
+    quelques sites. Un changement de reglage exige un redemarrage du service
+    — le module reaffecte cette constante pendant `_router_en_incluant_gnd`.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        if bool(reglage("gnd_confie_au_plan", False)):
+            return ("GND",)
+    except Exception:  # noqa: BLE001
+        pass
+    return ()
+
+
+# ⚠️ LUE A L IMPORT, donc un changement de reglage exige un REDEMARRAGE du
+# service. C est assume : ce module la reaffecte lui-meme (`global`) pendant
+# `_router_en_incluant_gnd`, et une valeur qui changerait sous ses pieds au
+# milieu d un routage serait pire qu une valeur figee.
+#
+# Mesure du 2026-09-10 : un reglage lu a l import rend tout A/B inerte tant
+# qu on ne redemarre pas — verifier que le `mtime` du module precede le
+# demarrage du processus avant de mesurer quoi que ce soit.
+_NETS_CONFIES_AU_PLAN: tuple[str, ...] = _nets_confies_au_plan()
 
 
 def _strip_net_from_dsn(dsn_text: str, net_name: str,
@@ -4553,7 +4624,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                     dsn.write_text(_injecter_wiring(
                         dsn.read_text(encoding="utf-8", errors="replace"),
                         _VIAS_RESERVES,
-                        _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                        (_nets_confies_au_plan() or ("GND",))[0],
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))

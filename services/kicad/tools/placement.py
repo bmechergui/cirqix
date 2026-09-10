@@ -1971,6 +1971,99 @@ def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):
         return None
 
 
+def _blocs_edge_cuts(texte: str) -> list[tuple[int, int]]:
+    """Les blocs de geometrie posee sur `Edge.Cuts`, en (debut, fin).
+
+    ⚠️ DEUX FORMES AU MOINS, et je n en cherchais qu une : quatre
+    `gr_line`, ou un seul `gr_rect`. `carte-01` porte un `gr_rect`, et mon
+    expression ne voyait rien — « aucun contour trouve » sur une carte qui en a
+    un. Treizieme piege de forme de ce projet.
+
+    On decoupe en comptant les parentheses plutot qu en supposant la place du
+    champ `(layer ...)` : il vient APRES `(start)`/`(end)` dans un `gr_rect`,
+    AVANT dans certains `gr_line`, et une expression qui suppose l ordre rate
+    une forme sur deux.
+    """
+    blocs = []
+    for tag in ("gr_line", "gr_rect", "gr_arc", "gr_poly", "gr_circle"):
+        i = 0
+        while True:
+            j = texte.find("(" + tag, i)
+            if j < 0:
+                break
+            prof, k = 0, j
+            while k < len(texte):
+                if texte[k] == "(":
+                    prof += 1
+                elif texte[k] == ")":
+                    prof -= 1
+                    if prof == 0:
+                        break
+                k += 1
+            bloc = texte[j:k + 1]
+            i = k + 1
+            if '(layer "Edge.Cuts")' in bloc:
+                blocs.append((j, k + 1))
+    return sorted(blocs)
+
+
+def _redimensionner_contour(chemin: Path, largeur: float, hauteur: float) -> bool:
+    """Reecrit le contour `Edge.Cuts` du board aux dimensions donnees.
+
+    ⚠️ ON NE TOUCHE QUE `Edge.Cuts`. Le reste — empreintes, nets, pistes —
+    est preserve : agrandir une carte ne doit rien deplacer.
+
+    ⚠️ LE CONTOUR PART DE SON PROPRE COIN, pas de (0,0). Le board vit dans
+    un repere page (typiquement decale de 100,100) ; poser le nouveau contour a
+    l origine le mettrait ailleurs que ses composants — le piege de repere que
+    trois implementations maison ont deja commis dans ce depot.
+
+    Rend `True` si le contour a ete reecrit.
+    """
+    texte = chemin.read_text(encoding="utf-8", errors="replace")
+    blocs = _blocs_edge_cuts(texte)
+    if not blocs:
+        logger.error("redimensionnement: aucun contour Edge.Cuts trouve — "
+                     "la carte N EST PAS agrandie")
+        return False
+
+    coins = []
+    for a, b in blocs:
+        for m in re.finditer(r"\((?:start|end) ([-\d.]+) ([-\d.]+)\)", texte[a:b]):
+            coins.append((float(m.group(1)), float(m.group(2))))
+    if not coins:
+        logger.error("redimensionnement: contour illisible — carte inchangee")
+        return False
+
+    x0, y0 = min(c[0] for c in coins), min(c[1] for c in coins)
+    x1, y1 = x0 + largeur, y0 + hauteur
+
+    # On retire les anciens blocs (a l envers, pour ne pas decaler les index)
+    # puis on repose UN rectangle — la forme la plus simple, et celle que
+    # `gr_rect` exprime deja.
+    for a, b in reversed(blocs):
+        texte = texte[:a] + texte[b:]
+
+    rect = (
+        "TAB(gr_rectNL"
+        "TABTAB(start %s %s)NL"
+        "TABTAB(end %s %s)NL"
+        "TABTAB(strokeNLTABTABTAB(width 0.1)NLTABTABTAB(type default)NLTABTAB)NL"
+        "TABTAB(fill no)NL"
+        'TABTAB(layer "Edge.Cuts")NL'
+        "TAB)NL"
+    ) % (x0, y0, x1, y1)
+    rect = rect.replace("TAB", chr(9)).replace("NL", chr(10))
+
+    i = texte.rfind(")")
+    if i < 0:
+        return False
+    chemin.write_text(texte[:i] + rect + texte[i:], encoding="utf-8")
+    logger.info("redimensionnement: contour reecrit a %.0fx%.0f mm depuis (%.1f, %.1f)",
+                largeur, hauteur, x0, y0)
+    return True
+
+
 def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                          board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
@@ -1995,6 +2088,38 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         from kicad_tools.optim import OptimizationWorkflow, WorkflowConfig
 
         pcb = PCB.load(str(src))
+
+        # ⚠️ LA CARTE EST-ELLE ASSEZ GRANDE POUR SES COMPOSANTS ?
+        #
+        # Mesure du 2026-09-09 sur `carte-11` : deux connecteurs 2x20 sur une
+        # carte de 90x60 mm. `J1` a un encombrement de 49,1 mm, il exigeait
+        # donc 102 mm par dimension — la plage de positions valides etait
+        # NEGATIVE. Le placement renoncait a juste titre, `J1` sortait de
+        # 43,3 mm, et le routeur n avait rien a router : 3 % pendant des
+        # semaines.
+        #
+        # ⚠️ AGRANDIR CETTE CARTE-LA NE CORRIGEAIT RIEN : le dimensionnement
+        # vient d un modele de langage, il sera plausible et faux aussi souvent
+        # qu on lui demandera. La verification est donc posee ici, pour TOUTES
+        # les cartes — demande de l utilisateur : « je veux toujours une
+        # solution generale, pas une solution de bricolage liee a chaque carte ».
+        #
+        # ⚠️ ON AGRANDIT, ON NE REFUSE PAS. Une carte trop petite produit un
+        # board inutilisable qui traverse tout le pipeline sans que rien ne le
+        # signale. Une carte agrandie reste fabricable, elle coute un peu de
+        # substrat.
+        try:
+            from tools.taille_carte import verifier_et_agrandir
+            nl, nh = verifier_et_agrandir(pcb, board_width_mm, board_height_mm)
+            if (nl, nh) != (board_width_mm, board_height_mm):
+                board_width_mm, board_height_mm = nl, nh
+                _redimensionner_contour(src, nl, nh)
+                pcb = PCB.load(str(src))
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ On le DIT. Une verification silencieusement absente laisserait
+            # croire la carte dimensionnee — l etat d avant.
+            logger.error("auto_place: verification de taille INDISPONIBLE (%s) "
+                         "— la carte n est pas verifiee", e)
 
         # Filet : footprints hors-carte (vieux PCB pré-placé à -1000) → place_unplaced
         if any(fp.position[0] < -100 or fp.position[1] < -100 for fp in pcb.footprints):

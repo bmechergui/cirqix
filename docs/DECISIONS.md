@@ -439,3 +439,155 @@ existante inchangée (Géomètre, halo, snap, grille, Inspecteur).
    n'a été faite — elle coûte plusieurs heures sur cette machine.
 
 **Une mesure étaye une proposition ; elle ne la valide pas.**
+
+---
+
+## D-2026-09-10-a — Borner la memoire de la JVM Freerouting (`-Xmx`)
+
+**Statut : en attente.**
+
+**Constat mesure**, journal du service, `carte-08` :
+
+    pass #85  score 964.42  (8 non routes)  6201 CPU s  55668 MB memoire
+    pass #86  score 964.42  (8 non routes)              55879 MB
+    pass #87  score 964.42  (8 non routes)              56223 MB
+    INFO: Child process [103] died
+
+**La JVM annonce 55 Go sur une machine qui en a 7,6.** Le worker uvicorn meurt
+juste apres. Ligne de commande actuelle, sans aucun plafond :
+
+    java -jar /opt/freerouting/freerouting.jar --api_server.enabled=true ...
+
+⚠️ **CE N EST PAS UNE PENURIE DE MEMOIRE SYSTEME**, et je l ai cru toute la
+journee. Le cgroup du conteneur dit `oom_kill = 0`, crete a 3,4 Go sur 7,6
+disponibles — le noyau n a tue personne. J ai arrete Supabase, surveille
+`free -m`, relance six fois : je traitais un symptome que la mesure dementait.
+Le message « stopped because the system is running low on memory » venait de
+l outil qui tuait mes processus WINDOWS, pas du conteneur.
+
+**Proposition.** Poser `-Xmx` au demarrage de la JVM, a une valeur compatible
+avec la machine (2 a 3 Go), pour qu un travail trop gourmand echoue proprement
+au lieu d emporter le worker.
+
+**Pourquoi ce n est PAS applique.** Seuil chiffre qui change le comportement
+livre, et le risque est reel dans l autre sens : une JVM trop bornee refusera de
+router une carte que la machine pourrait traiter. Il faut mesurer la
+consommation reelle d un routage qui ABOUTIT avant de choisir la valeur.
+
+**Lie a `D-2026-09-XX` (couper sur stagnation).** Les deux faces du meme
+constat : 87 passes pour ZERO gain de score. Un travail qui n ameliore plus rien
+consomme du CPU et de la memoire jusqu a tuer son hote.
+
+---
+
+## D-2026-09-10-b — Escalade de couches INCREMENTALE
+
+**Statut : en attente.** Souleve par l utilisateur le 2026-09-10.
+
+**Son argument, et il est juste :** ajouter des couches ne peut que donner PLUS
+de ressources. On devrait garder les pistes des 2 couches et ne router que ce
+qui manque sur les nouvelles. Le resultat serait alors MONOTONE — jamais pire.
+
+**Ce que le code fait aujourd hui :**
+
+    etendu = _expand_stackup(pcb_bytes, palier)
+
+`pcb_bytes` est le board PLACE, NON ROUTE. Chaque palier repart donc de zero :
+le routage a 4 couches ne conserve rien de celui a 2. Il refait tout, avec plus
+de place mais un autre tirage — donc il peut faire MOINS BIEN. Mesure du depot :
+`stm32-100`, 2 couches 99 %, puis 4 couches **87 %**.
+
+On garde le MEILLEUR palier, donc on ne livre jamais moins bon. Mais on ne
+CUMULE pas, et c est exactement l ecart que l utilisateur pointe.
+
+⚠️ **La piste a ete essayee et fermee** : `--preserve-existing` de Freerouting
+perdait la moitie du cuivre recu, et l escalade incrementale rendait le meme
+resultat que l escalade libre pour trois fois le temps.
+
+⚠️ **Mais cette mesure est ANTERIEURE** aux correctifs du round-trip Specctra et
+aux pieges de forme corriges depuis. Elle merite d etre refaite avant d etre
+opposee a l argument.
+
+**Une mesure etaye une proposition ; une mesure perimee n en refute aucune.**
+
+### D-2026-09-10-a — RECTIFICATION : le chiffre de 55 Go ne mesurait pas la memoire
+
+**Statut : retiree.** La proposition reposait sur une lecture fausse.
+
+Le journal Freerouting annonce « 55668 MB memory », puis 133 Go, 307 Go, et
+jusqu a **3 To** sur la nuit. Mesure du RSS reel, au meme moment :
+
+    java       1 426 712 ko  =  1,4 Go
+    conteneur              2,8 Go / 7,6
+
+⚠️ **C EST UN COMPTEUR CUMULE, PAS UNE OCCUPATION.** Une JVM ne detient pas
+3 To sur une machine de 7,6 Go — l invraisemblance du chiffre aurait du
+m arreter avant que j en fasse une decision produit.
+
+C est la faute deja inscrite pour les gardes : **relayer un nombre sans verifier
+ce qu il compte**. Et c est la seconde fois de la journee sur le meme sujet,
+apres le message « stopped because the system is running low on memory » qui
+venait de l outil tuant mes processus WINDOWS, alors que le cgroup du conteneur
+disait `oom_kill = 0`.
+
+**La cause des `RemoteDisconnected` reste donc INCONNUE.** Ce qui est etabli :
+
+    le cgroup du conteneur         oom_kill = 0, crete 3,4 Go sur 7,6
+    la JVM                          1,4 Go reels
+    le routeur, lui, STAGNE         87 passes puis 242 passes sans gain de score
+
+La stagnation est mesuree et reelle ; l explication par la memoire ne l est pas.
+Piste a explorer a froid : l assertion `wxWidgets PROPERTY_ENUM` visible dans
+les journaux, qui est un plantage NATIF de `pcbnew` — celui pour lequel
+`PYTHONFAULTHANDLER` a ete active.
+
+**Ne pas borner `-Xmx` sur la foi de ce chiffre.**
+
+---
+
+## Diagnostic du 2026-09-10 — la cause reelle des `RemoteDisconnected`
+
+**Ce n est PAS la memoire.** Je l ai cru toute la journee et j ai agi dessus :
+arret de Supabase, surveillance de `free -m`, recreation du conteneur, six
+campagnes relancees. Deux mesures le dementent :
+
+    cgroup du conteneur    oom_kill = 0, crete 3,4 Go sur 7,6
+    RSS reel de la JVM     1,4 Go  (le journal Freerouting annonce 495 Go —
+                                    c est un compteur CUMULE, pas une occupation)
+
+**La vraie cause**, visible en lisant ce qui PRECEDE la mort, trois fois a
+l identique :
+
+    Restoring an earlier board that has the score of 964.42 (8 unrouted)
+    INFO:     Waiting for child process [103]
+    INFO:     Child process [103] died
+
+Le worker meurt **apres** que le routage a rendu son resultat, pendant le
+POST-TRAITEMENT — replacement des vias, coulee des plans, fanout, couture des
+ilots. Toutes ces etapes passent par `pcbnew`. Et le conteneur journalise
+**neuf assertions natives en quarante minutes** :
+
+    property.h(607): assert "m_choices.GetCount() > 0" failed in PROPERTY_ENUM()
+
+C est le plantage que ce depot documente deja, celui pour lequel
+`PYTHONFAULTHANDLER` avait ete active — et qui n ecrit aucune trace, le signal
+n etant pas detournable.
+
+⚠️ **POURQUOI SEULEMENT LES CARTES DENSES.** Plus de zones, de vias et d ilots
+a post-traiter, donc plus d occasions de declencher l assertion. `carte-01` a
+`carte-07` passent ; `carte-08`, `09` et `10` echouent trois fois sur trois.
+
+**Consequence pour le banc :** ces trois cartes ne peuvent pas aboutir tant que
+ce plantage n est pas contourne. Ce n est ni le placement, ni le nombre de
+couches, ni le nombre de tirages.
+
+**Piste, non appliquee :** isoler le post-traitement `pcbnew` dans un processus
+ENFANT, comme `cmaes_runner.py` et `drc_pcbnew_runner.py` le font deja. Un
+plantage natif tuerait alors l enfant, pas le worker — et la requete rendrait
+une erreur au lieu de couper la connexion. Le depot documente deja cette regle :
+« toute nouvelle route appelant `pcbnew` doit suivre ce schema ».
+
+⚠️ **DEUX FAUSSES PISTES SUIVIES AVANT CELLE-CI**, toutes deux par relais d un
+message sans verification : « low on memory » venait de l outil tuant mes
+processus WINDOWS, et « 495299 MB memory » d un compteur cumule. **Verifier ce
+qu un nombre COMPTE avant d en tirer une decision.**
