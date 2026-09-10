@@ -241,11 +241,27 @@ mesure, **non validés** :
 - `_GRILLE_MM = 0.5` — pas de la grille de placement
 - `_RAYON_PAIRE_MM = 5.0` — rayon de rappel d'une paire en série
 
+## État au 2026-09-10 (commits `133d690`, `510f959`, `9b8094c`)
+
+- **GND est routé par défaut** (pistes + plan, comme la référence STM32
+  d'Astra et `docs/methodologie-routage.md`) ; le confier au plan est un
+  réglage (`gnd_confie_au_plan`). Suite verte : 1636 passed.
+- **Les `RemoteDisconnected` sont expliqués et corrigés** : uvicorn abattait
+  le worker qui relisait 564 Mo de journal Freerouting (GIL > 5 s). Lecteur
+  incrémental `tools/journal_freerouting.py`. Trois diagnostics faux avant —
+  lire `docs/DECISIONS.md`, section rectifiée.
+- **Découplage** : chaque capa va au CI le plus proche sur son rail
+  (`_reattribuer_les_decouplages`) et le snap POWER vise la BROCHE
+  (`_pastille_partagee`). carte-05 : 7,1 → 2,5 mm mesuré, pas encore livré.
+- Cartes 01-04 et 06 livrées 100 % / 0 erreur avec `placement.kicad_pcb`.
+- Campagne en cours : `/tmp/campagne-1789040706` (11 cartes × 2), à livrer
+  par `scripts/livrer_campagne.py` — **ne remplace que si meilleur**.
+
 ## Reste à faire
 
 - **C1** — livrer `expected/placement.kicad_pcb` pour les onze cartes (le
-  mécanisme existe, `scripts/livrer_placements.py` ; seules 05 et 06 sont
-  couvertes, les autres attendent leur régénération).
+  mécanisme existe, `scripts/livrer_placements.py` ; 01-06 couvertes, les
+  autres attendent la campagne ci-dessus).
 - **A3** — espacer la sérigraphie (`silk_over_copper`, `silk_overlap`).
 - **D1** — la carte de référence réelle, type `astra_piNas`.
 - Régénérer les onze cartes avec les correctifs.
