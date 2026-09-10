@@ -296,7 +296,14 @@ def _tuer_la_jvm(attente_s: float = 60.0) -> bool:
     except Exception:  # noqa: BLE001
         pass
     try:
-        subprocess.run(["pkill", "-f", "freerouting.jar"], capture_output=True, timeout=10)
+        # ⚠️ Le motif vise LA JVM API, et rien d autre. `pkill -f freerouting.jar`
+        # tuait aussi le `sh -c "while true; do java -jar …freerouting.jar"`
+        # qui la relance (sa ligne de commande contient le nom du jar) — mesure
+        # du 2026-09-10, 23:20 : boucle morte, trois heures de CLI a 48-89 %.
+        # Il epargne aussi les jobs CLI (`java -jar … -de …`), qui n ont pas
+        # `--api_server`.
+        subprocess.run(["pkill", "-f", r"^(/usr/bin/)?java -jar /opt/freerouting/freerouting\.jar --api_server"],
+                       capture_output=True, timeout=10)
     except Exception as exc:  # noqa: BLE001
         logger.warning("freerouting : impossible de tuer la JVM (%s)", exc)
         return False

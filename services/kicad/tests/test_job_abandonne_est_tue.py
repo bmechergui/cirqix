@@ -25,7 +25,12 @@ class TestTuerLaJvm:
         reponses = iter([None, None, "http://127.0.0.1:37864"])
         monkeypatch.setattr(R, "_find_freerouting_api", lambda: next(reponses))
         assert R._tuer_la_jvm(attente_s=60.0) is True
-        assert appels and appels[0][:2] == ["pkill", "-f"] and "freerouting.jar" in appels[0][2]
+        assert appels and appels[0][:2] == ["pkill", "-f"]
+        motif = re.compile(appels[0][2])
+        # Vise la JVM API, epargne la boucle qui la relance et les jobs CLI.
+        assert motif.search("/usr/bin/java -jar /opt/freerouting/freerouting.jar --api_server.enabled=true --user_data_path=/tmp/freerouting")
+        assert not motif.search("sh -c while true; do java -jar /opt/freerouting/freerouting.jar --api_server.enabled=true; done")
+        assert not motif.search("/usr/bin/java -jar /opt/freerouting/freerouting.jar -de /tmp/x.dsn -do /tmp/x.ses")
 
     def test_le_reglage_peut_le_desarmer(self, monkeypatch):
         from tools import reglages_banc
