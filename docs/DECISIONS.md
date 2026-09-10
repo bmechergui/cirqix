@@ -591,3 +591,24 @@ une erreur au lieu de couper la connexion. Le depot documente deja cette regle :
 message sans verification : « low on memory » venait de l outil tuant mes
 processus WINDOWS, et « 495299 MB memory » d un compteur cumule. **Verifier ce
 qu un nombre COMPTE avant d en tirer une decision.**
+
+---
+
+## Délégation du 2026-09-10 — méthodologie de routage
+
+L'utilisateur a fourni une synthèse des pratiques de l'industrie (Hartley,
+Bogatin, Phil's Lab, Feranec, Peterson, IPC-2221/7351/4761) et a délégué :
+« si tu as besoin de ces recommandations, c'est toi qui les valides ».
+
+**Portée :** les choix de MÉTHODE de routage conformes à ces sources peuvent
+être validés par l'assistant sans retour à l'utilisateur. Les seuils chiffrés
+et les choix commerciaux (plafond de couches vendu, coût) restent siens.
+
+**Validé au titre de cette délégation :**
+- GND routé en pistes + plan coulé sur Bottom (2 couches) — déjà appliqué,
+  confirmé par « grille de masse / ground pour ».
+
+**À faire, validé d'avance :**
+- Routage orthogonal H/V par couche (préférence de direction Freerouting).
+- Ordre de routage par priorité (fanout → critiques → alimentation → GPIO) —
+  plus lourd, à mesurer avant.
