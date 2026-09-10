@@ -1,45 +1,45 @@
-SchÃ©ma (driver LLM) : 5 composants, 4 nets, board 25x20mm
+Schéma (driver LLM) : 5 composants, 4 nets, board 25x20mm
 
 ==============================================================
-[1] call_agent_schema â†’ POST /schematic/generate
+[1] call_agent_schema → POST /schematic/generate
 ==============================================================
-    -> taille=20491o  (7.3s)
+    -> taille=20491o  (13.7s)
 
 ==============================================================
-[2] call_agent_erc â†’ POST /erc
+[2] call_agent_erc → POST /erc
 ==============================================================
-    -> clean=False Â· violations=28 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (1.3s)
+    -> clean=False · violations=28 · fixed=21 · skipped=False · engine=kicad-cli  (2.8s)
 
 ==============================================================
-[4] call_agent_gen_pcb â†’ POST /pcb/generate
+[4] call_agent_gen_pcb → POST /pcb/generate
 ==============================================================
-    -> taille=12989o  (0.0s)
+    -> taille=12989o  (0.3s)
 
 ==============================================================
-[5] call_agent_placement â†’ POST /place/auto
+[5] call_agent_placement → POST /place/auto
 ==============================================================
-    -> placÃ©s=5 Â· status=None  (10.3s)
+    -> placés=5 · status=None  (52.3s)
 
 ==============================================================
-[6] call_agent_routing â†’ POST /route/auto
+[6] call_agent_routing → POST /route/auto
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=10 Â· skipped=False Â· warning=None  (23.6s)
+    -> routé=100% · couches=2 · vias=10 · skipped=False · warning=None  (51.0s)
 
-[6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
+[6b] Reasoner NON déclenché — routage déjà à 100% (comportement attendu).
 
 ==============================================================
-[7] call_agent_drc â†’ POST /drc/auto
+[7] call_agent_drc → POST /drc/auto
 ==============================================================
-    -> clean=True Â· violations=4 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (1.4s)
+    -> clean=True · violations=4 · fixed=0 · skipped=False · warning=kicad-tools DRC indisponible — résultat kicad-cli officiel seul  (2.5s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
 
 ==============================================================
-[8] call_agent_export â†’ POST /export/all
+[8] call_agent_export → POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.9s)
+    -> fichiers=20 · devis=$None · skipped=False · warning=kicad-tools unavailable — kicad-cli export  (5.6s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -63,6 +63,6 @@ SchÃ©ma (driver LLM) : 5 composants, 4 nets, board 25x20mm
 
 ==============================================================
 SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_overlap:4
-VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
+VERDICT : routage 100% · DRC clean=True (skipped=False) · 20 fichiers exportés
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-01-diviseur-1788854256/output
+Artefacts : /tmp/campagne-1788993749/carte-01-diviseur-t2/output

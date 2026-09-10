@@ -782,7 +782,7 @@ def _route_with_freerouting_api(
             dsn_path.write_text(_injecter_wiring(
                 dsn_path.read_text(encoding="utf-8", errors="replace"),
                 _VIAS_RESERVES,
-                (_nets_confies_au_plan() or ("GND",))[0],
+                (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
@@ -1170,7 +1170,7 @@ def _count_routable_nets(pcb_bytes: bytes) -> int:
     from collections import Counter
 
     text = pcb_bytes.decode("utf-8", errors="replace")
-    au_plan = set(_nets_confies_au_plan())
+    au_plan = set(_NETS_CONFIES_AU_PLAN)
 
     numerotes = Counter(nom for _, nom in _NET_NUMBERED_RE.findall(text) if nom)
     if numerotes:
@@ -1487,8 +1487,20 @@ def _escalade_peut_aider(percent_moteur: int, erreurs: int,
     # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
     # justifie l escalade ; dix nets de plan ne la justifient pas.
     if manquants:
-        plan = set(_nets_confies_au_plan()) or _NETS_DE_PLAN_CONNUS
-        if set(manquants) <= plan:
+        # ⚠️ PLUS DE REPLI SUR `_NETS_DE_PLAN_CONNUS` ICI (2026-09-10). Depuis
+        # qu on route GND (decision validee par l utilisateur), une liste vide
+        # signifie « rien n est confie au plan » — pas « on ne sait pas ». Le
+        # repli faisait retomber sur {GND, AGND, DGND} et REFUSAIT d escalader
+        # sur une masse manquante, alors qu elle est desormais une piste comme
+        # une autre, que du cuivre en plus peut relier. Garde :
+        # tests/test_escalade_selon_le_net.py (un net de masse NON confie au
+        # plan fait escalader).
+        # On lit la CONSTANTE, pas la fonction : le module la reaffecte lui-meme
+        # (`global`) pendant `_router_en_incluant_gnd`, et les gardes la
+        # monkeypatchent. Lire la fonction ici rendrait ces deux mecanismes
+        # inertes — mesure : deux gardes rouges sur une regle pourtant juste.
+        plan = set(_NETS_CONFIES_AU_PLAN)
+        if plan and set(manquants) <= plan:
             return False
     return percent_moteur < 100
 
@@ -1834,7 +1846,7 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
             # Paire pad <-> pad : on ne la retient que si le net est confie a un
             # plan, seul cas ou un via repare quelque chose.
             nets = {m.group(2) for m in pads}
-            if not nets or not nets.issubset(set(_nets_confies_au_plan())):
+            if not nets or not nets.issubset(set(_NETS_CONFIES_AU_PLAN)):
                 continue
         for m in pads:
             isolees.append((m.group(3), m.group(1)))
@@ -4624,7 +4636,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                     dsn.write_text(_injecter_wiring(
                         dsn.read_text(encoding="utf-8", errors="replace"),
                         _VIAS_RESERVES,
-                        (_nets_confies_au_plan() or ("GND",))[0],
+                        (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))

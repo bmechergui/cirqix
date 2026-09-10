@@ -121,6 +121,11 @@ def _reattribuer_les_decouplages(clusters, composants):
     TOUCHE. Sur un rail partage par plusieurs CI, on la donne au plus proche.
     On ne touche pas au fork ; on recompose les clusters POWER cote Cirqix.
     """
+    # ⚠️ Tout ce qui n est pas une liste de clusters passe INTACT. Une garde
+    # monkeypatche `detect_functional_clusters` pour rendre un entier et ne
+    # verifier que l appel ; iterer dessus la faisait tomber en TypeError.
+    if not isinstance(clusters, (list, tuple)):
+        return clusters
     par_ref = {getattr(c, "ref", None): c for c in composants if getattr(c, "ref", None)}
     power = [c for c in clusters
              if str(getattr(c, "cluster_type", "")).upper().endswith("POWER")]

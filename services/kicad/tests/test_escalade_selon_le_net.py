@@ -34,9 +34,20 @@ from routers import routing as R  # noqa: E402
 
 
 class TestRegle:
-    def test_seul_GND_manque_on_n_escalade_PAS(self):
-        # LE CAS MESURE : stm32-60 a 98 %, un net incomplet, GND.
+    def test_seul_GND_manque_on_n_escalade_PAS_quand_il_est_confie_au_plan(self, monkeypatch):
+        # LE CAS MESURE : stm32-60 a 98 %, un net incomplet, GND — a l epoque ou
+        # GND etait CONFIE AU PLAN. Du cuivre en plus n y changeait rien.
+        monkeypatch.setattr(R, "_NETS_CONFIES_AU_PLAN", ("GND",))
         assert R._escalade_peut_aider(98, erreurs=0, manquants={"GND"}) is False
+
+    def test_seul_GND_manque_on_ESCALADE_quand_il_est_route(self, monkeypatch):
+        """⚠️ Depuis le 2026-09-10, GND est ROUTE en pistes (decision validee par
+        l utilisateur, comme la carte de reference). Une masse manquante est
+        alors un signal manquant : du cuivre supplementaire peut la relier.
+        L ancien repli sur `_NETS_DE_PLAN_CONNUS` refusait l escalade ici —
+        l escalade etait aveugle aux manques de masse."""
+        monkeypatch.setattr(R, "_NETS_CONFIES_AU_PLAN", ())
+        assert R._escalade_peut_aider(98, erreurs=0, manquants={"GND"}) is True
 
     def test_un_net_de_SIGNAL_manque_on_escalade(self):
         # Le routeur manque de place : c est la raison d etre de l escalade.
