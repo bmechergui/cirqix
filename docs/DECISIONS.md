@@ -645,6 +645,31 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-10-e — un job Freerouting abandonné est un job TUÉ (JVM relancée)
+
+**Statut : validée sous délégation** (levier de temps, l'utilisateur demandait
+pourquoi carte-08 prenait des heures).
+
+`cancel` répond 501 : un job que l'on cesse d'attendre continue jusqu'à sa
+passe 999. Journal Freerouting du 2026-09-10, 19:51-19:58 : **huit jobs
+abandonnés lancés à une minute d'intervalle, 999 passes chacun, tous vivants
+en même temps dans la JVM** — chaque nouveau job partageait la JVM avec eux.
+A/B esp32-baseline sur le même placement : 100 % en 61 s quand la JVM est
+seule, contre trois tirages figés à 63-86 % puis escalade à 6 couches pendant
+la campagne. Le halo des capas, soupçonné, est hors de cause (contrôle 23 s,
+A 61 s, B 237 s — tous 100 % sur 2 couches).
+
+Règle : `_tuer_la_jvm()` à chaque abandon (`pkill -f freerouting.jar`, attente
+de `/system/status`) ; l'entrypoint relance la JVM en boucle, journal vidé.
+Perte assumée : la récupération d'un job abandonné (`_recuperer_jobs_abandonnes`)
+ne trouve plus rien — elle rendait des boards à 31-69 %, jamais livrables.
+Réglage `tuer_jvm_sur_abandon`. Gardes : `tests/test_job_abandonne_est_tue.py`.
+
+**Repli GND borné** (même jour) : il ne se paie que si ≤ 8 connexions manquent
+(`_REPLI_GND_MAX_MANQUANTES`, réglage `repli_gnd_max_manquantes`). carte-08 :
+17 min pour passer de 36 à 33 manquantes, 11 min pour un repli refusé.
+Gardes : `tests/test_repli_gnd_borne.py`.
+
 ## D-2026-09-10-d — un placement CONDAMNÉ n'est pas routé jusqu'au bout
 
 **Statut : validée** (utilisateur : « go » sur le levier « ne pas router un

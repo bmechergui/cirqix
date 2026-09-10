@@ -38,6 +38,16 @@ import os
 import re
 from typing import Iterable, Optional
 
+
+def _reglage(nom: str, defaut):
+    """Reglage du banc (`/tmp/cirqix-reglages.json`), relu a chaque appel ;
+    la valeur par defaut si le module des reglages est absent."""
+    try:
+        from tools.reglages_banc import reglage
+        return reglage(nom, defaut)
+    except Exception:  # noqa: BLE001
+        return defaut
+
 logger = logging.getLogger(__name__)
 
 # La detection native est importee au niveau du module pour qu'un test puisse
@@ -837,7 +847,12 @@ def snap_cluster_members(
         # Le canal d echappement n en souffre pas : une capa 0603 collee a une
         # broche VDD occupe UN cote du boitier sur 1,6 mm, elle ne bouche pas les
         # trois autres ni les 36 signaux qui en sortent.
-        if est_power:
+        # ⚠️ A/B du 2026-09-10 (soir) : depuis que les decouplages entrent dans
+        # le halo, carte-11 exige 4 couches (2 auparavant) et esp32-baseline
+        # monte a 6 sans atteindre 100 % (100 % sur 2 le 2026-09-03). Reglage
+        # `decouplage_dans_le_halo` (defaut : vrai) pour mesurer sur le meme
+        # board avant de trancher.
+        if est_power and _reglage("decouplage_dans_le_halo", True):
             marge = marge_mm
 
         for ref in cluster.members:

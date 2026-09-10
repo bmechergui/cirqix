@@ -274,6 +274,43 @@ def _freerouting_job_failed(state: str) -> bool:
     return str(state).upper() in ("FAILED", "CANCELLED", "INVALID")
 
 
+def _tuer_la_jvm(attente_s: float = 60.0) -> bool:
+    """Tue la JVM Freerouting et attend qu elle soit relancee par l entrypoint.
+
+    ⚠️ UN JOB ABANDONNE EST UN JOB TUE. `cancel` repond 501 : un job que l on
+    cesse d attendre CONTINUE jusqu a sa passe 999. Mesure du 2026-09-10,
+    19:51-19:58 : huit jobs abandonnes a une minute d intervalle, 999 passes
+    chacun, tous vivants en meme temps — et chaque nouveau job partage la JVM
+    avec eux. C est ce qui faisait « stagner » des cartes que le meme
+    placement route a 100 % en 61 s quand la JVM est seule (A/B esp32).
+
+    La JVM est un processus frere dans le conteneur, relance en boucle par
+    l entrypoint (journal vide au passage). On tue, on attend `/system/status`.
+    Le verrou de routage garantit qu aucun autre appel n a de job en cours.
+    Reglage `tuer_jvm_sur_abandon` (defaut : vrai) pour l A/B.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        if not bool(reglage("tuer_jvm_sur_abandon", True)):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        subprocess.run(["pkill", "-f", "freerouting.jar"], capture_output=True, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("freerouting : impossible de tuer la JVM (%s)", exc)
+        return False
+    limite = time.time() + attente_s
+    time.sleep(3.0)
+    while time.time() < limite:
+        if _find_freerouting_api():
+            logger.info("freerouting : JVM tuee et relancee — les jobs abandonnes sont morts avec elle")
+            return True
+        time.sleep(2.0)
+    logger.warning("freerouting : JVM tuee mais pas revenue en %.0f s", attente_s)
+    return False
+
+
 def _find_freerouting_api() -> Optional[str]:
     """Return Freerouting API base URL if the server is reachable, else None."""
     import urllib.request
@@ -936,6 +973,9 @@ def _route_with_freerouting_api(
                             100 * (nets_routables - unrouted) / nets_routables))
                         if nets_routables > 0 else 0,
                     })
+                    # Un job abandonne est un job TUE : sinon il court jusqu a
+                    # la passe 999 et ralentit tous les tirages suivants.
+                    _tuer_la_jvm()
                     raise RoutageFige(unrouted=unrouted,
                                       nets=nets_routables)
             time.sleep(2)
@@ -3474,6 +3514,28 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
         return 0
 
 
+# Au-dela de ce nombre de connexions manquantes, le repli GND n a rien a
+# refermer : il existe pour les DERNIERES broches d une carte presque complete.
+# Mesure du 2026-09-10 sur carte-08 (56 composants, 2 couches) :
+#
+#     (2 err, 36 manq) -> (2 err, 33 manq)    17 min   retenu, +3 connexions
+#     (5 err, 10 manq) -> (5 err, 27 manq)    11 min   REFUSE
+#
+# et le 2026-09-02 : 11 replis, 0 retenu. Un tirage de placement coute 75 s
+# et un routage propre 30 s : 17 min pour trois connexions est le pire usage
+# du temps de la chaine. Reglage `repli_gnd_max_manquantes` pour l A/B.
+_REPLI_GND_MAX_MANQUANTES: int = 8
+
+
+def _repli_gnd_vaut_le_coup(manquantes: int) -> bool:
+    try:
+        from tools.reglages_banc import reglage
+        seuil = int(reglage("repli_gnd_max_manquantes", _REPLI_GND_MAX_MANQUANTES))
+    except Exception:  # noqa: BLE001
+        seuil = _REPLI_GND_MAX_MANQUANTES
+    return int(manquantes) <= seuil
+
+
 def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
     """Le board de secours vaut-il mieux que celui qu il remplacerait ?
 
@@ -5270,9 +5332,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # ⚠️ QUELLES broches, pas seulement COMBIEN : c est leur identite
             # qui dit si ce repli a deja ete tente en vain pendant cet appel.
             try:
-                orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+                rap_final = _rapport_drc(final)
+                orphelines = _pads_isolees_du_plan(rap_final)
             except Exception:
-                orphelines = []
+                rap_final, orphelines = {}, []
+            manquantes_avant = len((rap_final or {}).get("unconnected_items") or [])
             if (_NETS_CONFIES_AU_PLAN and orphelines
                     and _repli_deja_tente(orphelines)):
                 logger.info(
@@ -5280,6 +5344,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "DEJA tenté sans succès sur ces mêmes broches, on ne le "
                     "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
                     len(orphelines))
+            elif (_NETS_CONFIES_AU_PLAN and orphelines
+                    and not _repli_gnd_vaut_le_coup(manquantes_avant)):
+                logger.info(
+                    "plan de masse : %d broche(s) GND non reliée(s) mais %d "
+                    "connexion(s) manquante(s) au total — le repli GND ne "
+                    "referme que les dernieres broches d une carte presque "
+                    "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
+                    len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
             elif _NETS_CONFIES_AU_PLAN and orphelines:
                 logger.warning(
                     "plan de masse : %d broche(s) GND non reliée(s) — "

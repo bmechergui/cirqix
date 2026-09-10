@@ -64,9 +64,23 @@ mkdir -p /tmp/freerouting
 # tools/journal_freerouting.py). Il n est lu que par increments depuis le
 # depart d un job : rien d anterieur au demarrage ne sert. On repart vide.
 : > /tmp/freerouting/freerouting.log
-java -jar /opt/freerouting/freerouting.jar \
-    --api_server.enabled=true \
-    --user_data_path=/tmp/freerouting &
+# ⚠️ LA JVM EST RELANCEE EN BOUCLE, et c est voulu : un job Freerouting
+# abandonne (`cancel` repond 501) CONTINUE jusqu a sa passe 999 et ralentit
+# tous les suivants. Mesure du 2026-09-10, 19:51-19:58 : huit jobs abandonnes
+# lances a une minute d intervalle, chacun a 999 passes, tous vivants en meme
+# temps dans la JVM. Le service TUE la JVM quand il abandonne un job
+# (`_tuer_la_jvm`, routers/routing.py) ; cette boucle la remet debout en
+# quelques secondes, journal vide.
+(
+  while true; do
+    : > /tmp/freerouting/freerouting.log
+    java -jar /opt/freerouting/freerouting.jar \
+        --api_server.enabled=true \
+        --user_data_path=/tmp/freerouting
+    echo "freerouting: JVM terminee (code $?), relance dans 2 s" >&2
+    sleep 2
+  done
+) &
 
 # Laisse Xvfb + la JVM Freerouting démarrer avant uvicorn
 sleep 5
