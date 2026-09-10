@@ -493,6 +493,66 @@ def _elaguer_attaches_impossibles(attaches: dict, plafonds: dict,
     return retirees
 
 
+def _pastille_partagee(ancre_fp, membre_fp) -> tuple[float, float] | None:
+    """La pastille de l ANCRE qui porte un net d alimentation partage avec le membre.
+
+    ⚠️ MESURE DU 2026-09-10, sur les onze cartes du banc — distance entre un
+    condensateur de decouplage et la broche d alimentation qu il decouple :
+
+        carte-05     9,2 mm   max 12,9
+        carte-09    16,6 mm   max 24,0
+        carte-10    18,5 mm   max 27,6
+
+    La regle de l industrie (Hartley, Bogatin, IPC) : « au plus pres des broches
+    d alimentation », soit 1 a 3 mm. AUCUNE carte n y etait. Un condensateur a
+    18 mm de sa broche ne decouple rien — sa boucle est trop grande.
+
+    ⚠️ LA CAUSE : le snap POWER visait le CENTRE DU CORPS de l ancre
+    (`_centre_et_demi`). « A 3 mm du corps » d un LQFP-48 de 7 mm de cote laisse
+    la capa n importe ou sur un perimetre de 40 mm — jamais contre la broche.
+    La bibliotheque le dit elle-meme (`FunctionalCluster.anchor_pin`, docstring :
+    « immediately adjacent to the IC power pins ») et ne le remplit pas ; et
+    CLAUDE.md l annoncait depuis le 2026-08-29 : « `anchor_pin`, deja expose,
+    jamais lu ». C est le SEPTIEME levier natif inutilise trouve cette semaine.
+
+    On ne devine rien : le net est SUR les pastilles. Rend la position absolue
+    de la pastille d alimentation de l ancre, ou `None` si le membre n en
+    partage aucune (il n est alors pas un decouplage, on retombe sur le corps).
+    """
+    def _nets(fp):
+        out = {}
+        for pad in getattr(fp, "pads", []) or []:
+            n = getattr(pad, "net_name", None)
+            if n:
+                out.setdefault(n, []).append(pad)
+        return out
+
+    nets_membre = _nets(membre_fp)
+    nets_ancre = _nets(ancre_fp)
+    # Un decouplage partage UN rail (pas GND) avec le CI.
+    from tools.placement_contraintes import _est_alimentation
+    communs = [n for n in nets_membre if n in nets_ancre and _est_alimentation(n)
+               and n.upper() not in ("GND", "AGND", "DGND", "PGND")]
+    if not communs:
+        return None
+    net = communs[0]
+    a = math.radians(getattr(ancre_fp, "rotation", 0.0) or 0.0)
+    ox, oy = ancre_fp.position
+    # ⚠️ Plusieurs pastilles du meme rail sur un LQFP (VDD x4) : on prend la
+    # plus proche de la position ACTUELLE du membre, pour ne pas envoyer une
+    # capa a l autre bout du boitier alors qu une broche est deja a cote.
+    mx, my = membre_fp.position
+    meilleure, dmin = None, 1e9
+    for pad in nets_ancre[net]:
+        px, py = pad.position
+        ax = ox + px * math.cos(a) - py * math.sin(a)
+        ay = oy + px * math.sin(a) + py * math.cos(a)
+        d = math.hypot(ax - mx, ay - my)
+        if d < dmin:
+            meilleure, dmin = (ax, ay), d
+    return meilleure
+
+
 def snap_cluster_members(
     pcb,
     *,
@@ -600,6 +660,7 @@ def snap_cluster_members(
         if ancre is None:
             continue
         acx, acy, ahw, ahh = _centre_et_demi(ancre)
+        est_power = str(getattr(cluster, "cluster_type", "")).upper().endswith("POWER")
         # Marge du halo si l'ancre est fine-pitch : sinon on reboucherait le
         # canal d'escape que `_reserve_escape_halos` vient de degager.
         marge = max(marge_mm, marge_dense_mm) if cluster.anchor in denses else marge_mm
@@ -609,6 +670,14 @@ def snap_cluster_members(
             if fp is None or ref in immobiles:
                 continue
             mcx, mcy, mhw, mhh = _centre_et_demi(fp)
+            # ⚠️ DECOUPLAGE : on vise la BROCHE, pas le corps. Voir
+            # `_pastille_partagee`. Le rayon d ancre devient celui d une pastille
+            # (quasi nul) : « a 3 mm » signifie alors 3 mm de la broche.
+            if est_power:
+                cible = _pastille_partagee(ancre, fp)
+                if cible is not None:
+                    acx, acy = cible
+                    ahw = ahh = _DEMI_MINIMUM_MM
             dx, dy = mcx - acx, mcy - acy
             dist = math.hypot(dx, dy)
             if dist < 1e-6:
