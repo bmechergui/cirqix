@@ -74,10 +74,15 @@ mkdir -p /tmp/freerouting
 (
   while true; do
     : > /tmp/freerouting/freerouting.log
+    # ⚠️ `|| true` OBLIGATOIRE : le script tourne sous `set -e`, et une JVM
+    # tuee rend 143 — sans lui la boucle meurt avec elle. Mesure du
+    # 2026-09-10, 21:50 : « JVM tuee mais pas revenue en 60 s », puis trois
+    # heures de routage par le CLI (une JVM par job, 48-89 %) sans que rien
+    # ne le dise en dehors de l etiquette `freerouting-cli` du journal.
     java -jar /opt/freerouting/freerouting.jar \
         --api_server.enabled=true \
-        --user_data_path=/tmp/freerouting
-    echo "freerouting: JVM terminee (code $?), relance dans 2 s" >&2
+        --user_data_path=/tmp/freerouting || true
+    echo "freerouting: JVM terminee, relance dans 2 s" >&2
     sleep 2
   done
 ) &

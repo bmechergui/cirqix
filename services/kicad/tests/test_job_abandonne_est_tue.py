@@ -65,3 +65,13 @@ class TestCablage:
             "sans boucle, tuer la JVM laisse le service sans routeur")
         assert re.search(r"while true; do\s*: > /tmp/freerouting/freerouting.log", code), (
             "le journal doit repartir vide a chaque relance")
+
+    def test_la_boucle_survit_a_une_jvm_tuee_sous_set_e(self):
+        """21:50 le 2026-09-10 : java tue rend 143, `set -e` a tue la boucle
+        avec lui, et le service a route trois heures par le CLI."""
+        texte = (_SERVICE / "docker-entrypoint.sh").read_text(encoding="utf-8")
+        code = "\n".join(l.split("#")[0] for l in texte.splitlines())
+        assert re.search(r"^\s*set -e", code, re.M), "le test suppose set -e ; s il disparait, revoir la garde"
+        bloc = code[code.find("while true; do"):code.find("done")]
+        assert re.search(r"--user_data_path=/tmp/freerouting\s*\|\|\s*true", bloc), (
+            "sans `|| true`, une JVM tuee (143) arrete la boucle de relance")
