@@ -113,3 +113,71 @@ class TestCablage:
         code = "\n".join(l.split("#")[0]
                          for l in inspect.getsource(B.snap_cluster_members).splitlines())
         assert "_pastille_partagee" in code, "le snap POWER vise encore le corps"
+
+
+class TestUneCapaParBrocheVDD:
+    """Regle de l industrie (Hartley, IPC, docs/methodologie-routage.md) :
+    UNE 100 nF par broche d alimentation du CI, le bulk au regulateur.
+
+    Mesure du 2026-09-10 sur carte-05 apres la reattribution « au CI le plus
+    proche » : C10..C15 restaient groupees autour du regulateur U2, parce que
+    le GA les y avait deja rassemblees (il heritait de `processed_caps`).
+    Le plus proche lisait donc l erreur qu il devait corriger. Un CI RECLAME
+    autant de capas qu il a de broches de rail, les plus proches d abord ;
+    le reste va au CI le plus proche.
+    """
+
+    def _carte_capas_parquees(self):
+        u2 = _Comp("U2", 0.0, 0.0, [(str(i), "+3V3" if i == 2 else ("GND" if i == 1 else "VIN")) for i in range(1, 9)])
+        u1 = _Comp("U1", 40.0, 0.0, [(str(i), "+3V3" if i in (1, 12, 24, 36) else ("GND" if i in (8, 23) else "SIG%d" % i)) for i in range(1, 49)])
+        caps = [_Comp("C%d" % i, 2.0 + 0.5 * i, 1.0, [("1", "+3V3"), ("2", "GND")]) for i in range(1, 7)]
+        return [u2, u1] + caps
+
+    def test_le_MCU_reclame_autant_de_capas_que_de_broches_VDD(self):
+        comps = self._carte_capas_parquees()
+        natif = [_Cluster("U2", ["C1", "C2", "C3", "C4", "C5", "C6"])]
+        res = B._reattribuer_les_decouplages(natif, comps)
+        par_ancre = {c.anchor: sorted(c.members) for c in res}
+        assert len(par_ancre.get("U1", [])) == 4, par_ancre
+        assert len(par_ancre.get("U2", [])) == 2, par_ancre
+
+    def test_les_capas_restantes_vont_au_plus_proche(self):
+        """Six capas pres du MCU, deux broches VDD : les quatre restantes ne
+        partent pas a 40 mm chez le regulateur (cas du test historique)."""
+        comps = _carte()
+        natif = [_Cluster("U2", ["C1", "C10", "C11", "C12", "C13", "C14", "C15"])]
+        res = B._reattribuer_les_decouplages(natif, comps)
+        par_ancre = {c.anchor: sorted(c.members) for c in res}
+        assert par_ancre.get("U1") == ["C10", "C11", "C12", "C13", "C14", "C15"], par_ancre
+
+
+class _Pad:
+    def __init__(self, number, net_name, x, y):
+        self.number, self.net_name, self.position = number, net_name, (x, y)
+
+
+class _Fp:
+    def __init__(self, ref, x, y, pads, rotation=0.0):
+        self.reference, self.position, self.pads, self.rotation = ref, (x, y), pads, rotation
+
+
+class TestUnePastilleParCapa:
+    def test_une_pastille_deja_prise_est_evitee(self):
+        u1 = _Fp("U1", 40.0, 0.0, [_Pad("1", "+3V3", -3.5, -3.0), _Pad("24", "+3V3", 3.5, 3.0), _Pad("8", "GND", 0, 3.5)])
+        c = _Fp("C10", 36.0, -3.0, [_Pad("1", "+3V3", -0.5, 0), _Pad("2", "GND", 0.5, 0)])
+        premiere = B._pastille_partagee(u1, c)
+        assert premiere == (36.5, -3.0)
+        seconde = B._pastille_partagee(u1, c, exclure={premiere})
+        assert seconde == (43.5, 3.0)
+
+    def test_toutes_prises_rend_la_plus_proche(self):
+        u1 = _Fp("U1", 40.0, 0.0, [_Pad("1", "+3V3", -3.5, -3.0)])
+        c = _Fp("C10", 36.0, -3.0, [_Pad("1", "+3V3", -0.5, 0)])
+        assert B._pastille_partagee(u1, c, exclure={(36.5, -3.0)}) == (36.5, -3.0)
+
+    def test_le_snap_distribue_les_capas_sur_des_pastilles_distinctes(self):
+        import inspect
+        code = "\n".join(l.split("#")[0]
+                         for l in inspect.getsource(B.snap_cluster_members).splitlines())
+        assert "pads_prises" in code and "exclure=" in code, (
+            "deux capas se collent a la meme broche VDD, les autres restent nues")

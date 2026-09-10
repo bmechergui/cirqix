@@ -166,25 +166,63 @@ def _reattribuer_les_decouplages(clusters, composants):
                 out.add(_nom_kicad_du_rail(n))
         return out
 
-    nouveaux = {a: [] for a in ancres}
+    # UNE CAPA PAR BROCHE DE RAIL, LES PLUS PROCHES D ABORD. Mesure du
+    # 2026-09-10 sur carte-05 : « au CI le plus proche » laissait C10..C15
+    # groupees autour du regulateur, parce que le GA (qui herite de
+    # `processed_caps`) les y avait deja rassemblees — le plus proche lisait
+    # l erreur qu il devait corriger. Chaque CI RECLAME autant de capas de son
+    # rail qu il a de broches sur ce rail (capacite), le CI le plus dote
+    # d abord ; ce qui reste va au plus proche. C est la regle de l industrie
+    # (« une 100 nF par broche VDD », docs/methodologie-routage.md), pas une
+    # heuristique de plus.
+    membres = []
     for c in power:
         for m in c.members:
-            mx, my = _pos(m)
-            if mx is None:
-                nouveaux[c.anchor].append(m)
+            if m not in membres:
+                membres.append(m)
+    origine = {m: c.anchor for c in power for m in c.members}
+
+    def _capacite(ref, rail):
+        """Broches de l ancre `ref` sur CE rail — pas sur tous ses rails : un
+        regulateur a six broches VIN et une seule sur +3V3, et c est la
+        seule qui compte pour les capas de +3V3."""
+        c = par_ref.get(ref)
+        n = 0
+        for pin in getattr(c, "pins", None) or []:
+            nom = getattr(pin, "net_name", "") or ""
+            if nom and _nom_kicad_du_rail(nom) == rail:
+                n += 1
+        return n
+
+    def _distance(m, a):
+        mx, my = _pos(m)
+        ax, ay = _pos(a)
+        if mx is None or ax is None:
+            return None
+        return ((mx - ax) ** 2 + (my - ay) ** 2) ** 0.5
+
+    nouveaux = {a: [] for a in ancres}
+    libres = list(membres)
+    paires = [(a, rail) for a in ancres for rail in sorted(rails_de.get(a) or _rails(a))]
+    for a, rail in sorted(paires, key=lambda ar: _capacite(*ar), reverse=True):
+        candidats = []
+        for m in libres:
+            d = _distance(m, a)
+            if d is not None and rail in _rails(m):
+                candidats.append((d, m))
+        candidats.sort()
+        for _, m in candidats[:_capacite(a, rail)]:
+            nouveaux[a].append(m)
+            libres.remove(m)
+    for m in libres:
+        meilleur, dmin = origine.get(m), float("inf")
+        for a in ancres:
+            if not (_rails(m) & (rails_de.get(a) or _rails(a))):
                 continue
-            rails_m = _rails(m)
-            meilleur, dmin = c.anchor, float("inf")
-            for a in ancres:
-                if not (rails_m & (rails_de.get(a) or _rails(a))):
-                    continue
-                ax, ay = _pos(a)
-                if ax is None:
-                    continue
-                d = ((mx - ax) ** 2 + (my - ay) ** 2) ** 0.5
-                if d < dmin:
-                    meilleur, dmin = a, d
-            nouveaux[meilleur].append(m)
+            d = _distance(m, a)
+            if d is not None and d < dmin:
+                meilleur, dmin = a, d
+        nouveaux.setdefault(meilleur, []).append(m)
 
     resultat = list(autres)
     modele = power[0] if power else None
@@ -604,7 +642,7 @@ def _elaguer_attaches_impossibles(attaches: dict, plafonds: dict,
     return retirees
 
 
-def _pastille_partagee(ancre_fp, membre_fp) -> tuple[float, float] | None:
+def _pastille_partagee(ancre_fp, membre_fp, exclure=()) -> tuple[float, float] | None:
     """La pastille de l ANCRE qui porte un net d alimentation partage avec le membre.
 
     ⚠️ MESURE DU 2026-09-10, sur les onze cartes du banc — distance entre un
@@ -653,15 +691,24 @@ def _pastille_partagee(ancre_fp, membre_fp) -> tuple[float, float] | None:
     # plus proche de la position ACTUELLE du membre, pour ne pas envoyer une
     # capa a l autre bout du boitier alors qu une broche est deja a cote.
     mx, my = membre_fp.position
-    meilleure, dmin = None, 1e9
+    # UNE CAPA PAR PASTILLE : `exclure` porte les pastilles deja servies par
+    # une autre capa de la meme ancre. Sans cela, deux capas se collent a la
+    # meme broche VDD et les autres broches restent nues (mesure carte-05,
+    # 2026-09-10). Si toutes sont prises, on retombe sur la plus proche.
+    prises = {(round(x, 3), round(y, 3)) for x, y in (exclure or ())}
+    candidates = []
     for pad in nets_ancre[net]:
         px, py = pad.position
         ax = ox + px * math.cos(a) - py * math.sin(a)
         ay = oy + px * math.sin(a) + py * math.cos(a)
-        d = math.hypot(ax - mx, ay - my)
-        if d < dmin:
-            meilleure, dmin = (ax, ay), d
-    return meilleure
+        candidates.append((math.hypot(ax - mx, ay - my), (ax, ay)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])
+    for _, pos in candidates:
+        if (round(pos[0], 3), round(pos[1], 3)) not in prises:
+            return pos
+    return candidates[0][1]
 
 
 def snap_cluster_members(
@@ -766,6 +813,8 @@ def snap_cluster_members(
     denses = set(denses or ())
 
     deplaces = 0
+    # Pastilles de rail deja servies, par ancre : une capa par broche VDD.
+    pads_prises: dict = {}
     for cluster in clusters:
         ancre = par_ref.get(cluster.anchor)
         if ancre is None:
@@ -800,10 +849,11 @@ def snap_cluster_members(
             # `_pastille_partagee`. Le rayon d ancre devient celui d une pastille
             # (quasi nul) : « a 3 mm » signifie alors 3 mm de la broche.
             if est_power:
-                cible = _pastille_partagee(ancre, fp)
+                cible = _pastille_partagee(ancre, fp, exclure=pads_prises.get(cluster.anchor, ()))
                 if cible is not None:
                     acx, acy = cible
                     ahw = ahh = _DEMI_MINIMUM_MM
+                    pads_prises.setdefault(cluster.anchor, set()).add(cible)
             dx, dy = mcx - acx, mcy - acy
             dist = math.hypot(dx, dy)
             if dist < 1e-6:
