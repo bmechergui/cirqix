@@ -67,8 +67,23 @@ def _refs_du_texte(texte: str) -> list[str]:
     return re.findall(r'\(property\s+"Reference"\s+"([^"]+)"', texte)
 
 
+_COUCHE_CUIVRE_RE = re.compile(r'\(\d+ "(?:F|B|In\d+)\.Cu"')
+
+
+def couches_du_texte(texte: str) -> int:
+    """Couches cuivre déclarées par le board. Quatrième critère de la note :
+    à complétude et DRC égaux, MOINS de couches gagne.
+
+    Mesure du 2026-09-10 : `carte-11` livrée à 100 % / 0 erreur sur QUATRE
+    couches par-dessus une carte à 100 % / 0 erreur sur DEUX — « à égalité »
+    pour la règle d'alors, qui ne lisait pas l'empilage. Une couche de plus
+    se paie à la fabrication ; l'escalade est un moyen, pas un résultat.
+    """
+    return len(_COUCHE_CUIVRE_RE.findall(texte or ""))
+
+
 def _note_versionnee(carte: str) -> tuple | None:
-    """(perdus, erreurs, -pourcentage) du board VERSIONNÉ, lu dans git."""
+    """(perdus, erreurs, -pourcentage, couches) du board VERSIONNÉ, lu dans git."""
     rel = "services/kicad/examples/%s/expected" % carte
     m = _git(["show", "HEAD:%s/mesures.json" % rel])
     if m.returncode != 0:
@@ -90,7 +105,8 @@ def _note_versionnee(carte: str) -> tuple | None:
             perdus = max(0, len(decl) - len(_refs_du_texte(b.stdout)))
         except Exception:
             perdus = 0
-    return (perdus, int(v["nb_erreurs"]), -int(mes["routed_percent"]))
+    couches = couches_du_texte(b.stdout) if b.returncode == 0 else 99
+    return (perdus, int(v["nb_erreurs"]), -int(mes["routed_percent"]), couches)
 
 
 def _note_du_tirage(dossier: str, carte: str) -> tuple | None:
@@ -143,7 +159,8 @@ def _note_du_tirage(dossier: str, carte: str) -> tuple | None:
             perdus = max(0, len(decl) - len(_refs_du_texte(lu.stdout)))
         except Exception:
             perdus = 0
-    return (perdus, err, -pct)
+    couches = couches_du_texte(lu.stdout) if lu.returncode == 0 else 99
+    return (perdus, err, -pct, couches)
 
 
 _SUMMARY_RE = re.compile(r"SUMMARY routed=(\d+) drc_violations=(\d+) drc_clean=(\w+)(?: files=\d+)?(?: types=(\S*))?")
