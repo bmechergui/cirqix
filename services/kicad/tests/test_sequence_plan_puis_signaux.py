@@ -35,17 +35,16 @@ from routers import routing as routing_router  # noqa: E402
 
 
 class TestSequenceActive:
-    def test_gnd_est_route_par_defaut_et_confie_au_plan_sur_reglage(self):
-        """Decision du 2026-09-10 (utilisateur, apres la reference STM32 d Astra
-        et `docs/methodologie-routage.md`) : GND est ROUTE en pistes ET coule en
-        plan. Le confier au plan reste un REGLAGE (`gnd_confie_au_plan`), plus
-        le defaut."""
-        assert routing_router._nets_confies_au_plan() == ()
+    def test_gnd_est_confie_au_plan_par_defaut_et_route_sur_reglage(self):
+        """A/B du 2026-09-10 sur le MEME board (carte-05, 2 couches) : GND en
+        pistes 92 %/92 % en 119-154 s, GND au plan 100 %/100 % en ~30 s. Le
+        plan est le defaut (D-2026-09-10-c) ; `gnd_route` remet les pistes."""
+        assert routing_router._nets_confies_au_plan() == ("GND",)
         from tools import reglages_banc
         original = reglages_banc.reglage
         try:
-            reglages_banc.reglage = lambda nom, defaut=None: True if nom == "gnd_confie_au_plan" else defaut
-            assert routing_router._nets_confies_au_plan() == ("GND",)
+            reglages_banc.reglage = lambda nom, defaut=None: True if nom == "gnd_route" else defaut
+            assert routing_router._nets_confies_au_plan() == ()
         finally:
             reglages_banc.reglage = original
 

@@ -41,7 +41,7 @@ initial. Le routage n'est que l'aboutissement.
 |---|---|---|
 | Fanout | En premier, dog-bones ou via-in-pad | Halo d'escape 5 mm au placement ; vias d'échappement réservés dans le DSN. |
 | Signaux critiques | Trajets directs, sans vias superflus, plan de référence continu | Pas de priorisation — Freerouting route tout d'un bloc. |
-| Masse | Multicouche : via court vers le plan, pas de pistes | **2 couches : GND routé en pistes + plan coulé** (depuis le 2026-09-10). |
+| Masse | Multicouche : via court vers le plan, pas de pistes | **2 couches : GND confié au plan coulé**, dogbones + couture. Essayé en pistes le 2026-09-10, réfuté par A/B sur le même board (92 % contre 100 %, D-2026-09-10-c). |
 | Alimentation | Après les critiques, en zones ou pistes larges | Routée avec les signaux. |
 | GPIO | En dernier | Pas de priorisation. |
 
@@ -49,14 +49,18 @@ initial. Le routage n'est que l'aboutissement.
 
 | Recommandation | Chez nous |
 |---|---|
-| **Grille de masse** : pistes H sur Top, V sur Bottom, pistes GND entrelacées reliées par vias | GND routé en pistes ✓. H/V par couche : **à faire** (préférence de direction Freerouting, validé d'avance). |
-| **Ground pour** : remplir Bottom en GND, **ne pas le découper** par de longues pistes transversales | Plan coulé avant routage ✓. La découpe par les signaux n'est pas contrôlée — c'est précisément pourquoi on ne confie plus la connectivité au plan. |
+| **Grille de masse** : pistes H sur Top, V sur Bottom, pistes GND entrelacées reliées par vias | GND en pistes : réfuté sur 2 couches (D-2026-09-10-c) ; réglage `gnd_route` pour un A/B sur 4-6 couches. H/V par couche : **à faire** (préférence de direction Freerouting, validé d'avance). |
+| **Ground pour** : remplir Bottom en GND, **ne pas le découper** par de longues pistes transversales | Plan coulé avant routage ✓. La découpe par les signaux n'est pas contrôlée ; les dogbones et la couture la compensent, et l'A/B du 2026-09-10 montre que confier GND au plan reste ce qui route à 100 %. |
 | **Discontinuités du chemin de retour** : vias de couture aux transitions | Couture d'îlots répétée (`_recoudre_les_ilots`), devenue un complément et non un rattrapage. |
 
 ⚠️ Mesure du 2026-08-28, gardée pour mémoire : router GND en pistes rendait
 `arduino-uno` complète (100 % / 0 manquante) là où le plan seul donnait 93 % / 1.
-La décision de garder le plan en charge a produit douze fonctions de rattrapage
-et un plantage natif sur les cartes denses. Renversée le 2026-09-10.
+La décision de garder le plan en charge a produit douze fonctions de rattrapage.
+Renversée le matin du 2026-09-10, puis **rétablie le jour même** par l'A/B sur le
+même board (`carte-05` : pistes 92 %/92 %, plan 100 %/100 %). Le « plantage
+natif sur les cartes denses » attribué au plan était en réalité le superviseur
+uvicorn qui abattait un worker occupé à relire 564 Mo de journal — voir
+`docs/DECISIONS.md`.
 
 ## 4. Cartes multicouches
 

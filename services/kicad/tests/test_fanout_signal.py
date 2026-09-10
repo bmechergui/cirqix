@@ -68,10 +68,12 @@ def _de(pads, ref):
 
 
 class TestSelection:
-    """⚠️ Depuis le 2026-09-10, GND est ROUTE par defaut (pistes + plan, comme la
-    reference STM32 d Astra ; `docs/methodologie-routage.md`). Une broche GND
-    est donc une broche a echapper comme les autres — sauf quand le reglage
-    `gnd_confie_au_plan` la confie au plan. Les deux cas sont couverts ici."""
+    """GND et l echappement. Le 2026-09-10, GND a ete route en pistes (comme la
+    reference STM32 d Astra) puis REMIS au plan apres A/B sur le meme board :
+    92 %/92 % en pistes contre 100 %/100 % au plan (D-2026-09-10-c). Le defaut
+    est donc le plan ; le reglage `gnd_route` remet les pistes. Une broche
+    GND confiee au plan sort par-dessous et n est pas a echapper ; routee, elle
+    l est comme un signal. Les deux cas sont couverts ici."""
 
     def test_les_pastilles_signal_du_boitier_dense_sont_retenues(self, monkeypatch):
         monkeypatch.setattr(routing, "_NETS_CONFIES_AU_PLAN", ("GND",))

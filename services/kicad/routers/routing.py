@@ -4192,8 +4192,8 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 # change pas.
 #
 # ⚠️ PILOTABLE, pour que l A/B reste possible sans editer ce fichier :
-# `{"gnd_confie_au_plan": true}` dans `/tmp/cirqix-reglages.json` restaure le
-# comportement precedent. Le defaut est desormais « on route GND ».
+# `{"gnd_route": true}` dans `/tmp/cirqix-reglages.json` route GND en pistes.
+# Le defaut est REVENU au plan le 2026-09-10 : voir la mesure dans la fonction.
 def _nets_confies_au_plan() -> tuple[str, ...]:
     """Les nets que le routeur NE route pas, laisses au plan.
 
@@ -4201,13 +4201,27 @@ def _nets_confies_au_plan() -> tuple[str, ...]:
     quelques sites. Un changement de reglage exige un redemarrage du service
     — le module reaffecte cette constante pendant `_router_en_incluant_gnd`.
     """
+    # MESURE DU 2026-09-10 (A/B, MEME board place, carte-05, 2 couches) :
+    #
+    #     GND en pistes    92 %   92 %    119-154 s
+    #     GND au plan     100 %  100 %     27-31 s
+    #
+    # Router GND en pistes sur DEUX couches coute le 100 % et quintuple le
+    # temps : chaque piste de masse coupe le plan et occupe le canal des
+    # signaux. La reference STM32 d Astra route GND en pistes sur SIX couches,
+    # avec deux plans dedies — pas notre cas. Sur nos cartes, la pratique pro
+    # (docs/methodologie-routage.md, Hartley/Bogatin/IPC) est le plan coule sur
+    # les faces exterieures, avec dogbones et couture — ce que la sequence
+    # ci-dessous fait deja. Decision D-2026-09-10-c, sous la delegation de
+    # validation confiee par l utilisateur. `{"gnd_route": true}` dans
+    # `/tmp/cirqix-reglages.json` remet GND en pistes pour un A/B.
     try:
         from tools.reglages_banc import reglage
-        if bool(reglage("gnd_confie_au_plan", False)):
-            return ("GND",)
+        if bool(reglage("gnd_route", False)):
+            return ()
     except Exception:  # noqa: BLE001
         pass
-    return ()
+    return ("GND",)
 
 
 # ⚠️ LUE A L IMPORT, donc un changement de reglage exige un REDEMARRAGE du

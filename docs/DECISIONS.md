@@ -645,6 +645,37 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-10-c — GND revient au PLAN par défaut (prise sous délégation)
+
+**Statut : validée sous la délégation de validation** confiée par l'utilisateur
+(« c'est toi qui valides avec la dernière recherche »). Elle RETIRE la mise en
+œuvre du matin « GND routé en pistes comme la référence STM32 d'Astra », qui
+n'avait jamais été mesurée sur le même board.
+
+A/B sur le MÊME board placé (`carte-05`, 26 composants, 2 couches), appel
+direct de `route_auto`, deux tirages par bras :
+
+    GND en pistes    92 %   92 %    154 s · 119 s   vias 34 · 19
+    GND au plan     100 %  100 %     31 s ·  27 s   vias 38 · 40
+
+Même différence dans la campagne du matin : `carte-05` livrée hier à 100 % en
+41 s (plan) contre 92 % avec 8 erreurs DRC et un essai à 69 % aujourd'hui
+(pistes). Sur deux couches, chaque piste de masse découpe le plan et occupe le
+canal des signaux ; Astra route GND en pistes sur SIX couches avec deux plans
+dédiés — ce n'est pas notre empilage.
+
+Ce que dit la recherche (`docs/methodologie-routage.md`) : sur 2 couches, plan
+de masse coulé sur la face libre, dogbones sur chaque pastille CMS de masse,
+couture des îlots. C'est la séquence déjà en place. « GND en pistes » reste
+disponible par réglage (`{"gnd_route": true}`) pour un futur A/B sur 4 ou 6
+couches, où la mesure pourrait s'inverser.
+
+Leçon : une décision validée SUR UNE RÉFÉRENCE n'est pas validée sur nos
+cartes tant que l'A/B n'est pas fait sur le même board. Elle a coûté une
+matinée de campagne.
+
+---
+
 ## Délégation du 2026-09-10 — méthodologie de routage
 
 L'utilisateur a fourni une synthèse des pratiques de l'industrie (Hartley,
