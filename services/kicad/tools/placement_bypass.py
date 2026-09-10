@@ -98,7 +98,113 @@ def _clusters_natifs(composants):
                 pin.net_name = _nom_kicad_du_rail(getattr(pin, "net_name", ""))
             except Exception:
                 continue  # une pin en lecture seule ne doit pas tuer la detection
-    return detect_functional_clusters(copie)
+    clusters = detect_functional_clusters(copie)
+    return _reattribuer_les_decouplages(clusters, composants)
+
+
+def _reattribuer_les_decouplages(clusters, composants):
+    """Rattache chaque condensateur de decouplage au CI LE PLUS PROCHE sur son
+    rail — pas au premier CI que la detection a parcouru.
+
+    ⚠️ MESURE DU 2026-09-10 sur `carte-05`. `detect_power_clusters` garde un
+    `processed_caps` : le PREMIER IC parcouru rafle toutes les capas de son
+    rail. `U2` (le regulateur) passe avant `U1` (le MCU) et prend les DIX capas
+    de +3V3 — dont `C10`..`C15`, qui decouplent le MCU a 3-6 mm de lui et se
+    retrouvent mesurees a 12-28 mm de `U2`. Sur la reference humaine, `C49` est
+    ancree a 48 mm de `U5` : elle decouple evidemment un autre CI.
+
+    Le snap herite de cet appariement et COLLE LES DECOUPLAGES DU MCU SUR LE
+    REGULATEUR. C est ce que les captures de l utilisateur montraient — pas une
+    distance mal reglee, un mauvais partenaire.
+
+    Regle generale, pas un correctif par carte : une capa decouple le CI qu elle
+    TOUCHE. Sur un rail partage par plusieurs CI, on la donne au plus proche.
+    On ne touche pas au fork ; on recompose les clusters POWER cote Cirqix.
+    """
+    par_ref = {getattr(c, "ref", None): c for c in composants if getattr(c, "ref", None)}
+    power = [c for c in clusters
+             if str(getattr(c, "cluster_type", "")).upper().endswith("POWER")]
+    if len(power) < 2 and not any(len(c.members) > 1 for c in power):
+        return clusters
+    autres = [c for c in clusters if c not in power]
+
+    # ⚠️ LES ANCRES SONT TOUS LES CI QUI ONT UNE BROCHE SUR UN RAIL, pas
+    # seulement ceux a qui la detection a laisse des capas. Mesure du
+    # 2026-09-10 : `U1` (LQFP-48, broches 1 et 24 sur +3V3) n avait AUCUN
+    # cluster POWER — `processed_caps` avait tout donne a `U2`, parcouru avant.
+    # Sans lui dans la liste, aucune reattribution n est possible.
+    rails_de = {}
+    for ref, c in par_ref.items():
+        if len(getattr(c, "pins", None) or []) < 8:
+            continue  # un CI, pas un passif
+        r = set()
+        for pin in c.pins or []:
+            n = getattr(pin, "net_name", "") or ""
+            if n and not n.upper().startswith(("GND", "AGND", "DGND")):
+                nk = _nom_kicad_du_rail(n)
+                if _RE_RAIL_DECIMAL.match(nk) or nk.upper().startswith(("V", "P", "+", "-")):
+                    r.add(nk)
+        if r:
+            rails_de[ref] = r
+    ancres = list(dict.fromkeys([c.anchor for c in power] + list(rails_de)))
+
+    def _pos(ref):
+        c = par_ref.get(ref)
+        return (getattr(c, "x", None), getattr(c, "y", None)) if c else (None, None)
+
+    def _rails(ref):
+        c = par_ref.get(ref)
+        out = set()
+        for pin in getattr(c, "pins", None) or []:
+            n = getattr(pin, "net_name", "") or ""
+            if n and not n.upper().startswith(("GND", "AGND", "DGND")):
+                out.add(_nom_kicad_du_rail(n))
+        return out
+
+    nouveaux = {a: [] for a in ancres}
+    for c in power:
+        for m in c.members:
+            mx, my = _pos(m)
+            if mx is None:
+                nouveaux[c.anchor].append(m)
+                continue
+            rails_m = _rails(m)
+            meilleur, dmin = c.anchor, float("inf")
+            for a in ancres:
+                if not (rails_m & (rails_de.get(a) or _rails(a))):
+                    continue
+                ax, ay = _pos(a)
+                if ax is None:
+                    continue
+                d = ((mx - ax) ** 2 + (my - ay) ** 2) ** 0.5
+                if d < dmin:
+                    meilleur, dmin = a, d
+            nouveaux[meilleur].append(m)
+
+    resultat = list(autres)
+    modele = power[0] if power else None
+    for a in ancres:
+        membres = nouveaux.get(a, [])
+        if not membres:
+            continue
+        existant = next((c for c in power if c.anchor == a), None)
+        if existant is not None:
+            try:
+                existant.members = membres
+            except Exception:
+                pass
+            resultat.append(existant)
+        elif modele is not None:
+            # Un CI que la detection avait laisse vide recoit un cluster POWER
+            # de meme forme que les autres (meme plafond de 3 mm).
+            c = copy.copy(modele)
+            try:
+                c.anchor = a
+                c.members = membres
+            except Exception:
+                continue
+            resultat.append(c)
+    return resultat
 
 # Degagement laisse entre les deux courtyards apres le saut. Assez pour que
 # l'Inspecteur n'ait rien a ecarter dans le cas nominal, assez petit pour que
@@ -664,6 +770,21 @@ def snap_cluster_members(
         # Marge du halo si l'ancre est fine-pitch : sinon on reboucherait le
         # canal d'escape que `_reserve_escape_halos` vient de degager.
         marge = max(marge_mm, marge_dense_mm) if cluster.anchor in denses else marge_mm
+        # ⚠️ UN DECOUPLAGE N EST PAS UN SIGNAL. Le halo de 5 mm protege le canal
+        # d ECHAPPEMENT des signaux d un boitier fine-pitch ; un condensateur de
+        # decouplage, lui, DOIT etre dans ce halo, contre sa broche — c est la
+        # regle de l industrie (« immediately adjacent to the IC power pins »).
+        #
+        # Mesure du 2026-09-10 : avec le halo impose aux capas, le decouplage
+        # plafonne a 4,6-4,7 mm sur carte-05 et carte-09, quand la regle vise
+        # 1 a 3 mm. Le halo et la regle ne sont pas en conflit sur le fond ;
+        # c est notre code qui appliquait le halo a TOUT membre indistinctement.
+        #
+        # Le canal d echappement n en souffre pas : une capa 0603 collee a une
+        # broche VDD occupe UN cote du boitier sur 1,6 mm, elle ne bouche pas les
+        # trois autres ni les 36 signaux qui en sortent.
+        if est_power:
+            marge = marge_mm
 
         for ref in cluster.members:
             fp = par_ref.get(ref)

@@ -60,6 +60,64 @@ _REFERENCE = (_SERVICE / "examples" / "reference-astra-pinas" / "input"
               / "astra_piNas.kicad_pcb")
 
 
+def _decouplage_corps_a_corps(pcb) -> tuple[float, float, int]:
+    """Ecart LIBRE entre le corps d un condensateur de decouplage et la broche
+    d alimentation qu il decouple. Rend (moyenne, max, nombre).
+
+    ⚠️ CORPS-A-CORPS, PAS ORIGINE-A-BROCHE. Mesure du 2026-09-10 sur carte-05 :
+    origine->broche disait 4,6 mm de moyenne ; corps->broche dit 2,8 mm, cinq
+    capas sur huit sous 2 mm. Une 0603 fait 1,6 mm : mesurer depuis son origine
+    ajoute la moitie du boitier et fait echouer une carte conforme. C est le
+    piege « origine vs corps » que CLAUDE.md documente pour le snap — il vaut
+    aussi pour la mesure.
+
+    La regle de l industrie (docs/methodologie-routage.md) : 1 a 3 mm.
+    """
+    import math
+    from tools.placement_bypass import _pastille_partagee, _centre_et_demi, _portee
+    # ⚠️ ON UTILISE LA DETECTION NATIVE, pas une devinette sur le prefixe « C ».
+    # Deuxieme version fausse de cette metrique : la reference humaine sortait
+    # a 26,6 mm — invraisemblable pour une carte pro — parce que je comptais
+    # les 38 condensateurs de +3V3 comme des decouplages de CI, y compris ceux
+    # qui filtrent un connecteur ou un LDO a l autre bout de la carte.
+    # `detect_functional_clusters` sait lesquels decouplent QUEL CI : c est ce
+    # que le snap utilise, donc c est ce que la mesure doit utiliser. Calibrer
+    # sur la source que le code lit — pour la mesure aussi.
+    from tools.placement_bypass import _clusters_natifs, _composants
+    fps = {f.reference: f for f in pcb.footprints if f.reference}
+    couples = []
+    for c in _clusters_natifs(_composants(pcb)):
+        if str(getattr(c, "cluster_type", "")).upper().endswith("POWER"):
+            couples += [(m, c.anchor) for m in c.members]
+    out = []
+    for r, ancre in couples:
+        f = fps.get(r); ci = fps.get(ancre)
+        if f is None or ci is None:
+            continue
+        cis = [ci]
+        # ⚠️ CONTRE LE CI LE PLUS PROCHE sur ce rail, pas le premier trouve.
+        # Premiere version : `break` au premier CI partageant le rail. Sur la
+        # reference humaine, +3V3 touche tous les CI — chaque capa etait mesuree
+        # contre un CI au hasard, et la reference sortait a 43 mm de decouplage.
+        # Une capa decouple le CI qu elle touche, pas un CI au bout du rail.
+        meilleur = None
+        for ci in cis:
+            b = _pastille_partagee(ci, f)
+            if b is None:
+                continue
+            cx, cy, hw, hh = _centre_et_demi(f)
+            dx, dy = cx - b[0], cy - b[1]
+            d = math.hypot(dx, dy) or 1e-9
+            libre = max(0.0, d - _portee(hw, hh, dx / d, dy / d) - 0.35)
+            if meilleur is None or libre < meilleur:
+                meilleur = libre
+        if meilleur is not None:
+            out.append(meilleur)
+    if not out:
+        return (0.0, 0.0, 0)
+    return (sum(out) / len(out), max(out), len(out))
+
+
 def _sur_grille(v: float, pas: float) -> bool:
     return abs(v / pas - round(v / pas)) < 1e-6
 
@@ -85,7 +143,9 @@ def mesurer(chemin: Path) -> dict | None:
     d = [math.dist(pos[a], pos[b]) for _, a, b in paires
          if a in pos and b in pos]
 
+    dm, dx, dn = _decouplage_corps_a_corps(pcb)
     return {
+        "decouplage_moy": dm, "decouplage_max": dx, "decouplage_n": dn,
         "empreintes": len(fps),
         "couches": len(re.findall(r'\((\d+) "(?:F|B|In\d+)\.Cu"', texte)),
         "au_dos": sum(1 for f in fps if getattr(f, "layer", "") == "B.Cu"),
@@ -105,11 +165,10 @@ def _ligne(titre: str, m: dict) -> str:
         paire = "aucune paire"
     else:
         paire = "%5.1f mm (max %5.1f)" % (m["paire_moyenne"], m["paire_max"])
-    return ("%-24s %4d fp · %d couches · %3d au dos · grille %3d/%-4d (%3.0f %%) "
-            "· paires %s"
-            % (titre, m["empreintes"], m["couches"], m["au_dos"],
-               m["sur_grille"], m["empreintes"],
-               100.0 * m["sur_grille"] / m["empreintes"], paire))
+    dec = ("decouplage %.1f mm (max %.1f, %d)" % (m["decouplage_moy"], m["decouplage_max"], m["decouplage_n"])
+           if m["decouplage_n"] else "decouplage -")
+    return ("%-22s %3d fp · grille %3.0f %% · paires %s · %s"
+            % (titre, m["empreintes"], 100.0 * m["sur_grille"] / m["empreintes"], paire, dec))
 
 
 def main(argv: list[str]) -> int:

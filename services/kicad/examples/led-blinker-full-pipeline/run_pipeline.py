@@ -294,7 +294,16 @@ def main() -> int:
     # ⑥b Reasoner — déclenché DÉTERMINISTIQUEMENT si <100% (règle orchestrateur)
     if routed < 100:
         t = _step(6.5, "shouldRescueRouting → POST /reason/auto")
-        res = _post("/reason/auto", {"kicad_pcb_b64": _b64(pcb)})
+        # ⚠️ LE SAUVETAGE NE DOIT PAS JETER LE BOARD OBTENU. Mesure du 2026-09-10,
+        # `carte-09` : essai 1 retenu a 98 %, essai 4 PERDU (worker tue), puis
+        # le reasoner tape sur le meme worker mort -> Traceback, AUCUN SUMMARY.
+        # Un board a 98 % existait et n a pas ete livre. Le reasoner est un
+        # BONUS : s il echoue, on garde ce qu on a et on le dit.
+        try:
+            res = _post("/reason/auto", {"kicad_pcb_b64": _b64(pcb)})
+        except Exception as e:  # noqa: BLE001
+            print("   reasoner PERDU (%s) — on garde le board a %s%%" % (str(e)[:60], routed))
+            res = {}
         if res.get("kicad_pcb_b64") and res.get("routed_percent", 0) >= routed:
             pcb = _unb64(res["kicad_pcb_b64"])
             _write(out / "6b_rescued.kicad_pcb", pcb)
@@ -310,7 +319,14 @@ def main() -> int:
     # a departage. On le rejoue ici UNIQUEMENT pour le rapport final : sans ce
     # passage, `violations` resterait vide et le SUMMARY annoncerait zero.
     t = _step(7, "call_agent_drc \u2192 POST /drc/auto (rapport final)")
-    res = _post("/drc/auto", {"kicad_pcb_b64": _b64(pcb), "auto_fix": True})
+    # ⚠️ Meme protection que le reasoner : le board est DEJA ecrit dans
+    # `6_routed.kicad_pcb`. Un service tombe apres coup ne doit pas effacer le
+    # verdict de la boucle — on rend le DRC de l essai retenu, deja mesure.
+    try:
+        res = _post("/drc/auto", {"kicad_pcb_b64": _b64(pcb), "auto_fix": True})
+    except Exception as e:  # noqa: BLE001
+        print("   DRC final PERDU (%s) — verdict de la boucle conserve" % str(e)[:60])
+        res = {"drc_clean": meilleur[0][1] == 0, "violations": [], "skipped": False}
     if res.get("kicad_pcb_b64"):
         pcb = _unb64(res["kicad_pcb_b64"])
         _write(out / "7_drc.kicad_pcb", pcb)
@@ -323,7 +339,11 @@ def main() -> int:
 
     # ⑧ Export ---------------------------------------------------------------
     t = _step(8, "call_agent_export → POST /export/all")
-    res = _post("/export/all", {"kicad_pcb_b64": _b64(pcb), "project_id": "led-blinker"})
+    try:
+        res = _post("/export/all", {"kicad_pcb_b64": _b64(pcb), "project_id": "led-blinker"})
+    except Exception as e:  # noqa: BLE001
+        print("   export PERDU (%s) — le board route est livre sans Gerbers" % str(e)[:60])
+        res = {"files": []}
     if res.get("zip_b64"):
         (out / "8_gerbers.zip").write_bytes(base64.b64decode(res["zip_b64"]))
     _done(t, fichiers=len(res.get("files", [])), devis=f"${res.get('quote_usd')}",
