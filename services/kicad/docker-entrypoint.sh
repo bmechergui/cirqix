@@ -59,6 +59,11 @@ Xvfb :99 -screen 0 1024x768x24 -ac &
 # invisible — sans journal la fonction rend 0 passe plate, ce qui signifie
 # « tout va bien ».
 mkdir -p /tmp/freerouting
+# ⚠️ Le journal grossit toute la vie de la JVM — 564 Mo mesures le 2026-09-10,
+# et c est sa TAILLE qui faisait abattre les workers (voir
+# tools/journal_freerouting.py). Il n est lu que par increments depuis le
+# depart d un job : rien d anterieur au demarrage ne sert. On repart vide.
+: > /tmp/freerouting/freerouting.log
 java -jar /opt/freerouting/freerouting.jar \
     --api_server.enabled=true \
     --user_data_path=/tmp/freerouting &
