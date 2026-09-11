@@ -103,7 +103,16 @@ le bind-mount de développement.
 
 - **Fork privé :** https://github.com/bmechergui/kicad-tools (`cirqix`)
 - **Upstream :** https://github.com/rjwalters/kicad-tools
-- **SHA épinglé :** `16aa43191fc86526013b6eaaaa63eb46de7d67b7`
+- **SHA épinglé :** `839a5b96f7b8da130d6d97add95c215484373668` (vérifié le
+  2026-09-11 par `git ls-tree HEAD kicad-tools` — l'ancienne mention
+  `16aa431` était 4 commits en amont : 3 CI + retouche du patch #1)
+- **Patches réellement portés (2026-09-11) : 5** — #1, #2, #3, #4, #7 (#5 retiré
+  par `16aa4319`, #6/#8 retirés le 2026-07-18, #9 jamais appliqué)
+- **Retard sur upstream (2026-09-11) :** 331 commits / 31 jours ; `optim/` et
+  `sexp/` inchangés, `router/` +8,7 k lignes, `placement/cost.py` change
+  l'objectif du CMA-ES (#4857). `git merge-tree` : 2 conflits triviaux
+  (`.gitignore`, `reasoning/state.py`). Rebase recommandé, à valider par le
+  banc — pas par les tests unitaires seuls.
   (rebase du 2026-08-10 sur `upstream/main` @ `627f3e44`, 221 commits rattrapés ;
   tags de protection `cirqix-pin-16aa431`, `cirqix-pin-5c4c926` et
   `cirqix-pin-f2afb96`. Le SHA

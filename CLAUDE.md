@@ -1961,7 +1961,10 @@ dans `DEPENDENCIES.md`.
 
 ### kicad-tools (fork privé complet — sous-module)
 - **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink
-  `16aa43191fc86526013b6eaaaa63eb46de7d67b7` (rebasé le 2026-08-10 sur
+  `839a5b96f7b8da130d6d97add95c215484373668` (vérifié le 2026-09-11 : c'est
+  le gitlink réel, 4 commits après `16aa431` — 3 CI + une retouche du patch
+  #1 ; 5 patches réellement portés : #1, #2, #3, #4, #7 ; upstream a 331
+  commits d'avance, rebase recommandé, 2 conflits triviaux) (rebasé le 2026-08-10 sur
   `upstream/main` @ `627f3e44`, 221 commits rattrapés) ; upstream
   github.com/rjwalters/kicad-tools.
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; package Python `kicad_tools`).
