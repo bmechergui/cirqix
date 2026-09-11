@@ -482,7 +482,16 @@ consomme du CPU et de la memoire jusqu a tuer son hote.
 
 ## D-2026-09-10-b — Escalade de couches INCREMENTALE
 
-**Statut : en attente.** Souleve par l utilisateur le 2026-09-10.
+**Statut : validée** par l'utilisateur le 2026-09-11 (« normalement on garde
+le routage et on augmente, on ne répète pas de zéro »). Implémentée : au
+changement de palier, les pistes du meilleur board du palier quitté sont
+ajoutées à `_PISTES_A_PROTEGER` (même mécanisme que le repli GND, `(type
+protect)` dans le DSN) ; le palier suivant ne route que ce qui manque.
+Réglage `escalade_incrementale` (défaut : vrai). Garde :
+`tests/test_escalade_incrementale.py`. Mesure à faire sur carte-08/10 (98 %
+à 2 couches) : le 4 couches doit rendre ≥ 98 %, jamais moins.
+
+Historique (avant validation) : souleve par l utilisateur le 2026-09-10.
 
 **Son argument, et il est juste :** ajouter des couches ne peut que donner PLUS
 de ressources. On devrait garder les pistes des 2 couches et ne router que ce

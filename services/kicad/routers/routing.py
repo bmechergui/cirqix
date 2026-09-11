@@ -1454,6 +1454,18 @@ _SEUIL_REDRAW_PCT: int = 80
 _CONDAMNE_PCT: int = 50
 
 
+def _escalade_incrementale() -> bool:
+    """Le palier suivant garde-t-il les pistes du meilleur board du palier
+    quitte ? Defaut : oui (D-2026-09-10-b). Reglage `escalade_incrementale`
+    pour l A/B — la mesure anterieure (kicad-tools, `--preserve-existing`)
+    est perimee et ne vaut pas pour Freerouting."""
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("escalade_incrementale", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _placement_condamne(fige_max: int) -> bool:
     """Tous les tirages ont fige et le meilleur d entre eux reste sous le
     seuil : la carte n est pas a portee, on ne paie pas la derniere chance."""
@@ -5124,6 +5136,21 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "meilleur board (%d%%) PROTEGEES, le routeur complete "
                         "au lieu de repartir de zero",
                         palier, n_fils, meilleur.routed_percent)
+            # ⚠️ ESCALADE INCREMENTALE (D-2026-09-10-b, validee par l utilisateur
+            # le 2026-09-11 : « normalement on garde le routage et on ajoute »).
+            # Le palier suivant recoit les pistes du MEILLEUR board du palier
+            # quitte, PROTEGEES dans le DSN : il n a plus qu a router ce qui
+            # manque sur les couches ajoutees. Jusqu ici chaque palier
+            # repartait du board place — un autre tirage, donc parfois pire
+            # (stm32-100 : 99 % a 2 couches, puis 87 % a 4).
+            if (palier_courant is not None and meilleur is not None
+                    and meilleur.kicad_pcb_b64 and _escalade_incrementale()):
+                _ajouter_aux_pistes_protegees(base64.b64decode(meilleur.kicad_pcb_b64))
+                logger.info(
+                    "route_auto: escalade INCREMENTALE — les pistes du meilleur "
+                    "board a %d couches (%d%%) sont protegees, le palier a %d "
+                    "couches ne route que ce qui manque",
+                    palier_courant, meilleur.routed_percent, palier)
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
