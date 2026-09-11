@@ -654,6 +654,28 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-11-b — une carte qui stagne à son plafond de couches est AGRANDIE et re-placée
+
+**Statut : en attente.** Décision produit : la taille de la carte est une
+donnée visible du client (le générateur la dimensionne au nombre de composants).
+
+Mesure du 2026-09-11 sur `carte-08` (56 composants, 125 × 95 mm, plafond 98 %
+depuis 24 h quels que soient placement, couches et routeur) : le MÊME schéma,
+contour **150 × 114 mm (+20 %)**, placement complet (contrainte + rangées),
+**100 % à 2 couches, 0 erreur** au premier tirage (1308 s dont attente du
+verrou). Le levier des cartes denses n'est ni le routeur ni les couches :
+c'est l'espace.
+
+Proposition, générale : dans la boucle de la chaîne, quand un placement a
+été routé à son plafond de couches sans atteindre 100 % (ou que le plancher
+d'échappement dépasse le plafond), le contour est agrandi de 20 % (règle
+`taille_carte`, qui sait déjà réécrire `Edge.Cuts`) et la carte est
+re-placée — au lieu de re-tirer indéfiniment. Un pas maximal (par ex. deux
+agrandissements) borne la surface. Le client voit une carte plus grande et
+moins chère (2 couches) plutôt qu'une carte à 98 % sur 6 couches.
+
+Ne pas implémenter avant validation.
+
 ## D-2026-09-11-a — plancher d'échappement > palier : UN tirage de preuve, puis escalade
 
 **Statut : validée** par l'utilisateur le 2026-09-11 (« ok go »). Implémentée :
