@@ -28,10 +28,13 @@ def test_active_par_defaut_et_desarmable():
 def test_le_changement_de_palier_protege_le_meilleur_board():
     code = "\n".join(l.split("#")[0] for l in inspect.getsource(R.route_auto).splitlines())
     i_test = code.find("_escalade_incrementale()")
-    i_prot = code.find("_ajouter_aux_pistes_protegees(base64.b64decode(meilleur.kicad_pcb_b64))")
+    i_prot = code.find("_PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]")
     i_palier = code.find("palier_courant, meilleur_du_palier = palier, 0")
     assert i_test != -1 and i_prot != -1 and i_palier != -1
     assert i_test < i_prot < i_palier, "la protection doit preceder l entree dans le nouveau palier"
+    # UNE seule protection par changement de palier : la doubler double les
+    # fils dans le DSN (mesure du 2026-09-11 : 88 % -> 79 %).
+    assert code.count("_ajouter_aux_pistes_protegees(base64.b64decode(meilleur") == 0
 
 
 def test_les_pistes_protegees_s_ajoutent_sans_effacer():

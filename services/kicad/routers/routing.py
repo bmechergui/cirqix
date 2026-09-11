@@ -2075,6 +2075,22 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
 # Un nom inconnu ferait rejeter le DSN par Freerouting.
 _PADSTACK_VIA = "Via[0-1]_600:300_um"
 
+# ⚠️ CE NOM N EST JUSTE QUE SUR DEUX COUCHES. pcbnew nomme le padstack par
+# l intervalle de couches du via : `Via[0-1]` a 2 couches, `Via[0-3]` a 4,
+# `Via[0-5]` a 6. Mesure du 2026-09-11, 09:08, palier 4 couches :
+# « Wiring.read_via_scope: via padstack not found » — Freerouting JETAIT tous
+# les vias injectes (dogbones, vias reserves, vias des pistes protegees), et
+# l escalade rendait 79 % apres 88 % a 2 couches. Le nom est donc lu dans le
+# DSN au moment de l injection ; la constante ne sert que de PLACEHOLDER.
+_USE_VIA_RE = re.compile(r'\(use_via\s+"?([^"\s()]+)"?\s*\)')
+
+
+def _padstack_via_du_dsn(dsn_text: str) -> str:
+    """Le padstack de via que CE DSN declare (`(use_via "…")`), ou la
+    constante a 2 couches s il n en declare aucun."""
+    m = _USE_VIA_RE.search(dsn_text or "")
+    return m.group(1) if m else _PADSTACK_VIA
+
 # Vias reserves pour l appel de routage en cours. Variable de module parce que
 # `_export_specctra` est appele depuis deux chemins (API et sous-processus)
 # et qu il faut injecter aux DEUX — un seul site oublie et la reservation ne
@@ -2141,6 +2157,7 @@ _SEGMENT_COMPLET_RE = re.compile(
 _NET_NOM_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
 
 
+_CHAMP_AT_RE = re.compile(r"\(at\s+(-?[\d.]+)\s+(-?[\d.]+)")
 _CHAMP_START_RE = re.compile(r"\(start\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
 _CHAMP_END_RE = re.compile(r"\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
 _CHAMP_WIDTH_RE = re.compile(r"\(width\s+([\d.]+)\)")
@@ -2357,6 +2374,24 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
                float(x1) * 1000.0, -float(y1) * 1000.0,
                float(x2) * 1000.0, -float(y2) * 1000.0,
                _nom_pour_dsn(nom)))
+    # ⚠️ LES VIAS AUSSI. On ne protegeait que les segments : chaque changement
+    # de couche d une piste protegee etait ROMPU, et le routeur devait refaire
+    # ces nets — mesure du 2026-09-11 : 88 % a 2 couches, 79 % a 4 « avec »
+    # 673 pistes protegees. Meme transformation d unites que les segments ;
+    # le padstack est un placeholder remplace par celui du DSN a l injection.
+    for bloc in _blocs_equilibres(txt, "(via"):
+        at = _CHAMP_AT_RE.search(bloc)
+        n = _CHAMP_NET_RE.search(bloc)
+        if not (at and n):
+            continue
+        num, nomme = n.group(1) or "", n.group(2) or ""
+        nom = nomme or (noms.get(int(num)) if num and int(num) else None)
+        if not nom:
+            continue
+        lignes.append(
+            '    (via "%s" %.1f %.1f (net %s) (type protect))'
+            % (_PADSTACK_VIA, float(at.group(1)) * 1000.0,
+               -float(at.group(2)) * 1000.0, _nom_pour_dsn(nom)))
     return chr(10).join(lignes)
 
 
@@ -2578,6 +2613,11 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
     bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
+    # Le padstack de via est celui de CE DSN (2, 4 ou 6 couches), jamais la
+    # constante : voir `_padstack_via_du_dsn`.
+    padstack = _padstack_via_du_dsn(dsn_text)
+    if padstack != _PADSTACK_VIA:
+        bloc = bloc.replace('"%s"' % _PADSTACK_VIA, '"%s"' % padstack)
     i = dsn_text.find("(wiring")
     if i == -1:
         logger.warning("DSN sans bloc (wiring) — reservation abandonnee")
@@ -5118,7 +5158,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Mon objection initiale citait la mesure du 2026-08-01 sur
             # `--preserve-existing` de `kct route` : un moteur que la cascade
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
-            if meilleur is not None and meilleur.kicad_pcb_b64:
+            if meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale():
                 _PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]
                 # ⚠️ COMPTER les fils, ne pas se contenter d annoncer. Le
                 # 2026-08-31 au matin, ce meme mecanisme en injectait ZERO
@@ -5143,14 +5183,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # manque sur les couches ajoutees. Jusqu ici chaque palier
             # repartait du board place — un autre tirage, donc parfois pire
             # (stm32-100 : 99 % a 2 couches, puis 87 % a 4).
-            if (palier_courant is not None and meilleur is not None
-                    and meilleur.kicad_pcb_b64 and _escalade_incrementale()):
-                _ajouter_aux_pistes_protegees(base64.b64decode(meilleur.kicad_pcb_b64))
-                logger.info(
-                    "route_auto: escalade INCREMENTALE — les pistes du meilleur "
-                    "board a %d couches (%d%%) sont protegees, le palier a %d "
-                    "couches ne route que ce qui manque",
-                    palier_courant, meilleur.routed_percent, palier)
+            # La protection elle-meme est faite quinze lignes plus haut
+            # (« passage a N couches — pistes PROTEGEES ») ; l ajouter ici une
+            # seconde fois DOUBLAIT les fils dans le DSN (mesure du 2026-09-11,
+            # 09:08 : 673 pistes protegees deux fois, 4 couches -> 79 % apres
+            # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
