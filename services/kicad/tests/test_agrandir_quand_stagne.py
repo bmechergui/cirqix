@@ -40,6 +40,10 @@ class TestTailleSuivante:
     def test_un_plafond_de_2_couches_agrandit_des_2(self):
         assert RP.taille_suivante(70, 50, 92, 8, couches=2, plafond=2, agrandissements=0)[2] == 1
 
+    def test_un_zero_n_agrandit_rien(self):
+        """0 % = panne ou placement condamne, pas un manque d espace (carte-09, 2026-09-12)."""
+        assert RP.taille_suivante(130, 100, 0, 240, couches=6, plafond=6, agrandissements=0) == (130, 100, 0)
+
     def test_la_boucle_de_la_chaine_l_appelle(self):
         code = "\n".join(l.split("#")[0] for l in inspect.getsource(RP.main).splitlines())
         assert "taille_suivante(" in code and "board_w, board_h, agrandissements = " in code

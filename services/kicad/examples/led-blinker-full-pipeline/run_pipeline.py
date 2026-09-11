@@ -397,6 +397,11 @@ def taille_suivante(board_w: float, board_h: float, routed: int, erreurs: int,
     peu plus grande a 2 couches coute moins cher qu une carte a 98 % sur 6.
     Rend (largeur, hauteur, agrandissements) pour l essai suivant."""
     au_plafond = couches is None or int(couches) >= int(plafond)
+    # ⚠️ Un ZERO n est pas un verdict de routage mais une panne (aucun moteur,
+    # placement condamne) : carte-09 a ete agrandie de 130x100 a 156x120 sur
+    # un 0 % a 240 erreurs DRC (2026-09-12). De l espace n y change rien.
+    if routed <= 0:
+        return (board_w, board_h, agrandissements)
     if (routed >= 100 and erreurs == 0) or not au_plafond or agrandissements >= maxi:
         return (board_w, board_h, agrandissements)
     return (round(board_w * _AGRANDISSEMENT, 1), round(board_h * _AGRANDISSEMENT, 1),
