@@ -257,10 +257,28 @@ mesure, **non validés** :
 - Campagne en cours : `/tmp/campagne-1789040706` (11 cartes × 2), à livrer
   par `scripts/livrer_campagne.py` — **ne remplace que si meilleur**.
 
+## État au 2026-09-11 matin (commits `24689b4` → `f9288dc`)
+
+- **Placement structuré, étape 2 livrée** (`0baf8d0`) : un `GroupingConstraint`
+  natif par CI (ses découplages à corps + 3 mm) entre dans le GA. Mesure sur
+  carte-09 (62 composants), même board généré : découplage **19,0 → 4,2 mm**
+  (max 28,8 → 7,4), paires 34 → 37 mm (bruit). Objectif ≤ 5 mm atteint.
+- **Escalade incrémentale validée et réparée** : deux défauts rendaient
+  4 couches pires que 2 — padstack de via codé `Via[0-1]` (jeté par
+  Freerouting à 4/6 couches), pistes protégées sans leurs vias. Corrigés
+  (`f9288dc`), mesure en cours sur carte-10/08.
+- Livré cette nuit : carte-09 100 % / 0 erreur / 2 couches. carte-08 et 10 :
+  98 % avec le routage d'aujourd'hui ; leur 100 % du 07/09 était un tirage
+  chanceux (bissection : ancien code 98 % en 8 min).
+- Campagne en cours : `/tmp/campagne-1789119243` (10, 08, 07 × 2).
+
 ## Reste à faire
 
+- **Placement structuré, étapes 1, 7, 8** : graine hiérarchique par grappes
+  (réglage `graine_hierarchique`, à mesurer), échange de place quand l'anneau
+  du CI est occupé, `kct placement align/distribute` pour les rangées LED/R.
 - **C1** — livrer `expected/placement.kicad_pcb` pour les onze cartes (le
-  mécanisme existe, `scripts/livrer_placements.py` ; 01-06 couvertes, les
+  mécanisme existe, `scripts/livrer_placements.py` ; 01-06, 09 couvertes, les
   autres attendent la campagne ci-dessus).
 - **A3** — espacer la sérigraphie (`silk_over_copper`, `silk_overlap`).
 - **D1** — la carte de référence réelle, type `astra_piNas`.
