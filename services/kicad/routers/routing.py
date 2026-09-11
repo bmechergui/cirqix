@@ -2162,6 +2162,46 @@ def _bloc_wiring(vias: list, net: str) -> str:
 # bas, et le faire descendre par signature traverserait toute la cascade.
 _PISTES_A_PROTEGER: Optional[bytes] = None
 
+# Positions (mm) des pastilles encore NON RELIEES du meilleur board au moment
+# de l escalade : autour d elles, les pistes protegees sont LIBEREES.
+#
+# ⚠️ Question de l utilisateur, 2026-09-11 : « comment escalade-t-on a 4
+# couches en gardant 96 % ? avec deux couches de plus c est impossible que ce
+# ne soit pas 100 % ». Mesure carte-08 : les nets restants sont `GND` et un
+# signal, et le fanout dit « aucune sortie degagee » — la pastille est
+# ENCERCLEE par les pistes du palier precedent, que l escalade protege
+# toutes. Deux couches libres ne servent a rien si aucun via ne peut etre
+# pose a cote de la pastille. On protege donc tout SAUF un rayon de
+# `_RAYON_LIBERATION_MM` autour de chaque pastille non reliee : le routeur y
+# reprend la main. Reglage `liberer_autour_des_non_reliees`.
+_ZONES_LIBEREES: list = []
+_RAYON_LIBERATION_MM: float = 2.5
+
+
+def _positions_non_reliees(rapport_drc: dict) -> list:
+    """Positions (mm) des items des connexions manquantes du rapport DRC."""
+    out = []
+    for item in (rapport_drc or {}).get("unconnected_items", []) or []:
+        for i in item.get("items") or []:
+            pos = i.get("pos") or {}
+            try:
+                out.append((float(pos["x"]), float(pos["y"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def _liberation_active() -> bool:
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("liberer_autour_des_non_reliees", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _pres_d_une_zone_liberee(x: float, y: float, zones, rayon: float) -> bool:
+    return any((x - zx) ** 2 + (y - zy) ** 2 <= rayon * rayon for zx, zy in zones)
+
 # ⚠️ NOM DISTINCT de `_SEGMENT_RE` (ligne ~847), qui sert a `_track_length_mm`
 # et ne capture que quatre groupes. Reutiliser le nom l ecrasait EN SILENCE :
 # la mesure de longueur recevait sept groupes au lieu de quatre. Attrape par
@@ -2344,7 +2384,7 @@ def _champs_de_segment(bloc: str):
             w.group(1), c.group(1), n.group(1) or "", n.group(2) or "")
 
 
-def _bloc_wiring_pistes(pcb_bytes) -> str:
+def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
     """Pistes du board, au format Specctra, marquees `(type protect)`.
 
     ⚠️ RAISON D ETRE : le DSN produit par pcbnew porte un bloc `(wiring)` VIDE
@@ -2372,15 +2412,23 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
     # routage. Les traiter l un OU l autre perdait l un des deux.
     if isinstance(pcb_bytes, (list, tuple)):
         return chr(10).join(
-            x for x in (_bloc_wiring_pistes(b) for b in pcb_bytes) if x)
+            x for x in (_bloc_wiring_pistes(b, liberer=liberer) for b in pcb_bytes) if x)
     txt = pcb_bytes.decode("utf-8", "replace")
     noms = {int(n): nom for n, nom in _NET_NOM_RE.findall(txt)}
+    zones = list(liberer or ())
+    liberes = 0
     lignes = []
     for bloc in _blocs_equilibres(txt, "(segment"):
         champs = _champs_de_segment(bloc)
         if champs is None:
             continue
         x1, y1, x2, y2, largeur, couche, num, nomme = champs
+        # Autour d une pastille non reliee, on ne protege RIEN : le routeur
+        # doit pouvoir y poser un via (voir `_ZONES_LIBEREES`).
+        if zones and (_pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
+                      or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
+            liberes += 1
+            continue
         # Forme nommee : le nom est la. Forme numerotee : on cherche la
         # declaration ; absente, on ECARTE — jamais on ne devine un net.
         if nomme:
@@ -2411,10 +2459,18 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
         nom = nomme or (noms.get(int(num)) if num and int(num) else None)
         if not nom:
             continue
+        if zones and _pres_d_une_zone_liberee(float(at.group(1)), float(at.group(2)),
+                                              zones, _RAYON_LIBERATION_MM):
+            liberes += 1
+            continue
         lignes.append(
             '    (via "%s" %.1f %.1f (net %s) (type protect))'
             % (_PADSTACK_VIA, float(at.group(1)) * 1000.0,
                -float(at.group(2)) * 1000.0, _nom_pour_dsn(nom)))
+    if liberes:
+        logger.info("pistes protegees : %d segment(s)/via(s) LIBERE(S) autour de %d "
+                    "pastille(s) non reliee(s) (rayon %.1f mm) — le routeur y reprend la main",
+                    liberes, len(zones), _RAYON_LIBERATION_MM)
     return chr(10).join(lignes)
 
 
@@ -2630,7 +2686,8 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
     # Les pistes deja routees du meilleur board, protegees pour le palier
     # suivant : c est ce qui rend l escalade CUMULATIVE au lieu de repartir de
     # zero a chaque fois.
-    fils = _bloc_wiring_pistes(pistes) if pistes else ""
+    fils = (_bloc_wiring_pistes(pistes, liberer=_ZONES_LIBEREES if _liberation_active() else None)
+            if pistes else "")
     if declares:
         fils = _garder_les_nets_declares(fils, declares, "piste")
     bloc = chr(10).join(x for x in (bloc, fils) if x)
@@ -5085,8 +5142,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # ⚠️ Etat de MODULE, arme a l entree comme `_ABANDON_AUTORISE` : le laisser
     # traîner ferait proteger, dans une requete suivante, les pistes d une
     # carte qui n a rien a voir.
-    global _PISTES_A_PROTEGER
+    global _PISTES_A_PROTEGER, _ZONES_LIBEREES
     _PISTES_A_PROTEGER = None
+    _ZONES_LIBEREES = []
     # ⚠️ Etat de module : sans remise a zero on recupererait le job d une AUTRE
     # carte, routee dans la requete precedente du meme worker.
     _JOBS_ABANDONNES.clear()
@@ -5187,6 +5245,17 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
             if meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale():
                 _PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]
+                # Autour des pastilles que ce board n a PAS reliees, on ne
+                # protege rien : sinon deux couches de plus ne debloquent pas
+                # une pastille encerclee (question de l utilisateur, carte-08
+                # a 96 % de 2 a 6 couches). Un DRC du meilleur board (~5 s).
+                if _liberation_active():
+                    try:
+                        _ZONES_LIBEREES = _positions_non_reliees(
+                            _rapport_drc(_PISTES_A_PROTEGER[0]))
+                    except Exception as exc:  # noqa: BLE001
+                        _ZONES_LIBEREES = []
+                        logger.warning("liberation autour des non reliees impossible (%s)", exc)
                 # ⚠️ COMPTER les fils, ne pas se contenter d annoncer. Le
                 # 2026-08-31 au matin, ce meme mecanisme en injectait ZERO
                 # (le net nomme de KiCad 10) tout en affichant un message
