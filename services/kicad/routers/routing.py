@@ -1341,10 +1341,32 @@ _TIRAGES_ROUTAGE_PAR_PALIER = 3
 _TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
 
 
-def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
-    """Repete chaque palier `tirages` fois, dans l ordre.
+def _tirage_de_preuve() -> bool:
+    """D-2026-09-11-a (validee par l utilisateur) : sous le plancher
+    d echappement, UN seul tirage de preuve par palier. Reglage
+    `tirage_de_preuve` pour l A/B."""
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("tirage_de_preuve", True))
+    except Exception:  # noqa: BLE001
+        return True
 
-        [2, 4], 3  ->  [2, 2, 2, 4, 4, 4]
+
+def _paliers_avec_tirages(echelle: list, tirages: int, plancher: int = 0,
+                          preuve: int = 1) -> list:
+    """Repete chaque palier `tirages` fois, dans l ordre — sauf SOUS le
+    plancher d echappement, ou chaque palier n a droit qu a `preuve` tirage.
+
+        [2, 4], 3              ->  [2, 2, 2, 4, 4, 4]
+        [2, 4], 3, plancher=4  ->  [2, 4, 4, 4]
+
+    ⚠️ D-2026-09-11-a. Mesure sur carte-08 (56 composants, plancher 4,
+    budget 1800 s) : trois tirages a 2 couches (fige 80 %, 69 %, fige 80 %)
+    ont brule TOUT le budget et le palier 4 a rendu « 0 % (aucun moteur) »,
+    deux essais de suite. On garde le depart a 2 couches — le client ne paie
+    pas une couche sur une prevision (decision du 2026-08-29) — mais la
+    preuve « 2 ne suffisent pas » ne coute plus qu un tirage. Les bonus de
+    tirages a portee de 100 % (`_tirages_bonus`) s appliquent toujours.
 
     L ordre compte : on epuise 2 couches AVANT de payer 4, une carte a moins de
     couches coutant moins cher a fabriquer.
@@ -1359,7 +1381,8 @@ def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
     """
     if tirages <= 1:
         return list(echelle)
-    return [palier for palier in echelle for _ in range(tirages)]
+    return [palier for palier in echelle
+            for _ in range(max(1, preuve) if palier < plancher else tirages)]
 
 
 def _est_une_panne(res) -> bool:
@@ -5068,7 +5091,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # carte, routee dans la requete precedente du meme worker.
     _JOBS_ABANDONNES.clear()
     essais = _paliers_avec_tirages(
-        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
+        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER,
+        plancher=plancher if _tirage_de_preuve() else 0)
+    if plancher > 2 and _tirage_de_preuve():
+        logger.info("route_auto: sous le plancher de %d couches, un seul tirage de "
+                    "preuve par palier (D-2026-09-11-a) — echelle %s", plancher, essais)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui

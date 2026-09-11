@@ -656,8 +656,11 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-11-a — plancher d'échappement > palier : UN tirage de preuve, puis escalade
 
-**Statut : en attente.** Décision produit : elle nuance la décision utilisateur
-du 2026-08-29 (« on part toujours de 2 couches »).
+**Statut : validée** par l'utilisateur le 2026-09-11 (« ok go »). Implémentée :
+`_paliers_avec_tirages(…, plancher=…)` — un tirage par palier sous le
+plancher, trois à partir du plancher ; réglage `tirage_de_preuve`. Garde :
+`tests/test_tirage_de_preuve.py`. Elle nuance la décision du 2026-08-29
+(« on part toujours de 2 couches »), qu'elle conserve.
 
 Mesure du 2026-09-11 sur `carte-08` (56 composants, plancher calculé : 4
 couches, budget 1800 s) : trois tirages à 2 couches (figé 80 %, 69 %, figé
