@@ -46,3 +46,16 @@ def test_les_pistes_protegees_s_ajoutent_sans_effacer():
         assert list(R._PISTES_A_PROTEGER) == [b"a", b"b"]
     finally:
         R._PISTES_A_PROTEGER = memoire
+
+
+def test_un_board_hors_de_portee_n_est_pas_protege():
+    """55 % proteges a 4 couches -> 6 couches fige a 59 % (carte-08, 2026-09-11) :
+    sous le seuil de re-tirage, le palier suivant repart de zero."""
+    assert R._vaut_la_peine_de_proteger(R._SEUIL_REDRAW_PCT) is True
+    assert R._vaut_la_peine_de_proteger(R._SEUIL_REDRAW_PCT - 1) is False
+    assert R._vaut_la_peine_de_proteger(None) is False
+    import inspect
+    code = chr(10).join(l.split("#")[0] for l in inspect.getsource(R.route_auto).splitlines())
+    i_v = code.find("_vaut_la_peine_de_proteger(meilleur.routed_percent)")
+    i_p = code.find("_PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]")
+    assert i_v != -1 and i_p != -1 and i_v < i_p

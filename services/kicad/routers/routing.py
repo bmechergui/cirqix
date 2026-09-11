@@ -1474,6 +1474,16 @@ def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
 # entiers ; seuls ceux d un palier hors d atteinte sont abandonnes.
 _SEUIL_REDRAW_PCT: int = 80
 
+
+def _vaut_la_peine_de_proteger(pct) -> bool:
+    """Le meilleur board merite-t-il d etre COMPLETE au palier suivant ?
+    Meme seuil que le re-tirage : sous `_SEUIL_REDRAW_PCT`, ses pistes sont un
+    handicap, pas un acquis (carte-08 : 55 % proteges -> 59 % fige)."""
+    try:
+        return int(pct) >= _SEUIL_REDRAW_PCT
+    except Exception:  # noqa: BLE001
+        return False
+
 # En dessous de ce pourcentage, un placement dont TOUS les tirages ont fige
 # est CONDAMNE : ni « derniere chance », ni repli GND — on rend la main pour
 # que l appelant RE-PLACE. Mesure du 2026-09-10 sur carte-05, essai 1 :
@@ -3940,6 +3950,13 @@ def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
         autres = [(d, k) for _, d, k in autres]
         for _, k in autres[:max(0, int(voisines))]:
             pins.add("%s-%s" % k)
+        # ⚠️ DIRE le choix : le 2026-09-11 le worker rendait des broches de
+        # LQFP la ou le meme code, hors service, choisissait C32/C35.
+        logger.info(
+            "repli GND cible : %s-%s -> %d pastille(s) %s connue(s), %d candidate(s), "
+            "retenues %s", cle[0], cle[1], len(positions), "/".join(sorted(nets_plan)),
+            len(autres), ", ".join("%s-%s (%.1f mm, %d pads)" % (k[0], k[1], d, _PADS_PAR_BOITIER.get(k[0], 0))
+                                   for d, k in autres[:max(0, int(voisines))]) or "aucune")
     return pins
 
 
@@ -5522,7 +5539,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Mon objection initiale citait la mesure du 2026-08-01 sur
             # `--preserve-existing` de `kct route` : un moteur que la cascade
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
-            if meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale():
+            if (meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale()
+                    and not _vaut_la_peine_de_proteger(meilleur.routed_percent)):
+                # Hors de portee, on REFAIT (55 % proteges -> 59 % fige, carte-08).
+                _PISTES_A_PROTEGER = None
+                _ZONES_LIBEREES = []
+                logger.info(
+                    "route_auto: %d%% est hors de portee (seuil %d%%) — le palier "
+                    "%d couches repart de zero, rien n est protege",
+                    meilleur.routed_percent, _SEUIL_REDRAW_PCT, palier)
+            elif meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale():
                 _PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]
                 # Autour des pastilles que ce board n a PAS reliees, on ne
                 # protege rien : sinon deux couches de plus ne debloquent pas
