@@ -101,6 +101,8 @@ Régénération : `scripts/vues_index.py --rendre`.
 ## Ce qui reste ouvert
 
 - campagne 1789150495 (08/09/10) : première mesure de la règle
-  d'agrandissement dans la boucle ; à porter ensuite dans `run-orchestrator.ts`.
+  d'agrandissement dans la boucle. La même règle est portée en production
+  (`packages/agents/src/engines/board-growth.ts`, câblée dans les deux boucles
+  de re-tirage de `orchestrator.ts`, plafond = celui du plan).
 - sérigraphie : références qui se chevauchent dans les rangées (A3).
 - tirages sans budget en fin d'appel (« 0 % aucun moteur ») : ne pas les tirer.
