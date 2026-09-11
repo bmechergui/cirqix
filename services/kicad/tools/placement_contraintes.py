@@ -237,8 +237,60 @@ def paires_du_board(pcb) -> list[tuple[str, str, str]]:
     return paires
 
 
+def contraintes_de_decouplage(pcb) -> list:
+    """UNE contrainte native par CI : ses condensateurs de decouplage a portee.
+
+    Etape 2 du pipeline « placement structure » (2026-09-11). Le snap des
+    capas vient EN DERNIER de la chaine : sur une carte dense, l anneau du CI
+    est deja occupe par des passifs etrangers et il ne trouve plus de place —
+    carte-09 (62 composants) : decouplage 19 mm, capas en paquet sous le MCU.
+    Ici, c est le GA lui-meme qui garde les capas contre leur CI : la regle
+    entre dans sa fonction de cout (`GroupingConstraint`, natif), au lieu
+    d etre appliquee apres coup.
+
+    L appariement capa -> CI est celui du snap (`_clusters_natifs`, qui passe
+    par `_reattribuer_les_decouplages` : une capa par broche de rail). Le rayon
+    est mesure de l ORIGINE du CI : demi-diagonale du corps + plafond du
+    cluster (3 mm POWER), pour ne pas exiger que la capa soit DANS le boitier.
+    """
+    try:
+        from kicad_tools.optim.constraints import GroupingConstraint, SpatialConstraint
+        from tools.placement_bypass import _centre_et_demi, _clusters_natifs, _composants
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        clusters = _clusters_natifs(_composants(pcb))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("contraintes de decouplage : detection impossible (%s)", exc)
+        return []
+    par_ref = {f.reference: f for f in pcb.footprints if getattr(f, "reference", None)}
+    out = []
+    for c in clusters:
+        if not str(getattr(c, "cluster_type", "")).upper().endswith("POWER"):
+            continue
+        membres = [m for m in c.members if m in par_ref and m != c.anchor]
+        if not membres or c.anchor not in par_ref:
+            continue
+        try:
+            _, _, hw, hh = _centre_et_demi(par_ref[c.anchor])
+            demi = (hw ** 2 + hh ** 2) ** 0.5
+        except Exception:  # noqa: BLE001
+            demi = 4.0
+        rayon = demi + float(getattr(c, "max_distance_mm", 3.0) or 3.0)
+        out.append(GroupingConstraint(
+            name="decouplage-%s" % c.anchor,
+            members=[c.anchor] + membres,
+            constraints=[SpatialConstraint.max_distance(anchor=c.anchor, radius_mm=rayon)],
+        ))
+    if out:
+        logger.info("placement: %d CI contraint(s) a garder leurs decouplages a portee "
+                    "(rayon = corps + 3 mm)", len(out))
+    return out
+
+
 def contraintes_du_board(pcb, refs_ancrees=None, rayon_mm=None):
-    """`contraintes_de_paires`, mais alimentee par le board."""
+    """`contraintes_de_paires`, mais alimentee par le board — plus les
+    contraintes de decouplage (une par CI)."""
     try:
         from kicad_tools.optim.constraints import (GroupingConstraint,
                                                    SpatialConstraint)
@@ -270,7 +322,7 @@ def contraintes_du_board(pcb, refs_ancrees=None, rayon_mm=None):
                     "(lues sur le board)", len(out), rayon_mm)
     else:
         logger.info("placement: aucune paire a deux bornes sur ce board")
-    return out
+    return out + contraintes_de_decouplage(pcb)
 
 def aligner_sur_grille(chemin, pas_mm: float, figes=None) -> int:
     """Arrondit les positions des footprints MOBILES au pas donne.
