@@ -162,6 +162,7 @@ Une mesure peut étayer une proposition ; elle ne la valide pas.
 - `docs/cirqix-full-resume.md` — vision produit complète, business model, stack
 - `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
 - `PLAN.md` — plan d'implémentation complet par phases
+- `docs/pipeline-placement-routage.md` — **le pipeline placement → routage, étape par étape, pour tout type de carte** (critères de livraison, règles générales, ce qui reste ouvert). À lire avant toute modification de `tools/placement*.py` ou `routers/routing.py`.
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
 - `docs/graphify.md` — graphes séparés Cirqix, `kicad-tools`, `circuit_synth` et agrégat multi-repo.
   Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
