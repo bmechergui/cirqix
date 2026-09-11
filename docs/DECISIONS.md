@@ -654,6 +654,26 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-11-a — plancher d'échappement > palier : UN tirage de preuve, puis escalade
+
+**Statut : en attente.** Décision produit : elle nuance la décision utilisateur
+du 2026-08-29 (« on part toujours de 2 couches »).
+
+Mesure du 2026-09-11 sur `carte-08` (56 composants, plancher calculé : 4
+couches, budget 1800 s) : trois tirages à 2 couches (figé 80 %, 69 %, figé
+80 %) ont consommé **tout le budget** ; le palier 4 couches, atteint à
+13:14, a rendu « 0 % (aucun moteur) » — jamais tiré. La preuve « 2 couches
+ne suffisent pas » a coûté la totalité de l'appel, et l'escalade que la
+preuve devait déclencher n'a pas eu lieu.
+
+Proposition, générale : quand le plancher d'échappement dit N > palier
+courant, on garde le départ à 2 couches (le client ne paie pas une couche
+sur une prévision) mais on n'y accorde **qu'un seul tirage de preuve** —
+s'il n'atteint pas 100 %, on escalade tout de suite avec le budget restant,
+pistes protégées. Aucun changement pour les cartes dont le plancher est 2.
+
+Ne pas implémenter avant validation.
+
 ## D-2026-09-10-e — un job Freerouting abandonné est un job TUÉ (JVM relancée)
 
 **Statut : validée sous délégation** (levier de temps, l'utilisateur demandait
