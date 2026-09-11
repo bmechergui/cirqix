@@ -901,7 +901,9 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
         positions.append({"ref": str(ref), "pad": str(nom_pad),
                           "pad_x": int(pos.x), "pad_y": int(pos.y),
                           "via_x": int(sortie[0]), "via_y": int(sortie[1]),
-                          "layer": int(pad.GetLayer()), "net": int(pad.GetNetCode())})
+                          "layer": int(pad.GetLayer()),
+                          "layer_nom": board.GetLayerName(pad.GetLayer()),
+                          "net": int(pad.GetNetCode())})
     Path(args["result"]).write_text(
         json.dumps({"vias": positions, "renonces": renonces}), encoding="utf-8")
 

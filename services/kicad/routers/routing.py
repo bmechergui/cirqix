@@ -2168,7 +2168,26 @@ def _bloc_wiring(vias: list, net: str) -> str:
             % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0,
                _nom_pour_dsn(str(net_via)))
         )
+        # ⚠️ LE TRONCON AUSSI. Mesure du 2026-09-11 (carte-08) : le via etait
+        # protege, pas le troncon pastille -> via ; le routeur posait un
+        # signal dans ce couloir de 1,2 mm, la repose du troncon echouait, et
+        # le DRC final separait « Via [GND] <-> Pad 23 [GND] of U1 ». Le via
+        # seul ne reserve rien : c est le troncon qui relie la pastille.
+        # Sans nom de couche on ne devine pas — un troncon sur la mauvaise
+        # face serait un court-circuit, pas une approximation.
+        if (isinstance(via, dict) and via.get("layer_nom")
+                and via.get("pad_x") is not None and via.get("pad_y") is not None):
+            lignes.append(
+                "    (wire (path %s %.1f %.1f %.1f %.1f %.1f) (net %s) (type protect))"
+                % (via["layer_nom"], _TRONCON_LARGEUR_MM * 1000.0,
+                   via["pad_x"] / 1000.0, -via["pad_y"] / 1000.0,
+                   x_nm / 1000.0, -y_nm / 1000.0, _nom_pour_dsn(str(net_via))))
     return chr(10).join(lignes)
+
+
+# Largeur du troncon pastille -> via reserve, celle que pose le runner
+# (`trace_mm`, 0,25 mm par defaut).
+_TRONCON_LARGEUR_MM: float = 0.25
 
 
 
@@ -2309,6 +2328,30 @@ def _connexion_pleine(pcb_bytes: bytes, pastilles) -> bytes:
     return texte.encode("utf-8")
 
 
+def _pastilles_sur_le_plan_sans_raccord(rapport: dict) -> list[tuple[str, str]]:
+    """(reference, pastille) de chaque pastille que le DRC declare separee de
+    la ZONE de son propre net : « Pad 1 [GND] of U2 on F.Cu <-> Zone [GND] ».
+
+    Mesure du 2026-09-11 (carte-08, a CHAQUE tirage) : U2.1 est sur le plan,
+    le cuivre l entoure, et le relief thermique ne la rejoint pas — « le
+    cuivre est la, la connexion non ». La fanout renonce (aucune sortie) ;
+    la connexion pleine, elle, ne demande aucune place.
+    """
+    trouvees: list[tuple[str, str]] = []
+    for item in (rapport or {}).get("unconnected_items") or []:
+        descs = [str(i.get("description", "")) for i in (item.get("items") or [])]
+        pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descs) if m]
+        zones = [m for m in (_ZONE_NET_RE.match(d) for d in descs) if m]
+        if len(pads) != 1 or not zones:
+            continue
+        if pads[0].group(2) != zones[0].group(1):
+            continue
+        cle = (pads[0].group(3), pads[0].group(1))
+        if cle not in trouvees:
+            trouvees.append(cle)
+    return trouvees
+
+
 def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
     """Promeut les pastilles affamees en connexion pleine, puis recoule.
 
@@ -2323,6 +2366,10 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
     """
     rapport = _rapport_drc(pcb_bytes)
     pastilles = _pastilles_affamees(rapport)
+    # Meme remede pour la pastille que sa zone entoure sans la raccorder.
+    for cle in _pastilles_sur_le_plan_sans_raccord(rapport):
+        if cle not in pastilles:
+            pastilles.append(cle)
     if not pastilles:
         return pcb_bytes
 
@@ -2340,15 +2387,21 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
         logger.warning(
             "reliefs thermiques : aucun verdict DRC — board recu conserve")
         return pcb_bytes
-    avant, apres = _compte_erreurs(rapport), _compte_erreurs(rapport_rempli)
-    if apres < avant:
+    avant = (_compte_erreurs(rapport), len(rapport.get("unconnected_items") or []))
+    apres = (_compte_erreurs(rapport_rempli),
+             len(rapport_rempli.get("unconnected_items") or []))
+    # ⚠️ Les liaisons manquantes comptent aussi : une pastille sans raccord
+    # n est pas une erreur DRC, c est une connexion absente.
+    if _secours_est_meilleur(avant, apres):
         logger.info(
             "reliefs thermiques : %d pastille(s) passee(s) en connexion pleine "
-            "— %d erreur(s) -> %d", len(pastilles), avant, apres)
+            "— (%d erreur, %d manquante) -> (%d erreur, %d manquante)",
+            len(pastilles), avant[0], avant[1], apres[0], apres[1])
         return rempli
     logger.warning(
-        "reliefs thermiques : promotion REFUSEE (%d erreur(s) -> %d) — "
-        "board conserve", avant, apres)
+        "reliefs thermiques : promotion REFUSEE ((%d erreur, %d manquante) -> "
+        "(%d erreur, %d manquante)) — board conserve",
+        avant[0], avant[1], apres[0], apres[1])
     return pcb_bytes
 
 
