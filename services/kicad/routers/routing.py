@@ -2362,6 +2362,27 @@ def _pastilles_sur_le_plan_sans_raccord(rapport: dict) -> list[tuple[str, str]]:
     return trouvees
 
 
+_DOSSIER_TRACES = Path(os.environ.get("CIRQIX_TRACES_ROUTAGE", "/tmp/traces-routage"))
+_TRACES_MAX = 12
+
+
+def _garder_une_trace(final: bytes) -> None:
+    """Ecrit le board FINAL de chaque appel dans `_DOSSIER_TRACES` (les
+    `_TRACES_MAX` derniers). La chaine du banc n ecrit un board qu en fin
+    d essai : entre-temps, un defaut vu au DRC (« Via [GND] <-> Pad 23 of
+    U1 ») n a AUCUN artefact a inspecter. Jamais une panne : au moindre
+    doute, on n ecrit rien."""
+    try:
+        _DOSSIER_TRACES.mkdir(parents=True, exist_ok=True)
+        anciens = sorted(_DOSSIER_TRACES.glob("*.kicad_pcb"))
+        for vieux in anciens[:max(0, len(anciens) - _TRACES_MAX + 1)]:
+            vieux.unlink()
+        nom = time.strftime("%Y%m%dT%H%M%S") + "-%d.kicad_pcb" % os.getpid()
+        (_DOSSIER_TRACES / nom).write_bytes(final)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
     """Promeut les pastilles affamees en connexion pleine, puis recoule.
 
@@ -4124,7 +4145,9 @@ def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
         bilan = json.loads(resultat.read_text(encoding="utf-8"))
         n = bilan.get("escaped", 0)
         renonces = bilan.get("renonces", 0)
-        logger.info("fanout: %d broche(s) sortie(s) vers le plan", n)
+        logger.info("fanout: %d broche(s) sortie(s) vers le plan (%d position(s) "
+                    "reservee(s) rejouee(s), %d visee(s))",
+                    n, bilan.get("reprises", 0), bilan.get("vises", 0))
         # ⚠️ DIRE les renoncements. Ce compteur existait, etait rendu dans le
         # resultat, et etait JETE : on abandonnait des broches en silence.
         #
@@ -5887,6 +5910,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # correctifs justes qui s annulent. L ordre fait partie du
             # correctif, pas de son emballage.
             final = _retirer_ilots_flottants(final)
+            _garder_une_trace(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)
