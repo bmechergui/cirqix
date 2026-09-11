@@ -9,7 +9,7 @@
   "duree_s": 1103,
   "git": "1614670",
   "routed_percent": 100,
-  "drc_violations": 118,
+  "drc_violations": 260,
   "drc_clean": true,
   "fichiers_exportes": 20,
   "types_violations": "silk_over_copper:82,silk_overlap:36",
@@ -21,11 +21,13 @@
     "empreintes": 45
   },
   "drc_du_board": {
-    "violations": 118,
+    "violations": 260,
     "non_connectes": 0,
-    "types": "silk_over_copper:82,silk_overlap:36",
+    "types": "silk_over_copper:162,silk_overlap:98",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-07-multi-io-t1"
 }

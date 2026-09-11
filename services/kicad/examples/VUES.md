@@ -23,8 +23,8 @@ sont des avertissements de serigraphie.
 | carte-04-mcu-minimal | 2026-09-10 | 100 % | 0 | 18 | 2 | 10.8 / 29.5 | 93 % | - | [placement](carte-04-mcu-minimal/output/vue-placement.png) | [routage](carte-04-mcu-minimal/output/vue-final.png) |
 | carte-05-capteur-i2c | 2026-09-10 | 100 % | 0 | 59 | 2 | 3.6 / 7.9 | 81 % | 4.9 | [placement](carte-05-capteur-i2c/output/vue-placement.png) | [routage](carte-05-capteur-i2c/output/vue-final.png) |
 | carte-06-io-etendu | 2026-09-10 | 100 % | 0 | 81 | 2 | 8.3 / 14.7 | 80 % | 15.3 | [placement](carte-06-io-etendu/output/vue-placement.png) | [routage](carte-06-io-etendu/output/vue-final.png) |
-| carte-07-multi-io | 2026-09-09 | 100 % | 0 | 118 | 2 | 10.1 / 32.5 | 84 % | 15.7 | [placement](carte-07-multi-io/output/vue-placement.png) | [routage](carte-07-multi-io/output/vue-final.png) |
+| carte-07-multi-io | 2026-09-09 (modifie) | 100 % | 0 | 260 | 2 | 2.5 / 3.7 | 91 % | 2.5 | [placement](carte-07-multi-io/output/vue-placement.png) | [routage](carte-07-multi-io/output/vue-final.png) |
 | carte-08-dense | 2026-09-07 | 100 % | 0 | 77 | 2 | 10.6 / 19.5 | 4 % | 39.2 | pas de temoin | [routage](carte-08-dense/output/vue-final.png) |
-| carte-09-tres-dense | 2026-09-07 (modifie) | 100 % | 0 | 142 | 2 | 19.0 / 28.8 | 82 % | 34.2 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
+| carte-09-tres-dense | 2026-09-11 | 100 % | 0 | 142 | 2 | 19.0 / 28.8 | 82 % | 34.2 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
 | carte-10-maximale | 2026-09-07 | 100 % | 0 | 104 | 2 | 15.8 / 26.5 | 3 % | 49.5 | pas de temoin | [routage](carte-10-maximale/output/vue-final.png) |
 | carte-11-croisements | 2026-09-09 | 100 % | 0 | 10 | 2 | - | 100 % | - | [placement](carte-11-croisements/output/vue-placement.png) | [routage](carte-11-croisements/output/vue-final.png) |
