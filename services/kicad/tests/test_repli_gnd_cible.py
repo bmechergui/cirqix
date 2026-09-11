@@ -120,9 +120,35 @@ class TestDsn:
 class TestCablage:
     def test_le_repli_cible_est_tente_avant_le_repli_global(self):
         code = "\n".join(l.split("#")[0] for l in inspect.getsource(R.route_auto).splitlines())
-        i_c = code.find("_router_gnd_cible(")
+        i_c = code.find("_repli_gnd_cible_iteratif(")
         i_g = code.find("_router_en_incluant_gnd(")
         assert i_c != -1 and i_g != -1 and i_c < i_g
+
+    def test_le_repli_cible_n_est_pas_soumis_au_seuil_du_global(self):
+        """Le seuil `_repli_gnd_vaut_le_coup` ne bride que le repli GLOBAL
+        (10-17 min) : le cible (11 s) passe avant lui."""
+        code = "\n".join(l.split("#")[0] for l in inspect.getsource(R.route_auto).splitlines())
+        i_c = code.find("_repli_gnd_cible_iteratif(")
+        i_s = code.find("_repli_gnd_vaut_le_coup(")
+        assert i_c != -1 and i_s != -1 and i_c < i_s
+
+    def test_le_repli_cible_est_repete_tant_qu_il_referme(self, monkeypatch):
+        appels = []
+        boards = [b"b1", b"b2", b"b3"]
+        bilans = {b"b0": (0, 6), b"b1": (0, 5), b"b2": (0, 4), b"b3": (0, 4)}
+        orph = {b"b0": [("C1", "2"), ("C2", "2")], b"b1": [("C2", "2")], b"b2": [("C3", "2")], b"b3": [("C3", "2")]}
+        monkeypatch.setattr(R, "_router_gnd_cible", lambda *a, **k: (appels.append(1), boards[len(appels) - 1])[1])
+        monkeypatch.setattr(R, "_bilan_drc", lambda b: bilans[b])
+        monkeypatch.setattr(R, "_rapport_drc", lambda b: b)
+        monkeypatch.setattr(R, "_pads_isolees_du_plan", lambda rap: orph[rap])
+        final, restantes = R._repli_gnd_cible_iteratif(b"e", None, 10.0, orph[b"b0"], b"b0")
+        assert final == b"b2" and restantes == [("C3", "2")] and len(appels) == 3
+        assert 2 <= R._REPLI_CIBLE_TOURS <= 6
+
+    def test_l_empreinte_du_module_est_journalisee_au_chargement(self):
+        src = Path(R.__file__).read_text(encoding="utf-8")
+        assert "routing.py charge : empreinte" in src
+        assert len(R._empreinte_du_module()) == 10
 
     def test_confier_au_plan_transmet_les_broches_gardees(self):
         code = inspect.getsource(R._confier_au_plan)

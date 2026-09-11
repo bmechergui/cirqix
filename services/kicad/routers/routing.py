@@ -44,6 +44,21 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
+def _empreinte_du_module() -> str:
+    """Empreinte courte du SOURCE importe. Journalisee au chargement : un
+    worker qui tourne sur un module perime est indistinguable d un worker a
+    jour tant qu on ne la lit pas (`routers/` est monte a chaud, le module
+    importe ne suit pas le fichier)."""
+    import hashlib
+    try:
+        return hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:10]
+    except Exception:  # noqa: BLE001
+        return "inconnue"
+
+
+logger.info("routing.py charge : empreinte %s (pid %d)", _empreinte_du_module(), os.getpid())
+
 router = APIRouter(tags=["routing"])
 
 # 2-layer simple boards usually < 90s, 4-layer ~300s, 8-layer ~600s
@@ -3868,6 +3883,42 @@ def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
     return pins
 
 
+_REPLI_CIBLE_TOURS = 4
+
+
+def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: float,
+                              orphelines, final: bytes) -> tuple:
+    """Repete le repli GND cible tant qu il referme des broches (au plus
+    `_REPLI_CIBLE_TOURS` tours). Rend (board retenu, orphelines restantes).
+
+    Mesure du 2026-09-11 (carte-08) : un tour passe de 6 a 5 orphelines en
+    11 s ; s arreter la laissait 5 broches pour un repli global de 15 min.
+    """
+    for tour in range(1, _REPLI_CIBLE_TOURS + 1):
+        if not orphelines:
+            break
+        cible = _router_gnd_cible(etendu, req, budget_s, orphelines, deja_route=final)
+        if cible is None:
+            break
+        avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
+        if not _secours_est_meilleur(avant_c, apres_c):
+            logger.warning(
+                "repli GND CIBLE tour %d refuse : (%d erreur, %d manquante) "
+                "ne fait pas mieux que (%d erreur, %d manquante)",
+                tour, apres_c[0], apres_c[1], avant_c[0], avant_c[1])
+            break
+        logger.info(
+            "repli GND CIBLE tour %d retenu : (%d erreur, %d manquante) -> "
+            "(%d erreur, %d manquante)",
+            tour, avant_c[0], avant_c[1], apres_c[0], apres_c[1])
+        final = cible
+        try:
+            orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+        except Exception:  # noqa: BLE001
+            orphelines = []
+    return final, orphelines
+
+
 def _bilan_drc(pcb_bytes: bytes) -> tuple:
     rap = _rapport_drc(pcb_bytes)
     return (_compte_erreurs(rap), len(rap.get("unconnected_items") or []))
@@ -5679,40 +5730,28 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "DEJA tenté sans succès sur ces mêmes broches, on ne le "
                     "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
                     len(orphelines))
-            elif (_NETS_CONFIES_AU_PLAN and orphelines
-                    and not _repli_gnd_vaut_le_coup(manquantes_avant)):
-                logger.info(
-                    "plan de masse : %d broche(s) GND non reliée(s) mais %d "
-                    "connexion(s) manquante(s) au total — le repli GND ne "
-                    "referme que les dernieres broches d une carte presque "
-                    "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
-                    len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
             elif _NETS_CONFIES_AU_PLAN and orphelines:
-                logger.warning(
-                    "plan de masse : %d broche(s) GND non reliée(s) — "
-                    "repli sur un routage incluant GND", len(orphelines))
-                # `final` = le board ROUTE : ses pistes seront protegees, le
-                # routeur ne fera qu ajouter les liaisons GND manquantes.
-                # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND),
-                # le repli GLOBAL ensuite seulement s il reste des orphelines.
+                # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND) :
+                # 11 s mesurees, il n est PAS soumis au seuil du repli global
+                # (qui coute 10-17 min). Repete tant qu il referme des broches.
+                final, orphelines = _repli_gnd_cible_iteratif(
+                    etendu, req, restant, orphelines, final)
+                manquantes_avant = _bilan_drc(final)[1] if orphelines else 0
                 secours = None
-                cible = _router_gnd_cible(etendu, req, restant, orphelines,
-                                          deja_route=final)
-                if cible is not None:
-                    avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
-                    if _secours_est_meilleur(avant_c, apres_c):
-                        logger.info(
-                            "repli GND CIBLE retenu : (%d erreur, %d manquante) "
-                            "-> (%d erreur, %d manquante)",
-                            avant_c[0], avant_c[1], apres_c[0], apres_c[1])
-                        final = cible
-                        orphelines = _pads_isolees_du_plan(_rapport_drc(final))
-                    else:
-                        logger.warning(
-                            "repli GND CIBLE refuse : (%d erreur, %d manquante) "
-                            "ne fait pas mieux que (%d erreur, %d manquante)",
-                            apres_c[0], apres_c[1], avant_c[0], avant_c[1])
-                if orphelines:
+                if orphelines and not _repli_gnd_vaut_le_coup(manquantes_avant):
+                    logger.info(
+                        "plan de masse : %d broche(s) GND non reliée(s) mais %d "
+                        "connexion(s) manquante(s) au total — le repli GND global ne "
+                        "referme que les dernieres broches d une carte presque "
+                        "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
+                        len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
+                    orphelines = []
+                elif orphelines and not _repli_deja_tente(orphelines):
+                    logger.warning(
+                        "plan de masse : %d broche(s) GND non reliée(s) — "
+                        "repli sur un routage incluant GND", len(orphelines))
+                    # `final` = le board ROUTE : ses pistes seront protegees, le
+                    # routeur ne fera qu ajouter les liaisons GND manquantes.
                     secours = _router_en_incluant_gnd(etendu, req, restant,
                                                       deja_route=final)
                 if secours is None and orphelines:
