@@ -2175,7 +2175,15 @@ _PISTES_A_PROTEGER: Optional[bytes] = None
 # `_RAYON_LIBERATION_MM` autour de chaque pastille non reliee : le routeur y
 # reprend la main. Reglage `liberer_autour_des_non_reliees`.
 _ZONES_LIBEREES: list = []
-_RAYON_LIBERATION_MM: float = 2.5
+# ⚠️ Rayon = la place d UN via (0,6 mm + 2 x 0,2 mm de degagement), pas plus.
+# Premiere version a 2,5 mm, mesuree sur carte-08 le 2026-09-11 : 159 des 372
+# segments proteges liberes autour de 14 pastilles — 43 % du routage rendu au
+# routeur, qui a fait PIRE (92 % -> 79 %). Un LQFP au pas de 0,5 mm a des
+# dizaines de pistes dans 2,5 mm. Et si malgre tout la liberation depasse
+# `_PART_LIBERATION_MAX`, on renonce a liberer : proteger tout vaut mieux que
+# tout rejouer.
+_RAYON_LIBERATION_MM: float = 1.2
+_PART_LIBERATION_MAX: float = 0.25
 
 
 def _positions_non_reliees(rapport_drc: dict) -> list:
@@ -2468,6 +2476,12 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
             % (_PADSTACK_VIA, float(at.group(1)) * 1000.0,
                -float(at.group(2)) * 1000.0, _nom_pour_dsn(nom)))
     if liberes:
+        total = liberes + len(lignes)
+        if total and liberes / total > _PART_LIBERATION_MAX:
+            logger.warning("pistes protegees : liberer %d/%d elements (%.0f %%) rendrait au "
+                           "routeur presque tout le palier precedent — on protege TOUT",
+                           liberes, total, 100.0 * liberes / total)
+            return _bloc_wiring_pistes(pcb_bytes, liberer=None)
         logger.info("pistes protegees : %d segment(s)/via(s) LIBERE(S) autour de %d "
                     "pastille(s) non reliee(s) (rayon %.1f mm) — le routeur y reprend la main",
                     liberes, len(zones), _RAYON_LIBERATION_MM)
