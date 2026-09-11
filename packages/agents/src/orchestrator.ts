@@ -6,7 +6,9 @@ type ToolUseBlock = Anthropic.ToolUseBlock;
 type TextBlock = Anthropic.TextBlock;
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './prompts';
 import { ACTIVE_PCB_TOOLS, executeToolStub } from './tools';
-import { syncPcbCacheFromResult } from './tools/shared';
+import { syncPcbCacheFromResult, pcbStateCache, getProjectPlan } from './tools/shared';
+import { maxLayersForPlan } from '@cirqix/types';
+import { nextBoardSize, type BoardGrowth } from './engines/board-growth';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
@@ -146,6 +148,48 @@ export function keepBestDrc(
   if (best['drc_clean'] === true) return best;
   if (candidate['drc_clean'] === true) return candidate;
   return violationCount(candidate) < violationCount(best) ? candidate : best;
+}
+
+/**
+ * Dernier résultat de routage par projet : le re-tirage piloté par le DRC a
+ * besoin de savoir à combien de couches et à quel pourcentage la carte a été
+ * routée pour décider de l'agrandir (D-2026-09-11-b).
+ */
+export const lastRoutingResult = new Map<string, Record<string, unknown>>();
+
+export function initialGrowth(projectId: string): BoardGrowth {
+  const cached = pcbStateCache.get(projectId);
+  return { boardW: cached?.boardW ?? 50, boardH: cached?.boardH ?? 40, growths: 0 };
+}
+
+/**
+ * Agrandissement de la carte quand elle stagne à son plafond de couches
+ * (D-2026-09-11-b) — même règle que `run_pipeline.py::taille_suivante`. Le
+ * plafond est celui du PLAN : on n'agrandit qu'une carte à laquelle on ne
+ * peut plus vendre de couche. La taille agrandie est écrite dans le cache
+ * (le plan de masse et le routage la lisent là) et rendue pour le placement.
+ */
+export function growBoardIfStalled(
+  projectId: string,
+  growth: BoardGrowth,
+  routing: Record<string, unknown> | undefined,
+  drc?: Record<string, unknown>,
+): BoardGrowth {
+  const ceiling = maxLayersForPlan(getProjectPlan(projectId));
+  const pct = typeof routing?.['routed_percent'] === 'number' ? (routing['routed_percent'] as number) : 100;
+  const layers = typeof routing?.['layers'] === 'number' ? (routing['layers'] as number) : ceiling;
+  const drcClean = typeof drc?.['drc_clean'] === 'boolean' ? (drc['drc_clean'] as boolean) : undefined;
+  const next = nextBoardSize(growth, { routedPercent: pct, drcClean, layers, ceiling });
+  if (next === growth) return growth;
+  const cached = pcbStateCache.get(projectId);
+  if (cached) pcbStateCache.set(projectId, { ...cached, boardW: next.boardW, boardH: next.boardH });
+  return next;
+}
+
+export function placementInputFor(growth: BoardGrowth): Record<string, unknown> {
+  return growth.growths > 0
+    ? { board_width_mm: growth.boardW, board_height_mm: growth.boardH }
+    : {};
 }
 
 function extractReasoningSteps(result: Record<string, unknown>): string[] {
@@ -327,10 +371,12 @@ export async function* runOrchestrator(
       // ci-dessus : règle à seuil → code, pas jugement de Sonnet.
       if (tool.name === 'call_agent_routing') {
         let attempt = 1;
+        let growth = initialGrowth(options.projectId);
         while (shouldRetryPlacement(result, attempt)) {
           attempt++;
+          growth = growBoardIfStalled(options.projectId, growth, result);
           yield { type: 'step', step: 'PLACEMENT' };
-          const placement = await executeToolStub('call_agent_placement', {}, options.projectId);
+          const placement = await executeToolStub('call_agent_placement', placementInputFor(growth), options.projectId);
           yield { type: 'pcb_state', projectId: options.projectId, state: placement };
           yield { type: 'step', step: 'ROUTING' };
           let retry = await executeToolStub('call_agent_routing', {}, options.projectId);
@@ -345,6 +391,7 @@ export async function* runOrchestrator(
         // keepBestRouting peut retenir un board antérieur alors que le cache
         // porte le dernier essai (pire). handleExport lit le cache → resync.
         syncPcbCacheFromResult(options.projectId, result);
+        lastRoutingResult.set(options.projectId, result);
       }
 
       // Retry placement piloté par le DRC — même philosophie que le retry
@@ -353,13 +400,17 @@ export async function* runOrchestrator(
       // placement étant stochastique, re-tirer est le levier déterministe.
       if (tool.name === 'call_agent_drc') {
         let attempt = 1;
+        let growth = initialGrowth(options.projectId);
         while (shouldRetryForDrc(result, attempt)) {
           attempt++;
+          growth = growBoardIfStalled(
+            options.projectId, growth, lastRoutingResult.get(options.projectId), result);
           yield { type: 'step', step: 'PLACEMENT' };
-          const placement = await executeToolStub('call_agent_placement', {}, options.projectId);
+          const placement = await executeToolStub('call_agent_placement', placementInputFor(growth), options.projectId);
           yield { type: 'pcb_state', projectId: options.projectId, state: placement };
           yield { type: 'step', step: 'ROUTING' };
-          await executeToolStub('call_agent_routing', {}, options.projectId);
+          const routing = await executeToolStub('call_agent_routing', {}, options.projectId);
+          lastRoutingResult.set(options.projectId, routing);
           yield { type: 'step', step: 'DRC' };
           const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
           result = keepBestDrc(result, retry);
