@@ -75,6 +75,14 @@ schéma → ERC → footprints → gen_pcb → [placement → routage → DRC] �
 On retire tant que le DRC n'est pas propre ; le meilleur est gardé
 (`(composants perdus, erreurs, -%)`, puis couches).
 
+**Agrandissement (D-2026-09-11-b, validée).** Une carte routée à son plafond
+de couches sans 100 % / 0 erreur est agrandie de 20 % par côté pour l'essai
+suivant, au plus deux fois (`run_pipeline.py::taille_suivante`) ; le service
+rend alors le contour à la taille demandée (`tools/placement.py::_taille_contour`).
+Mesure carte-08 : 98 % à 2, 4 et 6 couches pendant 24 h ; +20 % → 100 % /
+0 erreur à 2 couches au premier tirage. Sous le plafond, l'escalade garde la
+main ; un « 0 % (aucun moteur) » n'agrandit rien.
+
 ## Infrastructure — ce qui a coûté une journée et ne doit plus revenir
 
 - uvicorn abat un worker muet 5 s : `lancer_service.py` porte la tolérance à
@@ -92,8 +100,7 @@ Régénération : `scripts/vues_index.py --rendre`.
 
 ## Ce qui reste ouvert
 
-- carte-08 et carte-10 (56 et 100 composants) plafonnent à 98 % ; A/B en cours :
-  contour +20 %. Si concluant, règle générale : une carte qui stagne à son
-  plafond de couches est agrandie et re-placée.
+- campagne 1789150495 (08/09/10) : première mesure de la règle
+  d'agrandissement dans la boucle ; à porter ensuite dans `run-orchestrator.ts`.
 - sérigraphie : références qui se chevauchent dans les rangées (A3).
 - tirages sans budget en fin d'appel (« 0 % aucun moteur ») : ne pas les tirer.

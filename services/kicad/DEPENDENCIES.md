@@ -113,6 +113,22 @@ le bind-mount de développement.
   l'objectif du CMA-ES (#4857). `git merge-tree` : 2 conflits triviaux
   (`.gitignore`, `reasoning/state.py`). Rebase recommandé, à valider par le
   banc — pas par les tests unitaires seuls.
+- **Rebase `cirqix-rebase-20260911` (`075dfe27`, poussé + tag) : NON VALIDÉ
+  par le banc (2026-09-11).** A/B sur le MÊME board généré (carte-05, 26
+  composants, 70 × 50 mm), même code Cirqix, deux conteneurs :
+
+      fork courant `839a5b96`  : 0 conflit non résolu, DRC 1 erreur (bord)
+      fork rebasé  `075dfe27`  : 9 conflits non résolus à CHACUN des 3 tirages
+
+  Sur le rebasé, `PlacementFixer.iterative_fix` DIVERGE (5 → 8 → 20 conflits
+  entre deux passes), pousse des composants hors carte (U2 à x = −4,79) et
+  `PlacementAnalyzer` signale `board_outline` comme un composant hors contour.
+  Ce sont les tests unitaires qui passaient (50/51) et le banc qui tombe — le
+  motif inscrit au rebase du 2026-08-10. Suspects amont : `placement/cost.py`
+  (#4857) et l'analyseur `pth_inside_courtyard`. **Le gitlink reste sur
+  `839a5b96` ; ne pas basculer `cirqix` sans avoir isolé le commit amont
+  fautif** (bissection sur `upstream/main` entre `627f3e44` et le tip, avec le
+  banc carte-05 comme oracle). Journal : `examples/carte-05-capteur-i2c/output/ab_fork_rebase.out`.
   (rebase du 2026-08-10 sur `upstream/main` @ `627f3e44`, 221 commits rattrapés ;
   tags de protection `cirqix-pin-16aa431`, `cirqix-pin-5c4c926` et
   `cirqix-pin-f2afb96`. Le SHA

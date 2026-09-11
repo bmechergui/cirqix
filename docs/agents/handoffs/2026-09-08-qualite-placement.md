@@ -270,7 +270,15 @@ mesure, **non validés** :
 - Livré cette nuit : carte-09 100 % / 0 erreur / 2 couches. carte-08 et 10 :
   98 % avec le routage d'aujourd'hui ; leur 100 % du 07/09 était un tirage
   chanceux (bissection : ancien code 98 % en 8 min).
-- Campagne en cours : `/tmp/campagne-1789119243` (10, 08, 07 × 2).
+- Livrés depuis : carte-07 100 % / 0 err / 2 couches (`36770a2`), carte-08
+  100 % / 0 err à 6 couches puis, avec +20 % de contour, à 2 couches.
+- **D-2026-09-11-b validée et livrée (`0971706`)** : une carte qui stagne à
+  son plafond de couches est agrandie de 20 % (≤ 2 fois) ; le service rend le
+  contour à la taille demandée. Campagne de mesure : `/tmp/campagne-1789150495`
+  (08, 09, 10), service redémarré avant (module importé ≠ fichier monté).
+- **Fork kicad-tools rebasé (`075dfe27`) : NON validé** — 9 conflits de
+  placement non résolus à chaque tirage sur carte-05, 0 sur le fork courant.
+  Détail et suspects dans `services/kicad/DEPENDENCIES.md`. Gitlink inchangé.
 
 ## Reste à faire
 
