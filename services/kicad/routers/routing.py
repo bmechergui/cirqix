@@ -5425,6 +5425,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     Garde : tests/test_stackup_escalade.py.
     """
+    from tools.reglages_banc import journaliser_les_reglages
+    journaliser_les_reglages("routage")
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
     except (ValueError, TypeError) as exc:

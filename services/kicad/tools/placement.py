@@ -1879,6 +1879,8 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
 
     On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
     """
+    from tools.reglages_banc import journaliser_les_reglages
+    journaliser_les_reglages("placement")
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))

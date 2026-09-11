@@ -73,6 +73,27 @@ def _du_fichier() -> dict:
     return brut
 
 
+def reglages_actifs() -> dict:
+    """Les réglages en vigueur, tels que lus MAINTENANT (dict vide = défauts)."""
+    return dict(_du_fichier())
+
+
+def journaliser_les_reglages(ou: str) -> dict:
+    """Écrit dans le journal les réglages qui s appliquent à cet appel.
+
+    ⚠️ Mesure du 2026-09-11 : `{"graine_hierarchique": true}` posé le 09/09
+    pour un A/B est resté dans `/tmp/cirqix-reglages.json` DEUX JOURS et a
+    piloté toutes les campagnes suivantes sans qu aucune ligne ne le dise —
+    carte-08 livrée avec ses découplages à 13-32 mm du MCU. Un levier de
+    banc actif se lit au journal, ou il n existe pas.
+    """
+    actifs = reglages_actifs()
+    if actifs:
+        logger.warning("%s : REGLAGES DE BANC ACTIFS %s (%s) — ce tirage n est "
+                       "pas la production", ou, actifs, _CHEMIN)
+    return actifs
+
+
 def reglage(nom: str, defaut: Any) -> Any:
     """Rend le réglage `nom`, relu À CHAQUE APPEL.
 
