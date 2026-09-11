@@ -2525,6 +2525,33 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # l outil natif, et on revient au board d avant si le compte d erreurs
         # monte — un alignement est un CONFORT, il ne peut pas coûter une
         # erreur de fabrication.
+        # Etape 8 du placement structure (2026-09-11) : les paires LED/R en
+        # rangee le long du bord le plus libre. APRES le snap (qui les serre)
+        # et AVANT la grille (qui aligne tout au pas) — meme garde-fou que la
+        # grille : annule si l Inspecteur ne ramene pas le compte d erreurs.
+        try:
+            from tools.placement_contraintes import paires_du_board as _paires_du_board
+            from tools.placement_rangees import ranger_les_paires
+            _rendre_lisible(out)
+            pcb_rang = PCB.load(str(out))
+            n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
+                                       board_width_mm, board_height_mm)
+            if n_rang:
+                avant_rangees = out.read_bytes()
+                err_avant_rangees = _compter_conflits_erreur(out)
+                pcb_rang.save(str(out))
+                _normalize_to_board_frame(out)
+                _resolve_remaining_conflicts(out, conn)
+                _rendre_lisible(out)
+                if _compter_conflits_erreur(out) > err_avant_rangees:
+                    out.write_bytes(avant_rangees)
+                    logger.info("auto_place: rangees de paires annulees (%d -> %d erreurs)",
+                                err_avant_rangees, _compter_conflits_erreur(out))
+                else:
+                    logger.info("auto_place: rangees de paires — %d footprint(s) poses", n_rang)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("auto_place: rangees de paires impossibles (%s) — placement conserve", exc)
+
         _pas = _grille_mm()
         if _pas > 0:
             _rendre_lisible(out)
