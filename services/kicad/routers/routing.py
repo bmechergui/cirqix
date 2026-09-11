@@ -3341,6 +3341,15 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
         if not sortie.is_file():
             return pcb_bytes
         repose = sortie.read_bytes()
+        try:
+            bilan = json.loads(resultat.read_text(encoding="utf-8"))
+            logger.info(
+                "repose des vias : %d posee(s) sur %d visee(s) — %d position(s) "
+                "rejouee(s), %d troncon(s) seul(s) (via deja la), %d renoncee(s)",
+                bilan.get("escaped", 0), bilan.get("vises", 0), bilan.get("reprises", 0),
+                bilan.get("troncons_seuls", 0), bilan.get("renonces", 0))
+        except Exception:  # noqa: BLE001
+            pass
     # ⚠️ NE PEUT QU AMELIORER — la garde que ses trois voisines avaient et
     # qu elle n avait pas. Les positions de ces vias sont calculees AVANT le
     # routage ; rien ne garantit qu elles restent valides sur le board final.

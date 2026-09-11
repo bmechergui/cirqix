@@ -557,6 +557,26 @@ def _trous_perces(board) -> list[tuple[float, float, float]]:
     return trous
 
 
+_TOLERANCE_VIA_EXISTANT_NM = 50_000
+
+
+def _via_existant_a(vias, x, y, netcode: int, tolerance=_TOLERANCE_VIA_EXISTANT_NM) -> bool:
+    """Un via du MEME net est-il deja a cette position (a 50 um pres) ?
+
+    ⚠️ Mesure du 2026-09-11 (carte-08, board trace) : autour de chaque broche
+    GND du LQFP, le via reserve etait bien la, a 1,20 mm — le routeur l avait
+    conserve — mais AUCUNE piste ne le reliait a la pastille. A la repose,
+    `_trou_libre` voyait ce via comme un trou occupe et RENONCAIT : la
+    pastille restait orpheline a cause du via qui devait la relier. Un via
+    du meme net deja en place n est pas un obstacle, c est le travail a
+    moitie fait : il ne manque que le troncon.
+    """
+    for vx, vy, vnet in vias or ():
+        if int(vnet) == int(netcode) and abs(vx - x) <= tolerance and abs(vy - y) <= tolerance:
+            return True
+    return False
+
+
 def _trou_libre(x: float, y: float, rayon: float,
                 trous: list[tuple[float, float, float]], ecart: float) -> bool:
     """Vrai si l on peut percer en (x, y) sans toucher un trou existant."""
@@ -702,6 +722,10 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     # ⚠️ Positions REPRISES de la reservation d avant-routage. Les compter :
     # un rejeu qui ne se compte pas est indistinguable d un rejeu absent.
     reprises = 0
+    # Un via du meme net deja au point de chute : troncon seul (voir `_via_existant_a`).
+    vias_existants = [(float(v.GetPosition().x), float(v.GetPosition().y), int(v.GetNetCode()))
+                      for v in board.GetTracks() if v.GetClass() == "PCB_VIA"]
+    troncons_seuls = 0
     for cible in cibles:
         # Deux formes : `[ref, pad]` (fanout post-routage, aucune reservation)
         # et `[ref, pad, via_x, via_y]` (repose d une sortie deja calculee,
@@ -800,7 +824,8 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # quand il porte le meme net. Mesure du 2026-09-02, board final de
         # `nucleo-f401` : 150 vias pour 149 positions — un via superpose que
         # la regle posee sur la seule couture ne pouvait pas voir.
-        if not _trou_libre(vx, vy, perc_d / 2, trous, ecart_trous):
+        existant = _via_existant_a(vias_existants, vx, vy, pad.GetNetCode())
+        if not existant and not _trou_libre(vx, vy, perc_d / 2, trous, ecart_trous):
             renonces += 1
             continue
 
@@ -812,13 +837,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         piste.SetNetCode(pad.GetNetCode())
         board.Add(piste)
 
-        via = pcbnew.PCB_VIA(board)
-        via.SetPosition(pcbnew.VECTOR2I(vx, vy))
-        via.SetWidth(via_d)
-        via.SetDrill(perc_d)
-        via.SetNetCode(pad.GetNetCode())
-        board.Add(via)
-        trous.append((float(vx), float(vy), perc_d / 2))
+        if existant:
+            troncons_seuls += 1
+        else:
+            via = pcbnew.PCB_VIA(board)
+            via.SetPosition(pcbnew.VECTOR2I(vx, vy))
+            via.SetWidth(via_d)
+            via.SetDrill(perc_d)
+            via.SetNetCode(pad.GetNetCode())
+            board.Add(via)
+            trous.append((float(vx), float(vy), perc_d / 2))
         poses += 1
         # ⚠️ AMORCE EN FACE : ESSAYEE LE 2026-09-02, REFUTEE PAR LA MESURE.
         # L idee — poser avec le via une courte piste de masse sur la face
@@ -853,7 +881,8 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
               % (vises, poses, renonces), file=sys.stderr)
     Path(args["result"]).write_text(
         json.dumps({"escaped": poses, "renonces": renonces,
-                    "reprises": reprises, "vises": vises}), encoding="utf-8"
+                    "reprises": reprises, "vises": vises,
+                    "troncons_seuls": troncons_seuls}), encoding="utf-8"
     )
 
 
