@@ -66,6 +66,27 @@ Règles générales qui bornent le temps (toutes mesurées, `docs/DECISIONS.md`)
 - GND est **confié au plan** sur 2 couches (A/B : 100 % vs 92 % en pistes,
   D-2026-09-10-c) ; `gnd_route` reste disponible pour un A/B multicouche.
 
+### Ce qui manque quand une carte reste à 98 % (mesuré le 2026-09-11)
+
+Sur carte-08 et carte-10, 60 verdicts DRC ratés : le net incomplet est
+**GND dans 100 % des cas**, jamais un signal (le signal manquant change à
+chaque tirage et disparaît à l'escalade). Le DRC nomme désormais les objets
+séparés (« manquant : Via [GND] <-> Pad 23 [GND] of U1 »). Trois causes,
+trois règles générales, toutes dans `routers/routing.py` :
+
+| objet séparé | cause | règle |
+|---|---|---|
+| `Via [GND] <-> Pad 23 of U1` | le via réservé était déclaré au routeur, pas le tronçon pastille → via ; un signal passait dans le couloir | le tronçon est déclaré `(wire … protect)` avec le via (`_bloc_wiring`) |
+| `Pad 1 [GND] of U2 <-> Zone [GND]` | la pastille est sur le plan, le relief thermique ne la rejoint pas | promue en connexion pleine comme une pastille affamée (`_pastilles_sur_le_plan_sans_raccord`) |
+| pastille de 0402 sans sortie ni place pour un via | le repli global re-route TOUT le GND en pistes et perd 16 liaisons (0 retenu / 11) | **repli GND ciblé** : l'orpheline + 2 voisines GND d'un boîtier ordinaire, pistes libérées à 1,2 mm autour, répété ≤ 4 tours, avant et hors du seuil du repli global (`_repli_gnd_cible_iteratif`) |
+
+Et une règle d'escalade : un meilleur board **sous 80 %** n'est plus protégé
+au palier suivant — 55 % protégés à 4 couches donnaient 59 % figé à 6.
+
+Chaque worker journalise l'**empreinte sha1 du module** au chargement :
+`routers/` est monté à chaud mais le module importé ne suit pas le fichier,
+et un worker périmé est indistinguable d'un worker à jour sans cette ligne.
+
 ## Boucle de la chaîne (`run_pipeline.py`, orchestrateur)
 
 ```

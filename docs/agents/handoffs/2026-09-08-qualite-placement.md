@@ -276,6 +276,12 @@ mesure, **non validés** :
   son plafond de couches est agrandie de 20 % (≤ 2 fois) ; le service rend le
   contour à la taille demandée. Campagne de mesure : `/tmp/campagne-1789150495`
   (08, 09, 10), service redémarré avant (module importé ≠ fichier monté).
+- **Soirée du 2026-09-11 — GND à 98 %** : cause mesurée (GND dans 60/60
+  verdicts ratés), trois règles générales livrées (`8ac00df` → `2176dde`) :
+  repli GND ciblé itératif, tronçon du via réservé protégé, pastille sans
+  raccord promue en connexion pleine, protection bornée à 80 % à l'escalade,
+  empreinte du module au chargement. Détail : `docs/pipeline-placement-routage.md`.
+  Campagne de mesure en cours : `/tmp/campagne-1789161948`.
 - **Fork kicad-tools rebasé (`075dfe27`) : NON validé** — 9 conflits de
   placement non résolus à chaque tirage sur carte-05, 0 sur le fork courant.
   Détail et suspects dans `services/kicad/DEPENDENCIES.md`. Gitlink inchangé.
