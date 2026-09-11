@@ -656,8 +656,15 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-11-b — une carte qui stagne à son plafond de couches est AGRANDIE et re-placée
 
-**Statut : en attente.** Décision produit : la taille de la carte est une
-donnée visible du client (le générateur la dimensionne au nombre de composants).
+**Statut : validée** par l'utilisateur le 2026-09-11 (« go »). Implémentée en
+règle générale : (1) le service rend le contour à la taille demandée quand
+elle dépasse le contour du board (`_taille_contour`, `auto_place`) ; (2) la
+boucle de la chaîne (`run_pipeline.py::taille_suivante`) agrandit de 20 % par
+côté, au plus deux fois, une carte routée à son plafond de couches sans
+100 % / 0 erreur. Gardes : `tests/test_agrandir_quand_stagne.py`. À porter
+dans l'orchestrateur TypeScript (`run-orchestrator.ts`) pour la production.
+La taille de la carte est une donnée visible du client (le générateur la
+dimensionne au nombre de composants).
 
 Mesure du 2026-09-11 sur `carte-08` (56 composants, 125 × 95 mm, plafond 98 %
 depuis 24 h quels que soient placement, couches et routeur) : le MÊME schéma,

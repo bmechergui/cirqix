@@ -2007,6 +2007,21 @@ def _blocs_edge_cuts(texte: str) -> list[tuple[int, int]]:
     return sorted(blocs)
 
 
+_COORD_CONTOUR_RE = re.compile(r"\((?:start|end|center|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
+
+
+def _taille_contour(texte: str) -> Optional[tuple[float, float]]:
+    """(largeur, hauteur) du contour `Edge.Cuts` du board, ou None sans contour."""
+    xs, ys = [], []
+    for debut, fin in _blocs_edge_cuts(texte):
+        for x, y in _COORD_CONTOUR_RE.findall(texte[debut:fin]):
+            xs.append(float(x))
+            ys.append(float(y))
+    if not xs:
+        return None
+    return (max(xs) - min(xs), max(ys) - min(ys))
+
+
 def _redimensionner_contour(chemin: Path, largeur: float, hauteur: float) -> bool:
     """Reecrit le contour `Edge.Cuts` du board aux dimensions donnees.
 
@@ -2111,10 +2126,22 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         try:
             from tools.taille_carte import verifier_et_agrandir
             nl, nh = verifier_et_agrandir(pcb, board_width_mm, board_height_mm)
-            if (nl, nh) != (board_width_mm, board_height_mm):
+            # ⚠️ LA TAILLE DEMANDEE EST AUTORITAIRE (D-2026-09-11-b). La chaine
+            # agrandit une carte qui stagne a son plafond de couches en
+            # demandant un contour plus grand ; on ne redimensionnait que quand
+            # le MINIMUM depassait la demande, et un contour plus petit que la
+            # demande restait tel quel — 32 composants hors contour, routage
+            # a 0 % (mesure du 2026-09-11 sur carte-08). Le contour suit donc la
+            # plus grande des deux : minimum calcule, taille demandee.
+            contour = _taille_contour(src.read_text(encoding="utf-8", errors="replace"))
+            if (nl, nh) != (board_width_mm, board_height_mm) or contour is None \
+                    or nl > contour[0] + 0.01 or nh > contour[1] + 0.01:
                 board_width_mm, board_height_mm = nl, nh
                 _redimensionner_contour(src, nl, nh)
                 pcb = PCB.load(str(src))
+                if contour is not None:
+                    logger.info("auto_place: contour %.0fx%.0f mm -> %.0fx%.0f mm (taille demandee)",
+                                contour[0], contour[1], nl, nh)
         except Exception as e:  # noqa: BLE001
             # ⚠️ On le DIT. Une verification silencieusement absente laisserait
             # croire la carte dimensionnee — l etat d avant.

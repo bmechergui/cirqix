@@ -191,6 +191,7 @@ def main() -> int:
 
     meilleur = None          # (routé, -violations, place_b64, route_b64, res)
     echecs = []
+    agrandissements = 0      # D-2026-09-11-b : voir `taille_suivante`
     for essai in range(1, max(1, tentatives) + 1):
       # ⚠️ UN ESSAI QUI PLANTE NE DOIT PAS EMPORTER LES SUIVANTS.
       #
@@ -268,6 +269,16 @@ def main() -> int:
           if routed >= 100 and erreurs == 0:
               print("   100 % atteint — on arrete les essais")
               break
+          # D-2026-09-11-b : au plafond de couches sans 100 % / 0 erreur, on
+          # AGRANDIT la carte pour l essai suivant plutot que de re-tirer le
+          # meme espace. Le service rend le contour a la taille demandee.
+          nw, nh, agrandissements_apres = taille_suivante(
+              board_w, board_h, routed, erreurs, res_r.get("layers"), plafond, agrandissements)
+          if agrandissements_apres > agrandissements:
+              print("   carte AGRANDIE pour l essai suivant : %sx%s -> %sx%s mm "
+                    "(routee a %s%% au plafond de %d couches, %d erreur(s))"
+                    % (board_w, board_h, nw, nh, routed, plafond, erreurs))
+              board_w, board_h, agrandissements = nw, nh, agrandissements_apres
       except SystemExit:
           raise
       except Exception as e:  # noqa: BLE001
@@ -366,6 +377,30 @@ def main() -> int:
     print("PIPELINE COMPLET OK" if ok else "PIPELINE INCOMPLET — voir les étapes ci-dessus")
     print(f"Artefacts : {out}")
     return 0 if ok else 1
+
+
+_AGRANDISSEMENT = 1.2      # +20 % par cote, mesure carte-08 : 98 % -> 100 % a 2 couches
+_AGRANDISSEMENTS_MAX = 2   # borne la surface : x1,44 par cote au plus
+
+
+def taille_suivante(board_w: float, board_h: float, routed: int, erreurs: int,
+                    couches: int | None, plafond: int, agrandissements: int,
+                    maxi: int = _AGRANDISSEMENTS_MAX) -> tuple[float, float, int]:
+    """D-2026-09-11-b : une carte routee a son PLAFOND de couches sans atteindre
+    100 % / 0 erreur est AGRANDIE de 20 % pour l essai suivant, au plus `maxi`
+    fois — au lieu de re-tirer indefiniment le meme espace.
+
+    Mesure du 2026-09-11 sur carte-08 (56 composants, 125 x 95 mm) : 98 %
+    depuis 24 h a 2, 4 et 6 couches ; le meme schema a 150 x 114 mm route a
+    100 % / 0 erreur a 2 couches au premier tirage. Le levier des cartes
+    denses n est ni le routeur ni les couches, c est l espace — et une carte un
+    peu plus grande a 2 couches coute moins cher qu une carte a 98 % sur 6.
+    Rend (largeur, hauteur, agrandissements) pour l essai suivant."""
+    au_plafond = couches is None or int(couches) >= int(plafond)
+    if (routed >= 100 and erreurs == 0) or not au_plafond or agrandissements >= maxi:
+        return (board_w, board_h, agrandissements)
+    return (round(board_w * _AGRANDISSEMENT, 1), round(board_h * _AGRANDISSEMENT, 1),
+            agrandissements + 1)
 
 
 def _fail(stage: str, res: dict[str, Any]) -> int:
