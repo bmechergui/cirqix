@@ -3787,6 +3787,125 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
         _PISTES_A_PROTEGER = memoire_pistes
 
 
+_FP_AT_RE = re.compile(r"\(at\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+))?")
+_REPLI_CIBLE_VOISINES = 2
+
+
+def _positions_des_pastilles(pcb_bytes: bytes, nets_plan) -> dict:
+    """{(ref, pad): (x, y)} des pastilles d un net de plan, en coordonnees carte.
+
+    La rotation du boitier est appliquee : une 0402 tournee de 90 degres a
+    ses broches sur l axe y, pas sur l axe x. Rend {} au moindre doute.
+    """
+    import math
+    if not pcb_bytes or not nets_plan:
+        return {}
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    positions: dict = {}
+    for bloc_fp in re.split(r"\(footprint", texte)[1:]:
+        ref = (re.search(r'\(property "Reference" "([^"]+)"', bloc_fp)
+               or re.search(r'\(fp_text reference "?([^"\s\)]+)', bloc_fp))
+        at = _FP_AT_RE.search(bloc_fp)
+        if not ref or not at:
+            continue
+        fx, fy = float(at.group(1)), float(at.group(2))
+        a = math.radians(float(at.group(3) or 0.0))
+        ca, sa = math.cos(a), math.sin(a)
+        for morceau in bloc_fp.split('(pad "')[1:]:
+            nom, reste = morceau.split('"', 1)
+            m_net = _NET_TOUTES_FORMES_RE.search(morceau)
+            m_at = _FP_AT_RE.search(reste)
+            if not m_net or m_net.group(1) not in nets_plan or not m_at:
+                continue
+            dx, dy = float(m_at.group(1)), float(m_at.group(2))
+            # KiCad : y vers le bas, rotation positive antihoraire a l ecran.
+            positions[(ref.group(1), nom)] = (fx + dx * ca + dy * sa,
+                                              fy - dx * sa + dy * ca)
+    return positions
+
+
+def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
+                       voisines: int = _REPLI_CIBLE_VOISINES) -> set:
+    """Broches Specctra `REF-PAD` rendues au routeur par le repli GND cible :
+    chaque orpheline et ses `voisines` broches du meme plan les plus proches.
+
+    Le routeur n a plus qu a tirer une piste courte de l orpheline vers une
+    broche que le plan atteint deja — au lieu de router TOUT le GND.
+    """
+    if not orphelines:
+        return set()
+    positions = _positions_des_pastilles(pcb_bytes, nets_plan)
+    if not positions:
+        return set()
+    import math
+    pins: set = set()
+    for ref, pad in orphelines:
+        cle = (str(ref), str(pad))
+        if cle not in positions:
+            continue
+        pins.add("%s-%s" % cle)
+        ox, oy = positions[cle]
+        autres = sorted(
+            (math.hypot(x - ox, y - oy), k) for k, (x, y) in positions.items()
+            if k != cle and k not in orphelines)
+        for _, k in autres[:max(0, int(voisines))]:
+            pins.add("%s-%s" % k)
+    return pins
+
+
+def _bilan_drc(pcb_bytes: bytes) -> tuple:
+    rap = _rapport_drc(pcb_bytes)
+    return (_compte_erreurs(rap), len(rap.get("unconnected_items") or []))
+
+
+def _router_gnd_cible(pcb_bytes: bytes, req: "RouteAutoRequest", budget_s: float,
+                      orphelines, deja_route: Optional[bytes] = None):
+    """Repli GND CIBLE : rend au routeur la seule broche orpheline du plan et
+    ses voisines GND les plus proches, pistes existantes protegees.
+
+    Mesure du 2026-09-11 (carte-08, carte-10, 60 tirages rates) : le net
+    incomplet est GND dans 100 % des cas, pour UNE broche sans sortie. Le
+    repli global (`_router_en_incluant_gnd`) demande au routeur de router
+    TOUT le GND en pistes sur deux couches : « (0 erreur, 16 manquante) ne
+    fait pas mieux que (0 erreur, 2 manquante) », 0 retenu sur 11. Ici le
+    routeur ne tire qu une piste courte vers du cuivre que le plan atteint.
+
+    Rend None sur echec ; l appelant compare avant de remplacer.
+    """
+    global _PINS_GND_A_GARDER, _PISTES_A_PROTEGER
+    pins = _pins_gnd_a_garder(pcb_bytes, orphelines, set(_NETS_CONFIES_AU_PLAN))
+    if not pins:
+        return None
+    memoire_pins = _PINS_GND_A_GARDER
+    memoire_pistes = _PISTES_A_PROTEGER
+    try:
+        _PINS_GND_A_GARDER = frozenset(pins)
+        if deja_route:
+            _PISTES_A_PROTEGER = deja_route
+        logger.info("repli GND CIBLE : %d broche(s) rendue(s) au routeur (%s)",
+                    len(pins), ", ".join(sorted(pins)))
+        tentative = RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(pcb_bytes).decode("ascii"),
+            layers=req.layers,
+            timeout_s=max(budget_s, _MIN_LEVEL_BUDGET_S),
+            progress_key=req.progress_key,
+        )
+        res = _route_auto_once(tentative)
+        if not res.kicad_pcb_b64 or res.skipped:
+            return None
+        board = _fill_zones(_add_ground_planes(base64.b64decode(res.kicad_pcb_b64)))
+        return _fanout_pads_isolees(board)
+    except Exception as exc:
+        logger.warning("repli GND cible impossible (%s) — sequence conservee", exc)
+        return None
+    finally:
+        _PINS_GND_A_GARDER = memoire_pins
+        _PISTES_A_PROTEGER = memoire_pistes
+
+
 def _fill_zones(pcb_bytes: bytes) -> bytes:
     """Remplit les zones de cuivre. Reparation : au moindre doute, board rendu tel quel.
 
@@ -4479,8 +4598,13 @@ _NETS_CONFIES_AU_PLAN: tuple[str, ...] = _nets_confies_au_plan()
 
 
 def _strip_net_from_dsn(dsn_text: str, net_name: str,
-                        garder_declaration: bool = False) -> tuple[str, int]:
+                        garder_declaration: bool = False,
+                        garder_pins=()) -> tuple[str, int]:
     """Retire les BROCHES d un net de la section network. Rend (texte, broches).
+
+    `garder_pins` (identifiants Specctra `REF-PAD`) : ces broches-la RESTENT
+    au routeur, les autres sont retirees — c est le repli GND CIBLE. Le compte
+    rendu est celui des broches retirees.
 
     `garder_declaration=False` supprime l entree entiere — le routeur ignore
     jusqu a l existence du net.
@@ -4518,6 +4642,7 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
     bloc = dsn_text[debut : i + 1]
     pins = bloc[bloc.find("(pins") :].replace("(pins", "").replace(")", "")
     n = len(pins.split())
+    gardees = [pin for pin in pins.split() if pin in set(garder_pins or ())]
 
     fin = i + 1
     while fin < len(dsn_text) and dsn_text[fin] in " " + chr(9):
@@ -4525,6 +4650,9 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
     if dsn_text[fin : fin + 1] == chr(10):
         fin += 1
     tete = dsn_text[:debut].rstrip(" " + chr(9))
+    if gardees:
+        return (dsn_text[:debut] + "(net %s (pins %s))" % (net_name, " ".join(gardees))
+                + chr(10) + dsn_text[fin:], n - len(gardees))
     if garder_declaration:
         # L indentation d origine est conservee : `tete` s arrete juste avant.
         marge = dsn_text[:debut]
@@ -4533,6 +4661,10 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
                 + dsn_text[fin:], n)
     return tete + dsn_text[fin:], n
 
+
+# Broches `REF-PAD` d un net de plan que le repli GND CIBLE rend au routeur
+# (l orpheline et ses voisines GND les plus proches). Vide hors repli.
+_PINS_GND_A_GARDER: frozenset = frozenset()
 
 # Garder le net du plan DECLARE dans le DSN, sans broches, au lieu de le
 # supprimer. Rend resoluble la protection du cuivre de masse pose a l etape ③,
@@ -4548,7 +4680,8 @@ def _confier_au_plan(dsn_path: Path) -> int:
     total = 0
     for net in _NETS_CONFIES_AU_PLAN:
         texte, n = _strip_net_from_dsn(
-            texte, net, garder_declaration=_GARDER_LE_NET_DU_PLAN_DECLARE)
+            texte, net, garder_declaration=_GARDER_LE_NET_DU_PLAN_DECLARE,
+            garder_pins=_PINS_GND_A_GARDER)
         total += n
     if total:
         dsn_path.write_text(texte, encoding="utf-8")
@@ -5539,9 +5672,29 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "repli sur un routage incluant GND", len(orphelines))
                 # `final` = le board ROUTE : ses pistes seront protegees, le
                 # routeur ne fera qu ajouter les liaisons GND manquantes.
-                secours = _router_en_incluant_gnd(etendu, req, restant,
-                                                  deja_route=final)
-                if secours is None:
+                # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND),
+                # le repli GLOBAL ensuite seulement s il reste des orphelines.
+                secours = None
+                cible = _router_gnd_cible(etendu, req, restant, orphelines,
+                                          deja_route=final)
+                if cible is not None:
+                    avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
+                    if _secours_est_meilleur(avant_c, apres_c):
+                        logger.info(
+                            "repli GND CIBLE retenu : (%d erreur, %d manquante) "
+                            "-> (%d erreur, %d manquante)",
+                            avant_c[0], avant_c[1], apres_c[0], apres_c[1])
+                        final = cible
+                        orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+                    else:
+                        logger.warning(
+                            "repli GND CIBLE refuse : (%d erreur, %d manquante) "
+                            "ne fait pas mieux que (%d erreur, %d manquante)",
+                            apres_c[0], apres_c[1], avant_c[0], avant_c[1])
+                if orphelines:
+                    secours = _router_en_incluant_gnd(etendu, req, restant,
+                                                      deja_route=final)
+                if secours is None and orphelines:
                     # ⚠️ NOTER l echec, sinon la memoire reste vide et le
                     # correctif est inerte — un repli qui rend None a coute
                     # tout son temps sans rien produire.
