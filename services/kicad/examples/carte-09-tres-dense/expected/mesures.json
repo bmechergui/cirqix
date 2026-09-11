@@ -9,7 +9,7 @@
   "duree_s": 2321,
   "git": "29caf3e",
   "routed_percent": 100,
-  "drc_violations": 86,
+  "drc_violations": 142,
   "drc_clean": true,
   "fichiers_exportes": 20,
   "types_violations": "silk_over_copper:50,silk_overlap:36",
@@ -21,11 +21,13 @@
     "empreintes": 63
   },
   "drc_du_board": {
-    "violations": 43,
+    "violations": 142,
     "non_connectes": 0,
-    "types": "silk_over_copper:25,silk_overlap:18",
+    "types": "silk_over_copper:96,silk_overlap:46",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-09-tres-dense-t2"
 }
