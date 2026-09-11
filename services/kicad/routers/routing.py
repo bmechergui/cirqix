@@ -3789,6 +3789,10 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
 
 _FP_AT_RE = re.compile(r"\(at\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+))?")
 _REPLI_CIBLE_VOISINES = 2
+# Nombre de pastilles par boitier, releve par `_positions_des_pastilles` : les
+# voisines GND d un boitier DENSE (>= _DENSE_PAD_COUNT) passent en dernier —
+# une broche de LQFP est aussi difficile d acces que l orpheline elle-meme.
+_PADS_PAR_BOITIER: dict = {}
 
 
 def _positions_des_pastilles(pcb_bytes: bytes, nets_plan) -> dict:
@@ -3811,6 +3815,7 @@ def _positions_des_pastilles(pcb_bytes: bytes, nets_plan) -> dict:
         at = _FP_AT_RE.search(bloc_fp)
         if not ref or not at:
             continue
+        _PADS_PAR_BOITIER[ref.group(1)] = bloc_fp.count('(pad "')
         fx, fy = float(at.group(1)), float(at.group(2))
         a = math.radians(float(at.group(3) or 0.0))
         ca, sa = math.cos(a), math.sin(a)
@@ -3848,9 +3853,16 @@ def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
             continue
         pins.add("%s-%s" % cle)
         ox, oy = positions[cle]
+        # ⚠️ Mesure du 2026-09-11 (carte-08) : les deux voisines les plus
+        # proches de C37.2 etaient U1.23 et U1.35, deux broches de LQFP — le
+        # routeur n a rien pu tirer. On prefere une voisine d un boitier
+        # ordinaire, meme un peu plus loin.
         autres = sorted(
-            (math.hypot(x - ox, y - oy), k) for k, (x, y) in positions.items()
+            (_PADS_PAR_BOITIER.get(k[0], 0) >= _DENSE_PAD_COUNT,
+             math.hypot(x - ox, y - oy), k)
+            for k, (x, y) in positions.items()
             if k != cle and k not in orphelines)
+        autres = [(d, k) for _, d, k in autres]
         for _, k in autres[:max(0, int(voisines))]:
             pins.add("%s-%s" % k)
     return pins
@@ -3875,16 +3887,24 @@ def _router_gnd_cible(pcb_bytes: bytes, req: "RouteAutoRequest", budget_s: float
 
     Rend None sur echec ; l appelant compare avant de remplacer.
     """
-    global _PINS_GND_A_GARDER, _PISTES_A_PROTEGER
-    pins = _pins_gnd_a_garder(pcb_bytes, orphelines, set(_NETS_CONFIES_AU_PLAN))
+    global _PINS_GND_A_GARDER, _PISTES_A_PROTEGER, _ZONES_LIBEREES
+    nets_plan = set(_NETS_CONFIES_AU_PLAN)
+    pins = _pins_gnd_a_garder(pcb_bytes, orphelines, nets_plan)
     if not pins:
         return None
     memoire_pins = _PINS_GND_A_GARDER
     memoire_pistes = _PISTES_A_PROTEGER
+    memoire_zones = _ZONES_LIBEREES
     try:
         _PINS_GND_A_GARDER = frozenset(pins)
         if deja_route:
             _PISTES_A_PROTEGER = deja_route
+        # ⚠️ LIBERER les pistes autour de l orpheline, comme a l escalade :
+        # toutes protegees, le routeur n avait aucune place pour la piste
+        # courte — « (0 erreur, 4 manquante) ne fait pas mieux que (0, 4) ».
+        positions = _positions_des_pastilles(pcb_bytes, nets_plan)
+        _ZONES_LIBEREES = [positions[(str(r), str(p))] for r, p in orphelines
+                           if (str(r), str(p)) in positions]
         logger.info("repli GND CIBLE : %d broche(s) rendue(s) au routeur (%s)",
                     len(pins), ", ".join(sorted(pins)))
         tentative = RouteAutoRequest(
@@ -3904,6 +3924,7 @@ def _router_gnd_cible(pcb_bytes: bytes, req: "RouteAutoRequest", budget_s: float
     finally:
         _PINS_GND_A_GARDER = memoire_pins
         _PISTES_A_PROTEGER = memoire_pistes
+        _ZONES_LIBEREES = memoire_zones
 
 
 def _fill_zones(pcb_bytes: bytes) -> bytes:
