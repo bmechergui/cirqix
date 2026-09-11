@@ -2075,7 +2075,26 @@ def _aggrave_le_board(avant: bytes, apres: bytes, *,
             "garde « ne peut qu ameliorer » : aucun verdict DRC — le candidat "
             "est refuse, le board recu est conserve")
         return True
-    return _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+    aggrave = _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+    if aggrave:
+        # ⚠️ DIRE quelles erreurs : « erreurs ajoutees — board conserve » a
+        # refuse la repose des vias GND du LQFP pendant toute une soiree
+        # (2026-09-11) sans jamais nommer l erreur qu elle ajoutait.
+        logger.warning("garde « ne peut qu ameliorer » : erreurs ajoutees %s",
+                       _erreurs_ajoutees(r_avant, r_apres))
+    return aggrave
+
+
+def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
+    """{type: +n} des erreurs DRC en plus dans `r_apres` (types en hausse seulement)."""
+    def _par_type(rap):
+        c: dict = {}
+        for v in (rap or {}).get("violations") or []:
+            if isinstance(v, dict) and v.get("severity") == "error":
+                c[v.get("type", "?")] = c.get(v.get("type", "?"), 0) + 1
+        return c
+    a, b = _par_type(r_avant), _par_type(r_apres)
+    return {k: b[k] - a.get(k, 0) for k in sorted(b) if b[k] > a.get(k, 0)}
 
 
 def _rapport_drc(pcb_bytes: bytes) -> dict:
