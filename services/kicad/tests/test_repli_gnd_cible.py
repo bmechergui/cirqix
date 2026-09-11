@@ -162,3 +162,11 @@ class TestCablage:
     def test_le_repli_cible_libere_autour_des_orphelines(self):
         code = "\n".join(l.split("#")[0] for l in inspect.getsource(R._router_gnd_cible).splitlines())
         assert "_ZONES_LIBEREES = [positions[" in code
+
+
+def test_les_objets_manquants_sont_nommes_sous_le_verdict_drc():
+    """« GND incomplet » sans pastille orpheline peut etre deux ilots, un via
+    borgne ou une piste : le journal doit nommer les objets, pas seulement le net."""
+    src = Path(R.__file__).read_text(encoding="utf-8")
+    i = src.index("pourcentage ramene a")
+    assert '"  manquant : %s"' in src[i:i + 1200]

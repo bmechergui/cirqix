@@ -3453,6 +3453,13 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
             "incomplet(s) sur %d — pourcentage ramene a %d %% ; net(s) : %s",
             percent_moteur, len(nets), routables, reel,
             ", ".join(sorted(nets)[:12]))
+        # ⚠️ DIRE quels OBJETS restent separes, pas seulement le net. « GND
+        # incomplet » sans pastille orpheline (2026-09-11, carte-08) peut etre
+        # deux ilots de plan, un via borgne, une piste : chacun se repare
+        # ailleurs, et le nom du net ne les distingue pas.
+        for u in manquants[:6]:
+            logger.warning("  manquant : %s", " <-> ".join(
+                str(i.get("description", "?")) for i in (u.get("items") or [])))
         return reel
     return percent_moteur
 
