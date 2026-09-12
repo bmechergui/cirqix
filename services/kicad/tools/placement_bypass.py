@@ -953,3 +953,18 @@ def qualite_decouplage(pcb) -> tuple[float, float, int]:
     if not vals:
         return (0.0, 0.0, 0)
     return (sum(vals) / len(vals), max(vals), len(vals))
+
+
+def ancres_des_grappes(pcb) -> set:
+    """References des ANCRES de grappes fonctionnelles (les CI que les
+    decouplages, quartz et drivers entourent).
+
+    ⚠️ Mesure du 2026-09-12 (carte-09, service, diff des boards traces) :
+    l Inspecteur qui suit le snap resolvait un conflit en deplacant U1 de
+    16 mm et U2 de 13 mm — les capas, ancrees, restaient collees a l ANCIENNE
+    place de la puce (decouplage 2,4 -> 14,9 mm). L ancre doit etre ancree.
+    """
+    try:
+        return {str(c.anchor) for c in _clusters_natifs(_composants(pcb)) if getattr(c, "anchor", None)}
+    except Exception:  # noqa: BLE001
+        return set()

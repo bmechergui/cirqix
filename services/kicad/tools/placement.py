@@ -2088,8 +2088,17 @@ def _journaliser_qualite(out: Path, etape: str) -> None:
         from kicad_tools.schema.pcb import PCB as _PCB
         from tools.placement_bypass import qualite_decouplage
         moy, maxi, n = qualite_decouplage(_PCB.load(str(out)))
-        logger.info("auto_place: decouplage %s — moyenne %.1f mm, max %.1f mm (%d capa(s))",
-                    etape, moy, maxi, n)
+        import hashlib as _h
+        logger.info("auto_place: decouplage %s — moyenne %.1f mm, max %.1f mm (%d capa(s)) [%s, %d o]",
+                    etape, moy, maxi, n, _h.md5(out.read_bytes()).hexdigest()[:8], out.stat().st_size)
+        # Trace de l etape (12 dernieres), meme motif que `/tmp/traces-routage`.
+        d = Path(os.environ.get("CIRQIX_TRACES_PLACEMENT", "/tmp/traces-placement"))
+        d.mkdir(parents=True, exist_ok=True)
+        nom = "%s-%d-%s.kicad_pcb" % (time.strftime("%H%M%S"), os.getpid(),
+                                       re.sub(r"[^a-z0-9]+", "_", etape.lower())[:40])
+        (d / nom).write_bytes(out.read_bytes())
+        for vieux in sorted(d.glob("*.kicad_pcb"))[:-12]:
+            vieux.unlink()
     except Exception as exc:  # noqa: BLE001
         logger.info("auto_place: decouplage %s — non mesure (%s)", etape, exc)
 
@@ -2460,8 +2469,17 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             # venait de coller. Les membres deplaces par le snap sont donc
             # ANCRES pour cette passe : le Fixer bouge les autres.
             colles = sorted(_footprints_deplaces(positions_avant, out))
-            _resolve_remaining_conflicts(out, list(conn) + colles)
+            # ⚠️ ET LES PUCES. Diff des boards traces, carte-09 (2026-09-12) :
+            # les capas ancrees, le Fixer deplacait U1 de 16 mm et U2 de 13 mm
+            # pour resoudre un conflit — les capas restaient collees a l ancienne
+            # place de la puce. L ancre d une grappe est ancree avec ses membres.
+            from tools.placement_bypass import ancres_des_grappes
+            puces = sorted(ancres_des_grappes(pcb_snap))
+            fixes_snap = list(conn) + colles + [r for r in puces if r not in colles and r not in conn]
+            _resolve_remaining_conflicts(out, fixes_snap)
+            _journaliser_qualite(out, "apres Inspecteur (%d ancre(s))" % len(fixes_snap))
             _rendre_lisible(out)
+            _journaliser_qualite(out, "apres rendre_lisible")
             n_err_apres = _compter_conflits_erreur(out)
 
             # ⚠️ RETRAIT CIBLE avant le repli total. Mesure du 2026-09-02,

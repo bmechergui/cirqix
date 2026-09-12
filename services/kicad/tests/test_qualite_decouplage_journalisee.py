@@ -35,6 +35,19 @@ def test_l_inspecteur_apres_le_snap_ancre_les_membres_colles():
     l Inspecteur les dispersait a 19 mm pour resoudre UN conflit preexistant."""
     code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
     i_save = code.find("pcb_snap.save(str(out))")
-    i_fix = code.find("_resolve_remaining_conflicts(out, list(conn) + colles)", i_save)
+    i_fix = code.find("_resolve_remaining_conflicts(out, fixes_snap)", i_save)
     assert i_save != -1 and i_fix != -1
     assert "colles = sorted(_footprints_deplaces(positions_avant, out))" in code[i_save:i_fix]
+
+
+def test_l_inspecteur_apres_le_snap_ancre_aussi_les_puces(tmp_path):
+    """Diff des boards traces (carte-09, 2026-09-12) : capas ancrees, le Fixer
+    deplacait U1 de 16 mm et U2 de 13 mm ; les capas restaient collees a
+    l ancienne place de la puce."""
+    from tools.placement_bypass import ancres_des_grappes
+    pcb = PCB.load(str(_board_ic_and_far_bypass(tmp_path)))
+    assert ancres_des_grappes(pcb) == {"U1"}
+    code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
+    i = code.find("puces = sorted(ancres_des_grappes(pcb_snap))")
+    j = code.find("_resolve_remaining_conflicts(out, fixes_snap)", i)
+    assert i != -1 and j != -1
