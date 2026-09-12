@@ -2423,6 +2423,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # ⚠️ La distance se mesure entre les CORPS. L origine d un module est
         # sur sa pastille 1 (courtyard ESP32-WROOM : y de -30,74 a +10,51) ;
         # snapper « a 3 mm de l origine » poserait la capa DANS le module.
+        fixes_snap = list(conn)  # ancres de toutes les passes de l Inspecteur apres le snap
         pcb_snap = PCB.load(str(out))
         # Les paires en serie entrent dans LE MEME parcours de snap : deux
         # passages successifs se defont l un l autre (piege deja mesure entre
@@ -2499,7 +2500,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                         break  # les erreurs ne viennent pas du snap
                     _remettre_footprints(out, positions_avant, remis)
                     deplaces -= remis
-                    _resolve_remaining_conflicts(out, conn)
+                    _resolve_remaining_conflicts(out, fixes_snap)
                     _rendre_lisible(out)
                     n_err_apres = _compter_conflits_erreur(out)
                     logger.info(
@@ -2556,7 +2557,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             logger.warning(
                 "auto_place: %d composant(s) hors carte réparé(s) (%s)",
                 len(repares), ", ".join(repares))
-            _resolve_remaining_conflicts(out, conn + repares)
+            _resolve_remaining_conflicts(out, fixes_snap + repares)
 
         # ⚠️ Repasser l ecartement APRES le raffinement et l Inspecteur : le
         # CMA-ES ne connait pas nos ancrages dominants et peut y ramener des
@@ -2612,7 +2613,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 err_avant_rangees = _compter_conflits_erreur(out)
                 pcb_rang.save(str(out))
                 _normalize_to_board_frame(out)
-                _resolve_remaining_conflicts(out, conn)
+                _resolve_remaining_conflicts(out, fixes_snap)
                 _rendre_lisible(out)
                 if _compter_conflits_erreur(out) > err_avant_rangees:
                     out.write_bytes(avant_rangees)
@@ -2631,7 +2632,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             from tools.placement_contraintes import aligner_sur_grille
             n_grille = aligner_sur_grille(out, _pas, figes=conn)
             if n_grille:
-                _resolve_remaining_conflicts(out, conn)
+                _resolve_remaining_conflicts(out, fixes_snap)
                 _rendre_lisible(out)
                 if _compter_conflits_erreur(out) > err_avant_grille:
                     out.write_bytes(avant_grille)

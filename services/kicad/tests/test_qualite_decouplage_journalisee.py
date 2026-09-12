@@ -51,3 +51,12 @@ def test_l_inspecteur_apres_le_snap_ancre_aussi_les_puces(tmp_path):
     i = code.find("puces = sorted(ancres_des_grappes(pcb_snap))")
     j = code.find("_resolve_remaining_conflicts(out, fixes_snap)", i)
     assert i != -1 and j != -1
+
+
+def test_les_inspecteurs_des_rangees_et_de_la_grille_gardent_les_ancres_du_snap():
+    """carte-09 (2026-09-12) : 2,4 mm apres le snap, 8,6 mm livre — les passes
+    suivantes de l Inspecteur (rangees, grille) n ancraient que les connecteurs."""
+    code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
+    i_snap = code.find("pcb_snap.save(str(out))")
+    assert code.count("_resolve_remaining_conflicts(out, fixes_snap)") >= 3
+    assert "_resolve_remaining_conflicts(out, conn)" not in code[i_snap:]
