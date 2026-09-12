@@ -279,8 +279,15 @@ def main() -> int:
                     "(routee a %s%% au plafond de %d couches, %d erreur(s))"
                     % (board_w, board_h, nw, nh, routed, plafond, erreurs))
               board_w, board_h, agrandissements = nw, nh, agrandissements_apres
-      except SystemExit:
-          raise
+      except SystemExit as e:
+          # ⚠️ Un HTTP 500 sur un RE-TIRAGE ne jette pas le board deja retenu.
+          # carte-09 (2026-09-12) : essai 3 retenu a 100 %, essai 4 en 500 sur
+          # /place/auto -> la chaine sortait sans rien exporter, le 100 % perdu.
+          if meilleur is None:
+              raise
+          echecs.append("essai %d : %s" % (essai, str(e)[:70]))
+          print("   essai %d PERDU (%s) — le board retenu est conserve"
+                % (essai, str(e)[:70]))
       except Exception as e:  # noqa: BLE001
           # ⚠️ ON LE DIT, ET ON COMPTE. Un essai perdu en silence ferait passer
           # « 4 essais » pour une mesure alors qu un seul aurait tourne.

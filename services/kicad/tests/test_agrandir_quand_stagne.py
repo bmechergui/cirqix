@@ -68,3 +68,14 @@ class TestContour:
         i_r = code.find("_redimensionner_contour(src, nl, nh)")
         assert i_c != -1 and i_r != -1 and i_c < i_r
         assert "nl > contour[0]" in code
+
+
+def test_un_500_sur_un_re_tirage_ne_jette_pas_le_board_retenu():
+    """carte-09 (2026-09-12) : essai 3 retenu a 100 %, essai 4 en HTTP 500 sur
+    /place/auto -> la chaine sortait sans exporter. Le SystemExit de `_post`
+    n interrompt la boucle que si RIEN n a encore ete retenu."""
+    code = "\n".join(l.split("#")[0] for l in inspect.getsource(RP.main).splitlines())
+    i = code.find("except SystemExit as e:")
+    assert i != -1
+    bloc = code[i:i + 400]
+    assert "if meilleur is None:" in bloc and "raise" in bloc and "PERDU" in bloc
