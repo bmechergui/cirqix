@@ -52,11 +52,15 @@ _MARGE_MM = 0.15
 # Largeur d'un caractère, en fraction de la hauteur de police. KiCad dessine
 # ses glyphes dans un carré dont la largeur utile vaut environ 0,72 de la
 # hauteur, plus l'épaisseur du trait de part et d'autre.
-_LARGEUR_PAR_CARACTERE = 0.72
+# ⚠️ MESURE, pas estime : `kicad-cli pcb export svg` ecrit « C60 » avec
+# textLength=3,15 mm pour une hauteur de 1 mm, soit 1,05 mm par caractere.
+# A 0,72 la boite etait trop courte d un tiers et la sonde annoncait
+# « 8 sur cuivre » la ou le DRC en comptait 95 (carte-10, 2026-09-12).
+_LARGEUR_PAR_CARACTERE = 1.05
 
 # Rayons d'essai, du plus proche au plus lointain. On s'éloigne le moins
 # possible : une référence à 5 mm de son composant ne le désigne plus.
-_RAYONS_MM = (0.0, 0.8, 1.6, 2.4, 3.2)
+_RAYONS_MM = (0.0, 0.8, 1.6, 2.4, 3.2, 4.0)
 _ANGLES = (90, 270, 0, 180, 45, 135, 225, 315)
 
 
@@ -80,6 +84,25 @@ def _chevauche(a: tuple, b: tuple, marge: float = _MARGE_MM) -> bool:
                 or a[3] + marge < b[1] or b[3] + marge < a[1])
 
 
+def _angle_texte(t: Any) -> float:
+    """L angle du TEXTE, tel que KiCad le dessine — jamais celui du boitier.
+
+    ⚠️ MESURE DU 2026-09-12 (carte-10, `kicad-cli pcb export svg`) : la
+    reference d une 0603 tournee de 90 degres est ecrite `(at 0 -1.43 0)` et
+    KiCad la dessine A PLAT (aucun `rotate` dans le SVG, textLength 3,15 mm en
+    x). L angle de la propriete est celui du rendu ; notre generateur ecrit 0
+    partout. En tournant la boite avec le boitier, la sonde voyait un texte
+    vertical de 1 mm de large a 0,4 mm des pastilles — « libre » — quand le
+    DRC voyait un texte horizontal de 3 mm qui les recouvrait : 95 violations
+    invisibles a la sonde, et une regle jamais appelee par ailleurs.
+    """
+    for nom in ("rotation", "angle", "orientation"):
+        v = getattr(t, nom, None)
+        if isinstance(v, (int, float)):
+            return float(v)
+    return 0.0
+
+
 def _absolu(fp: Any, dx: float, dy: float) -> tuple[float, float]:
     """Une position locale du boîtier, ramenée au repère de la carte.
 
@@ -87,10 +110,26 @@ def _absolu(fp: Any, dx: float, dy: float) -> tuple[float, float]:
     place correctement les références des boîtiers à 0° et déplace toutes les
     autres — un défaut qui ne se voit que sur les cartes denses.
     """
+    return _tourne(fp, dx, dy)
+
+
+def _tourne(fp: Any, dx: float, dy: float) -> tuple[float, float]:
+    """Offset local -> absolu, dans la convention de KiCad.
+
+    ⚠️ KiCad : y vers le BAS, rotation positive ANTIHORAIRE a l ecran — donc
+    x = dx·cos + dy·sin, y = -dx·sin + dy·cos (meme formule que
+    `_positions_des_pastilles` du routage). La convention mathematique
+    inverse (dx·cos - dy·sin) MIROITE chaque offset des boitiers tournes :
+    mesure du 2026-09-12, C60 a 90 degres, texte local (0, -1,43), le DRC le
+    voit a x - 1,43 quand la sonde le mettait a x + 1,43. Sur carte-10, 51
+    boitiers sur 70 sont tournes : la sonde ne regardait pas les bons
+    endroits, et ses deplacements posaient les textes sur les pastilles des
+    voisins (14 -> 49 `silk_over_copper` avec les contours en obstacles).
+    """
     a = math.radians(getattr(fp, "rotation", 0.0) or 0.0)
     ox, oy = fp.position
-    return (ox + dx * math.cos(a) - dy * math.sin(a),
-            oy + dx * math.sin(a) + dy * math.cos(a))
+    return (ox + dx * math.cos(a) + dy * math.sin(a),
+            oy - dx * math.sin(a) + dy * math.cos(a))
 
 
 def _reference_visible(fp: Any):
@@ -118,11 +157,43 @@ def _obstacles_cuivre(pcb: Any) -> list[tuple]:
         for pad in getattr(fp, "pads", []) or []:
             px, py = getattr(pad, "position", (0.0, 0.0))
             sx, sy = getattr(pad, "size", (0.0, 0.0)) or (0.0, 0.0)
-            x = ox + px * math.cos(a) - py * math.sin(a)
-            y = oy + px * math.sin(a) + py * math.cos(a)
+            x, y = _tourne(fp, px, py)
             if abs(math.sin(a)) > 0.5:
                 sx, sy = sy, sx
             out.append((x - sx / 2, y - sy / 2, x + sx / 2, y + sy / 2))
+    return out
+
+
+def _obstacles_serigraphie(pcb: Any) -> list[tuple]:
+    """Les traits de serigraphie des empreintes (contours), en absolu.
+
+    ⚠️ C est ce que `silk_overlap` mesure entre un texte et un contour : sur
+    carte-10 (2026-09-12), 16 des 24 chevauchements restants opposaient la
+    reference d une LED au contour de la resistance voisine, a 4 mm. Sans ces
+    obstacles, la sonde jugeait la place « libre » et y laissait le texte.
+    """
+    out = []
+    for fp in pcb.footprints:
+        a = math.radians(getattr(fp, "rotation", 0.0) or 0.0)
+        ox, oy = fp.position
+        for g in getattr(fp, "graphics", []) or []:
+            if "Silk" not in (getattr(g, "layer", "") or ""):
+                continue
+            pts = []
+            for nom in ("start", "end"):
+                v = getattr(g, nom, None)
+                if v:
+                    pts.append(v)
+            pts.extend(getattr(g, "points", []) or [])
+            if not pts:
+                continue
+            xs, ys = [], []
+            for px, py in pts:
+                x, y = _tourne(fp, px, py)
+                xs.append(x)
+                ys.append(y)
+            e = (getattr(g, "stroke_width", 0.12) or 0.12) / 2
+            out.append((min(xs) - e, min(ys) - e, max(xs) + e, max(ys) + e))
     return out
 
 
@@ -136,7 +207,7 @@ def boites_des_references(pcb: Any) -> dict[str, tuple]:
         dx, dy = getattr(t, "position", (0.0, 0.0))
         cx, cy = _absolu(fp, dx, dy)
         out[fp.reference] = _boite_texte(cx, cy, fp.reference, _hauteur(t),
-                                         getattr(fp, "rotation", 0.0) or 0.0)
+                                         _angle_texte(t))
     return out
 
 
@@ -149,7 +220,7 @@ def compter_chevauchements(pcb: Any) -> tuple[int, int]:
     l'autre les vraies formes des glyphes.
     """
     boites = boites_des_references(pcb)
-    cuivre = _obstacles_cuivre(pcb)
+    cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
     sur_cuivre = sum(1 for b in boites.values()
                      if any(_chevauche(b, c) for c in cuivre))
     refs = sorted(boites)
@@ -169,7 +240,7 @@ def degager_references(pcb: Any) -> int:
     place : un texte déplacé au hasard chevauche autant et ne désigne plus son
     composant.
     """
-    cuivre = _obstacles_cuivre(pcb)
+    cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
     boites = boites_des_references(pcb)
     par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
     deplaces = 0
@@ -185,7 +256,7 @@ def degager_references(pcb: Any) -> int:
             continue
 
         haut = _hauteur(t)
-        rot = getattr(fp, "rotation", 0.0) or 0.0
+        rot = _angle_texte(t)
         dx0, dy0 = getattr(t, "position", (0.0, 0.0))
         trouve = None
         for rayon in _RAYONS_MM:

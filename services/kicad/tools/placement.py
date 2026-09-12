@@ -240,6 +240,25 @@ def elargir_percages_trop_fins(texte: str) -> tuple:
     return "(pad ".join(sortie), n
 
 
+def _degager_la_serigraphie(pcb_path: Path) -> int:
+    """Ecarte les references posees sur du cuivre ou les unes sur les autres.
+
+    Ne deplace jamais un composant : seules les positions de texte changent,
+    le DRC de placement ne peut donc pas empirer. Rend le nombre de textes
+    deplaces ; une panne de la regle ne casse pas le placement.
+    """
+    try:
+        from tools.serigraphie import degager_references
+        pcb = PCB.load(str(pcb_path))
+        n = degager_references(pcb)
+        if n:
+            pcb.save(str(pcb_path))
+        return n
+    except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
+        logger.warning("auto_place: serigraphie non degagee (%s)", exc)
+        return 0
+
+
 def _rendre_lisible(pcb_path: Path) -> None:
     """Repare, EN PLACE, ce que les lecteurs de KiCad refusent.
 
@@ -2640,6 +2659,12 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                                 "(%d -> %d erreurs)", err_avant_grille,
                                 _compter_conflits_erreur(out))
 
+        # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
+        # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les
+        # seize cartes livrees portaient 95 references sur leurs propres
+        # pastilles (carte-10). Une regle jamais invoquee est indistinguable
+        # d une regle absente — troisieme occurrence dans ce depot.
+        _degager_la_serigraphie(out)
         _rendre_lisible(out)
         conflits_restants = _compter_conflits_erreur(out)
         if conflits_restants:

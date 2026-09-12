@@ -54,9 +54,10 @@ class _Pad:
 
 
 class _Fp:
-    def __init__(self, reference, position, textes, pads=(), rotation=0.0):
+    def __init__(self, reference, position, textes, pads=(), rotation=0.0, graphics=()):
         self.reference, self.position = reference, position
         self.texts, self.pads, self.rotation = textes, list(pads), rotation
+        self.graphics = list(graphics)
 
 
 class _Pcb:
@@ -110,7 +111,73 @@ class TestDetection:
         droit = S._absolu(_Fp("R1", (0.0, 0.0), [], rotation=0.0), 0.0, -2.0)
         tourne = S._absolu(_Fp("R1", (0.0, 0.0), [], rotation=90.0), 0.0, -2.0)
         assert droit != tourne
-        assert math.isclose(tourne[0], 2.0, abs_tol=1e-6)
+        # ⚠️ Convention KiCad (y vers le bas, rotation antihoraire) : un texte
+        # AU-DESSUS d un boitier a 0 degre passe A GAUCHE a 90 degres. Mesure
+        # du 2026-09-12 : C60 a 90 degres, texte local (0, -1,43), vu par le
+        # DRC a x - 1,43. Ce test exigeait +2,0 — il encodait le miroir.
+        assert math.isclose(tourne[0], -2.0, abs_tol=1e-6)
+        assert math.isclose(tourne[1], 0.0, abs_tol=1e-6)
+
+
+class TestTexteAPlat:
+    """KiCad dessine la reference A PLAT quel que soit l angle du boitier
+    (mesure SVG du 2026-09-12) : la boite ne tourne pas avec lui."""
+
+    def _c60(self):
+        # 0603 tournee de 90 : pastilles en y (±0,775), reference a 1,43 mm
+        # a gauche, texte horizontal de 3 caracteres — il touche la pastille.
+        pads = [_Pad((-0.775, 0.0), (0.9, 1.0)), _Pad((0.775, 0.0), (0.9, 1.0))]
+        return _Pcb([_Fp("C60", (148.5, 97.0), [_Texte((0.0, -1.43))],
+                         pads=pads, rotation=90.0)])
+
+    def test_la_boite_ne_tourne_pas_avec_le_boitier(self):
+        b = S.boites_des_references(self._c60())["C60"]
+        assert b[2] - b[0] > b[3] - b[1], "le texte est a plat, plus large que haut"
+
+    def test_une_reference_sur_ses_propres_pastilles_est_vue(self):
+        assert S.compter_chevauchements(self._c60())[0] == 1
+
+    def test_et_degagee(self):
+        pcb = self._c60()
+        assert S.degager_references(pcb) == 1
+        assert S.compter_chevauchements(pcb)[0] == 0
+
+    def test_la_largeur_par_caractere_est_celle_mesuree(self):
+        assert S._LARGEUR_PAR_CARACTERE >= 1.0
+
+
+class _Trait:
+    def __init__(self, start, end, layer="F.SilkS"):
+        self.start, self.end, self.layer = start, end, layer
+        self.points, self.stroke_width, self.graphic_type = [], 0.12, "line"
+
+
+class TestContoursDeSerigraphie:
+    """La reference d une LED posee sur le CONTOUR de la resistance voisine :
+    16 des 24 chevauchements restants de carte-10 (2026-09-12)."""
+
+    def _rangee(self):
+        r = _Fp("R1", (0.0, 0.0), [_Texte((0.0, -3.0))],
+                graphics=[_Trait((-0.8, -0.7), (0.8, -0.7)), _Trait((-0.8, 0.7), (0.8, 0.7))])
+        d = _Fp("D1", (0.0, 4.0), [_Texte((0.0, -4.7))])  # texte a y=-0.7 : sur le trait de R1
+        return _Pcb([r, d])
+
+    def test_le_contour_est_un_obstacle(self):
+        assert S._obstacles_serigraphie(self._rangee())
+
+    def test_une_reference_sur_un_contour_voisin_est_vue_et_degagee(self):
+        pcb = self._rangee()
+        assert S.compter_chevauchements(pcb)[0] >= 1
+        assert S.degager_references(pcb) >= 1
+        assert S.compter_chevauchements(pcb)[0] == 0
+
+
+class TestCablage:
+    def test_auto_place_degage_la_serigraphie_en_dernier(self):
+        src = (_SERVICE / "tools" / "placement.py").read_text(encoding="utf-8")
+        i = src.index("_degager_la_serigraphie(out)")
+        assert "aligner_sur_grille(" in src[:i], "la serigraphie vient APRES la grille"
+        assert "degager_references" in src
 
 
 class TestDegagement:
