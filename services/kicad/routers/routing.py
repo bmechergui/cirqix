@@ -2019,7 +2019,19 @@ def _projet_kicad(pcb_bytes: bytes):
     chez JLCPCB. La condition est la presence reelle d un boitier dense — meme
     critere que le halo d escape et le keepout de coulee.
     """
+    # ⚠️ D-2026-09-12-a (option B, validee) : le routage juge aux REGLES
+    # STANDARD, comme la chaine et la commande JLCPCB. Les regles ouvertes
+    # (percage 0,15 mm, option payante) faisaient dire « 100 %, 0 erreur » a un
+    # board que la chaine refusait — deux instruments, deux verdicts. Elles
+    # restent disponibles comme levier de BANC (`regles_fine_pitch`).
     if not _boites_fine_pitch(pcb_bytes):
+        return None
+    try:
+        from tools.reglages_banc import reglage
+        ouvrir = bool(reglage("regles_fine_pitch", False))
+    except Exception:  # noqa: BLE001
+        ouvrir = False
+    if not ouvrir:
         return None
     return {
         "board": {"design_settings": {"rules": dict(_REGLES_FINE_PITCH)}},

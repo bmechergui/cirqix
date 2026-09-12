@@ -656,7 +656,13 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-12-a — le DRC de la chaîne et celui du routage jugent avec les MÊMES règles
 
-**Statut : en attente.** Décision produit : règles de fabrication du board livré.
+**Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
+sur l'option recommandée B). Implémentée : `_projet_kicad` ne rend plus les
+règles ouvertes qu'avec le réglage de banc `regles_fine_pitch` ; par défaut
+le routage juge aux règles standard, comme la chaîne. Garde :
+`tests/test_regles_microvias.py`. Même réponse pour la livraison : à
+100 % / 0 erreur, le placement pro est livré même avec plus de couches
+(`livrer_campagne.py --placement-pro`).
 
 Mesure du 2026-09-12 (carte-08, campagne 1789171988) : le routage rend
 « 100 %, 0 erreur » et la chaîne enregistre « 100 %, 2 erreurs DRC » sur le

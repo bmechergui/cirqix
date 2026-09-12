@@ -215,6 +215,9 @@ def main(argv: list[str]) -> int:
     a.add_argument("file")
     a.add_argument("--appliquer", action="store_true",
                    help="ecrit dans examples/ ; sans ce drapeau on ne fait que dire")
+    a.add_argument("--placement-pro", action="store_true",
+                   help="les couches ne departagent plus : un tirage a 100 %%/0 err "
+                        "remplace la reference meme avec plus de couches (2026-09-12)")
     o = a.parse_args(argv[1:])
 
     par_carte = _lister(o.file)
@@ -222,11 +225,12 @@ def main(argv: list[str]) -> int:
         print("aucun tirage dans %s" % o.file)
         return 1
 
+    sans_couches = (lambda n: n[:3] if (n is not None and o.placement_pro) else n)
     for carte in sorted(par_carte):
-        avant = _note_versionnee(carte)
+        avant = sans_couches(_note_versionnee(carte))
         notes = []
         for d in sorted(par_carte[carte]):
-            n = _note_du_tirage(d, carte)
+            n = sans_couches(_note_du_tirage(d, carte))
             notes.append((n, d))
 
         valides = [(n, d) for n, d in notes if n is not None]
