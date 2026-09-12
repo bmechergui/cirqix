@@ -1794,9 +1794,14 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
 est **caduque** : le comptage du 2026-08-30 montre 16 routages, **0 par
 kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
 
-- **Allumer `CIRQIX_ASYNC_PIPELINE`** là où Redis ET le worker tournent. Le
-  drapeau reste fail-closed dans le code, et sans file un `202` accepterait un
-  job que personne ne consomme.
+- ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **allumé depuis le 2026-09-05**
+  (`apps/web/.env.local`, D-2026-09-05 sur la retenue de crédits en témoigne).
+  Il n'existe pas de déploiement distant (Vercel non lié) : « production » est
+  la machine de développement, Redis + worker en conteneurs. ⚠️ Relevé le
+  2026-09-12 : l'image `cirqix-worker` datait du 26/08 — trois semaines de
+  correctifs worker/agents jamais déployés. Reconstruire l'image après tout
+  commit dans `packages/agents` ou `services/worker` (voir
+  `build-long-conteneur-detache`).
 - **Valider la moitié « journal + Realtime »** avec une vraie
   `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
   les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
