@@ -266,11 +266,28 @@ _MARGE_MM: float = 0.3
 
 
 def _boite_absolue(fp) -> tuple[float, float, float, float]:
-    """Boite du footprint en coordonnees board : ``(x0, y0, x1, y1)``."""
+    """Boite du footprint en coordonnees board : ``(x0, y0, x1, y1)``.
+
+    ⚠️ LA BOITE TOURNE AVEC LE COMPOSANT. `_boite_locale_fp` rend le
+    courtyard dans le repere du footprint ; sans appliquer sa rotation, une
+    0402 tournee de 90 degres etait testee COUCHEE. Mesure du 2026-09-12
+    (carte-09, board trace juste apres le snap) : deux capas declarees libres
+    par la recherche se chevauchaient (`courtyards_overlap` C35/C65 et
+    C36/C37, pastilles a 0,13 mm), le DRC les refusait, et le retrait cible
+    les renvoyait a 17-50 mm de leur broche. Meme convention de rotation que
+    `_pastille_partagee`.
+    """
     from tools.placement import _boite_locale_fp
 
     x0, y0, x1, y1 = _boite_locale_fp(fp)
     px, py = fp.position
+    a = math.radians(float(getattr(fp, "rotation", 0.0) or 0.0))
+    if abs(a) > 1e-9:
+        ca, sa = math.cos(a), math.sin(a)
+        coins = [(x * ca - y * sa, x * sa + y * ca)
+                 for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
+        x0, x1 = min(c[0] for c in coins), max(c[0] for c in coins)
+        y0, y1 = min(c[1] for c in coins), max(c[1] for c in coins)
     return px + x0, py + y0, px + x1, py + y1
 
 
