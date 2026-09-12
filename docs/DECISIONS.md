@@ -656,7 +656,12 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-12-b — à partir de 4 couches, le plan GND vit aussi sur une couche INTERNE
 
-**Statut : en attente.** Non implémentée.
+**Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
+sur l'option recommandée A). Implémentée : `_couches_du_plan` ajoute
+`In1.Cu` aux faces dès que le board déclare 4 couches cuivre ; In2 et au-delà
+restent aux signaux. Gardes : `tests/test_plan_gnd_interne_des_quatre_couches.py`,
+`tests/test_ground_planes_avant_routage.py`. Coût sur carte-08/09/10 : à mesurer
+au prochain banc.
 
 Mesure du 2026-09-12 (carte-10, phase 2c, 6 tirages à 4 et 6 couches) : les
 tirages sortent à 98 % avec la MÊME rupture — « Track [GND] 1,2 mm ↔ Via

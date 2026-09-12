@@ -1859,9 +1859,37 @@ def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
 # quel que soit le nombre de couches. En 4 couches cela donne GND/SIG/SIG/GND,
 # un empilage blinde ; les couches internes restent aux signaux.
 #
-# Garde : tests/test_ground_planes_avant_routage.py.
+# ⚠️ COMPLETEE PAR D-2026-09-12-b (validee « Gi » = go, 2026-09-12) : a partir
+# de 4 couches, GND vit AUSSI sur In1.Cu. Mesure carte-10 (6 tirages a 4 et
+# 6 couches) et stm32-100 (4 tirages a 4 couches) : les tirages sortent a
+# 96-98 % sur la MEME rupture, le via d echappement d une broche GND du
+# LQFP atterrit sur B.Cu dans un ilot de 1 mm2 isole par les pistes, l ilot
+# ne se coud pas, il est retire, la broche reste orpheline. Les couches
+# internes n avaient AUCUN plan : un via traversant n y trouvait rien. Un
+# plan interne est continu — aucune piste ne le decoupe — et tout via GND
+# le rejoint, ou qu il tombe. C est l empilage standard a 4 couches.
+#
+# Garde : tests/test_ground_planes_avant_routage.py,
+# tests/test_plan_gnd_interne_des_quatre_couches.py.
 
 _GROUND_PLANE_LAYERS: tuple[str, ...] = ("F.Cu", "B.Cu")
+_PLAN_INTERNE: str = "In1.Cu"
+_PLAN_INTERNE_DES_COUCHES: int = 4
+
+
+def _couches_du_plan(pcb_bytes: bytes) -> tuple[str, ...]:
+    """Couches ou couler le plan GND : les deux faces, plus In1.Cu des que le
+    board declare au moins 4 couches cuivre (et declare bien In1.Cu)."""
+    couches = _GROUND_PLANE_LAYERS
+    try:
+        if _count_copper_layers(pcb_bytes) >= _PLAN_INTERNE_DES_COUCHES:
+            bloc = _layers_block(pcb_bytes.decode("utf-8", errors="replace"))
+            declarees = {c.strip('"') for c in _COPPER_LAYER_RE.findall(bloc)}
+            if bloc and _PLAN_INTERNE in declarees:
+                couches = ("F.Cu", _PLAN_INTERNE, "B.Cu")
+    except Exception:  # noqa: BLE001 — un plan en moins, jamais une panne
+        return _GROUND_PLANE_LAYERS
+    return couches
 _EDGE_COORD_RE = re.compile(
     r"\((?:start|end|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)"
 )
@@ -4554,7 +4582,7 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     # le DRC signale « Zone <-> Zone ». La couture est la reponse industrielle
     # standard a un plan fragmente.
     # Garde : tests/test_ground_planes_avant_routage.py.
-    a_couler = [c for c in _GROUND_PLANE_LAYERS if c not in existantes]
+    a_couler = [c for c in _couches_du_plan(pcb_bytes) if c not in existantes]
     if not a_couler:
         return pcb_bytes
 

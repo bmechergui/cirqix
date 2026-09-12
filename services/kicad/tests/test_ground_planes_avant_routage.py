@@ -126,12 +126,13 @@ class TestPlansDeMasse:
         assert abs(max(x for x, _ in pts) - (160.0 - marge)) < 0.01
         assert "(xy 0 0)" not in out
 
-    def test_reste_sur_les_faces_meme_en_quatre_couches(self):
+    def test_en_quatre_couches_gnd_vit_aussi_sur_in1(self):
+        # D-2026-09-12-b : les deux faces, PLUS In1.Cu — jamais In2, qui reste
+        # aux signaux.
         quatre = routing_router._expand_stackup(_board(RECT), 4)
         out = routing_router._add_ground_planes(quatre).decode("utf-8")
         zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
-        assert zones == ["B.Cu", "F.Cu"]
-        assert not any("In" in z for z in zones)
+        assert zones == ["B.Cu", "F.Cu", "In1.Cu"]
 
     def test_ne_touche_pas_un_board_sans_gnd(self):
         sans = _board(RECT, gnd='\t(net 1 "VCC")')
@@ -245,7 +246,8 @@ class TestRegleDeCouche:
 
     ⚠️ A partir de 4 couches la regle S INVERSE : les signaux vivent a
     l interieur, les deux faces exterieures restent continues, et le fanout
-    reprend tout son sens. C est le choix produit de l utilisateur, conserve.
+    reprend tout son sens. Et depuis D-2026-09-12-b, GND vit AUSSI sur In1 :
+    un plan interne est continu, tout via GND le rejoint.
     """
 
     def test_les_deux_faces_meme_en_deux_couches(self):
@@ -267,16 +269,16 @@ class TestRegleDeCouche:
         zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
         assert zones == ["B.Cu", "F.Cu"]
 
-    def test_quatre_couches_coule_les_deux_faces(self):
+    def test_quatre_couches_coulent_les_deux_faces_et_in1(self):
+        # D-2026-09-12-b (validee le 2026-09-12) : a partir de 4 couches GND
+        # vit aussi sur In1.Cu, plan continu qu aucune piste ne decoupe.
         quatre = routing_router._expand_stackup(_board(RECT), 4)
         out = routing_router._add_ground_planes(quatre).decode("utf-8")
-        zones = sorted(
-            re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
-        )
-        assert zones == ["B.Cu", "F.Cu"], f"attendu les deux faces, obtenu {zones}"
+        zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
+        assert zones == ["B.Cu", "F.Cu", "In1.Cu"], f"attendu les deux faces et In1, obtenu {zones}"
 
-    def test_les_couches_internes_ne_recoivent_jamais_de_plan(self):
+    def test_in2_et_au_dela_restent_aux_signaux(self):
         six = routing_router._expand_stackup(_board(RECT), 6)
         out = routing_router._add_ground_planes(six).decode("utf-8")
         zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)
-        assert not any("In" in z for z in zones), "les internes sont pour les signaux"
+        assert [z for z in zones if "In" in z] == ["In1.Cu"], "un seul plan interne, In1"

@@ -390,6 +390,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      le 2026-08-29) — `routers/routing.py::route_auto`, pour chaque palier :
 
         ① plan de masse COULÉ ET REMPLI, sur les deux faces extérieures
+           (et sur In1.Cu dès 4 couches — D-2026-09-12-b, validée le 2026-09-12)
         ② vias d'échappement réservés (déclarés dans le DSN)
         ③ routage des signaux (GND est confié au plan, `_NETS_CONFIES_AU_PLAN`)
         ④ replacement des vias réservés (le round-trip Specctra les efface)
