@@ -140,7 +140,7 @@ class TestCablage:
         monkeypatch.setattr(R, "_router_gnd_cible", lambda *a, **k: (appels.append(1), boards[len(appels) - 1])[1])
         monkeypatch.setattr(R, "_bilan_drc", lambda b: bilans[b])
         monkeypatch.setattr(R, "_rapport_drc", lambda b: b)
-        monkeypatch.setattr(R, "_pads_isolees_du_plan", lambda rap: orph[rap])
+        monkeypatch.setattr(R, "_pads_isolees_du_plan", lambda rap, *a: orph[rap])
         final, restantes = R._repli_gnd_cible_iteratif(b"e", None, 10.0, orph[b"b0"], b"b0")
         assert final == b"b2" and restantes == [("C3", "2")] and len(appels) == 3
         assert 2 <= R._REPLI_CIBLE_TOURS <= 6

@@ -1968,8 +1968,16 @@ _ZONE_RE = re.compile(r"^Zone\s+\[")
 _ZONE_NET_RE = re.compile(r"^Zone\s+\[([^\]]*)\]")
 
 
-def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
+def _pads_isolees_du_plan(rapport_drc: dict,
+                          pcb_bytes: Optional[bytes] = None) -> list[tuple[str, str]]:
     """Broches que le DRC signale comme non reliees A UNE ZONE.
+
+    ⚠️ Avec le board (`pcb_bytes`), une rupture d un net de plan decrite SANS
+    pastille — « Track [GND] <-> Via [GND] » — designe la pastille sur
+    laquelle l item est pose. Mesure du 2026-09-12 (stm32-100, quatre tirages
+    a 96 %) : U1-8 portait un troncon de 1,2 mm vers un via que le retrait
+    des ilots avait emporte ; le DRC nommait le troncon, jamais la broche, et
+    le repli GND cible ne se declenchait pas.
 
     ⚠️ Les paires « pad <-> pad » relevent en general du ROUTAGE : y poser un via
     ne relierait rien. MAIS si le net est pris en charge par un PLAN, un via sous
@@ -1990,6 +1998,9 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
         ]
         pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descriptions) if m]
         touche_zone = any(_ZONE_RE.match(d) for d in descriptions)
+        if not pads and pcb_bytes:
+            isolees.extend(_pastilles_sous_les_items(item, pcb_bytes))
+            continue
         if not touche_zone:
             # Paire pad <-> pad : on ne la retient que si le net est confie a un
             # plan, seul cas ou un via repare quelque chose.
@@ -1999,6 +2010,38 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
         for m in pads:
             isolees.append((m.group(3), m.group(1)))
     return isolees
+
+
+_ITEM_NET_RE = re.compile(r"^\w+\s+\[([^\]]*)\]")
+_TOLERANCE_ITEM_SUR_PASTILLE_MM = 0.05
+
+
+def _pastilles_sous_les_items(item: dict, pcb_bytes: bytes) -> list[tuple[str, str]]:
+    """Pastilles d un net de plan sur lesquelles un item du rapport est pose."""
+    import math
+    trouvees: list[tuple[str, str]] = []
+    nets = set()
+    for i in item.get("items") or []:
+        m = _ITEM_NET_RE.match(str(i.get("description", "")))
+        if m:
+            nets.add(m.group(1))
+    if not nets or not nets.issubset(set(_NETS_CONFIES_AU_PLAN)):
+        return trouvees
+    try:
+        positions = _positions_des_pastilles(pcb_bytes, nets)
+    except Exception:  # noqa: BLE001 — une reparation ne leve jamais
+        return trouvees
+    for i in item.get("items") or []:
+        pos = i.get("pos") or {}
+        try:
+            x, y = float(pos["x"]), float(pos["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for (ref, pad), (px, py) in positions.items():
+            if (math.hypot(px - x, py - y) <= _TOLERANCE_ITEM_SUR_PASTILLE_MM
+                    and (ref, pad) not in trouvees):
+                trouvees.append((ref, pad))
+    return trouvees
 
 
 # Regles ouvertes pour une carte portant un boitier fine-pitch. Valeurs
@@ -4066,7 +4109,7 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
             tour, avant_c[0], avant_c[1], apres_c[0], apres_c[1])
         final = cible
         try:
-            orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+            orphelines = _pads_isolees_du_plan(_rapport_drc(final), final)
         except Exception:  # noqa: BLE001
             orphelines = []
     return final, orphelines
@@ -5904,7 +5947,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # qui dit si ce repli a deja ete tente en vain pendant cet appel.
             try:
                 rap_final = _rapport_drc(final)
-                orphelines = _pads_isolees_du_plan(rap_final)
+                orphelines = _pads_isolees_du_plan(rap_final, final)
             except Exception:
                 rap_final, orphelines = {}, []
             manquantes_avant = len((rap_final or {}).get("unconnected_items") or [])
