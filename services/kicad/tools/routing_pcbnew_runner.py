@@ -648,8 +648,28 @@ def _via_in_pad_dispense_de_clearance(diametre_via: float,
     return 0 < diametre_via <= largeur_pad
 
 
+def _via_min_fabricable(board) -> float:
+    """Plus petit via que les REGLES DU BOARD acceptent (nm) : percage minimal
+    + deux anneaux minimaux, et jamais sous la taille minimale de via.
+
+    ⚠️ Mesure du 2026-09-12 (carte-08) : chaque via-in-pad retreci a 0,3-0,5 mm
+    recevait un percage plancher de 0,3 mm, donc un anneau nul ou negatif —
+    « erreurs ajoutees {'annular_width': 1} » a CHAQUE repose et chaque fanout,
+    tous refuses par la garde. Un via qui tient dans la pastille mais pas dans
+    les regles n est pas un via.
+    """
+    try:
+        ds = board.GetDesignSettings()
+        percage = float(getattr(ds, "m_MinThroughDrill", 0) or 0)
+        anneau = float(getattr(ds, "m_ViasMinAnnularWidth", 0) or 0)
+        taille = float(getattr(ds, "m_ViasMinSize", 0) or 0)
+        return max(_VIA_MIN_MM, taille, percage + 2.0 * anneau)
+    except Exception:  # noqa: BLE001
+        return _VIA_MIN_MM
+
+
 def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
-                         percage_pad: float) -> float:
+                         percage_pad: float, via_min: float = _VIA_MIN_MM) -> float:
     """Diametre du via a poser DANS la pastille. 0 si aucun ne convient.
 
     ⚠️ UNE PASTILLE DEJA PERCEE LE REFUSE TOUJOURS. Un via dans une pastille
@@ -659,7 +679,7 @@ def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
     """
     if percage_pad > 0:
         return 0.0
-    d = _diametre_via_in_pad(largeur_pad, via_nominal)
+    d = _diametre_via_in_pad(largeur_pad, via_nominal, via_min)
     # ⚠️ Si le PERCAGE minimal ne tient pas dans la pastille, poser le via
     # ferait deborder le trou du cuivre : on renonce plutot que de livrer un
     # board que le DRC refusera. Mesure du 2026-09-02 : une pastille de
@@ -669,7 +689,8 @@ def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
     return d
 
 
-def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
+def _diametre_via_in_pad(largeur_pad: float, via_nominal: float,
+                         via_min: float = _VIA_MIN_MM) -> float:
     """Diametre d un via pose DANS la pastille. 0 si aucun ne tient.
 
     ⚠️ Le via ne doit JAMAIS depasser la pastille. Tout l argument tient la :
@@ -684,7 +705,7 @@ def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
     plus cher a fabriquer.
     """
     d = min(largeur_pad, via_nominal)
-    return d if d >= _VIA_MIN_MM else 0.0
+    return d if d >= max(_VIA_MIN_MM, via_min) else 0.0
 
 def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     """Fanout : une courte piste depuis chaque broche isolee vers un via.
@@ -781,7 +802,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
                 perce = float(pad.GetDrillSizeX())
             except Exception:
                 perce = 0.0  # sans percage lisible, on traite en CMS
-            d = _via_in_pad_possible(larg, via_d, perce)
+            d = _via_in_pad_possible(larg, via_d, perce, _via_min_fabricable(board))
             perc = _percage_pour_via(d)
             # ⚠️ Un via qui TIENT dans la pastille herite de SON isolement :
             # exiger un degagement autour de lui reviendrait a demander deux
@@ -1350,7 +1371,7 @@ def _poser_via_dans_pastille(pcbnew, board, pad, via_d: float,
         perce = float(pad.GetDrillSizeX())
     except Exception:
         return False
-    d = _via_in_pad_possible(larg, via_d, perce)
+    d = _via_in_pad_possible(larg, via_d, perce, _via_min_fabricable(board))
     if d <= 0:
         return False
     perc = _percage_pour_via(d)
