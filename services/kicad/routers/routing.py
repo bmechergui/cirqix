@@ -4351,7 +4351,9 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     Garde : tests/test_fanout_jamais_regression.py.
     """
     rapport = _rapport_drc(pcb_bytes)
-    isolees = _pads_isolees_du_plan(rapport)
+    # Avec le board : une broche dont la rupture est decrite par son troncon
+    # (« Track [GND] <-> Via [GND] ») est une orpheline comme les autres.
+    isolees = _pads_isolees_du_plan(rapport, pcb_bytes)
     if not isolees:
         return pcb_bytes
 
@@ -6087,6 +6089,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # correctifs justes qui s annulent. L ordre fait partie du
             # correctif, pas de son emballage.
             final = _retirer_ilots_flottants(final)
+            # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du
+            # 2026-09-12 (carte-08/10, stm32-100, tirages a 96-98 %) : le
+            # retrait emportait le via d echappement d une broche GND pose
+            # dans un ilot B.Cu de 1 mm2 — la broche n etait orpheline
+            # QU APRES, et plus rien ne la sortait. Le fanout prefere
+            # desormais un via qui touche le plan principal d en face.
+            final = _fanout_pads_isolees(final)
             _garder_une_trace(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")

@@ -270,8 +270,17 @@ def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
-                    marge_piste=None, portee=None, pas=None):
+                    marge_piste=None, portee=None, pas=None, prefere=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
+
+    ⚠️ `prefere(x, y)` ORDONNE les sorties degagees, il n en filtre aucune :
+    la premiere sortie degagee que `prefere` accepte est rendue ; a defaut,
+    la premiere sortie degagee tout court. Mesure du 2026-09-12 (carte-08/10,
+    stm32-100) : le via d echappement d une broche GND tombait dans un ilot
+    B.Cu de 1 mm2 isole par les pistes, retire ensuite comme flottant — la
+    broche restait orpheline tirage apres tirage. Preferer un via qui touche
+    le plan principal d en face regle le cas ; l EXIGER a deja ete refute
+    (2026-09-01, 1 -> 4 manquantes).
 
     La direction naturelle (a l oppose du centre du boitier) est essayee en
     premier : c est le canal que le halo d escape du placement a reserve. On
@@ -292,6 +301,7 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     depart = distance
     portee = portee if portee is not None else distance
     pas = pas if pas is not None else max(distance / 4.0, 1.0)
+    premiere = None  # la premiere sortie degagee, si aucune n est preferee
     # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
     # d une direction avant de tourner. Le couloir reserve par le halo
     # d escape du placement vaut mieux qu une deviation — l ordre inverse
@@ -314,8 +324,33 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                 # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
                 if any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles):
                     continue
-                return int(x1), int(y1)
-    return None
+                if prefere is None or prefere(x1, y1):
+                    return int(x1), int(y1)
+                if premiere is None:
+                    premiere = (int(x1), int(y1))
+    return premiere
+
+
+def _dans_le_plan_principal(polys, x, y, vec) -> bool:
+    """Le point est-il dans le PLUS GRAND contour rempli d un des polygones ?
+
+    Le plus grand contour est le plan lui-meme ; les autres sont des ilots que
+    les pistes ont detaches. Un via qui touche un ilot ne relie rien de
+    durable — l ilot part au retrait des flottants, et le via avec.
+    `vec(x, y)` construit le point dans le type attendu par le polygone.
+    """
+    pt = vec(x, y)
+    for poly in polys or ():
+        try:
+            n = poly.OutlineCount()
+            if n <= 0:
+                continue
+            principal = max(range(n), key=lambda i: poly.Outline(i).Area())
+            if poly.Contains(pt, principal):
+                return True
+        except Exception:  # noqa: BLE001 — un doute ne prefere rien
+            continue
+    return False
 
 
 def _direction_d_echappement(pad, centre_fp) -> tuple:
@@ -781,16 +816,30 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # recherche, elle, s execute sur le board ROUTE, ou les pistes de
         # signal l ont referme. Chercher a nouveau, c est jeter la seule
         # mesure faite au bon moment.
+        # Le cuivre du net sur les AUTRES couches : c est lui que le via doit
+        # toucher, et de preference son plan principal, pas un ilot.
+        en_face = _cuivre_du_net_sur(board, pad.GetLayer(), pad.GetNetCode())
+        prefere = (lambda x, y: _dans_le_plan_principal(
+            en_face, x, y, lambda a, b_: pcbnew.VECTOR2I(int(a), int(b_))))
         sortie = None
         if reserve is not None and _sortie_reservee_valide(
                 pos.x, pos.y, reserve[0], reserve[1], obstacles, marge,
                 propre, marge_piste):
             sortie = reserve
             reprises += 1
+            # ⚠️ Une position reservee qui ne touche pas le plan principal est
+            # rejouee SEULEMENT si aucune sortie degagee ne le touche.
+            if not sans_direction and not prefere(reserve[0], reserve[1]):
+                mieux = _choisir_sortie(
+                    pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
+                    marge_piste, portee, pas, prefere=prefere)
+                if mieux is not None and prefere(mieux[0], mieux[1]):
+                    sortie = mieux
+                    reprises -= 1
         if sortie is None and not sans_direction:
             sortie = _choisir_sortie(
                 pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                marge_piste, portee, pas
+                marge_piste, portee, pas, prefere=prefere
             )
         if sortie is None:
             # Dernier recours : le via DANS la pastille. Il n a besoin
@@ -1212,7 +1261,11 @@ def _cuivre_du_net_sur(board, couche_exclue, netcode):
     J avais remplace un via aveugle par un via jamais pose.
     """
     autres = []
-    for z in board.Zones():
+    try:
+        zones = list(board.Zones())
+    except Exception:  # noqa: BLE001 — sans zones lisibles, pas de cuivre en face
+        return autres
+    for z in zones:
         try:
             if z.GetNetCode() != netcode:
                 continue

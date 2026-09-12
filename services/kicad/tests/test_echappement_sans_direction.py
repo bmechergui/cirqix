@@ -155,6 +155,7 @@ class TestExecutionReelle:
             GetFootprints = staticmethod(lambda: [_Fp()])
             Footprints = staticmethod(lambda: [_Fp()])
             GetTracks = staticmethod(lambda: [])
+            Zones = staticmethod(lambda: [])  # le vrai BOARD l expose ; le faux aussi
             FindFootprintByReference = staticmethod(lambda r: _Fp())
 
             def Add(s, item):
