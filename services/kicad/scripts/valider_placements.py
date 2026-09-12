@@ -36,6 +36,9 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/opt/kicad-tools/src")
 
 _TIRAGES = 3
+# Placement PRO : chaque decouplage a moins de 5 mm de sa broche (regle 1-3 mm,
+# docs/methodologie-routage.md ; mesure 2026-09-12 : 2,5 mm moy / 4,8 max atteints).
+_DECOUPLAGE_MAX_MM = 5.0
 _EX = Path("/tmp/ex")
 
 
@@ -76,11 +79,15 @@ def _grille(carte: str) -> bytes | None:
     """Board du générateur, avant toute optimisation."""
     from routers.schematic import SchematicRequest, generate as generer_schema
     from routers.pcb import PcbRequest, generate as generer_pcb
-    entree = _EX / carte / "input" / "circuit.json"
-    if not entree.is_file():
+    # Deux formes coexistent (cf. banc_exemples._fichier_de_cas) : circuit.json
+    # (nets = [{name, pins}]) et schema.json (nets = noms, connections = liaisons).
+    entree = next((f for f in (_EX / carte / "input" / n for n in ("circuit.json", "schema.json"))
+                   if f.is_file()), None)
+    if entree is None:
         return None
     circuit = json.loads(entree.read_text(encoding="utf-8"))
-    liaisons = circuit.get("nets") or []
+    liaisons = (circuit.get("connections") if isinstance(circuit.get("connections"), list)
+                else circuit.get("nets")) or []
     charge = {
         "components": circuit["components"],
         "nets": [n["name"] for n in liaisons],
@@ -93,7 +100,17 @@ def _grille(carte: str) -> bytes | None:
         return None
     pcb = generer_pcb(PcbRequest(
         kicad_sch_b64=_b64(sch.kicad_sch_content.encode()), **charge))
-    return pcb.kicad_pcb_content.encode() if pcb.success else None
+    if not pcb.success:
+        return None
+    return pcb.kicad_pcb_content.encode(), charge["board_width_mm"], charge["board_height_mm"]
+
+
+def _decouplage(chemin: str) -> tuple[float, float, int]:
+    """(moyenne, max, n) de l ecart libre capa -> broche d alimentation la plus
+    proche — la mesure du service (`qualite_decouplage`)."""
+    from kicad_tools.schema.pcb import PCB
+    from tools.placement_bypass import qualite_decouplage
+    return qualite_decouplage(PCB.load(chemin))
 
 
 def valider(carte: str) -> dict:
@@ -101,9 +118,10 @@ def valider(carte: str) -> dict:
     sortie = _EX / carte / "output"
     sortie.mkdir(parents=True, exist_ok=True)
 
-    grille = _grille(carte)
-    if grille is None:
-        return {"carte": carte, "erreur": "pas de circuit.json exploitable"}
+    g = _grille(carte)
+    if g is None:
+        return {"carte": carte, "erreur": "pas d entree exploitable (circuit.json / schema.json)"}
+    grille, largeur, hauteur = g
     (sortie / "1_grille.kicad_pcb").write_bytes(grille)
 
     meilleur = None
@@ -111,22 +129,25 @@ def valider(carte: str) -> dict:
         t0 = time.time()
         try:
             board = base64.b64decode(place_auto(
-                AutoPlacementRequest(kicad_pcb_b64=_b64(grille))).kicad_pcb_b64)
+                AutoPlacementRequest(kicad_pcb_b64=_b64(grille), board_width_mm=largeur,
+                                     board_height_mm=hauteur)).kicad_pcb_b64)
         except Exception as exc:
             print("   tirage %d : ECHEC %s" % (i, exc), flush=True)
             continue
         essai = str(sortie / ("2_placement_essai%d.kicad_pcb" % i))
         Path(essai).write_bytes(board)
         err, viol = _drc(essai)
-        capas = _capas_au_mcu(essai)
-        med = st.median(capas.values()) if capas else 0.0
-        mx = max(capas.values()) if capas else 0.0
-        print("   tirage %d/%d : %s erreur(s) · %s violations · capas med %.1f "
-              "max %.1f mm · %.0f s"
-              % (i, _TIRAGES, err, viol, med, mx, time.time() - t0), flush=True)
+        try:
+            med, mx, n_capas = _decouplage(essai)
+        except Exception as exc:  # noqa: BLE001
+            med, mx, n_capas = 0.0, 0.0, 0
+            print("   (decouplage non mesure : %s)" % exc, flush=True)
+        print("   tirage %d/%d : %s erreur(s) · %s violations · decouplage moy %.1f "
+              "max %.1f mm (%d capas) · %.0f s"
+              % (i, _TIRAGES, err, viol, med, mx, n_capas, time.time() - t0), flush=True)
         # ⚠️ Classement : l'erreur d'abord — une carte non fabricable ne part
-        # pas. À égalité, le découplage le plus serré.
-        cle = (err if err is not None else 99, mx)
+        # pas. À égalité, le découplage le plus serré (regle 1-3 mm, max 5).
+        cle = (err if err is not None else 99, round(mx, 1), round(med, 1))
         if meilleur is None or cle < meilleur["cle"]:
             meilleur = {"cle": cle, "board": board, "err": err, "viol": viol,
                         "med": med, "max": mx, "tirage": i}
@@ -136,7 +157,8 @@ def valider(carte: str) -> dict:
 
     # ⚠️ Le placement RETENU prend le nom que le banc relit en mode figé.
     (sortie / "2_placement.kicad_pcb").write_bytes(meilleur["board"])
-    return {"carte": carte, "valide": meilleur["err"] == 0, **{
+    pro = meilleur["max"] <= _DECOUPLAGE_MAX_MM
+    return {"carte": carte, "valide": meilleur["err"] == 0 and pro, "pro": pro, **{
         k: meilleur[k] for k in ("err", "viol", "med", "max", "tirage")}}
 
 
@@ -159,7 +181,7 @@ if __name__ == "__main__":
         if "erreur" in r:
             print("   %-16s %s" % (r["carte"], r["erreur"]))
         else:
-            print("   %-16s %s erreur(s)  %3s violations  capas med %5.1f "
+            print("   %-22s %s erreur(s)  %3s violations  decouplage moy %5.1f "
                   "max %5.1f mm   %s"
                   % (r["carte"], r["err"], r["viol"], r["med"], r["max"],
                      "VALIDE" if r["valide"] else "NON VALIDE"))
