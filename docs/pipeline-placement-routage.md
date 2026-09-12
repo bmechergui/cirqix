@@ -28,7 +28,7 @@
 4  Géomètre       CMA-ES (enfant, 30 it.)              micro-raffinement, revert si > 20 mm ou erreurs
 5  Inspecteur     PlacementAnalyzer + PlacementFixer   0 erreur garanti
 6  halo           _reserve_escape_halos (5 mm)         canal d'échappement des fine-pitch ; capas exemptées
-7  snap           snap_cluster_members                 une capa par broche VDD, sur la broche ; paires serrées
+7  snap           snap_cluster_members                 une capa par broche VDD, sur la broche, approchée par l'extérieur ; les capas supplémentaires à la marge du halo
 8  rangées        placement_rangees.ranger_les_paires  paires LED/R en rangée le long du bord le plus libre
 9  grille         aligner_sur_grille (0,5 mm)          EN DERNIER, annulé si les erreurs augmentent
 10 DRC placé      _compter_conflits_erreur             une erreur → re-tirage, on ne route jamais un board cassé
@@ -51,6 +51,8 @@ journal) — chacune une règle générale dans `tools/placement*.py` :
 | l'Inspecteur (`PlacementFixer`) qui suit le snap résolvait un conflit en déplaçant **la puce** (U1 de 16 mm) — les capas, elles, restaient à l'ancienne place | 2,4 → 14,9 mm | après le snap, chaque passe de l'Inspecteur ancre les membres collés **et** les puces ancres des grappes, jusqu'à la livraison |
 | la boîte d'encombrement ignorait la **rotation** : une 0402 à 90° était testée couchée, deux capas « libres » se chevauchaient, le retrait ciblé les renvoyait au loin | `courtyards_overlap` C35/C65 | `_boite_absolue` tourne la boîte avec le composant |
 | réglage de banc `graine_hierarchique` oublié deux jours dans `/tmp/cirqix-reglages.json` | 13-32 mm | tout réglage de banc actif est journalisé en WARNING à chaque placement et routage |
+| la recherche de place partait de la position du GA : quand la capa était de l'autre côté du boîtier, le rayon traversait le CI et la recherche finissait 6-20 mm plus loin | 13-32 mm (carte-08/09) | le snap POWER approche par la **normale sortante** de la broche (du centre du CI vers elle) |
+| **toutes** les capas d'une même broche entraient dans le halo d'escape : sur carte-10 (LQFP-48, 3 broches VDD, 22 découplages) elles formaient un mur à 2-8 mm et bouchaient les couloirs de sortie des signaux | routage 53-85 % de 2 à 8 couches | une capa par broche dans le halo ; une capa supplémentaire d'une broche déjà couverte se pose à la marge du halo (5 mm) |
 
 Mesure après correctifs (carte-09, 62 composants, par le service) :
 **découplage livré 2,5 mm en moyenne, 4,8 mm au pire.** Le service
