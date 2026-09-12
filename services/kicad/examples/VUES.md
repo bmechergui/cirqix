@@ -25,6 +25,6 @@ sont des avertissements de serigraphie.
 | carte-06-io-etendu | 2026-09-10 | 100 % | 0 | 81 | 2 | 2.0 / 3.0 | 94 % | 4.0 | [placement](carte-06-io-etendu/output/vue-placement.png) | [routage](carte-06-io-etendu/output/vue-final.png) |
 | carte-07-multi-io | 2026-09-11 | 100 % | 0 | 260 | 2 | 2.5 / 4.8 | 93 % | 4.0 | [placement](carte-07-multi-io/output/vue-placement.png) | [routage](carte-07-multi-io/output/vue-final.png) |
 | carte-08-dense | 2026-09-12 | 100 % | 0 | 356 | 4 | 2.6 / 4.2 | 86 % | 2.5 | [placement](carte-08-dense/output/vue-placement.png) | [routage](carte-08-dense/output/vue-final.png) |
-| carte-09-tres-dense | 2026-09-12 | 100 % | 0 | 348 | 5 | 3.2 / 5.2 | 92 % | 4.0 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
+| carte-09-tres-dense | 2026-09-12 | 100 % | 0 | 348 | 6 | 3.2 / 5.2 | 92 % | 4.0 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
 | carte-10-maximale | 2026-09-12 | 100 % | 0 | 203 | 4 | 19.0 / 31.1 | 3 % | 28.7 | [placement](carte-10-maximale/output/vue-placement.png) | [routage](carte-10-maximale/output/vue-final.png) |
 | carte-11-croisements | 2026-09-09 | 100 % | 0 | 10 | 2 | - | 100 % | - | [placement](carte-11-croisements/output/vue-placement.png) | [routage](carte-11-croisements/output/vue-final.png) |

@@ -87,8 +87,7 @@ def ligne(dossier: Path, rendre: bool) -> str | None:
     # ⚠️ Les couches se COMPTENT sur le board route (segments/vias sur les
     # couches internes), pas dans mesures.json : ce champ disait 2 pour des
     # boards livres a 4 et 6 couches (2026-09-12).
-    internes = {m_.group(1) for m_ in re.finditer(r'\(layer "(In\d+\.Cu)"\)', texte)}
-    couches = 2 + len(internes)
+    couches = len(set(re.findall(r'\(\d+ "((?:F|B|In\d+)\.Cu)"', texte))) or 2
     dec = ("%.1f / %.1f" % (q["decouplage_moy"], q["decouplage_max"])) if q.get("decouplage_n") else "-"
     paires = ("%.1f" % q["paire_moyenne"]) if q.get("paire_moyenne") is not None else "-"
     pl = ("[placement](%s/output/vue-placement.png)" % dossier.name) if place.is_file() else "pas de temoin"
