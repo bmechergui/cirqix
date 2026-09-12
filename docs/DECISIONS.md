@@ -654,6 +654,38 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-12-a — le DRC de la chaîne et celui du routage jugent avec les MÊMES règles
+
+**Statut : en attente.** Décision produit : règles de fabrication du board livré.
+
+Mesure du 2026-09-12 (carte-08, campagne 1789171988) : le routage rend
+« 100 %, 0 erreur » et la chaîne enregistre « 100 %, 2 erreurs DRC » sur le
+même board. Deux instruments, deux règles :
+
+| instrument | règles | via minimal | dégagement |
+|---|---|---|---|
+| `route_auto` (`_rapport_drc`) | projet « fine-pitch ouvert » dès qu'un boîtier dense existe (`_REGLES_FINE_PITCH`, 2026-08-26) | 0,30 mm, perçage 0,15, anneau 0,075 | 0,15 mm |
+| `/drc/auto` (la chaîne, et `POST /api/jlcpcb/order`) | défauts KiCad (aucun projet) | 0,50 mm, perçage 0,30, anneau 0,10 | 0,20 mm |
+
+Les règles ouvertes correspondent à une **option payante** chez JLCPCB
+(perçage 0,15 mm). Un board « propre » pour le routage peut donc être refusé
+par la chaîne, et un board livré peut coûter plus cher à fabriquer que prévu.
+
+Deux options, une seule à choisir :
+- **A** — la chaîne juge avec les règles ouvertes quand le board porte un
+  boîtier dense (même helper que le routage). Livrable : oui, au tarif
+  fine-pitch.
+- **B** (recommandée) — le routage juge avec les règles standard : plus de
+  via-in-pad sous 0,60 mm, les broches fines ne sortent que par tronçon + via
+  (mécanisme réparé le 2026-09-11 : « tronçon seul quand le via est déjà
+  là »). Livrable au tarif standard ; à mesurer sur carte-08/09/10.
+
+Déjà fait sans décision (instrument, pas produit) : `_nets_incomplets` lit le
+net de TOUT objet du rapport (`PTH pad`, `Via`, `Track`), donc un palier ne
+peut plus afficher 100 % avec une liaison manquante.
+
+Ne pas implémenter avant validation.
+
 ## D-2026-09-11-b — une carte qui stagne à son plafond de couches est AGRANDIE et re-placée
 
 **Statut : validée** par l'utilisateur le 2026-09-11 (« go »). Implémentée en

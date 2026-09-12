@@ -3507,18 +3507,22 @@ def _nets_incomplets(rapport: dict) -> set:
     d escalade. Deux extractions separees divergeraient : le message nommerait
     des nets que la decision ne verrait pas.
     """
+    # ⚠️ TOUTE forme d objet porte son net entre crochets : `PTH pad 1 [X] of
+    # J10`, `Via [GND] on F.Cu - B.Cu`, `Track [X] on F.Cu` — les deux formes
+    # ci-dessus n en voyaient que deux. Mesure du 2026-09-12 (carte-08) : une
+    # paire « PTH pad <-> Track » ne nommait aucun net, le palier restait a
+    # 100 % avec une liaison manquante, et le DRC de la chaine la comptait en
+    # erreur (« 100 %, 2 erreurs »). Un seul filet, general.
     nets = set()
     for item in rapport.get("unconnected_items") or []:
         for i in item.get("items") or []:
-            d = str(i.get("description", ""))
-            m = _PAD_ISOLEE_RE.match(d)
-            if m:
-                nets.add(m.group(2))
-                continue
-            z = _ZONE_NET_RE.match(d)
-            if z:
-                nets.add(z.group(1))
+            m = _NET_ENTRE_CROCHETS_RE.search(str(i.get("description", "")))
+            if m and m.group(1):
+                nets.add(m.group(1))
     return nets
+
+
+_NET_ENTRE_CROCHETS_RE = re.compile(r"\[([^\]]*)\]")
 
 
 def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> int:
