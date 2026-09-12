@@ -2450,7 +2450,17 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             positions_avant = _positions_des_footprints(out)
             pcb_snap.save(str(out))
             _normalize_to_board_frame(out)
-            _resolve_remaining_conflicts(out, conn)
+            _journaliser_qualite(out, "apres snap, avant Inspecteur")
+            # ⚠️ L INSPECTEUR NE DEFAIT PAS LE SNAP. `PlacementFixer` ecarte les
+            # composants en conflit dans TOUTES les directions, snap compris :
+            # mesure du 2026-09-12 (carte-09, service) — « 35 membre(s)
+            # ramene(s) a portee, 0 conflit (1 avant) » puis decouplage a
+            # 19 mm de moyenne, la ou l appel direct rendait 3 mm. Un conflit
+            # preexistant suffisait a lui faire disperser les capas que le snap
+            # venait de coller. Les membres deplaces par le snap sont donc
+            # ANCRES pour cette passe : le Fixer bouge les autres.
+            colles = sorted(_footprints_deplaces(positions_avant, out))
+            _resolve_remaining_conflicts(out, list(conn) + colles)
             _rendre_lisible(out)
             n_err_apres = _compter_conflits_erreur(out)
 

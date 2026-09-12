@@ -28,3 +28,13 @@ def test_le_service_journalise_apres_le_snap_et_a_la_livraison():
     code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
     assert '_journaliser_qualite(out, "apres snap")' in code
     assert '_journaliser_qualite(out, "livre")' in code
+
+
+def test_l_inspecteur_apres_le_snap_ancre_les_membres_colles():
+    """carte-09 (service, 2026-09-12) : 35 membres ramenes a portee, puis
+    l Inspecteur les dispersait a 19 mm pour resoudre UN conflit preexistant."""
+    code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
+    i_save = code.find("pcb_snap.save(str(out))")
+    i_fix = code.find("_resolve_remaining_conflicts(out, list(conn) + colles)", i_save)
+    assert i_save != -1 and i_fix != -1
+    assert "colles = sorted(_footprints_deplaces(positions_avant, out))" in code[i_save:i_fix]
