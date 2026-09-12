@@ -654,6 +654,35 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-12-b — à partir de 4 couches, le plan GND vit aussi sur une couche INTERNE
+
+**Statut : en attente.** Non implémentée.
+
+Mesure du 2026-09-12 (carte-10, phase 2c, 6 tirages à 4 et 6 couches) : les
+tirages sortent à 98 % avec la MÊME rupture — « Track [GND] 1,2 mm ↔ Via
+[GND] », le tronçon d'échappement d'une broche GND du LQFP-48 (U1-8, puis
+C37-2). Le via réservé est bien posé, mais il atterrit sur B.Cu dans un îlot
+de plan de 1 mm² isolé par les pistes d'échappement ; l'îlot ne se coud pas
+(trop petit pour un second via), il est retiré comme flottant, et la broche
+reste orpheline. Sur stm32-100 (4 couches), même motif à 96-97 % pendant
+quatre tirages. Les couches internes (In1, In2) n'ont AUCUN plan : elles ne
+portent que des signaux, et un via traversant n'y trouve rien.
+
+Aujourd'hui `_add_ground_planes` ne coule le plan que sur les deux faces
+extérieures. Un empilage professionnel à 4 couches met la masse sur In1 :
+tout via GND, où qu'il tombe, rejoint un plan continu qu'aucune piste ne
+découpe. C'est une décision d'empilage (stratégie de routage), donc produit.
+
+Options :
+- **A** — plan GND sur In1 dès que le palier compte ≥ 4 couches, en plus des
+  faces extérieures. Recommandée : c'est la pratique standard, et le via
+  d'échappement atteint toujours du cuivre.
+- **B** — statu quo, on s'en remet aux tirages (carte-10 est sortie à 100 %
+  au 2e tirage, 4 couches).
+
+Coût de A : un plan intérieur retire In1 aux signaux ; à mesurer sur
+carte-08/09/10 (100 % à 4-6 couches aujourd'hui) avant de conclure.
+
 ## D-2026-09-12-a — le DRC de la chaîne et celui du routage jugent avec les MÊMES règles
 
 **Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
