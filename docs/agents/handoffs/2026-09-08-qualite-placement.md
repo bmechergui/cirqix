@@ -290,6 +290,21 @@ mesure, **non validés** :
   D-2026-09-12-a (B) validée : routage aux règles standard. Livrés :
   carte-08 (100 %, 0 err, 4 couches, 2,8 mm) ; campagne 09/10 en cours
   (`/tmp/campagne-1789199047`) pour les livrer avec le placement corrigé.
+- **Après-midi du 2026-09-12 — objectif atteint, méthode en deux phases** :
+  sur consigne de l'utilisateur (« valider le placement de toutes les cartes,
+  puis router — plus d'aller-retour »), phase 1 `scripts/valider_placements.py`
+  puis phase 2 `banc_exemples.py --placement-fige`. **16 cartes livrées à
+  100 %, 0 erreur DRC** (carte-01..11, stm32-baseline/30/60/100,
+  esp32-baseline), placements gelés et routages dans `examples/*/expected/`,
+  `examples/VUES.md` régénéré (`98c4da2`). Correctifs généraux du jour :
+  une capa par broche VDD dans le halo, approche par l'extérieur de la
+  broche (`d4c3a32`) ; broche GND décrite par son tronçon reconnue comme
+  orpheline (`f3b8b34`) ; horloge « sans progrès » sur nouveau minimum
+  (`2422b29`, un tirage de stm32-100 tenait 35 min sur une oscillation 1↔2).
+  D-2026-09-12-b (plan GND sur In1 dès 4 couches) validée puis **réfutée par
+  la mesure** le jour même (carte-08 : 100 % à 4 couches sans, jamais 100 %
+  de 2 à 8 avec) — réglage de banc `plan_gnd_interne`, défaut inchangé
+  (`937b5f9`). Workers redémarrés à 15:42Z, empreinte `d6b201976a` sur les 4.
 - **Fork kicad-tools rebasé (`075dfe27`) : NON validé** — 9 conflits de
   placement non résolus à chaque tirage sur carte-05, 0 sur le fork courant.
   Détail et suspects dans `services/kicad/DEPENDENCIES.md`. Gitlink inchangé.
@@ -299,9 +314,11 @@ mesure, **non validés** :
 - **Placement structuré, étapes 1, 7, 8** : graine hiérarchique par grappes
   (réglage `graine_hierarchique`, à mesurer), échange de place quand l'anneau
   du CI est occupé, `kct placement align/distribute` pour les rangées LED/R.
-- **C1** — livrer `expected/placement.kicad_pcb` pour les onze cartes (le
-  mécanisme existe, `scripts/livrer_placements.py` ; 01-06, 09 couvertes, les
-  autres attendent la campagne ci-dessus).
+- ~~**C1** — livrer `expected/placement.kicad_pcb` pour les onze cartes~~ —
+  **fait le 2026-09-12**, seize cartes.
+- **Îlot GND F.Cu/B.Cu sous le LQFP** : cause des tirages à 96-98 % sur
+  carte-08/10 et stm32-100 (via d'échappement sur un îlot B.Cu de 1 mm²,
+  retiré comme flottant). Le plan interne ne le règle pas ; piste ouverte :
+  choisir la sortie du via d'échappement là où B.Cu est continu.
 - **A3** — espacer la sérigraphie (`silk_over_copper`, `silk_overlap`).
 - **D1** — la carte de référence réelle, type `astra_piNas`.
-- Régénérer les onze cartes avec les correctifs.
