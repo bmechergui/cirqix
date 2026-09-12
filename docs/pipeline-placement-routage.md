@@ -39,6 +39,23 @@ ajoute une erreur. L'ordre est contraint des deux côtés : un snap avant le
 Géomètre est défait par lui ; une grille avant les rangées est défaite par
 elles.
 
+### Ce qui défaisait le placement pro (mesuré le 2026-09-12)
+
+Le snap collait bien les découplages à 2-3 mm de leur broche, et le board
+**livré** les avait à 13-32 mm. Trois causes, trouvées par diff des boards
+tracés à chaque étape (`/tmp/traces-placement`, 12 derniers, md5 au
+journal) — chacune une règle générale dans `tools/placement*.py` :
+
+| cause | mesure | règle |
+|---|---|---|
+| l'Inspecteur (`PlacementFixer`) qui suit le snap résolvait un conflit en déplaçant **la puce** (U1 de 16 mm) — les capas, elles, restaient à l'ancienne place | 2,4 → 14,9 mm | après le snap, chaque passe de l'Inspecteur ancre les membres collés **et** les puces ancres des grappes, jusqu'à la livraison |
+| la boîte d'encombrement ignorait la **rotation** : une 0402 à 90° était testée couchée, deux capas « libres » se chevauchaient, le retrait ciblé les renvoyait au loin | `courtyards_overlap` C35/C65 | `_boite_absolue` tourne la boîte avec le composant |
+| réglage de banc `graine_hierarchique` oublié deux jours dans `/tmp/cirqix-reglages.json` | 13-32 mm | tout réglage de banc actif est journalisé en WARNING à chaque placement et routage |
+
+Mesure après correctifs (carte-09, 62 composants, par le service) :
+**découplage livré 2,5 mm en moyenne, 4,8 mm au pire.** Le service
+journalise cette qualité après le snap et à la livraison.
+
 ## Routage (`routers/routing.py::route_auto`)
 
 ```

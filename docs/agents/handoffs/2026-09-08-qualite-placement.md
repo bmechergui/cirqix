@@ -282,6 +282,14 @@ mesure, **non validés** :
   raccord promue en connexion pleine, protection bornée à 80 % à l'escalade,
   empreinte du module au chargement. Détail : `docs/pipeline-placement-routage.md`.
   Campagne de mesure en cours : `/tmp/campagne-1789161948`.
+- **Matin du 2026-09-12 — le placement pro atteint la livraison** : trois
+  causes générales corrigées (`6be3077` → `39b69c0`) — l'Inspecteur ancre
+  les membres collés et leurs puces à toutes ses passes après le snap ; la
+  boîte d'encombrement tourne avec le composant ; réglages de banc journalisés.
+  carte-09 par le service : 2,5 mm de découplage moyen (17-31 mm avant).
+  D-2026-09-12-a (B) validée : routage aux règles standard. Livrés :
+  carte-08 (100 %, 0 err, 4 couches, 2,8 mm) ; campagne 09/10 en cours
+  (`/tmp/campagne-1789199047`) pour les livrer avec le placement corrigé.
 - **Fork kicad-tools rebasé (`075dfe27`) : NON validé** — 9 conflits de
   placement non résolus à chaque tirage sur carte-05, 0 sur le fork courant.
   Détail et suspects dans `services/kicad/DEPENDENCIES.md`. Gitlink inchangé.
