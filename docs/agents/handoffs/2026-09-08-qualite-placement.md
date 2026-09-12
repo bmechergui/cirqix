@@ -320,5 +320,8 @@ mesure, **non validés** :
   carte-08/10 et stm32-100 (via d'échappement sur un îlot B.Cu de 1 mm²,
   retiré comme flottant). Le plan interne ne le règle pas ; piste ouverte :
   choisir la sortie du via d'échappement là où B.Cu est continu.
-- **A3** — espacer la sérigraphie (`silk_over_copper`, `silk_overlap`).
+- ~~**A3** — espacer la sérigraphie~~ — **fait le 2026-09-12** (`6def8a6`) :
+  `degager_references` n'était appelée nulle part, sa sonde était en miroir et
+  tournait un texte que KiCad dessine à plat. Les 16 boards livrés ont été
+  repassés : carte-01..08, 10, 11 à 0/0 ; restes : carte-09 5, stm32-100 11/8.
 - **D1** — la carte de référence réelle, type `astra_piNas`.

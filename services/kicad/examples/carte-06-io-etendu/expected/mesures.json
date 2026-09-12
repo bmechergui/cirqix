@@ -21,11 +21,12 @@
     "empreintes": 36
   },
   "drc_du_board": {
-    "violations": 81,
+    "violations": 2,
     "non_connectes": 0,
-    "types": "silk_over_copper:58,silk_overlap:22,track_dangling:1",
+    "types": "track_dangling:1,via_dangling:1",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "serigraphie_degagee": "2026-09-12"
 }

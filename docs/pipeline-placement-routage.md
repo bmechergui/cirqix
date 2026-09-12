@@ -31,7 +31,8 @@
 7  snap           snap_cluster_members                 une capa par broche VDD, sur la broche, approchée par l'extérieur ; les capas supplémentaires à la marge du halo
 8  rangées        placement_rangees.ranger_les_paires  paires LED/R en rangée le long du bord le plus libre
 9  grille         aligner_sur_grille (0,5 mm)          EN DERNIER, annulé si les erreurs augmentent
-10 DRC placé      _compter_conflits_erreur             une erreur → re-tirage, on ne route jamais un board cassé
+10 sérigraphie    serigraphie.degager_references       EN DERNIER : une référence sur du cuivre ou un contour est écartée (texte à plat, convention KiCad)
+11 DRC placé      _compter_conflits_erreur             une erreur → re-tirage, on ne route jamais un board cassé
 ```
 
 Chaque déplacement (4, 7, 8, 9) est suivi de l'Inspecteur et **annulé** s'il
@@ -52,6 +53,7 @@ journal) — chacune une règle générale dans `tools/placement*.py` :
 | la boîte d'encombrement ignorait la **rotation** : une 0402 à 90° était testée couchée, deux capas « libres » se chevauchaient, le retrait ciblé les renvoyait au loin | `courtyards_overlap` C35/C65 | `_boite_absolue` tourne la boîte avec le composant |
 | réglage de banc `graine_hierarchique` oublié deux jours dans `/tmp/cirqix-reglages.json` | 13-32 mm | tout réglage de banc actif est journalisé en WARNING à chaque placement et routage |
 | la recherche de place partait de la position du GA : quand la capa était de l'autre côté du boîtier, le rayon traversait le CI et la recherche finissait 6-20 mm plus loin | 13-32 mm (carte-08/09) | le snap POWER approche par la **normale sortante** de la broche (du centre du CI vers elle) |
+| la règle de sérigraphie `degager_references` existait, testée, et n'était **appelée nulle part** ; sa sonde tournait le texte avec le boîtier (KiCad le dessine à plat, 1,05 mm par caractère mesuré au SVG) et sa rotation était en miroir (dx·cos − dy·sin au lieu de la convention KiCad) : sur les boîtiers tournés elle regardait au mauvais endroit | carte-10 : 95 `silk_over_copper` + 43 `silk_overlap`, toutes des références sur leurs propres pastilles | appelée en dernier dans `auto_place` ; texte à plat, convention KiCad, contours de sérigraphie en obstacles. Mesure sur les 16 boards livrés : carte-10 95/43 → 0/0, carte-08 111/66 → 0/0, stm32-100 174/89 → 11/8 ; 0 erreur, 0 non connecté partout |
 | **toutes** les capas d'une même broche entraient dans le halo d'escape : sur carte-10 (LQFP-48, 3 broches VDD, 22 découplages) elles formaient un mur à 2-8 mm et bouchaient les couloirs de sortie des signaux | routage 53-85 % de 2 à 8 couches | une capa par broche dans le halo ; une capa supplémentaire d'une broche déjà couverte se pose à la marge du halo (5 mm) |
 
 Mesure après correctifs (carte-09, 62 composants, par le service) :

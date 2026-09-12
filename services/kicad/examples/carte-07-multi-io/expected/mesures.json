@@ -21,13 +21,14 @@
     "empreintes": 45
   },
   "drc_du_board": {
-    "violations": 260,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "silk_over_copper:162,silk_overlap:98",
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
   "livre_par": "livrer_campagne.py",
-  "tirage": "carte-07-multi-io-t1"
+  "tirage": "carte-07-multi-io-t1",
+  "serigraphie_degagee": "2026-09-12"
 }

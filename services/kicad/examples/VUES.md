@@ -17,14 +17,14 @@ sont des avertissements de serigraphie.
 
 | carte | livree le | route | err DRC | violations | couches | decouplage moy / max | grille | paires | placement | routage |
 |---|---|---|---|---|---|---|---|---|---|---|
-| carte-01-diviseur | 2026-09-10 | 100 % | 0 | 4 | 2 | - | 100 % | 2.5 | [placement](carte-01-diviseur/output/vue-placement.png) | [routage](carte-01-diviseur/output/vue-final.png) |
-| carte-02-alimentation | 2026-09-10 | 100 % | 0 | 4 | 2 | 1.8 / 2.1 | 92 % | 3.0 | [placement](carte-02-alimentation/output/vue-placement.png) | [routage](carte-02-alimentation/output/vue-final.png) |
-| carte-03-oscillateur | 2026-09-10 | 100 % | 0 | 13 | 2 | 2.3 / 2.3 | 93 % | 4.0 | [placement](carte-03-oscillateur/output/vue-placement.png) | [routage](carte-03-oscillateur/output/vue-final.png) |
-| carte-04-mcu-minimal | 2026-09-10 | 100 % | 0 | 18 | 2 | 1.9 / 2.1 | 87 % | - | [placement](carte-04-mcu-minimal/output/vue-placement.png) | [routage](carte-04-mcu-minimal/output/vue-final.png) |
-| carte-05-capteur-i2c | 2026-09-10 | 100 % | 0 | 59 | 2 | 1.9 / 3.3 | 92 % | 4.0 | [placement](carte-05-capteur-i2c/output/vue-placement.png) | [routage](carte-05-capteur-i2c/output/vue-final.png) |
-| carte-06-io-etendu | 2026-09-10 | 100 % | 0 | 81 | 2 | 2.0 / 3.0 | 94 % | 4.0 | [placement](carte-06-io-etendu/output/vue-placement.png) | [routage](carte-06-io-etendu/output/vue-final.png) |
-| carte-07-multi-io | 2026-09-11 | 100 % | 0 | 260 | 2 | 2.5 / 4.8 | 93 % | 4.0 | [placement](carte-07-multi-io/output/vue-placement.png) | [routage](carte-07-multi-io/output/vue-final.png) |
-| carte-08-dense | 2026-09-12 | 100 % | 0 | 356 | 4 | 2.6 / 4.2 | 86 % | 2.5 | [placement](carte-08-dense/output/vue-placement.png) | [routage](carte-08-dense/output/vue-final.png) |
-| carte-09-tres-dense | 2026-09-12 | 100 % | 0 | 348 | 6 | 3.2 / 5.2 | 92 % | 4.0 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
-| carte-10-maximale | 2026-09-12 | 100 % | 0 | ? | 4 | 4.1 / 9.6 | 93 % | 4.0 | [placement](carte-10-maximale/output/vue-placement.png) | [routage](carte-10-maximale/output/vue-final.png) |
-| carte-11-croisements | 2026-09-12 | 100 % | 0 | ? | 4 | - | 100 % | - | [placement](carte-11-croisements/output/vue-placement.png) | [routage](carte-11-croisements/output/vue-final.png) |
+| carte-01-diviseur | 2026-09-10 (modifie) | 100 % | 0 | 4 | 2 | - | 100 % | 2.5 | [placement](carte-01-diviseur/output/vue-placement.png) | [routage](carte-01-diviseur/output/vue-final.png) |
+| carte-02-alimentation | 2026-09-10 (modifie) | 100 % | 0 | 4 | 2 | 1.8 / 2.1 | 92 % | 3.0 | [placement](carte-02-alimentation/output/vue-placement.png) | [routage](carte-02-alimentation/output/vue-final.png) |
+| carte-03-oscillateur | 2026-09-10 (modifie) | 100 % | 0 | 13 | 2 | 2.3 / 2.3 | 93 % | 4.0 | [placement](carte-03-oscillateur/output/vue-placement.png) | [routage](carte-03-oscillateur/output/vue-final.png) |
+| carte-04-mcu-minimal | 2026-09-10 (modifie) | 100 % | 0 | 18 | 2 | 1.9 / 2.1 | 87 % | - | [placement](carte-04-mcu-minimal/output/vue-placement.png) | [routage](carte-04-mcu-minimal/output/vue-final.png) |
+| carte-05-capteur-i2c | 2026-09-10 (modifie) | 100 % | 0 | 59 | 2 | 1.9 / 3.3 | 92 % | 4.0 | [placement](carte-05-capteur-i2c/output/vue-placement.png) | [routage](carte-05-capteur-i2c/output/vue-final.png) |
+| carte-06-io-etendu | 2026-09-10 (modifie) | 100 % | 0 | 81 | 2 | 2.0 / 3.0 | 94 % | 4.0 | [placement](carte-06-io-etendu/output/vue-placement.png) | [routage](carte-06-io-etendu/output/vue-final.png) |
+| carte-07-multi-io | 2026-09-11 (modifie) | 100 % | 0 | 260 | 2 | 2.5 / 4.8 | 93 % | 4.0 | [placement](carte-07-multi-io/output/vue-placement.png) | [routage](carte-07-multi-io/output/vue-final.png) |
+| carte-08-dense | 2026-09-12 (modifie) | 100 % | 0 | 356 | 4 | 2.6 / 4.2 | 86 % | 2.5 | [placement](carte-08-dense/output/vue-placement.png) | [routage](carte-08-dense/output/vue-final.png) |
+| carte-09-tres-dense | 2026-09-12 (modifie) | 100 % | 0 | 348 | 6 | 3.2 / 5.2 | 92 % | 4.0 | [placement](carte-09-tres-dense/output/vue-placement.png) | [routage](carte-09-tres-dense/output/vue-final.png) |
+| carte-10-maximale | 2026-09-12 (modifie) | 100 % | 0 | ? | 4 | 4.1 / 9.6 | 93 % | 4.0 | [placement](carte-10-maximale/output/vue-placement.png) | [routage](carte-10-maximale/output/vue-final.png) |
+| carte-11-croisements | 2026-09-12 (modifie) | 100 % | 0 | ? | 4 | - | 100 % | - | [placement](carte-11-croisements/output/vue-placement.png) | [routage](carte-11-croisements/output/vue-final.png) |

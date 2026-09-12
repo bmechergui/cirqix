@@ -21,13 +21,14 @@
     "empreintes": 26
   },
   "drc_du_board": {
-    "violations": 59,
+    "violations": 1,
     "non_connectes": 0,
-    "types": "silk_over_copper:40,silk_overlap:18,track_dangling:1",
+    "types": "track_dangling:1",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
   "livre_par": "livrer_campagne.py",
-  "tirage": "carte-05-capteur-i2c-t1"
+  "tirage": "carte-05-capteur-i2c-t1",
+  "serigraphie_degagee": "2026-09-12"
 }

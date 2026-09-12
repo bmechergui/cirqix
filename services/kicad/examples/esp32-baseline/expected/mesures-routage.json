@@ -7,11 +7,12 @@
   "note": "",
   "duree_s": 65.3,
   "drc_du_board": {
-    "violations": 22,
+    "violations": 1,
     "non_connectes": 0,
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true
+    "fabricable": true,
+    "types": "silk_over_copper:1"
   },
   "tirages": 2,
   "board": {
@@ -20,5 +21,6 @@
     "empreintes": 21
   },
   "date": "2026-09-12",
-  "methode": "placement valide (phase 1) puis routage sur placement gele (phase 2)"
+  "methode": "placement valide (phase 1) puis routage sur placement gele (phase 2)",
+  "serigraphie_degagee": "2026-09-12"
 }

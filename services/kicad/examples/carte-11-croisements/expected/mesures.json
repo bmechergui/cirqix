@@ -19,15 +19,17 @@
     "empreintes": 7
   },
   "drc_du_board": {
-    "violations": 7,
+    "violations": 4,
     "non_connectes": 0,
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true
+    "fabricable": true,
+    "types": "hole_to_hole:4"
   },
   "couches": 4,
   "date": "2026-09-12",
   "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
   "livre_par": "banc_exemples.py + livrer_boards.py",
-  "tirage": 2
+  "tirage": 2,
+  "serigraphie_degagee": "2026-09-12"
 }

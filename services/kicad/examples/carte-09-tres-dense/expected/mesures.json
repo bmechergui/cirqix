@@ -21,13 +21,14 @@
     "empreintes": 63
   },
   "drc_du_board": {
-    "violations": 348,
+    "violations": 10,
     "non_connectes": 0,
-    "types": "silk_over_copper:216,silk_overlap:130,track_dangling:2",
+    "types": "track_dangling:5,silk_over_copper:5",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
   "livre_par": "livrer_campagne.py",
-  "tirage": "carte-09-tres-dense-t2"
+  "tirage": "carte-09-tres-dense-t2",
+  "serigraphie_degagee": "2026-09-12"
 }
