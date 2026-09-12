@@ -151,6 +151,10 @@ def valider(carte: str) -> dict:
         if meilleur is None or cle < meilleur["cle"]:
             meilleur = {"cle": cle, "board": board, "err": err, "viol": viol,
                         "med": med, "max": mx, "tirage": i}
+        # ⚠️ Un tirage VALIDE suffit : re-tirer est le levier contre un tirage
+        # rate, pas un rituel (3 x 2 min x 16 cartes = 1 h 30 pour rien).
+        if err == 0 and mx <= _DECOUPLAGE_MAX_MM:
+            break
 
     if meilleur is None:
         return {"carte": carte, "erreur": "aucun tirage abouti"}
