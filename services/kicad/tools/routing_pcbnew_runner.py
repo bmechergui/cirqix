@@ -270,8 +270,17 @@ def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
-                    marge_piste=None, portee=None, pas=None):
+                    marge_piste=None, portee=None, pas=None, prefere=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
+
+    ⚠️ `prefere(x, y)` ORDONNE les sorties degagees, il n en filtre aucune :
+    la premiere sortie degagee que `prefere` accepte est rendue ; a defaut,
+    la premiere sortie degagee tout court. Mesure du 2026-09-12 (carte-08/10,
+    stm32-100) : le via d echappement d une broche GND tombait dans un ilot
+    B.Cu de 1 mm2 isole par les pistes, retire ensuite comme flottant — la
+    broche restait orpheline tirage apres tirage. Preferer un via qui touche
+    le plan principal d en face regle le cas ; l EXIGER a deja ete refute
+    (2026-09-01, 1 -> 4 manquantes).
 
     La direction naturelle (a l oppose du centre du boitier) est essayee en
     premier : c est le canal que le halo d escape du placement a reserve. On
@@ -292,6 +301,7 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     depart = distance
     portee = portee if portee is not None else distance
     pas = pas if pas is not None else max(distance / 4.0, 1.0)
+    premiere = None  # la premiere sortie degagee, si aucune n est preferee
     # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
     # d une direction avant de tourner. Le couloir reserve par le halo
     # d escape du placement vaut mieux qu une deviation — l ordre inverse
@@ -314,8 +324,33 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                 # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
                 if any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles):
                     continue
-                return int(x1), int(y1)
-    return None
+                if prefere is None or prefere(x1, y1):
+                    return int(x1), int(y1)
+                if premiere is None:
+                    premiere = (int(x1), int(y1))
+    return premiere
+
+
+def _dans_le_plan_principal(polys, x, y, vec) -> bool:
+    """Le point est-il dans le PLUS GRAND contour rempli d un des polygones ?
+
+    Le plus grand contour est le plan lui-meme ; les autres sont des ilots que
+    les pistes ont detaches. Un via qui touche un ilot ne relie rien de
+    durable — l ilot part au retrait des flottants, et le via avec.
+    `vec(x, y)` construit le point dans le type attendu par le polygone.
+    """
+    pt = vec(x, y)
+    for poly in polys or ():
+        try:
+            n = poly.OutlineCount()
+            if n <= 0:
+                continue
+            principal = max(range(n), key=lambda i: poly.Outline(i).Area())
+            if poly.Contains(pt, principal):
+                return True
+        except Exception:  # noqa: BLE001 — un doute ne prefere rien
+            continue
+    return False
 
 
 def _direction_d_echappement(pad, centre_fp) -> tuple:
@@ -557,6 +592,26 @@ def _trous_perces(board) -> list[tuple[float, float, float]]:
     return trous
 
 
+_TOLERANCE_VIA_EXISTANT_NM = 50_000
+
+
+def _via_existant_a(vias, x, y, netcode: int, tolerance=_TOLERANCE_VIA_EXISTANT_NM) -> bool:
+    """Un via du MEME net est-il deja a cette position (a 50 um pres) ?
+
+    ⚠️ Mesure du 2026-09-11 (carte-08, board trace) : autour de chaque broche
+    GND du LQFP, le via reserve etait bien la, a 1,20 mm — le routeur l avait
+    conserve — mais AUCUNE piste ne le reliait a la pastille. A la repose,
+    `_trou_libre` voyait ce via comme un trou occupe et RENONCAIT : la
+    pastille restait orpheline a cause du via qui devait la relier. Un via
+    du meme net deja en place n est pas un obstacle, c est le travail a
+    moitie fait : il ne manque que le troncon.
+    """
+    for vx, vy, vnet in vias or ():
+        if int(vnet) == int(netcode) and abs(vx - x) <= tolerance and abs(vy - y) <= tolerance:
+            return True
+    return False
+
+
 def _trou_libre(x: float, y: float, rayon: float,
                 trous: list[tuple[float, float, float]], ecart: float) -> bool:
     """Vrai si l on peut percer en (x, y) sans toucher un trou existant."""
@@ -628,8 +683,28 @@ def _via_in_pad_dispense_de_clearance(diametre_via: float,
     return 0 < diametre_via <= largeur_pad
 
 
+def _via_min_fabricable(board) -> float:
+    """Plus petit via que les REGLES DU BOARD acceptent (nm) : percage minimal
+    + deux anneaux minimaux, et jamais sous la taille minimale de via.
+
+    ⚠️ Mesure du 2026-09-12 (carte-08) : chaque via-in-pad retreci a 0,3-0,5 mm
+    recevait un percage plancher de 0,3 mm, donc un anneau nul ou negatif —
+    « erreurs ajoutees {'annular_width': 1} » a CHAQUE repose et chaque fanout,
+    tous refuses par la garde. Un via qui tient dans la pastille mais pas dans
+    les regles n est pas un via.
+    """
+    try:
+        ds = board.GetDesignSettings()
+        percage = float(getattr(ds, "m_MinThroughDrill", 0) or 0)
+        anneau = float(getattr(ds, "m_ViasMinAnnularWidth", 0) or 0)
+        taille = float(getattr(ds, "m_ViasMinSize", 0) or 0)
+        return max(_VIA_MIN_MM, taille, percage + 2.0 * anneau)
+    except Exception:  # noqa: BLE001
+        return _VIA_MIN_MM
+
+
 def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
-                         percage_pad: float) -> float:
+                         percage_pad: float, via_min: float = _VIA_MIN_MM) -> float:
     """Diametre du via a poser DANS la pastille. 0 si aucun ne convient.
 
     ⚠️ UNE PASTILLE DEJA PERCEE LE REFUSE TOUJOURS. Un via dans une pastille
@@ -639,7 +714,7 @@ def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
     """
     if percage_pad > 0:
         return 0.0
-    d = _diametre_via_in_pad(largeur_pad, via_nominal)
+    d = _diametre_via_in_pad(largeur_pad, via_nominal, via_min)
     # ⚠️ Si le PERCAGE minimal ne tient pas dans la pastille, poser le via
     # ferait deborder le trou du cuivre : on renonce plutot que de livrer un
     # board que le DRC refusera. Mesure du 2026-09-02 : une pastille de
@@ -649,7 +724,8 @@ def _via_in_pad_possible(largeur_pad: float, via_nominal: float,
     return d
 
 
-def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
+def _diametre_via_in_pad(largeur_pad: float, via_nominal: float,
+                         via_min: float = _VIA_MIN_MM) -> float:
     """Diametre d un via pose DANS la pastille. 0 si aucun ne tient.
 
     ⚠️ Le via ne doit JAMAIS depasser la pastille. Tout l argument tient la :
@@ -664,7 +740,7 @@ def _diametre_via_in_pad(largeur_pad: float, via_nominal: float) -> float:
     plus cher a fabriquer.
     """
     d = min(largeur_pad, via_nominal)
-    return d if d >= _VIA_MIN_MM else 0.0
+    return d if d >= max(_VIA_MIN_MM, via_min) else 0.0
 
 def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     """Fanout : une courte piste depuis chaque broche isolee vers un via.
@@ -702,6 +778,10 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     # ⚠️ Positions REPRISES de la reservation d avant-routage. Les compter :
     # un rejeu qui ne se compte pas est indistinguable d un rejeu absent.
     reprises = 0
+    # Un via du meme net deja au point de chute : troncon seul (voir `_via_existant_a`).
+    vias_existants = [(float(v.GetPosition().x), float(v.GetPosition().y), int(v.GetNetCode()))
+                      for v in board.GetTracks() if v.GetClass() == "PCB_VIA"]
+    troncons_seuls = 0
     for cible in cibles:
         # Deux formes : `[ref, pad]` (fanout post-routage, aucune reservation)
         # et `[ref, pad, via_x, via_y]` (repose d une sortie deja calculee,
@@ -736,16 +816,30 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # recherche, elle, s execute sur le board ROUTE, ou les pistes de
         # signal l ont referme. Chercher a nouveau, c est jeter la seule
         # mesure faite au bon moment.
+        # Le cuivre du net sur les AUTRES couches : c est lui que le via doit
+        # toucher, et de preference son plan principal, pas un ilot.
+        en_face = _cuivre_du_net_sur(board, pad.GetLayer(), pad.GetNetCode())
+        prefere = (lambda x, y: _dans_le_plan_principal(
+            en_face, x, y, lambda a, b_: pcbnew.VECTOR2I(int(a), int(b_))))
         sortie = None
         if reserve is not None and _sortie_reservee_valide(
                 pos.x, pos.y, reserve[0], reserve[1], obstacles, marge,
                 propre, marge_piste):
             sortie = reserve
             reprises += 1
+            # ⚠️ Une position reservee qui ne touche pas le plan principal est
+            # rejouee SEULEMENT si aucune sortie degagee ne le touche.
+            if not sans_direction and not prefere(reserve[0], reserve[1]):
+                mieux = _choisir_sortie(
+                    pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
+                    marge_piste, portee, pas, prefere=prefere)
+                if mieux is not None and prefere(mieux[0], mieux[1]):
+                    sortie = mieux
+                    reprises -= 1
         if sortie is None and not sans_direction:
             sortie = _choisir_sortie(
                 pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                marge_piste, portee, pas
+                marge_piste, portee, pas, prefere=prefere
             )
         if sortie is None:
             # Dernier recours : le via DANS la pastille. Il n a besoin
@@ -757,7 +851,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
                 perce = float(pad.GetDrillSizeX())
             except Exception:
                 perce = 0.0  # sans percage lisible, on traite en CMS
-            d = _via_in_pad_possible(larg, via_d, perce)
+            d = _via_in_pad_possible(larg, via_d, perce, _via_min_fabricable(board))
             perc = _percage_pour_via(d)
             # ⚠️ Un via qui TIENT dans la pastille herite de SON isolement :
             # exiger un degagement autour de lui reviendrait a demander deux
@@ -800,7 +894,8 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # quand il porte le meme net. Mesure du 2026-09-02, board final de
         # `nucleo-f401` : 150 vias pour 149 positions — un via superpose que
         # la regle posee sur la seule couture ne pouvait pas voir.
-        if not _trou_libre(vx, vy, perc_d / 2, trous, ecart_trous):
+        existant = _via_existant_a(vias_existants, vx, vy, pad.GetNetCode())
+        if not existant and not _trou_libre(vx, vy, perc_d / 2, trous, ecart_trous):
             renonces += 1
             continue
 
@@ -812,13 +907,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         piste.SetNetCode(pad.GetNetCode())
         board.Add(piste)
 
-        via = pcbnew.PCB_VIA(board)
-        via.SetPosition(pcbnew.VECTOR2I(vx, vy))
-        via.SetWidth(via_d)
-        via.SetDrill(perc_d)
-        via.SetNetCode(pad.GetNetCode())
-        board.Add(via)
-        trous.append((float(vx), float(vy), perc_d / 2))
+        if existant:
+            troncons_seuls += 1
+        else:
+            via = pcbnew.PCB_VIA(board)
+            via.SetPosition(pcbnew.VECTOR2I(vx, vy))
+            via.SetWidth(via_d)
+            via.SetDrill(perc_d)
+            via.SetNetCode(pad.GetNetCode())
+            board.Add(via)
+            trous.append((float(vx), float(vy), perc_d / 2))
         poses += 1
         # ⚠️ AMORCE EN FACE : ESSAYEE LE 2026-09-02, REFUTEE PAR LA MESURE.
         # L idee — poser avec le via une courte piste de masse sur la face
@@ -853,7 +951,8 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
               % (vises, poses, renonces), file=sys.stderr)
     Path(args["result"]).write_text(
         json.dumps({"escaped": poses, "renonces": renonces,
-                    "reprises": reprises, "vises": vises}), encoding="utf-8"
+                    "reprises": reprises, "vises": vises,
+                    "troncons_seuls": troncons_seuls}), encoding="utf-8"
     )
 
 
@@ -901,7 +1000,9 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
         positions.append({"ref": str(ref), "pad": str(nom_pad),
                           "pad_x": int(pos.x), "pad_y": int(pos.y),
                           "via_x": int(sortie[0]), "via_y": int(sortie[1]),
-                          "layer": int(pad.GetLayer()), "net": int(pad.GetNetCode())})
+                          "layer": int(pad.GetLayer()),
+                          "layer_nom": board.GetLayerName(pad.GetLayer()),
+                          "net": int(pad.GetNetCode())})
     Path(args["result"]).write_text(
         json.dumps({"vias": positions, "renonces": renonces}), encoding="utf-8")
 
@@ -1160,7 +1261,11 @@ def _cuivre_du_net_sur(board, couche_exclue, netcode):
     J avais remplace un via aveugle par un via jamais pose.
     """
     autres = []
-    for z in board.Zones():
+    try:
+        zones = list(board.Zones())
+    except Exception:  # noqa: BLE001 — sans zones lisibles, pas de cuivre en face
+        return autres
+    for z in zones:
         try:
             if z.GetNetCode() != netcode:
                 continue
@@ -1319,7 +1424,7 @@ def _poser_via_dans_pastille(pcbnew, board, pad, via_d: float,
         perce = float(pad.GetDrillSizeX())
     except Exception:
         return False
-    d = _via_in_pad_possible(larg, via_d, perce)
+    d = _via_in_pad_possible(larg, via_d, perce, _via_min_fabricable(board))
     if d <= 0:
         return False
     perc = _percage_pour_via(d)

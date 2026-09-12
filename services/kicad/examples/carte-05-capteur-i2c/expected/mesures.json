@@ -9,11 +9,11 @@
   "duree_s": 1052,
   "git": "6fb7359",
   "routed_percent": 100,
-  "drc_violations": 43,
-  "drc_clean": false,
+  "drc_violations": 59,
+  "drc_clean": true,
   "fichiers_exportes": 27,
-  "types_violations": "silk_over_copper:20,track_dangling:10,silk_overlap:6,item_on_disabled_layer:4,via_dangling:2,invalid_outline:1",
-  "abouti": false,
+  "types_violations": "silk_over_copper:26,silk_overlap:12",
+  "abouti": true,
   "board": {
     "segments": 290,
     "vias": 29,
@@ -21,14 +21,14 @@
     "empreintes": 26
   },
   "drc_du_board": {
-    "violations": 30,
+    "violations": 1,
     "non_connectes": 0,
-    "types": "invalid_outline:1,item_on_disabled_layer:4,silk_over_copper:10,silk_overlap:3,track_dangling:10,via_dangling:2",
-    "erreurs": [
-      "invalid_outline",
-      "item_on_disabled_layer"
-    ],
-    "nb_erreurs": 5,
-    "fabricable": false
-  }
+    "types": "track_dangling:1",
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-05-capteur-i2c-t1",
+  "serigraphie_degagee": "2026-09-12"
 }

@@ -109,8 +109,9 @@
     {
       "ref": "U3",
       "value": "BME280",
-      "footprint": "Package_LGA:LGA-8_2.5x2.5mm_P0.65mm",
-      "symbol": "Sensor:BME280"
+      "footprint": "Package_LGA:Bosch_LGA-8_2.5x2.5mm_P0.65mm_ClockwisePinNumbering",
+      "symbol": "Sensor:BME280",
+      "_footprint_note": "CORRIGE le 2026-09-09. L empreinte demandee, `Package_LGA:LGA-8_2.5x2.5mm_P0.65mm`, N EXISTE PAS dans KiCad : la bibliotheque livre celle du BME280 prefixee `Bosch_` et suffixee `_ClockwisePinNumbering`, parce que ce capteur numerote ses broches dans le sens horaire, contrairement a la convention LGA habituelle. Consequence : `add_component` rendait None, le composant etait perdu en silence, et la carte sortait « 100 % routee, 0 erreur » SANS SON CAPTEUR. La bibliotheque le disait pourtant, dans `result.failed` -- que nous jetions."
     },
     {
       "ref": "R3",

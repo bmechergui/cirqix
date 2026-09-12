@@ -91,7 +91,9 @@ class TestCablage:
         source = (_SERVICE_ROOT / "tools" / "routing_pcbnew_runner.py").read_text(
             encoding="utf-8")
         i = source.index("def _escape_pads(")
-        corps = source[i:i + 4000]
+        # Le CORPS de la fonction, pas une tranche fixe (meme piege que le
+        # test voisin : 4000 caracteres depasses le 2026-09-11).
+        corps = source[i:source.index(chr(10) + "def ", i + 1)]
         assert "len(cible) >= 4" in corps
         assert "_sortie_reservee_valide(" in corps
 

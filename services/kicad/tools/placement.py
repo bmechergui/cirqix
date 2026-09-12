@@ -25,6 +25,7 @@ import base64
 import json
 import logging
 import math
+import os
 import re
 import subprocess
 import sys
@@ -237,6 +238,25 @@ def elargir_percages_trop_fins(texte: str) -> tuple:
     morceaux = texte.split("(pad ")
     sortie = [morceaux[0]] + [sur_un_pad(m) for m in morceaux[1:]]
     return "(pad ".join(sortie), n
+
+
+def _degager_la_serigraphie(pcb_path: Path) -> int:
+    """Ecarte les references posees sur du cuivre ou les unes sur les autres.
+
+    Ne deplace jamais un composant : seules les positions de texte changent,
+    le DRC de placement ne peut donc pas empirer. Rend le nombre de textes
+    deplaces ; une panne de la regle ne casse pas le placement.
+    """
+    try:
+        from tools.serigraphie import degager_references
+        pcb = PCB.load(str(pcb_path))
+        n = degager_references(pcb)
+        if n:
+            pcb.save(str(pcb_path))
+        return n
+    except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
+        logger.warning("auto_place: serigraphie non degagee (%s)", exc)
+        return 0
 
 
 def _rendre_lisible(pcb_path: Path) -> None:
@@ -1647,6 +1667,45 @@ def _reserve_escape_halos(pcb_path: Path, anchored: list[str],
 #
 # Ce qui SURVIT de l experience : `_placement_meilleur`, qui departage deux
 # tirages legaux par la longueur de fil. Il ne coute rien et reste juste.
+# Pas de la grille de placement, en millimetres.
+#
+# ⚠️ SEUIL CHIFFRE QUI CHANGE LE COMPORTEMENT LIVRE — decision produit.
+#
+# 0,5 mm est le pas usuel d un placement manuel en CMS : il aligne les rangees
+# de passifs sans contraindre les boitiers fins. Le natif arrondit AUSSI les
+# rotations au multiple de 90 degres — sans effet ici, nos orientations sont
+# deja toutes cardinales (mesure : 55/55 sur `nucleo-f401`).
+#
+# Une valeur nulle desactive le snap : c est le comportement d avant, et c est
+# ce que la lib fait par defaut.
+# ⚠️ RELU A CHAQUE APPEL, jamais fige a l import — voir `tools/reglages_banc`.
+# Une constante d import rendrait tout A/B impossible : le service tourne depuis
+# le demarrage du conteneur, et un bras heriterait du precedent.
+_GRILLE_MM_DEFAUT = 0.5
+
+
+def _grille_mm() -> float:
+    from tools.reglages_banc import reglage
+    return float(reglage("grille_mm", _GRILLE_MM_DEFAUT))
+
+
+# Conserve pour les gardes qui verifient que le pas n est pas nul.
+_GRILLE_MM = _GRILLE_MM_DEFAUT
+
+# Decision produit `D-2026-09-09-a`, EN ATTENTE. Desarmee par defaut.
+def _graine_hierarchique() -> bool:
+    from tools.reglages_banc import (avertir_si_module_plus_recent_que_le_processus,
+                                     reglage)
+    actif = bool(reglage("graine_hierarchique", False))
+    if actif:
+        # ⚠️ Une regle demandee mais absente du code CHARGE rendrait le bras
+        # A/B identique au temoin — « aucun effet », la reponse qu on attendait.
+        # Mesure du 2026-09-09 : le service tournait depuis neuf heures avec un
+        # module anterieur a la regle.
+        import sys as _s
+        avertir_si_module_plus_recent_que_le_processus(_s.modules[__name__])
+    return actif
+
 _WF_ITERATIONS: int = 1000   # raffinement physique force-directed
 _WF_GENERATIONS: int = 100   # phase évolutionnaire (groupement)
 _WF_POPULATION: int = 50
@@ -1839,6 +1898,8 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
 
     On garde le MEILLEUR, pas le dernier : un tirage tardif peut etre pire.
     """
+    from tools.reglages_banc import journaliser_les_reglages
+    journaliser_les_reglages("placement")
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
@@ -1931,6 +1992,136 @@ def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):
         return None
 
 
+def _blocs_edge_cuts(texte: str) -> list[tuple[int, int]]:
+    """Les blocs de geometrie posee sur `Edge.Cuts`, en (debut, fin).
+
+    ⚠️ DEUX FORMES AU MOINS, et je n en cherchais qu une : quatre
+    `gr_line`, ou un seul `gr_rect`. `carte-01` porte un `gr_rect`, et mon
+    expression ne voyait rien — « aucun contour trouve » sur une carte qui en a
+    un. Treizieme piege de forme de ce projet.
+
+    On decoupe en comptant les parentheses plutot qu en supposant la place du
+    champ `(layer ...)` : il vient APRES `(start)`/`(end)` dans un `gr_rect`,
+    AVANT dans certains `gr_line`, et une expression qui suppose l ordre rate
+    une forme sur deux.
+    """
+    blocs = []
+    for tag in ("gr_line", "gr_rect", "gr_arc", "gr_poly", "gr_circle"):
+        i = 0
+        while True:
+            j = texte.find("(" + tag, i)
+            if j < 0:
+                break
+            prof, k = 0, j
+            while k < len(texte):
+                if texte[k] == "(":
+                    prof += 1
+                elif texte[k] == ")":
+                    prof -= 1
+                    if prof == 0:
+                        break
+                k += 1
+            bloc = texte[j:k + 1]
+            i = k + 1
+            if '(layer "Edge.Cuts")' in bloc:
+                blocs.append((j, k + 1))
+    return sorted(blocs)
+
+
+_COORD_CONTOUR_RE = re.compile(r"\((?:start|end|center|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
+
+
+def _taille_contour(texte: str) -> Optional[tuple[float, float]]:
+    """(largeur, hauteur) du contour `Edge.Cuts` du board, ou None sans contour."""
+    xs, ys = [], []
+    for debut, fin in _blocs_edge_cuts(texte):
+        for x, y in _COORD_CONTOUR_RE.findall(texte[debut:fin]):
+            xs.append(float(x))
+            ys.append(float(y))
+    if not xs:
+        return None
+    return (max(xs) - min(xs), max(ys) - min(ys))
+
+
+def _redimensionner_contour(chemin: Path, largeur: float, hauteur: float) -> bool:
+    """Reecrit le contour `Edge.Cuts` du board aux dimensions donnees.
+
+    ⚠️ ON NE TOUCHE QUE `Edge.Cuts`. Le reste — empreintes, nets, pistes —
+    est preserve : agrandir une carte ne doit rien deplacer.
+
+    ⚠️ LE CONTOUR PART DE SON PROPRE COIN, pas de (0,0). Le board vit dans
+    un repere page (typiquement decale de 100,100) ; poser le nouveau contour a
+    l origine le mettrait ailleurs que ses composants — le piege de repere que
+    trois implementations maison ont deja commis dans ce depot.
+
+    Rend `True` si le contour a ete reecrit.
+    """
+    texte = chemin.read_text(encoding="utf-8", errors="replace")
+    blocs = _blocs_edge_cuts(texte)
+    if not blocs:
+        logger.error("redimensionnement: aucun contour Edge.Cuts trouve — "
+                     "la carte N EST PAS agrandie")
+        return False
+
+    coins = []
+    for a, b in blocs:
+        for m in re.finditer(r"\((?:start|end) ([-\d.]+) ([-\d.]+)\)", texte[a:b]):
+            coins.append((float(m.group(1)), float(m.group(2))))
+    if not coins:
+        logger.error("redimensionnement: contour illisible — carte inchangee")
+        return False
+
+    x0, y0 = min(c[0] for c in coins), min(c[1] for c in coins)
+    x1, y1 = x0 + largeur, y0 + hauteur
+
+    # On retire les anciens blocs (a l envers, pour ne pas decaler les index)
+    # puis on repose UN rectangle — la forme la plus simple, et celle que
+    # `gr_rect` exprime deja.
+    for a, b in reversed(blocs):
+        texte = texte[:a] + texte[b:]
+
+    rect = (
+        "TAB(gr_rectNL"
+        "TABTAB(start %s %s)NL"
+        "TABTAB(end %s %s)NL"
+        "TABTAB(strokeNLTABTABTAB(width 0.1)NLTABTABTAB(type default)NLTABTAB)NL"
+        "TABTAB(fill no)NL"
+        'TABTAB(layer "Edge.Cuts")NL'
+        "TAB)NL"
+    ) % (x0, y0, x1, y1)
+    rect = rect.replace("TAB", chr(9)).replace("NL", chr(10))
+
+    i = texte.rfind(")")
+    if i < 0:
+        return False
+    chemin.write_text(texte[:i] + rect + texte[i:], encoding="utf-8")
+    logger.info("redimensionnement: contour reecrit a %.0fx%.0f mm depuis (%.1f, %.1f)",
+                largeur, hauteur, x0, y0)
+    return True
+
+
+def _journaliser_qualite(out: Path, etape: str) -> None:
+    """Ecrit la qualite du decouplage (moy/max) du board `out` a cette etape.
+    Jamais une panne : la mesure est un temoin, pas un verrou."""
+    try:
+        from kicad_tools.schema.pcb import PCB as _PCB
+        from tools.placement_bypass import qualite_decouplage
+        moy, maxi, n = qualite_decouplage(_PCB.load(str(out)))
+        import hashlib as _h
+        logger.info("auto_place: decouplage %s — moyenne %.1f mm, max %.1f mm (%d capa(s)) [%s, %d o]",
+                    etape, moy, maxi, n, _h.md5(out.read_bytes()).hexdigest()[:8], out.stat().st_size)
+        # Trace de l etape (12 dernieres), meme motif que `/tmp/traces-routage`.
+        d = Path(os.environ.get("CIRQIX_TRACES_PLACEMENT", "/tmp/traces-placement"))
+        d.mkdir(parents=True, exist_ok=True)
+        nom = "%s-%d-%s.kicad_pcb" % (time.strftime("%H%M%S"), os.getpid(),
+                                       re.sub(r"[^a-z0-9]+", "_", etape.lower())[:40])
+        (d / nom).write_bytes(out.read_bytes())
+        for vieux in sorted(d.glob("*.kicad_pcb"))[:-12]:
+            vieux.unlink()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("auto_place: decouplage %s — non mesure (%s)", etape, exc)
+
+
 def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                          board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
@@ -1956,6 +2147,50 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
 
         pcb = PCB.load(str(src))
 
+        # ⚠️ LA CARTE EST-ELLE ASSEZ GRANDE POUR SES COMPOSANTS ?
+        #
+        # Mesure du 2026-09-09 sur `carte-11` : deux connecteurs 2x20 sur une
+        # carte de 90x60 mm. `J1` a un encombrement de 49,1 mm, il exigeait
+        # donc 102 mm par dimension — la plage de positions valides etait
+        # NEGATIVE. Le placement renoncait a juste titre, `J1` sortait de
+        # 43,3 mm, et le routeur n avait rien a router : 3 % pendant des
+        # semaines.
+        #
+        # ⚠️ AGRANDIR CETTE CARTE-LA NE CORRIGEAIT RIEN : le dimensionnement
+        # vient d un modele de langage, il sera plausible et faux aussi souvent
+        # qu on lui demandera. La verification est donc posee ici, pour TOUTES
+        # les cartes — demande de l utilisateur : « je veux toujours une
+        # solution generale, pas une solution de bricolage liee a chaque carte ».
+        #
+        # ⚠️ ON AGRANDIT, ON NE REFUSE PAS. Une carte trop petite produit un
+        # board inutilisable qui traverse tout le pipeline sans que rien ne le
+        # signale. Une carte agrandie reste fabricable, elle coute un peu de
+        # substrat.
+        try:
+            from tools.taille_carte import verifier_et_agrandir
+            nl, nh = verifier_et_agrandir(pcb, board_width_mm, board_height_mm)
+            # ⚠️ LA TAILLE DEMANDEE EST AUTORITAIRE (D-2026-09-11-b). La chaine
+            # agrandit une carte qui stagne a son plafond de couches en
+            # demandant un contour plus grand ; on ne redimensionnait que quand
+            # le MINIMUM depassait la demande, et un contour plus petit que la
+            # demande restait tel quel — 32 composants hors contour, routage
+            # a 0 % (mesure du 2026-09-11 sur carte-08). Le contour suit donc la
+            # plus grande des deux : minimum calcule, taille demandee.
+            contour = _taille_contour(src.read_text(encoding="utf-8", errors="replace"))
+            if (nl, nh) != (board_width_mm, board_height_mm) or contour is None \
+                    or nl > contour[0] + 0.01 or nh > contour[1] + 0.01:
+                board_width_mm, board_height_mm = nl, nh
+                _redimensionner_contour(src, nl, nh)
+                pcb = PCB.load(str(src))
+                if contour is not None:
+                    logger.info("auto_place: contour %.0fx%.0f mm -> %.0fx%.0f mm (taille demandee)",
+                                contour[0], contour[1], nl, nh)
+        except Exception as e:  # noqa: BLE001
+            # ⚠️ On le DIT. Une verification silencieusement absente laisserait
+            # croire la carte dimensionnee — l etat d avant.
+            logger.error("auto_place: verification de taille INDISPONIBLE (%s) "
+                         "— la carte n est pas verifiee", e)
+
         # Filet : footprints hors-carte (vieux PCB pré-placé à -1000) → place_unplaced
         if any(fp.position[0] < -100 or fp.position[1] < -100 for fp in pcb.footprints):
             from kicad_tools.placement.place_unplaced import place_unplaced
@@ -1978,6 +2213,36 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
+        # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
+        #
+        # `WorkflowConfig.grid` (defaut 0.0 = aucun snap) declenche
+        # `optimizer.snap_to_grid(grid, 90.0)` en fin d optimisation
+        # (`optim/workflow.py:348`). Sans lui, les positions restent la ou le
+        # GA les a laissees, au centieme de millimetre : mesure du 2026-09-08,
+        # **0 composant sur 55** aligne sur `nucleo-f401`, 1 sur 100 sur
+        # `stm32-100`. C est la premiere chose qu un oeil humain voit.
+        #
+        # `constraints=` (`optim/workflow.py:244`) transmet des
+        # `GroupingConstraint` a `optimizer.add_grouping_constraints`
+        # (ligne 333). Elles ne sont PAS decoratives :
+        # `compute_constraint_forces` (`optim/placement.py:1297`) produit des
+        # forces de rappel integrees a l etape 5 du calcul de forces
+        # (ligne 1783) — verifie dans le code, pas suppose.
+        #
+        # Sans elles, une LED et sa resistance serie — qui partagent un net ne
+        # touchant qu ELLES DEUX — finissent a 101 mm (`carte-09`, D12-R13).
+        #
+        # C est la troisieme fois que ce depot paie la meme erreur, apres
+        # `FunctionalCluster.max_distance_mm` et `anchor_pin` : le levier
+        # existait, public, et personne ne lisait ce que la lib rendait.
+        #
+        # ⚠️ Ce sont des FORCES, donc franchissables : elles ne remplacent pas
+        # le snap dur de fin de chaine, elles lui laissent moins a rattraper.
+        # Et le snap sur grille peut creer un chevauchement — l Inspecteur
+        # repasse derriere, comme apres toute etape qui deplace.
+        from tools.placement_contraintes import contraintes_du_board
+        contraintes = contraintes_du_board(pcb, refs_ancrees=conn)
+
         cfg = WorkflowConfig(
             strategy="hybrid",
             enable_clustering=True,
@@ -1985,8 +2250,58 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             iterations=_WF_ITERATIONS,
             generations=_WF_GENERATIONS,
             population=_WF_POPULATION,
+            grid=_grille_mm(),
         )
-        workflow = OptimizationWorkflow(pcb=pcb, config=cfg)
+        workflow = OptimizationWorkflow(pcb=pcb, config=cfg,
+                                        constraints=contraintes)
+
+        # ⚠️ GRAINE HIERARCHIQUE — decision produit `D-2026-09-09-a`, EN ATTENTE.
+        # Desarmee par defaut ; armer avec `CIRQIX_GRAINE_HIERARCHIQUE=1`.
+        #
+        # `optim/bottom_up_placement.py` est une methode NON genetique, presente
+        # dans la lib et jamais appelee : elle groupe par motif fonctionnel,
+        # dispose DANS chaque groupe, puis pose les groupes comme des blocs.
+        #
+        # Mesure du 2026-09-09, distance moyenne des paires en serie :
+        #
+        #     carte-08   39,2 -> 24,3 mm   (-38 %)
+        #     carte-09   55,3 -> 26,0 mm   (-53 %)
+        #     carte-10   49,5 -> 32,1 mm   (-35 %)
+        #
+        # ⚠️ ET ELLE PERD SUR LES PETITES CARTES : 3,0 -> 3,5 sur `carte-01`,
+        # 10,4 -> 13,9 sur `carte-05`. La bascule est une question de TAILLE,
+        # pas de qualite absolue.
+        #
+        # ⚠️ LE HIERARCHIQUE SEUL EST LE PIRE DES TROIS (26,7 mm de moyenne,
+        # contre 23,1 pour notre chaine et 18,1 pour la combinaison). Ce n est
+        # pas un remplacant du snap, c est une meilleure GRAINE — le mesurer
+        # isolement aurait conduit a l ecarter a tort.
+        #
+        # ⚠️ AUCUNE MESURE DE ROUTAGE a ce jour. `carte-08`, `09` et `10`
+        # routent aujourd hui a 100 % : un placement plus serre pourrait le
+        # casser. C est precisement ce que la campagne A/B doit trancher.
+        if _graine_hierarchique():
+            try:
+                from kicad_tools.optim.bottom_up_placement import (
+                    HierarchicalPlacementConfig, place_hierarchical_from_pcb)
+                res_h = place_hierarchical_from_pcb(
+                    pcb, HierarchicalPlacementConfig(), fixed_refs=conn)
+                brut = getattr(res_h, "positions", None) or {}
+                poses = 0
+                for fp in pcb.footprints:
+                    v = brut.get(fp.reference)
+                    if v and fp.reference not in conn:
+                        fp.position = (v[0], v[1])
+                        poses += 1
+                logger.info("auto_place: GRAINE HIERARCHIQUE — %d position(s) "
+                            "posee(s) avant l optimisation", poses)
+            except Exception as e:  # noqa: BLE001
+                # ⚠️ On le DIT. Une graine silencieusement absente rendrait le
+                # bras A/B indistinguable du bras temoin — et la campagne
+                # conclurait « aucun effet » sur une regle jamais executee.
+                logger.error("auto_place: graine hierarchique INDISPONIBLE (%s) "
+                             "— la mesure de ce tirage ne vaut rien", e)
+
         result = workflow.run()
         # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
         # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
@@ -2127,9 +2442,17 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # ⚠️ La distance se mesure entre les CORPS. L origine d un module est
         # sur sa pastille 1 (courtyard ESP32-WROOM : y de -30,74 a +10,51) ;
         # snapper « a 3 mm de l origine » poserait la capa DANS le module.
+        fixes_snap = list(conn)  # ancres de toutes les passes de l Inspecteur apres le snap
         pcb_snap = PCB.load(str(out))
+        # Les paires en serie entrent dans LE MEME parcours de snap : deux
+        # passages successifs se defont l un l autre (piege deja mesure entre
+        # le clamp et le centrage, puis entre le halo et le snap).
+        from tools.placement_contraintes import (paires_du_board,
+                                                  _rayon_paire_mm)
         n_snap = snap_cluster_members(
-            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap))
+            pcb_snap, figes=conn, denses=_dense_part_refs(pcb_snap),
+            paires=(paires_du_board(pcb_snap)
+                    if _rayon_paire_mm() > 0 else []))
         if n_snap:
             # ⚠️ FILET OBLIGATOIRE, meme forme que celui du Geometre. Le snap
             # a ete livre le 2026-08-29 SANS filet, sur l hypothese que
@@ -2156,8 +2479,27 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             positions_avant = _positions_des_footprints(out)
             pcb_snap.save(str(out))
             _normalize_to_board_frame(out)
-            _resolve_remaining_conflicts(out, conn)
+            _journaliser_qualite(out, "apres snap, avant Inspecteur")
+            # ⚠️ L INSPECTEUR NE DEFAIT PAS LE SNAP. `PlacementFixer` ecarte les
+            # composants en conflit dans TOUTES les directions, snap compris :
+            # mesure du 2026-09-12 (carte-09, service) — « 35 membre(s)
+            # ramene(s) a portee, 0 conflit (1 avant) » puis decouplage a
+            # 19 mm de moyenne, la ou l appel direct rendait 3 mm. Un conflit
+            # preexistant suffisait a lui faire disperser les capas que le snap
+            # venait de coller. Les membres deplaces par le snap sont donc
+            # ANCRES pour cette passe : le Fixer bouge les autres.
+            colles = sorted(_footprints_deplaces(positions_avant, out))
+            # ⚠️ ET LES PUCES. Diff des boards traces, carte-09 (2026-09-12) :
+            # les capas ancrees, le Fixer deplacait U1 de 16 mm et U2 de 13 mm
+            # pour resoudre un conflit — les capas restaient collees a l ancienne
+            # place de la puce. L ancre d une grappe est ancree avec ses membres.
+            from tools.placement_bypass import ancres_des_grappes
+            puces = sorted(ancres_des_grappes(pcb_snap))
+            fixes_snap = list(conn) + colles + [r for r in puces if r not in colles and r not in conn]
+            _resolve_remaining_conflicts(out, fixes_snap)
+            _journaliser_qualite(out, "apres Inspecteur (%d ancre(s))" % len(fixes_snap))
             _rendre_lisible(out)
+            _journaliser_qualite(out, "apres rendre_lisible")
             n_err_apres = _compter_conflits_erreur(out)
 
             # ⚠️ RETRAIT CIBLE avant le repli total. Mesure du 2026-09-02,
@@ -2177,7 +2519,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                         break  # les erreurs ne viennent pas du snap
                     _remettre_footprints(out, positions_avant, remis)
                     deplaces -= remis
-                    _resolve_remaining_conflicts(out, conn)
+                    _resolve_remaining_conflicts(out, fixes_snap)
                     _rendre_lisible(out)
                     n_err_apres = _compter_conflits_erreur(out)
                     logger.info(
@@ -2194,8 +2536,9 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             else:
                 logger.info(
                     "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
-                    "a portee de leur ancre, %d conflit(s) ERROR",
-                    n_snap, n_err_apres)
+                    "a portee de leur ancre, %d conflit(s) ERROR (%d avant)",
+                    n_snap, n_err_apres, n_err_avant)
+            _journaliser_qualite(out, "apres snap")
 
         # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
         # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une
@@ -2233,7 +2576,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             logger.warning(
                 "auto_place: %d composant(s) hors carte réparé(s) (%s)",
                 len(repares), ", ".join(repares))
-            _resolve_remaining_conflicts(out, conn + repares)
+            _resolve_remaining_conflicts(out, fixes_snap + repares)
 
         # ⚠️ Repasser l ecartement APRES le raffinement et l Inspecteur : le
         # CMA-ES ne connait pas nos ancrages dominants et peut y ramener des
@@ -2257,6 +2600,71 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # On ne LEVE pas : un board imparfait vaut mieux qu aucun board, et
         # l orchestrateur sait deja re-tirer. Mais on ne ment plus par
         # omission.
+        # ── Alignement sur grille — LA DERNIERE ETAPE QUI DEPLACE ──────────
+        #
+        # ⚠️ `WorkflowConfig.grid` aligne deja, mais A LA FIN DE L OPTIMISATION,
+        # avant le Geometre, le halo, le snap et l Inspecteur — qui deplacent
+        # tous. Mesure du 2026-09-08 sur `carte-09`, `grid=0.5` bien transmis :
+        #
+        #     grille 0,5 mm   2/62 avant   ->   2/62 apres
+        #
+        # Aucun changement. Le natif avait aligne ; les quatre etapes suivantes
+        # avaient tout defait. « L ordre fait partie du correctif. »
+        #
+        # ⚠️ MEME FILET QUE LE SNAP : l arrondi deplace de moins d un demi-pas,
+        # mais deux boitiers a la limite peuvent se toucher. On repare avec
+        # l outil natif, et on revient au board d avant si le compte d erreurs
+        # monte — un alignement est un CONFORT, il ne peut pas coûter une
+        # erreur de fabrication.
+        # Etape 8 du placement structure (2026-09-11) : les paires LED/R en
+        # rangee le long du bord le plus libre. APRES le snap (qui les serre)
+        # et AVANT la grille (qui aligne tout au pas) — meme garde-fou que la
+        # grille : annule si l Inspecteur ne ramene pas le compte d erreurs.
+        try:
+            from tools.placement_contraintes import paires_du_board as _paires_du_board
+            from tools.placement_rangees import ranger_les_paires
+            _rendre_lisible(out)
+            pcb_rang = PCB.load(str(out))
+            n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
+                                       board_width_mm, board_height_mm)
+            if n_rang:
+                avant_rangees = out.read_bytes()
+                err_avant_rangees = _compter_conflits_erreur(out)
+                pcb_rang.save(str(out))
+                _normalize_to_board_frame(out)
+                _resolve_remaining_conflicts(out, fixes_snap)
+                _rendre_lisible(out)
+                if _compter_conflits_erreur(out) > err_avant_rangees:
+                    out.write_bytes(avant_rangees)
+                    logger.info("auto_place: rangees de paires annulees (%d -> %d erreurs)",
+                                err_avant_rangees, _compter_conflits_erreur(out))
+                else:
+                    logger.info("auto_place: rangees de paires — %d footprint(s) poses", n_rang)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("auto_place: rangees de paires impossibles (%s) — placement conserve", exc)
+
+        _pas = _grille_mm()
+        if _pas > 0:
+            _rendre_lisible(out)
+            avant_grille = out.read_bytes()
+            err_avant_grille = _compter_conflits_erreur(out)
+            from tools.placement_contraintes import aligner_sur_grille
+            n_grille = aligner_sur_grille(out, _pas, figes=conn)
+            if n_grille:
+                _resolve_remaining_conflicts(out, fixes_snap)
+                _rendre_lisible(out)
+                if _compter_conflits_erreur(out) > err_avant_grille:
+                    out.write_bytes(avant_grille)
+                    logger.info("auto_place: alignement sur grille annule "
+                                "(%d -> %d erreurs)", err_avant_grille,
+                                _compter_conflits_erreur(out))
+
+        # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
+        # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les
+        # seize cartes livrees portaient 95 references sur leurs propres
+        # pastilles (carte-10). Une regle jamais invoquee est indistinguable
+        # d une regle absente — troisieme occurrence dans ce depot.
+        _degager_la_serigraphie(out)
         _rendre_lisible(out)
         conflits_restants = _compter_conflits_erreur(out)
         if conflits_restants:
@@ -2265,6 +2673,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 "board est livre en l etat, le DRC les signalera",
                 conflits_restants)
 
+        _journaliser_qualite(out, "livre")
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),

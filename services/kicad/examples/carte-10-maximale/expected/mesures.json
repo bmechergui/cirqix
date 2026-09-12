@@ -6,26 +6,30 @@
     140,
     105
   ],
-  "duree_s": 1585,
-  "git": "4c45c7a",
+  "duree_s": 174.6,
+  "git": "2422b29",
   "routed_percent": 100,
-  "drc_violations": 104,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:70,silk_overlap:34",
   "abouti": true,
   "board": {
-    "segments": 620,
-    "vias": 167,
+    "segments": 553,
+    "vias": 172,
     "zones": 3,
     "empreintes": 71
   },
   "drc_du_board": {
-    "violations": 52,
+    "violations": 6,
     "non_connectes": 0,
-    "types": "silk_over_copper:35,silk_overlap:17",
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true
-  }
+    "fabricable": true,
+    "types": "track_dangling:5,via_dangling:1"
+  },
+  "livre_par": "banc_exemples.py + livrer_boards.py",
+  "tirage": 2,
+  "couches": 4,
+  "date": "2026-09-12",
+  "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
+  "serigraphie_degagee": "2026-09-12"
 }

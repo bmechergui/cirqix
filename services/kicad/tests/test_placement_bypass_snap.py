@@ -117,6 +117,18 @@ def test_snap_does_not_move_unrelated_resistor(tmp_path):
 
 
 def test_snap_is_noop_when_already_close(tmp_path):
+    """Une capa deja CONTRE LA BROCHE n'est pas touchee.
+
+    ⚠️ Reecrite le 2026-09-10. La version precedente posait C1 a 3 mm du CENTRE
+    de U1 et attendait « aucun mouvement ». Or la broche VCC de cette fixture est
+    en (18.1, 17.5) — a 5,5 mm de la capa. Depuis que le snap POWER vise la
+    BROCHE et non le corps (mesure : decouplage 16,6 -> 4,7 mm sur carte-09),
+    3 mm du centre n'est plus « proche » : la garde encodait l'ancienne regle.
+
+    On pose donc C1 a cote de la pastille VCC elle-meme. C'est CA que « deja
+    proche » veut dire pour un decouplage, et c'est ce que la lib documente :
+    « immediately adjacent to the IC power pins ».
+    """
     pcb = PCB.create(width=_BOARD_W_MM, height=_BOARD_H_MM, layers=2)
     ox, oy = pcb.board_origin
     path = tmp_path / "close.kicad_pcb"
@@ -124,7 +136,9 @@ def test_snap_is_noop_when_already_close(tmp_path):
     text = path.read_text(encoding="utf-8")
     close_idx = text.rstrip().rfind(")")
     inject = _ic_sexp("U1", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1", ox + 20.0, oy + 20.0)
-    inject += _cap_sexp("C1", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2", ox + 23.0, oy + 20.0)
+    # La pastille VCC de U1 est a (-1.9, -2.54) de son origine : on colle C1 a
+    # 1,5 mm de la, cote exterieur.
+    inject += _cap_sexp("C1", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2", ox + 16.5, oy + 17.5)
     path.write_text(text[:close_idx] + inject + text[close_idx:], encoding="utf-8")
     pcb = PCB.load(str(path))
     before = _xy(pcb, "C1")

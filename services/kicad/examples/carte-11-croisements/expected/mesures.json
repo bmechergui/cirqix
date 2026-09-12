@@ -3,32 +3,33 @@
   "composants": 6,
   "nets": 34,
   "board_mm": [
-    90,
-    60
+    140,
+    120
   ],
-  "duree_s": 521,
-  "git": "1c708ea",
-  "routed_percent": 3,
-  "drc_violations": 104,
-  "drc_clean": false,
+  "duree_s": 291.6,
+  "git": "2422b29",
+  "routed_percent": 100,
+  "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "unconnected_items:80,hole_to_hole:8,copper_edge_clearance:4,silk_edge_clearance:4,track_dangling:4,silk_overlap:2,via_dangling:2",
-  "abouti": false,
+  "abouti": true,
   "board": {
-    "segments": 13,
-    "vias": 3,
-    "zones": 0,
-    "empreintes": 6
+    "segments": 312,
+    "vias": 55,
+    "zones": 4,
+    "empreintes": 7
   },
   "drc_du_board": {
-    "violations": 55,
-    "non_connectes": 40,
-    "types": "copper_edge_clearance:2,hole_to_hole:4,silk_edge_clearance:2,silk_overlap:1,track_dangling:4,unconnected_items:40,via_dangling:2",
-    "erreurs": [
-      "copper_edge_clearance",
-      "unconnected_items"
-    ],
-    "nb_erreurs": 42,
-    "fabricable": false
-  }
+    "violations": 4,
+    "non_connectes": 0,
+    "erreurs": [],
+    "nb_erreurs": 0,
+    "fabricable": true,
+    "types": "hole_to_hole:4"
+  },
+  "couches": 4,
+  "date": "2026-09-12",
+  "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
+  "livre_par": "banc_exemples.py + livrer_boards.py",
+  "tirage": 2,
+  "serigraphie_degagee": "2026-09-12"
 }

@@ -1,4 +1,4 @@
-# Cirqix.ai — CLAUDE.md
+﻿# Cirqix.ai — CLAUDE.md
 
 > **Source canonique transitoire.** Les règles projet, l’architecture et les
 > contraintes métier Cirqix sont maintenues ici une seule fois. Les adaptateurs
@@ -173,6 +173,7 @@ Une mesure peut étayer une proposition ; elle ne la valide pas.
 - `docs/cirqix-full-resume.md` — vision produit complète, business model, stack
 - `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
 - `PLAN.md` — plan d'implémentation complet par phases
+- `docs/pipeline-placement-routage.md` — **le pipeline placement → routage, étape par étape, pour tout type de carte** (critères de livraison, règles générales, ce qui reste ouvert). À lire avant toute modification de `tools/placement*.py` ou `routers/routing.py`.
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
 - `docs/graphify.md` — graphes séparés Cirqix, `kicad-tools`, `circuit_synth` et agrégat multi-repo.
   Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
@@ -400,6 +401,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      le 2026-08-29) — `routers/routing.py::route_auto`, pour chaque palier :
 
         ① plan de masse COULÉ ET REMPLI, sur les deux faces extérieures
+           (In1.Cu dès 4 couches : D-2026-09-12-b, RÉFUTÉE par la mesure le jour même — réglage de banc `plan_gnd_interne` seulement)
         ② vias d'échappement réservés (déclarés dans le DSN)
         ③ routage des signaux (GND est confié au plan, `_NETS_CONFIES_AU_PLAN`)
         ④ replacement des vias réservés (le round-trip Specctra les efface)
@@ -1459,6 +1461,18 @@ conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
 branche asynchrone de la route derrière drapeau, suivi de run côté client.
 
 Reste :
+- **Progression pendant le routage.** `kct_route.py` utilise
+  `subprocess.run(capture_output=True)` : la sortie du routeur n'est lue qu'à la
+  FIN. Sur 20 minutes, l'utilisateur ne voit donc rien. Le passage en `Popen`
+  avec lecture incrémentale servirait deux fins — l'affichage, et la détection
+  de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
+  bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
+  non testable sans un routage réel de ~14 min.
+- ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
+  s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
+  le catch-up. Publication : migration `020`. Le drapeau
+  `CIRQIX_ASYNC_PIPELINE` reste à allumer là où Redis + worker tournent.
+
 - ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03**, et pas
   du tout là où cette entrée l'annonçait.
 
@@ -1780,6 +1794,17 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
 est **caduque** : le comptage du 2026-08-30 montre 16 routages, **0 par
 kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
 
+- **Allumer `CIRQIX_ASYNC_PIPELINE`** là où Redis ET le worker tournent. Le
+  drapeau reste fail-closed dans le code, et sans file un `202` accepterait un
+  job que personne ne consomme.
+- **Valider la moitié « journal + Realtime »** avec une vraie
+  `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
+  les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
+- **Progression pendant le routage** — `kct_route.py` utilise
+  `subprocess.run(capture_output=True)` : rien ne s'affiche pendant 20 minutes.
+  Le passage en `Popen` servirait aussi à détecter un blocage par ABSENCE DE
+  PROGRESSION plutôt que par temps écoulé.
+
 - ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **fait le 2026-09-07.** Le drapeau
   reste fail-closed dans le code ; il est allumé dans `apps/web/.env.local`, où
   Redis et le worker tournent, et le worker a consommé un job pour de bon.
@@ -2037,6 +2062,91 @@ propre garde cherchait `"repli GND retenu"` par `index()` et tombait sur la
 docstring de la règle, en amont du site d'appel. `rindex()`, ou un ancrage sur
 ce qui ne bouge pas.
 
+### Leçons inscrites le 2026-09-09 — quand l'INSTRUMENT ment
+
+L'utilisateur juge les placements le 2026-09-08, captures à l'appui : « le
+placement, c'est un placement d'amateur ». Il avait raison, et la journée a
+produit deux familles de leçons — sur le produit, puis sur les outils de mesure
+eux-mêmes.
+
+**NEVER corriger un piège de forme sans chercher SES SŒURS.** `_NET_DECL_RE` a
+été corrigé le 2026-08-20 pour la double écriture `(net 3 "GND")` /
+`(net "GND")`. Trois expressions de `_patch_floating_nets` portaient la même
+hypothèse et sont restées fausses **vingt jours de plus**. Or tous nos boards
+sortent de pcbnew 10 (`numérotés=0, nus=93..988`) : la réparation ne touchait
+RIEN, en silence, et six cartes sur onze livraient des broches
+d'**alimentation** sur des nets orphelins — dont la sortie d'un régulateur.
+Le DRC ne pouvait pas le voir : un net orphelin n'a aucune connexion manquante.
+
+**NEVER se satisfaire du premier défaut trouvé.** Sous celui-là s'en cachait un
+second : le découpage des pastilles s'arrêtait sur UNE tabulation, quand pcbnew
+10 en écrit deux — la **dernière pastille de chaque empreinte** n'était jamais
+réparée. Et ma première correction fut pire que le mal : s'arrêter au premier
+`(` coupait le bloc AVANT le champ `(net …)`. **Une expression trop large et une
+trop étroite échouent identiquement, en silence.** On compte les parenthèses.
+
+**NEVER supposer qu'un levier natif est appelé parce qu'il existe.** Quatre de
+plus trouvés ce jour-là, publics, documentés, jamais invoqués :
+`WorkflowConfig.grid`, `OptimizationWorkflow(constraints=…)`,
+`PCB.move_reference()`, `optim/bottom_up_placement.py`. Cela porte à **six** avec
+`FunctionalCluster.max_distance_mm` et `anchor_pin`. Mesure : `grid` non passé
+donnait **2 composants alignés sur 62**.
+
+**NEVER poser un alignement AVANT les étapes qui déplacent.** `grid=0.5`
+correctement transmis n'a rien changé — `2/62` avant, `2/62` après : le natif
+aligne en fin d'optimisation, puis le Géomètre, le halo, le snap et l'Inspecteur
+défont tout. Reposé EN DERNIER : **2/62 → 62/62, zéro erreur ajoutée**.
+« L'ordre fait partie du correctif » vaut aussi pour ce qui ne déplace que de
+0,25 mm.
+
+**NEVER ignorer ce que dit une référence EXTERNE.** `astra_piNas` (six couches,
+176 empreintes, routée à la main) a révélé une loi qu'aucune mesure interne ne
+pouvait montrer : **notre qualité se dégrade avec la TAILLE, la sienne non** —
+3,0 mm de serrage à 5 composants, 55,3 mm à 62, quand elle tient 9,8 mm à 176.
+Un banc qui ne compare que nos cartes entre elles mesure une dérive, pas un
+écart à l'état de l'art. ⚠️ Le dépôt source n'a **aucune licence** : la carte
+n'est pas versionnée, un script la récupère.
+
+#### Et trois fois, c'est l'INSTRUMENT qui a menti
+
+Chaque fois en rendant **« aucun effet »** — c'est-à-dire la réponse qu'on
+attendait peut-être. C'est la forme la plus coûteuse de la famille que ce dépôt
+traque, parce qu'elle est indiscernable d'un résultat légitime.
+
+**NEVER piloter le SERVICE par une variable d'environnement du pipeline.**
+`run_pipeline.py` est un client HTTP ; le placement tourne dans le service
+FastAPI, un processus séparé. Une campagne A/B entière a comparé deux bras
+identiques — `98 %` contre `98 %`. Le remède suit le motif du verrou de routage :
+un **fichier** (`tools/reglages_banc.py`), seule ressource que des processus
+séparés partagent, **relu à chaque appel** — un réglage figé à l'import ferait
+hériter le second bras du premier.
+
+**NEVER mesurer après avoir édité un module que le service a déjà importé.**
+Deuxième campagne, échec différent : le service tournait depuis **neuf heures**
+avec un `tools/placement.py` antérieur à la règle. `tools/` est monté à chaud —
+le FICHIER change, le MODULE importé non. Le dépôt connaissait l'exception (« le
+runner ENFANT relit à chaque appel ») ; le workflow de placement, lui, tourne
+DANS le worker. **Redémarrer le service avant toute mesure**, et vérifier que le
+`mtime` du module précède le démarrage du processus.
+
+**NEVER ancrer une garde sur une phrase de sa propre documentation.** Ma garde
+« on ne pousse jamais la référence en `F.Fab` » cherchait `F.Fab` dans le source
+et le trouvait… dans la docstring qui l'interdit. Piège déjà inscrit le
+2026-09-08 ; `_code_seul()` retire commentaires **et** docstrings.
+
+**NEVER relancer après une mise à mort sans nettoyer le conteneur.** Un pipeline
+tué côté Windows **continue** côté conteneur : quatre orphelins accumulés, deux
+encore à 380 % de CPU vingt minutes plus tard, consommant la mémoire qui faisait
+tuer la suivante. Une spirale alimentée par chaque relance. Lancer **détaché
+dans** le conteneur (`docker exec -d`, journal redirigé), et vérifier les
+orphelins avant de repartir.
+
+**NEVER généraliser depuis un journal de mise au point.** J'ai lu « les seize
+paires refusées, sans exception » et bâti une décision produit dessus. La mesure
+l'a réfutée : la garde ne gèle rien — sur les mêmes boards elle déplace déjà 19
+à 36 composants. `D-2026-09-08-c` retirée. Une mesure étaye une proposition ;
+elle peut aussi la tuer, et c'est son travail.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
@@ -2081,6 +2191,34 @@ placement, et deux tirages concordants qui ne prouvaient rien.
 **ALWAYS sortir du conteneur ce qu'on veut garder.** `examples/` n'y est pas
 monté : un board produit par le banc n'existe QUE dans le conteneur et part au
 premier redémarrage — la leçon des worktrees vidés, transposée.
+
+### Leçon inscrite le 2026-09-10 — le worker que son propre superviseur abat
+
+**NEVER lire deux lignes voisines d'un journal comme une cause et son effet
+sans vérifier leur ORDRE.** Les `RemoteDisconnected` (« Child process died »)
+ont reçu TROIS diagnostics faux en une journée — mémoire, JVM, plantage natif
+`pcbnew` — le dernier parce que l'assert `PROPERTY_ENUM` apparaissait « à côté »
+de la mort. Il apparaît 3 à 5 s **après**, imprimé par le worker SUIVANT qui
+importe `pcbnew` au démarrage.
+
+La cause, mesurée par une sonde (`faulthandler.dump_traceback_later`, thread C,
+sans GIL) : **uvicorn 0.30 tue par SIGKILL tout worker qui ne répond pas à son
+ping en 5 s** (`supervisors/multiprocess.py:170 process is hung, kill it`), donc
+tout worker dont un appel C tient le GIL 5 s. Ici `read_text()` du journal
+Freerouting — **564 Mo**, relu en entier deux fois par tour de sondage —
+tenait le GIL 6 à 9 s. Rien de « dense » là-dedans : le symptôme suivait la
+taille du journal, `carte-05` (26 composants) perdait 3 essais sur 4.
+
+Correctif : `tools/journal_freerouting.py::LecteurIncremental` — lu par
+incréments depuis le départ du job. Mesuré : 0 famine, routage 165 → 77 s.
+Garde : `tests/test_journal_lu_par_increments.py`.
+
+**NEVER** tenir le GIL plus de quelques secondes dans un worker uvicorn — un
+gros `read_text`, `json.loads`, `re` sur des mégaoctets — ou le faire dans un
+processus enfant. Le superviseur ne distingue pas « occupé » de « pendu ».
+
+**NEVER** proposer un correctif sans instrument : « isoler pcbnew dans un
+enfant » était en place depuis des semaines et n'aurait rien changé.
 
 ### Leçons inscrites le 2026-09-07 — cinq compteurs qui inventaient un succès
 
@@ -2217,7 +2355,10 @@ dans `DEPENDENCIES.md`.
 
 ### kicad-tools (fork privé complet — sous-module)
 - **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink
-  `16aa43191fc86526013b6eaaaa63eb46de7d67b7` (rebasé le 2026-08-10 sur
+  `839a5b96f7b8da130d6d97add95c215484373668` (vérifié le 2026-09-11 : c'est
+  le gitlink réel, 4 commits après `16aa431` — 3 CI + une retouche du patch
+  #1 ; 5 patches réellement portés : #1, #2, #3, #4, #7 ; upstream a 331
+  commits d'avance, rebase recommandé, 2 conflits triviaux) (rebasé le 2026-08-10 sur
   `upstream/main` @ `627f3e44`, 221 commits rattrapés) ; upstream
   github.com/rjwalters/kicad-tools.
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; package Python `kicad_tools`).

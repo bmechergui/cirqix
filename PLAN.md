@@ -1,4 +1,4 @@
-# Plan d'Implémentation Complet — Cirqix.ai
+﻿# Plan d'Implémentation Complet — Cirqix.ai
 
 ## Vision
 

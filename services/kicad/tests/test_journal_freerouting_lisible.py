@@ -33,14 +33,16 @@ def test_l_entrypoint_fixe_le_chemin_du_journal():
 def test_le_chemin_de_l_entrypoint_est_CELUI_QUE_LE_CODE_LIT():
     """Deux chemins qui divergent = detection morte, sans le moindre message."""
     texte = _ENTRYPOINT.read_text(encoding="utf-8")
-    repertoire = str(_FREEROUTING_LOG.parent)
+    # `as_posix()` : sous Windows, Path("/tmp/x") s affiche avec des
+    # antislashs et l entrypoint (un shell POSIX) ne porte jamais cette forme.
+    repertoire = _FREEROUTING_LOG.parent.as_posix()
     assert f"--user_data_path={repertoire}" in texte, (
         f"le code lit {_FREEROUTING_LOG}, l entrypoint ecrit ailleurs")
 
 
 def test_le_repertoire_est_cree_avant_le_lancement():
     texte = _ENTRYPOINT.read_text(encoding="utf-8")
-    i_mkdir = texte.find("mkdir -p " + str(_FREEROUTING_LOG.parent))
+    i_mkdir = texte.find("mkdir -p " + _FREEROUTING_LOG.parent.as_posix())
     i_java = texte.find("java -jar /opt/freerouting")
     assert i_mkdir != -1, "repertoire jamais cree"
     assert i_mkdir < i_java, "repertoire cree APRES le lancement de la JVM"

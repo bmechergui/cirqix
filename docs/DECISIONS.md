@@ -1,4 +1,4 @@
-# Journal des décisions produit — Cirqix
+﻿# Journal des décisions produit — Cirqix
 
 > Créé le 2026-08-30 après constat que des décisions produit avaient été prises
 > et implémentées sans validation de l'utilisateur (voir CLAUDE.md §« Autonomie bornée »).
@@ -35,6 +35,27 @@
 - **Code concerné :** `services/kicad/tools/placement_bypass.py`, appel dans
   `tools/placement.py::auto_place`, gardes `tests/test_placement_bypass_snap.py`,
   `tests/test_snap_apres_geometre.py`.
+
+### D-2026-09-03-b — Dimensionnement : 4 workers pour une machine qui tient un seul routage
+- **Le fait mesuré :** un routage monte à **6,2 Go de mémoire résidente**
+  (`stm32-baseline`, le plus petit board du banc). Deux en parallèle dépassent
+  les 7,6 Go de la machine et le noyau tue le processus
+  (`Out of memory: Killed process ... anon-rss:6247616kB`, crête 7,2 Go).
+- **La contradiction :** `docker-entrypoint.sh` lance `uvicorn --workers 4`.
+  Quatre workers annoncent quatre requêtes simultanées ; la mémoire n'en
+  autorise qu'une. Le service accepte donc des requêtes qu'il ne peut pas
+  honorer, et le symptôme (`Child process died`) ne désigne pas sa cause.
+- **Ce que l'utilisateur doit arbitrer**, entre autres voies :
+  1. ramener le service à 1 worker et sérialiser les routages en amont (la file
+     BullMQ le fait déjà, `worker` en concurrence 1) ;
+  2. garder 4 workers mais poser un sémaphore sur `/route/auto`, pour refuser
+     ou faire attendre plutôt que mourir ;
+  3. donner plus de mémoire à la machine et mesurer le vrai plafond.
+- **Pourquoi ce n'est pas un correctif technique :** chacune de ces voies
+  change le débit annoncé du service et le comportement vu par l'utilisateur
+  (attente contre refus), donc la promesse produit.
+- **Code concerné :** `services/kicad/docker-entrypoint.sh`,
+  `services/kicad/routers/routing.py`.
 
 ### D-2026-09-03-a — Seed de placement (rejouabilité du GA)
 - **Ce qui était prévu (handoff `2026-08-28-placement-seed-snap`) :** semer `random`
@@ -267,3 +288,651 @@ finit par ceder, sur plusieurs tirages — exactement la prudence deja inscrite 
 deux tirages concordants ne prouvent rien.
 
 **Une mesure etaye une proposition ; elle ne la valide pas.**
+
+---
+
+## D-2026-09-08-a — Pas de grille du placement (`_GRILLE_MM = 0.5`)
+
+**Statut : en attente.**
+
+**Constat mesure.** Aucune carte livree n'a ses composants sur une grille :
+
+    carte-04    1 / 15        nucleo-f401    0 / 55
+    carte-07    2 / 44        stm32-100      1 / 100
+    carte-10    2 / 70
+
+Les orientations, elles, sont toutes cardinales (55/55 sur `nucleo-f401`). Ce
+sont les POSITIONS qui tombent au centieme de millimetre, la ou le GA les a
+laissees. C'est la signature visuelle que l'utilisateur designe le 2026-09-08 :
+« le placement, c'est un placement d'amateur ».
+
+**Le levier est natif et n'etait pas passe.** `WorkflowConfig.grid`
+(`optim/workflow.py:187`, defaut `0.0` = aucun snap) declenche
+`optimizer.snap_to_grid(grid, 90.0)` (ligne 348).
+
+⚠️ Le transmettre ne suffit PAS : le natif aligne en fin d'optimisation, puis le
+Geometre, le halo, le snap et l'Inspecteur deplacent tout. Mesure avec
+`grid=0.5` bien transmis : **2/62 avant, 2/62 apres**. L'alignement doit etre
+repose EN DERNIER (`aligner_sur_grille`).
+
+**Mesure du remede**, board place reel de `carte-09` :
+
+    grille 0,5 mm    2 / 62  ->  62 / 62
+    erreurs DRC      0       ->  0
+
+**Proposition.** `_GRILLE_MM = 0.5` — pas usuel d'un placement manuel en CMS.
+Une valeur nulle desactive le snap et rend le comportement d'avant.
+
+**Pourquoi ce n'est PAS acquis.** Seuil chiffre qui change le comportement
+livre. La mesure ci-dessus etaye la proposition ; elle ne la valide pas.
+
+---
+
+## D-2026-09-08-b — Rayon d'adjacence d'une paire en serie (`_RAYON_PAIRE_MM = 5.0`)
+
+**Statut : en attente.**
+
+**Constat mesure.** Une LED et sa resistance serie partagent un net qui ne
+touche qu'ELLES DEUX — la paire la plus serrable qui existe sur une carte :
+
+    carte-09   D12 ↔ R13   100,9 mm      carte-08   D14 ↔ R15   76,7 mm
+    carte-10   D9  ↔ R10    86,8 mm      carte-07   D2  ↔ R3    40,8 mm
+
+Moyenne par carte : 3 mm a 5 composants, **55 mm a 62**. La dispersion suit la
+taille de la carte.
+
+**Proposition.** Contraindre ces paires a 5 mm entre origines — ce qu'un
+ingenieur fait a la main, en laissant au routeur de quoi passer entre les deux.
+
+⚠️ Ce n'est PAS une distance de courtyard : `max_distance` se mesure entre
+positions, le snap dur entre CORPS. Confondre les deux est une erreur deja
+commise dans ce depot.
+
+**Effet mesure des contraintes natives seules** (avant serrage dur) :
+
+    paires   moyenne 55,3 -> 35,7 mm      max 100,9 -> 62,7 mm
+
+**Pourquoi ce n'est PAS acquis.** Seuil chiffre qui change le comportement
+livre.
+
+---
+
+## D-2026-09-08-c — Abandonner les attaches PROUVABLEMENT insatisfiables
+
+**Statut : en attente.** ⚠️ C'est la decision la plus lourde des trois : elle
+touche la STRATEGIE de placement, pas un reglage.
+
+**Constat mesure.** `detect_functional_clusters` attache un meme composant a
+PLUSIEURS ancres, et ces ancres sont incompatibles entre elles :
+
+    carte-07   15 composants a plusieurs ancres — les 15 insatisfiables
+    carte-09   19 sur 19        carte-10   19 sur 19        carte-04   3 sur 3
+
+    D10 (carte-09) appartient a SEPT clusters : J1, J10..J14 et U1
+    D6  tenu par J7 et J1, distants de 123 mm pour 16 mm de plafonds cumules
+
+Aucune position ne satisfait « a 8 mm de J1 » ET « a 8 mm de J7 » quand les deux
+sont a 123 mm l'un de l'autre.
+
+**Consequence : le gel complet.** La garde « ne peut qu'ameliorer » refuse tout
+mouvement, puisque se rapprocher d'une ancre eloigne d'une autre. Elle fait
+exactement son travail — et le resultat est que RIEN ne bouge :
+
+    snap R10 -> D10 : eloignerait une autre ancre, ignore
+    snap R11 -> D11 : eloignerait une autre ancre, ignore   ← les 16, sans exception
+
+C'est l'explication de fond du reproche « placement d'amateur » : le serrage ne
+manque pas, il est systematiquement refuse par des contraintes qu'aucune
+position ne peut honorer.
+
+⚠️ Corriger le choix d'ancre ne suffit pas — essaye et mesure le 2026-09-08 :
+35,7 -> 32,5 mm seulement, parce que la contradiction demeure des deux cotes.
+
+**Proposition.** Quand les ancres d'un composant sont plus eloignees entre elles
+que la somme de leurs plafonds, l'ensemble est PROUVABLEMENT insatisfiable : ne
+garder que l'attache la plus proche, et journaliser explicitement les abandons.
+
+**Pourquoi ce n'est PAS applique.** Decision de strategie de placement, la
+categorie qui exige une validation explicite. Et le risque est reel :
+abandonner une attache peut degrader une adjacence que le routage utilisait.
+
+**Une mesure etaye une proposition ; elle ne la valide pas.**
+
+### D-2026-09-08-c — MESURE DU 2026-09-09 : la proposition est RÉFUTÉE
+
+Statut : **retirée**. Le drapeau reste en place, désarmé
+(`CIRQIX_ABANDON_ATTACHES_IMPOSSIBLES`), pour que la mesure soit rejouable.
+
+Deux bras sur les onze boards livrés, snap seul, sans router :
+
+| carte | garde actuelle | avec abandon |
+|---|---|---|
+| carte-02 | 10,2 → **10,2** mm | 10,2 → **4,8** mm |
+| carte-05 | 10,4 → 4,8 | 10,4 → 4,8 |
+| carte-06 | 17,5 → 14,2 | 17,5 → 13,7 |
+| carte-07 | 15,7 → **15,1** | 15,7 → **15,9** ← pire |
+| carte-08 | 39,2 → 29,6 | 39,2 → **23,9** |
+| carte-09 | 55,3 → 42,6 | 55,3 → 42,8 ← pire |
+| carte-10 | 49,5 → **32,7** | 49,5 → **35,8** ← pire |
+| **moyenne** | **17,7 mm** | **16,9 mm** |
+
+**0,8 mm de gain moyen, et trois cartes sur sept DÉGRADÉES**, pour 10 à 30 %
+de composants déplacés en plus. Ce n'est pas un compromis acceptable : on
+paierait un risque réel de routage pour un gain dans le bruit.
+
+⚠️ **MA PRÉMISSE ÉTAIT FAUSSE.** J'avais lu « les seize paires refusées, sans
+exception » et conclu que la garde gelait tout. Elle ne gèle pas : sur les mêmes
+boards, la garde actuelle déplace déjà 19 à 36 composants et ramène `carte-09`
+de 55,3 à 42,6 mm. Ce que j'avais observé était le refus des paires *LED-
+résistance en particulier*, sur un board intermédiaire — pas un gel général.
+
+**Généraliser depuis un journal de mise au point est exactement ce que ce dépôt
+s'interdit** (« NEVER relayer le message d'une garde comme un diagnostic »).
+J'ai bâti une décision produit sur une lecture partielle, et c'est la mesure qui
+l'a arrêtée.
+
+**Ce que la mesure désigne à la place.** L'écart à la référence humaine
+(9,8 mm) ne se joue pas dans le snap de fin de chaîne : celui-ci fait déjà le
+plus gros du travail. Il se joue **en amont**, dans la dispersion du GA — que
+les contraintes natives réduisent déjà de 55,3 à 35,7 mm. Le levier suivant est
+donc `optim/bottom_up_placement.py`, la méthode non génétique jamais appelée.
+
+---
+
+## D-2026-09-09-a — Placement hiérarchique en amont du snap, sur les grandes cartes
+
+**Statut : en attente.** ⚠️ Stratégie de placement — catégorie qui exige une
+validation explicite.
+
+**Constat.** `optim/bottom_up_placement.py` est une méthode **non génétique**,
+présente dans `kicad-tools` et **jamais appelée**. Elle groupe par motif
+fonctionnel, dispose *dans* chaque groupe, puis pose les groupes comme des
+blocs — la méthode d'un ingénieur. Son en-tête cite l'hypothèse d'origine :
+« 80 % du chemin rien qu'en procédant du bas vers le haut ».
+
+**Mesure du 2026-09-09**, distance moyenne des paires en série, placement seul,
+sans router :
+
+| carte | livré | hiérarchique seul | hiérarchique + notre snap |
+|---|---|---|---|
+| carte-01 | **3,0** | 10,2 | 3,5 |
+| carte-03 | **7,1** | 14,0 | 10,4 |
+| carte-05 | **10,4** | 34,3 | 13,9 |
+| carte-07 | **15,7** | 38,8 | 22,5 |
+| carte-08 | 39,2 | 35,8 | **24,3** (−38 %) |
+| carte-09 | 55,3 | 34,5 | **26,0** (−53 %) |
+| carte-10 | 49,5 | 39,0 | **32,1** (−35 %) |
+| **moyenne** | 23,1 | 26,7 | **18,1** |
+
+**La coupure est nette et elle est de TAILLE.** Notre GA gagne jusqu'à une
+trentaine de composants ; le hiérarchique gagne au-delà. C'est exactement la loi
+mesurée la veille — notre qualité se dégrade avec la taille, celle de la
+référence humaine non.
+
+⚠️ **Le hiérarchique SEUL est le pire des trois** (26,7 mm). Ce n'est pas un
+remplaçant du snap, c'est une meilleure GRAINE. Les deux mesures séparées
+auraient conduit à l'écarter.
+
+**Proposition.** Sur les cartes au-delà d'un seuil de composants, remplacer la
+graine du GA par `place_hierarchical_from_pcb`, puis dérouler la chaîne
+existante inchangée (Géomètre, halo, snap, grille, Inspecteur).
+
+**Pourquoi ce n'est PAS appliqué.**
+1. Stratégie de placement — validation explicite requise.
+2. Le seuil de bascule est un seuil chiffré.
+3. ⚠️ **La mesure porte sur le PLACEMENT, jamais sur le routage.** Un placement
+   plus serré peut router MOINS bien : `carte-08`, `09` et `10` routent
+   aujourd'hui à 100 %, et c'est ce qu'on risquerait. Aucune campagne de routage
+   n'a été faite — elle coûte plusieurs heures sur cette machine.
+
+**Une mesure étaye une proposition ; elle ne la valide pas.**
+
+---
+
+## D-2026-09-10-a — Borner la memoire de la JVM Freerouting (`-Xmx`)
+
+**Statut : en attente.**
+
+**Constat mesure**, journal du service, `carte-08` :
+
+    pass #85  score 964.42  (8 non routes)  6201 CPU s  55668 MB memoire
+    pass #86  score 964.42  (8 non routes)              55879 MB
+    pass #87  score 964.42  (8 non routes)              56223 MB
+    INFO: Child process [103] died
+
+**La JVM annonce 55 Go sur une machine qui en a 7,6.** Le worker uvicorn meurt
+juste apres. Ligne de commande actuelle, sans aucun plafond :
+
+    java -jar /opt/freerouting/freerouting.jar --api_server.enabled=true ...
+
+⚠️ **CE N EST PAS UNE PENURIE DE MEMOIRE SYSTEME**, et je l ai cru toute la
+journee. Le cgroup du conteneur dit `oom_kill = 0`, crete a 3,4 Go sur 7,6
+disponibles — le noyau n a tue personne. J ai arrete Supabase, surveille
+`free -m`, relance six fois : je traitais un symptome que la mesure dementait.
+Le message « stopped because the system is running low on memory » venait de
+l outil qui tuait mes processus WINDOWS, pas du conteneur.
+
+**Proposition.** Poser `-Xmx` au demarrage de la JVM, a une valeur compatible
+avec la machine (2 a 3 Go), pour qu un travail trop gourmand echoue proprement
+au lieu d emporter le worker.
+
+**Pourquoi ce n est PAS applique.** Seuil chiffre qui change le comportement
+livre, et le risque est reel dans l autre sens : une JVM trop bornee refusera de
+router une carte que la machine pourrait traiter. Il faut mesurer la
+consommation reelle d un routage qui ABOUTIT avant de choisir la valeur.
+
+**Lie a `D-2026-09-XX` (couper sur stagnation).** Les deux faces du meme
+constat : 87 passes pour ZERO gain de score. Un travail qui n ameliore plus rien
+consomme du CPU et de la memoire jusqu a tuer son hote.
+
+---
+
+## D-2026-09-10-b — Escalade de couches INCREMENTALE
+
+**Statut : validée** par l'utilisateur le 2026-09-11 (« normalement on garde
+le routage et on augmente, on ne répète pas de zéro »). Implémentée : au
+changement de palier, les pistes du meilleur board du palier quitté sont
+ajoutées à `_PISTES_A_PROTEGER` (même mécanisme que le repli GND, `(type
+protect)` dans le DSN) ; le palier suivant ne route que ce qui manque.
+Réglage `escalade_incrementale` (défaut : vrai). Garde :
+`tests/test_escalade_incrementale.py`. Mesure à faire sur carte-08/10 (98 %
+à 2 couches) : le 4 couches doit rendre ≥ 98 %, jamais moins.
+
+Historique (avant validation) : souleve par l utilisateur le 2026-09-10.
+
+**Son argument, et il est juste :** ajouter des couches ne peut que donner PLUS
+de ressources. On devrait garder les pistes des 2 couches et ne router que ce
+qui manque sur les nouvelles. Le resultat serait alors MONOTONE — jamais pire.
+
+**Ce que le code fait aujourd hui :**
+
+    etendu = _expand_stackup(pcb_bytes, palier)
+
+`pcb_bytes` est le board PLACE, NON ROUTE. Chaque palier repart donc de zero :
+le routage a 4 couches ne conserve rien de celui a 2. Il refait tout, avec plus
+de place mais un autre tirage — donc il peut faire MOINS BIEN. Mesure du depot :
+`stm32-100`, 2 couches 99 %, puis 4 couches **87 %**.
+
+On garde le MEILLEUR palier, donc on ne livre jamais moins bon. Mais on ne
+CUMULE pas, et c est exactement l ecart que l utilisateur pointe.
+
+⚠️ **La piste a ete essayee et fermee** : `--preserve-existing` de Freerouting
+perdait la moitie du cuivre recu, et l escalade incrementale rendait le meme
+resultat que l escalade libre pour trois fois le temps.
+
+⚠️ **Mais cette mesure est ANTERIEURE** aux correctifs du round-trip Specctra et
+aux pieges de forme corriges depuis. Elle merite d etre refaite avant d etre
+opposee a l argument.
+
+**Une mesure etaye une proposition ; une mesure perimee n en refute aucune.**
+
+### D-2026-09-10-a — RECTIFICATION : le chiffre de 55 Go ne mesurait pas la memoire
+
+**Statut : retiree.** La proposition reposait sur une lecture fausse.
+
+Le journal Freerouting annonce « 55668 MB memory », puis 133 Go, 307 Go, et
+jusqu a **3 To** sur la nuit. Mesure du RSS reel, au meme moment :
+
+    java       1 426 712 ko  =  1,4 Go
+    conteneur              2,8 Go / 7,6
+
+⚠️ **C EST UN COMPTEUR CUMULE, PAS UNE OCCUPATION.** Une JVM ne detient pas
+3 To sur une machine de 7,6 Go — l invraisemblance du chiffre aurait du
+m arreter avant que j en fasse une decision produit.
+
+C est la faute deja inscrite pour les gardes : **relayer un nombre sans verifier
+ce qu il compte**. Et c est la seconde fois de la journee sur le meme sujet,
+apres le message « stopped because the system is running low on memory » qui
+venait de l outil tuant mes processus WINDOWS, alors que le cgroup du conteneur
+disait `oom_kill = 0`.
+
+**La cause des `RemoteDisconnected` reste donc INCONNUE.** Ce qui est etabli :
+
+    le cgroup du conteneur         oom_kill = 0, crete 3,4 Go sur 7,6
+    la JVM                          1,4 Go reels
+    le routeur, lui, STAGNE         87 passes puis 242 passes sans gain de score
+
+La stagnation est mesuree et reelle ; l explication par la memoire ne l est pas.
+Piste a explorer a froid : l assertion `wxWidgets PROPERTY_ENUM` visible dans
+les journaux, qui est un plantage NATIF de `pcbnew` — celui pour lequel
+`PYTHONFAULTHANDLER` a ete active.
+
+**Ne pas borner `-Xmx` sur la foi de ce chiffre.**
+
+---
+
+## Diagnostic du 2026-09-10, RECTIFIE le jour meme — la cause PROUVEE des `RemoteDisconnected`
+
+⚠️ La section qui suit celle-ci (« la cause reelle », pcbnew) est **FAUSSE**,
+troisieme diagnostic errone sur le meme symptome. Elle est conservee telle
+quelle : elle montre la faute — lire deux lignes voisines d un journal comme
+une cause et son effet, sans regarder leur ORDRE. Les asserts `PROPERTY_ENUM`
+sont imprimes 3 a 5 s **APRES** « Child process died », par le worker SUIVANT
+qui importe `pcbnew` au demarrage. Ils suivent la mort, ils ne la causent pas.
+
+**La cause, mesuree par une sonde et non lue dans un message :**
+
+    uvicorn 0.30.0, supervisors/multiprocess.py
+      :37   def ping(self, timeout: float = 5)
+      :170  process.kill()   # process is hung, kill it
+      :176  logger.info(f"Child process [{process.pid}] died")
+
+Le superviseur envoie un ping a chaque worker ; sans reponse en **5 s**, il
+l abat par SIGKILL — donc sans trace, `PYTHONFAULTHANDLER` compris. Le worker
+ne repond pas quand un appel C tient le GIL. Sonde
+(`faulthandler.dump_traceback_later` depuis un thread C, sans GIL) sur
+`carte-05`, 26 composants, appel direct de `route_auto` :
+
+    famines du thread de ping : 9,1 s · 6,0 s · 3,0 s · 3,0 s · 2,6 s
+    pile a cet instant        : <frozen codecs>.decode <- read_text
+                                <- routers/routing.py:850 _route_with_freerouting_api
+
+La boucle de sondage relisait le journal Freerouting ENTIER, deux fois par
+tour. Ce journal grossit toute la vie de la JVM : **564 Mo** ce jour-la. Le
+decodage UTF-8 tient le GIL 6 a 9 s. Le worker mourait 2 s apres la fin du
+routage — a la reprise de la sonde — et la carte n avait rien de dense :
+`carte-05` a perdu 3 essais sur 4 dans la campagne du matin.
+
+Pourquoi « seulement les cartes denses » : elles ecrivent plus de lignes ;
+le journal franchit plus vite la taille qui depasse 5 s. Le symptome
+suivait la TAILLE DU JOURNAL, pas la carte — d ou trois diagnostics faux
+(memoire, JVM, pcbnew), tous plausibles, aucun mesure.
+
+**Correctif** (`tools/journal_freerouting.py`, `LecteurIncremental`) : le
+journal est lu par increments depuis le depart du job, jamais relu. Mesure
+apres correctif, meme carte, meme sonde : **0 famine**, et le routage passe de
+165 s a 77 s — les relectures mangeaient aussi la moitie du temps.
+Gardes : `tests/test_journal_lu_par_increments.py` (comportement + cablage).
+
+**Trois lecons, toutes deja inscrites ailleurs et payees une fois de plus :**
+ne jamais relayer un message comme un diagnostic ; verifier l ORDRE de deux
+evenements avant d en faire une causalite ; **mesurer avec un instrument**
+(ici la sonde) avant de proposer un correctif — la piste « isoler pcbnew dans
+un enfant » etait deja en place depuis des semaines et n aurait rien change.
+
+---
+
+## Diagnostic du 2026-09-10 — « la cause reelle », REFUTE : ce n etait pas pcbnew
+
+**Ce n est PAS la memoire.** Je l ai cru toute la journee et j ai agi dessus :
+arret de Supabase, surveillance de `free -m`, recreation du conteneur, six
+campagnes relancees. Deux mesures le dementent :
+
+    cgroup du conteneur    oom_kill = 0, crete 3,4 Go sur 7,6
+    RSS reel de la JVM     1,4 Go  (le journal Freerouting annonce 495 Go —
+                                    c est un compteur CUMULE, pas une occupation)
+
+**La vraie cause**, visible en lisant ce qui PRECEDE la mort, trois fois a
+l identique :
+
+    Restoring an earlier board that has the score of 964.42 (8 unrouted)
+    INFO:     Waiting for child process [103]
+    INFO:     Child process [103] died
+
+Le worker meurt **apres** que le routage a rendu son resultat, pendant le
+POST-TRAITEMENT — replacement des vias, coulee des plans, fanout, couture des
+ilots. Toutes ces etapes passent par `pcbnew`. Et le conteneur journalise
+**neuf assertions natives en quarante minutes** :
+
+    property.h(607): assert "m_choices.GetCount() > 0" failed in PROPERTY_ENUM()
+
+C est le plantage que ce depot documente deja, celui pour lequel
+`PYTHONFAULTHANDLER` avait ete active — et qui n ecrit aucune trace, le signal
+n etant pas detournable.
+
+⚠️ **POURQUOI SEULEMENT LES CARTES DENSES.** Plus de zones, de vias et d ilots
+a post-traiter, donc plus d occasions de declencher l assertion. `carte-01` a
+`carte-07` passent ; `carte-08`, `09` et `10` echouent trois fois sur trois.
+
+**Consequence pour le banc :** ces trois cartes ne peuvent pas aboutir tant que
+ce plantage n est pas contourne. Ce n est ni le placement, ni le nombre de
+couches, ni le nombre de tirages.
+
+**Piste, non appliquee :** isoler le post-traitement `pcbnew` dans un processus
+ENFANT, comme `cmaes_runner.py` et `drc_pcbnew_runner.py` le font deja. Un
+plantage natif tuerait alors l enfant, pas le worker — et la requete rendrait
+une erreur au lieu de couper la connexion. Le depot documente deja cette regle :
+« toute nouvelle route appelant `pcbnew` doit suivre ce schema ».
+
+⚠️ **DEUX FAUSSES PISTES SUIVIES AVANT CELLE-CI**, toutes deux par relais d un
+message sans verification : « low on memory » venait de l outil tuant mes
+processus WINDOWS, et « 495299 MB memory » d un compteur cumule. **Verifier ce
+qu un nombre COMPTE avant d en tirer une decision.**
+
+---
+
+## D-2026-09-12-b — à partir de 4 couches, le plan GND vit aussi sur une couche INTERNE
+
+**Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
+sur l'option recommandée A), **puis réfutée par la mesure** une heure plus
+tard. Banc 2d, carte-08, placement gelé identique :
+
+| plan GND | 2 c. | 4 c. | 6 c. | 8 c. |
+|---|---|---|---|---|
+| faces seules (matin) | 67 % | **100 %** | — | — |
+| faces + In1 | 67 % | 96 / 88 % | 96 / 96 / 94 % | 96 % |
+
+Le plan In1 retire une couche entière aux signaux du LQFP, et l'îlot GND
+F.Cu ↔ B.Cu subsiste (il n'est pas relié à In1 non plus). **Par défaut, les
+faces seules** ; le levier reste un réglage de banc (`plan_gnd_interne`),
+code et gardes conservés (`tests/test_plan_gnd_interne_des_quatre_couches.py`).
+Une mesure étaye une proposition ; elle peut aussi la tuer, et c'est son travail.
+
+Mesure du 2026-09-12 (carte-10, phase 2c, 6 tirages à 4 et 6 couches) : les
+tirages sortent à 98 % avec la MÊME rupture — « Track [GND] 1,2 mm ↔ Via
+[GND] », le tronçon d'échappement d'une broche GND du LQFP-48 (U1-8, puis
+C37-2). Le via réservé est bien posé, mais il atterrit sur B.Cu dans un îlot
+de plan de 1 mm² isolé par les pistes d'échappement ; l'îlot ne se coud pas
+(trop petit pour un second via), il est retiré comme flottant, et la broche
+reste orpheline. Sur stm32-100 (4 couches), même motif à 96-97 % pendant
+quatre tirages. Les couches internes (In1, In2) n'ont AUCUN plan : elles ne
+portent que des signaux, et un via traversant n'y trouve rien.
+
+Aujourd'hui `_add_ground_planes` ne coule le plan que sur les deux faces
+extérieures. Un empilage professionnel à 4 couches met la masse sur In1 :
+tout via GND, où qu'il tombe, rejoint un plan continu qu'aucune piste ne
+découpe. C'est une décision d'empilage (stratégie de routage), donc produit.
+
+Options :
+- **A** — plan GND sur In1 dès que le palier compte ≥ 4 couches, en plus des
+  faces extérieures. Recommandée : c'est la pratique standard, et le via
+  d'échappement atteint toujours du cuivre.
+- **B** — statu quo, on s'en remet aux tirages (carte-10 est sortie à 100 %
+  au 2e tirage, 4 couches).
+
+Coût de A : un plan intérieur retire In1 aux signaux ; à mesurer sur
+carte-08/09/10 (100 % à 4-6 couches aujourd'hui) avant de conclure.
+
+## D-2026-09-12-a — le DRC de la chaîne et celui du routage jugent avec les MÊMES règles
+
+**Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
+sur l'option recommandée B). Implémentée : `_projet_kicad` ne rend plus les
+règles ouvertes qu'avec le réglage de banc `regles_fine_pitch` ; par défaut
+le routage juge aux règles standard, comme la chaîne. Garde :
+`tests/test_regles_microvias.py`. Même réponse pour la livraison : à
+100 % / 0 erreur, le placement pro est livré même avec plus de couches
+(`livrer_campagne.py --placement-pro`).
+
+Mesure du 2026-09-12 (carte-08, campagne 1789171988) : le routage rend
+« 100 %, 0 erreur » et la chaîne enregistre « 100 %, 2 erreurs DRC » sur le
+même board. Deux instruments, deux règles :
+
+| instrument | règles | via minimal | dégagement |
+|---|---|---|---|
+| `route_auto` (`_rapport_drc`) | projet « fine-pitch ouvert » dès qu'un boîtier dense existe (`_REGLES_FINE_PITCH`, 2026-08-26) | 0,30 mm, perçage 0,15, anneau 0,075 | 0,15 mm |
+| `/drc/auto` (la chaîne, et `POST /api/jlcpcb/order`) | défauts KiCad (aucun projet) | 0,50 mm, perçage 0,30, anneau 0,10 | 0,20 mm |
+
+Les règles ouvertes correspondent à une **option payante** chez JLCPCB
+(perçage 0,15 mm). Un board « propre » pour le routage peut donc être refusé
+par la chaîne, et un board livré peut coûter plus cher à fabriquer que prévu.
+
+Deux options, une seule à choisir :
+- **A** — la chaîne juge avec les règles ouvertes quand le board porte un
+  boîtier dense (même helper que le routage). Livrable : oui, au tarif
+  fine-pitch.
+- **B** (recommandée) — le routage juge avec les règles standard : plus de
+  via-in-pad sous 0,60 mm, les broches fines ne sortent que par tronçon + via
+  (mécanisme réparé le 2026-09-11 : « tronçon seul quand le via est déjà
+  là »). Livrable au tarif standard ; à mesurer sur carte-08/09/10.
+
+Déjà fait sans décision (instrument, pas produit) : `_nets_incomplets` lit le
+net de TOUT objet du rapport (`PTH pad`, `Via`, `Track`), donc un palier ne
+peut plus afficher 100 % avec une liaison manquante.
+
+Ne pas implémenter avant validation.
+
+## D-2026-09-11-b — une carte qui stagne à son plafond de couches est AGRANDIE et re-placée
+
+**Statut : validée** par l'utilisateur le 2026-09-11 (« go »). Implémentée en
+règle générale : (1) le service rend le contour à la taille demandée quand
+elle dépasse le contour du board (`_taille_contour`, `auto_place`) ; (2) la
+boucle de la chaîne (`run_pipeline.py::taille_suivante`) agrandit de 20 % par
+côté, au plus deux fois, une carte routée à son plafond de couches sans
+100 % / 0 erreur. Gardes : `tests/test_agrandir_quand_stagne.py`. À porter
+dans l'orchestrateur TypeScript (`run-orchestrator.ts`) pour la production.
+La taille de la carte est une donnée visible du client (le générateur la
+dimensionne au nombre de composants).
+
+Mesure du 2026-09-11 sur `carte-08` (56 composants, 125 × 95 mm, plafond 98 %
+depuis 24 h quels que soient placement, couches et routeur) : le MÊME schéma,
+contour **150 × 114 mm (+20 %)**, placement complet (contrainte + rangées),
+**100 % à 2 couches, 0 erreur** au premier tirage (1308 s dont attente du
+verrou). Le levier des cartes denses n'est ni le routeur ni les couches :
+c'est l'espace.
+
+Proposition, générale : dans la boucle de la chaîne, quand un placement a
+été routé à son plafond de couches sans atteindre 100 % (ou que le plancher
+d'échappement dépasse le plafond), le contour est agrandi de 20 % (règle
+`taille_carte`, qui sait déjà réécrire `Edge.Cuts`) et la carte est
+re-placée — au lieu de re-tirer indéfiniment. Un pas maximal (par ex. deux
+agrandissements) borne la surface. Le client voit une carte plus grande et
+moins chère (2 couches) plutôt qu'une carte à 98 % sur 6 couches.
+
+Ne pas implémenter avant validation.
+
+## D-2026-09-11-a — plancher d'échappement > palier : UN tirage de preuve, puis escalade
+
+**Statut : validée** par l'utilisateur le 2026-09-11 (« ok go »). Implémentée :
+`_paliers_avec_tirages(…, plancher=…)` — un tirage par palier sous le
+plancher, trois à partir du plancher ; réglage `tirage_de_preuve`. Garde :
+`tests/test_tirage_de_preuve.py`. Elle nuance la décision du 2026-08-29
+(« on part toujours de 2 couches »), qu'elle conserve.
+
+Mesure du 2026-09-11 sur `carte-08` (56 composants, plancher calculé : 4
+couches, budget 1800 s) : trois tirages à 2 couches (figé 80 %, 69 %, figé
+80 %) ont consommé **tout le budget** ; le palier 4 couches, atteint à
+13:14, a rendu « 0 % (aucun moteur) » — jamais tiré. La preuve « 2 couches
+ne suffisent pas » a coûté la totalité de l'appel, et l'escalade que la
+preuve devait déclencher n'a pas eu lieu.
+
+Proposition, générale : quand le plancher d'échappement dit N > palier
+courant, on garde le départ à 2 couches (le client ne paie pas une couche
+sur une prévision) mais on n'y accorde **qu'un seul tirage de preuve** —
+s'il n'atteint pas 100 %, on escalade tout de suite avec le budget restant,
+pistes protégées. Aucun changement pour les cartes dont le plancher est 2.
+
+Ne pas implémenter avant validation.
+
+## D-2026-09-10-e — un job Freerouting abandonné est un job TUÉ (JVM relancée)
+
+**Statut : validée sous délégation** (levier de temps, l'utilisateur demandait
+pourquoi carte-08 prenait des heures).
+
+`cancel` répond 501 : un job que l'on cesse d'attendre continue jusqu'à sa
+passe 999. Journal Freerouting du 2026-09-10, 19:51-19:58 : **huit jobs
+abandonnés lancés à une minute d'intervalle, 999 passes chacun, tous vivants
+en même temps dans la JVM** — chaque nouveau job partageait la JVM avec eux.
+A/B esp32-baseline sur le même placement : 100 % en 61 s quand la JVM est
+seule, contre trois tirages figés à 63-86 % puis escalade à 6 couches pendant
+la campagne. Le halo des capas, soupçonné, est hors de cause (contrôle 23 s,
+A 61 s, B 237 s — tous 100 % sur 2 couches).
+
+Règle : `_tuer_la_jvm()` à chaque abandon (`pkill -f freerouting.jar`, attente
+de `/system/status`) ; l'entrypoint relance la JVM en boucle, journal vidé.
+Perte assumée : la récupération d'un job abandonné (`_recuperer_jobs_abandonnes`)
+ne trouve plus rien — elle rendait des boards à 31-69 %, jamais livrables.
+Réglage `tuer_jvm_sur_abandon`. Gardes : `tests/test_job_abandonne_est_tue.py`.
+
+**Repli GND borné** (même jour) : il ne se paie que si ≤ 8 connexions manquent
+(`_REPLI_GND_MAX_MANQUANTES`, réglage `repli_gnd_max_manquantes`). carte-08 :
+17 min pour passer de 36 à 33 manquantes, 11 min pour un repli refusé.
+Gardes : `tests/test_repli_gnd_borne.py`.
+
+## D-2026-09-10-d — un placement CONDAMNÉ n'est pas routé jusqu'au bout
+
+**Statut : validée** (utilisateur : « go » sur le levier « ne pas router un
+placement condamné », 2026-09-10). Le seuil chiffré est le mien.
+
+Mesure sur `carte-05`, essai 1 du pipeline : tirages figés à 62 / 23 / 0 %,
+puis « dernière chance » (10 min) et repli GND (8 min) — **21 min pour un
+board à 0 %**. L'essai suivant, autre placement, a routé à **100 % en 30 s**.
+Vingt minutes de routage ne rachètent pas un placement inroutable ; trois
+minutes de re-placement, si.
+
+Règle (`_placement_condamne`, `_CONDAMNE_PCT = 50`) : quand TOUS les tirages
+d'un appel ont figé et que le meilleur reste sous 50 %, `route_auto` rend la
+main sans dernière chance ni repli GND. Au-dessus, rien ne change — la
+dernière chance a sauvé `nucleo-f401` (tirages figés à 43-79 %). Réglage
+`condamne_pct` pour l'A/B. Gardes : `tests/test_placement_condamne.py`.
+
+## Superviseur uvicorn tolérant (même jour, technique)
+
+Second worker abattu à 15:28, sonde armée : pile dans un parseur pur Python
+de 0,15 s. Pas de GIL tenu, pas de throttling CPU (12 cœurs, charge 2,4) —
+**la VM WSL paginait** (234 Mo en swap, 570 000 pages écrites, pression
+mémoire `full` 5,8 h cumulées ; Supabase seul pèse 1,7 Go). `lancer_service.py`
+porte la tolérance du ping de 5 s (codée en dur dans uvicorn 0.30) à 30 s ;
+Supabase est arrêté pendant les campagnes. Gardes :
+`tests/test_superviseur_tolerant.py`.
+
+---
+
+## D-2026-09-10-c — GND revient au PLAN par défaut (prise sous délégation)
+
+**Statut : validée sous la délégation de validation** confiée par l'utilisateur
+(« c'est toi qui valides avec la dernière recherche »). Elle RETIRE la mise en
+œuvre du matin « GND routé en pistes comme la référence STM32 d'Astra », qui
+n'avait jamais été mesurée sur le même board.
+
+A/B sur le MÊME board placé (`carte-05`, 26 composants, 2 couches), appel
+direct de `route_auto`, deux tirages par bras :
+
+    GND en pistes    92 %   92 %    154 s · 119 s   vias 34 · 19
+    GND au plan     100 %  100 %     31 s ·  27 s   vias 38 · 40
+
+Même différence dans la campagne du matin : `carte-05` livrée hier à 100 % en
+41 s (plan) contre 92 % avec 8 erreurs DRC et un essai à 69 % aujourd'hui
+(pistes). Sur deux couches, chaque piste de masse découpe le plan et occupe le
+canal des signaux ; Astra route GND en pistes sur SIX couches avec deux plans
+dédiés — ce n'est pas notre empilage.
+
+Ce que dit la recherche (`docs/methodologie-routage.md`) : sur 2 couches, plan
+de masse coulé sur la face libre, dogbones sur chaque pastille CMS de masse,
+couture des îlots. C'est la séquence déjà en place. « GND en pistes » reste
+disponible par réglage (`{"gnd_route": true}`) pour un futur A/B sur 4 ou 6
+couches, où la mesure pourrait s'inverser.
+
+Leçon : une décision validée SUR UNE RÉFÉRENCE n'est pas validée sur nos
+cartes tant que l'A/B n'est pas fait sur le même board. Elle a coûté une
+matinée de campagne.
+
+---
+
+## Délégation du 2026-09-10 — méthodologie de routage
+
+L'utilisateur a fourni une synthèse des pratiques de l'industrie (Hartley,
+Bogatin, Phil's Lab, Feranec, Peterson, IPC-2221/7351/4761) et a délégué :
+« si tu as besoin de ces recommandations, c'est toi qui les valides ».
+
+**Portée :** les choix de MÉTHODE de routage conformes à ces sources peuvent
+être validés par l'assistant sans retour à l'utilisateur. Les seuils chiffrés
+et les choix commerciaux (plafond de couches vendu, coût) restent siens.
+
+**Validé au titre de cette délégation :**
+- GND routé en pistes + plan coulé sur Bottom (2 couches) — déjà appliqué,
+  confirmé par « grille de masse / ground pour ».
+
+**À faire, validé d'avance :**
+- Routage orthogonal H/V par couche (préférence de direction Freerouting).
+- Ordre de routage par priorité (fanout → critiques → alimentation → GPIO) —
+  plus lourd, à mesurer avant.

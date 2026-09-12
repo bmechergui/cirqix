@@ -470,7 +470,29 @@ def _generate_with_kicad_tools(
         # Placement de départ par grille uniquement : l'agent placement (⑤) fait
         # le vrai placement en 2 phases — Phase 1 PlacementOptimizer (clustering +
         # connecteurs ancrés) puis Phase 2 EvolutionaryPlacementOptimizer (GA).
-        workflow.place_all_components(spacing=15.0, margin=5.0)
+        # ⚠️ ON LIT CE QUE LA BIBLIOTHEQUE REND. `place_all_components` rapporte
+        # chaque echec dans `result.failed`, avec sa raison — elle ne le
+        # JOURNALISE pas, et j avais conclu de ce silence qu elle ne disait
+        # rien. Mesure du 2026-09-09 sur `carte-05` :
+        #
+        #     RESULTAT places=25 echoues=1
+        #        ECHEC U3 -> Failed to add footprint
+        #
+        # La reponse etait la depuis toujours ; nous jetions la valeur de
+        # retour. Septieme fois que ce depot paie « ne pas lire ce que la lib
+        # rend », apres `FunctionalCluster.max_distance_mm`, `anchor_pin`,
+        # `WorkflowConfig.grid`, `constraints=`, `PCB.move_reference` et
+        # `bottom_up_placement`.
+        #
+        # ⚠️ On ne LEVE pas : la cascade sait deja retomber au niveau suivant,
+        # et `_composants_perdus` refuse le board incomplet. Mais un echec qui
+        # ne se nomme pas se rediagnostique a chaque fois — celui-ci a coute
+        # deux jours.
+        resultat = workflow.place_all_components(spacing=15.0, margin=5.0)
+        for ref, raison in (getattr(resultat, "failed", None) or []):
+            logger.error("generate_pcb niveau 1: %s NON POSE — %s", ref, raison)
+        for avertissement in (getattr(resultat, "warnings", None) or []):
+            logger.warning("generate_pcb niveau 1: %s", avertissement)
         workflow.assign_nets()
         workflow.save(pcb_path)
 
@@ -589,7 +611,36 @@ def _generate_with_pcbnew(
         # Board outline (Edge.Cuts)
         bw_iu = pcbnew.FromMM(board_w)
         bh_iu = pcbnew.FromMM(board_h)
-        edge_layer = 44  # Edge.Cuts
+        # ⚠️ LE NUMERO DE COUCHE A CHANGE ENTRE KiCAD 7 ET 10, et le nombre
+        # ecrit ici disait autre chose que son commentaire.
+        #
+        #     KiCad <= 7   Edge.Cuts = 44
+        #     KiCad 10     Edge.Cuts = 25   ·   44 = une couche interne
+        #
+        # Mesure du 2026-09-09 sur `carte-05-capteur-i2c` : les quatre segments
+        # du contour etaient ecrits sur `In21.Cu`, une couche que le board (a
+        # DEUX couches) ne declare meme pas. Consequences, toutes deux comptees
+        # comme des ERREURS de fabrication :
+        #
+        #     invalid_outline        1   il n y a RIEN sur Edge.Cuts
+        #     item_on_disabled_layer 4   les quatre segments, orphelins
+        #
+        # La carte n avait donc AUCUN CONTOUR. Elle sortait « 100 % routee »
+        # quand meme — le routeur travaille sur les pastilles, pas sur la forme
+        # du board — et c est ce qui a masque le defaut : encore une absence
+        # qui se lit comme un succes.
+        #
+        # ⚠️ ON NE CODE PLUS LE NUMERO EN DUR. `pcbnew` expose la constante,
+        # et elle suit la version installee. Un nombre est muet ; un commentaire
+        # qui le traduit peut mentir sans que rien ne le dise.
+        edge_layer = getattr(pcbnew, "Edge_Cuts", None)
+        if edge_layer is None:
+            # ⚠️ On le DIT, et on prend la valeur de KiCad 10 plutot que celle
+            # de KiCad 7 : se tromper de couche est ce qui vient de couter deux
+            # erreurs de fabrication sur une carte livree.
+            logger.error("generate_pcb: pcbnew n expose pas Edge_Cuts — "
+                         "repli sur 25 (KiCad 10) ; verifier le contour")
+            edge_layer = 25
         for x1, y1, x2, y2 in [
             (0, 0, bw_iu, 0), (bw_iu, 0, bw_iu, bh_iu),
             (bw_iu, bh_iu, 0, bh_iu), (0, bh_iu, 0, 0),
@@ -738,10 +789,44 @@ def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
         return pcb_content
 
     # Collect all net ids from PCB header: id → name
-    net_id_to_name: dict[int, str] = {
-        int(m.group(1)): m.group(2)
-        for m in _re.finditer(r'^\s*\(net\s+(\d+)\s+"([^"]+)"\)', pcb_content, _re.MULTILINE)
-    }
+    #
+    # ⚠️ DEUX ECRITURES COEXISTENT POUR LA MEME INFORMATION (2026-09-08) :
+    #
+    #     (net 3 "GND")     ← kicad-tools, et KiCad <= 9
+    #     (net "GND")       ← pcbnew de KiCad 10 (`generator_version "10.0"`)
+    #
+    # Ces trois expressions n acceptaient que la PREMIERE. Or TOUS nos boards
+    # sortent de pcbnew 10 : mesure du 2026-09-08 sur cinq cartes du banc,
+    # `numerote=0` et `nu=93..988` a chaque fois. `net_id_to_name` etait donc
+    # TOUJOURS VIDE, `_patch_floating_nets` ne reparait RIEN, et la fonction
+    # rendait son entree inchangee sans le moindre message.
+    #
+    # Consequence mesuree : six cartes sur onze livrent des pastilles portant
+    # un net orphelin alors que le SCHEMA les nomme — et ce sont des broches
+    # d ALIMENTATION. Sur `carte-07`, la sortie du regulateur `U2.2` porte
+    # `Net-(U2-2)` au lieu de `+3V3` : le regulateur n alimente rien.
+    #
+    # ⚠️ Le DRC ne pouvait pas le voir : un net orphelin est un net a part
+    # entiere, sans connexion manquante a signaler. Meme famille que le
+    # composant absent de `carte-05`.
+    #
+    # C est le MEME piege de forme que `_NET_DECL_RE` le 2026-08-20 — corrige
+    # la-bas, jamais ici. Quand une forme de fichier trompe une expression, il
+    # faut chercher SES SOEURS : elles ont ete ecrites le meme jour, sur la
+    # meme hypothese.
+    #
+    # Garde : tests/test_nets_kicad10_dans_pcb.py
+    numerotes = _re.findall(r'^\s*\(net\s+(\d+)\s+"([^"]+)"\)',
+                            pcb_content, _re.MULTILINE)
+    net_id_to_name: dict[int, str] = {int(i): n for i, n in numerotes}
+    if not net_id_to_name:
+        # Forme KiCad 10 : les nets n ont pas de numero dans le fichier. On
+        # leur en attribue un, stable par ordre d apparition — il ne sert
+        # qu au dictionnaire ci-dessous, jamais au fichier ecrit.
+        for rang, nom in enumerate(
+                _re.findall(r'^\s*\(net\s+"([^"]+)"\)',
+                            pcb_content, _re.MULTILINE)):
+            net_id_to_name.setdefault(rang, nom)
     name_to_net_id: dict[str, int] = {v: k for k, v in net_id_to_name.items()}
 
     def _is_floating(net_name: str) -> bool:
@@ -756,7 +841,10 @@ def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
         if conn.name not in name_to_net_id:
             name_to_net_id[conn.name] = next_id
             net_id_to_name[next_id] = conn.name
-            new_net_decls.append(f'  (net {next_id} "{conn.name}")')
+            # Meme regle que pour les pastilles : on ecrit dans la forme du
+            # fichier recu. `numerotes` est vide sur un board KiCad 10.
+            new_net_decls.append(f'  (net {next_id} "{conn.name}")'
+                                 if numerotes else f'  (net "{conn.name}")')
             next_id += 1
 
     if new_net_decls:
@@ -776,8 +864,7 @@ def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
             return block
         ref = ref_m.group(1)
 
-        def _fix_pad(pm: _re.Match) -> str:
-            pad_block = pm.group(0)
+        def _fix_pad_texte(pad_block: str) -> str:
             pad_num_m = _re.search(r'\(pad\s+"([^"]+)"', pad_block)
             if not pad_num_m:
                 return pad_block
@@ -785,24 +872,71 @@ def _patch_floating_nets(pcb_content: str, connections: list[SchemaNet]) -> str:
             correct_net = pin_to_net.get((ref, pad_num))
             if not correct_net:
                 return pad_block
-            net_m = _re.search(r'\(net\s+\d+\s+"([^"]+)"\)', pad_block)
+            # ⚠️ Le numero est OPTIONNEL : voir la note de forme plus haut.
+            net_m = _re.search(r'\(net\s+(?:\d+\s+)?"([^"]+)"\)', pad_block)
             if not net_m or not _is_floating(net_m.group(1)):
                 return pad_block
             # Replace with correct net
             correct_id = name_to_net_id.get(correct_net)
             if correct_id is None:
                 return pad_block
+            # ⚠️ ON REECRIT DANS LA FORME DU FICHIER RECU, jamais dans la
+            # notre : reintroduire un numero dans un board KiCad 10 melangerait
+            # les deux ecritures, et le prochain lecteur trancherait au hasard.
             fixed = _re.sub(
-                r'\(net\s+\d+\s+"[^"]+"\)',
-                f'(net {correct_id} "{correct_net}")',
+                r'\(net\s+(\d+\s+)?"[^"]+"\)',
+                lambda mm: ('(net %d "%s")' % (correct_id, correct_net)
+                            if mm.group(1) else '(net "%s")' % correct_net),
                 pad_block,
             )
             logger.info("patch_floating_nets: %s.%s: %s → %s",
                         ref, pad_num, net_m.group(1), correct_net)
             return fixed
 
-        return _re.sub(r'\(pad\s+"[^"]+"\s+[\s\S]*?(?=\n\s+\(pad|\n\s+\(property|\n\t\))',
-                       _fix_pad, block)
+        # ⚠️ LE DECOUPAGE DES PASTILLES ETAIT INCOMPLET (2026-09-08). Il
+        # s arretait sur UNE seule tabulation avant la parenthese fermante.
+        # Les boards de pcbnew 10 en portent DEUX, et la derniere pastille d un
+        # boitier y est suivie de `(embedded_fonts no)`, que rien ne
+        # reconnaissait : la DERNIERE pastille de chaque empreinte n etait
+        # donc jamais reparee. Un defaut silencieux cache derriere le premier.
+        #
+        # On s ancre desormais sur ce qui ne bouge pas : une pastille se
+        # termine ou commence un frere, ou ou se ferme le parent.
+        # ⚠️ ON NE DECOUPE PLUS LES PASTILLES AU REGEX (2026-09-08).
+        #
+        # L expression precedente s arretait sur `\n<blanc>(pad`,
+        # `\n<blanc>(property` ou une SEULE tabulation avant la parenthese
+        # fermante. Les boards de pcbnew 10 en portent deux, et la derniere
+        # pastille d un boitier y est suivie de `(embedded_fonts no)` : cette
+        # derniere pastille n etait donc JAMAIS reparee.
+        #
+        # Ma premiere correction — s arreter au premier `\n<blanc>(` — etait
+        # pire : elle coupait le bloc juste apres `(pad "2" smd roundrect`,
+        # AVANT le champ `(net ...)`, et ne reparait plus rien du tout. Une
+        # expression trop large et une trop etroite echouent identiquement,
+        # en silence.
+        #
+        # On compte donc les parentheses. C est la lecon deja inscrite pour les
+        # segments : chercher chaque champ DANS SON BLOC, jamais en une seule
+        # expression qui suppose l ordre et l indentation des champs.
+        morceaux, i = [], 0
+        while True:
+            j = block.find("(pad ", i)
+            if j < 0:
+                morceaux.append(block[i:])
+                return "".join(morceaux)
+            morceaux.append(block[i:j])
+            prof, k = 0, j
+            while k < len(block):
+                if block[k] == "(":
+                    prof += 1
+                elif block[k] == ")":
+                    prof -= 1
+                    if prof == 0:
+                        break
+                k += 1
+            morceaux.append(_fix_pad_texte(block[j:k + 1]))
+            i = k + 1
 
     # Apply patch to each footprint block
     patched = _re.sub(
@@ -858,6 +992,40 @@ def generate_pcb(
     2. Python pur depuis .kicad_sch   — Schematic.load() + extract_netlist() + S-expr natif
     3. '' → router success=False      → TypeScript runCircuitSynthEngine() fallback
     """
+    # ⚠️ VERIFIER QUE CHAQUE EMPREINTE EXISTE, AVANT TOUTE GENERATION.
+    #
+    # Mesure du 2026-09-09 : `carte-05` declarait
+    # `Package_LGA:LGA-8_2.5x2.5mm_P0.65mm`, un nom qui N EXISTE PAS — KiCad
+    # livre celle du BME280 sous `Bosch_<...>_ClockwisePinNumbering`.
+    # `add_component` rendait `None`, le capteur disparaissait, et la carte
+    # sortait « 100 % routee, 0 erreur » SANS LUI.
+    #
+    # ⚠️ CORRIGER CE SCHEMA-LA NE CORRIGEAIT RIEN : le nom vient d un modele de
+    # langage, il sera plausible et faux aussi souvent qu on lui demandera. La
+    # verification est donc posee ICI, avant la cascade, pour TOUTES les cartes
+    # et tous ses niveaux — demande de l utilisateur : « je veux toujours une
+    # solution generale pour marcher avec tous les types de cartes ».
+    #
+    # ⚠️ Ce n est pas l agent Footprint. Lui RESOUT une empreinte manquante
+    # (cascade KiCad -> pgvector -> LCSC -> SnapMagic -> IA). Ici on traite le
+    # cas qu il ne voit pas : une empreinte DECLAREE, donc jamais signalee
+    # `unresolved`, mais qui n existe sous aucun nom.
+    try:
+        from tools.empreintes_reelles import verifier_et_corriger
+        corrigees, introuvables = verifier_et_corriger(components)
+        if corrigees:
+            logger.warning("generate_pcb: %d empreinte(s) inexistante(s) "
+                           "remplacee(s) par leur vrai nom", corrigees)
+        if introuvables:
+            logger.error("generate_pcb: %d empreinte(s) INTROUVABLE(S) — les "
+                         "composants seront perdus : %s",
+                         len(introuvables), ", ".join(introuvables))
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ On le DIT. Une verification silencieusement absente laisserait
+        # croire les empreintes valides — exactement l etat d avant.
+        logger.error("generate_pcb: verification des empreintes INDISPONIBLE "
+                     "(%s) — les noms ne sont pas verifies", e)
+
     # Niveau 1 : kicad-tools PCBFromSchematic
     if kicad_sch_content:
         try:

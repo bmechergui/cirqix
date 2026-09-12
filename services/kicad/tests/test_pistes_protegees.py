@@ -51,7 +51,9 @@ class TestPistes:
     def test_chaque_segment_devient_un_fil_protege(self):
         bloc = R._bloc_wiring_pistes(_BOARD)
         assert bloc.count("(wire") == 2
-        assert bloc.count("(type protect)") == 2
+        # 2 fils + 1 via : depuis le 2026-09-11 les vias sont proteges avec
+        # les segments (sans eux, chaque changement de couche etait rompu).
+        assert bloc.count("(type protect)") == 2 + bloc.count("(via")
 
     def test_les_coordonnees_sont_en_micrometres_et_Y_est_NEGATIF(self):
         """⚠️ Oublier le signe placerait chaque piste en miroir de sa position —

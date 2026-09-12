@@ -126,6 +126,14 @@ from observability import init_sentry  # noqa: E402
 if init_sentry():
     logging.info("Sentry actif (evenements expurges avant envoi)")
 
+# Sonde de famine du GIL, a demeure : si un appel C tient le GIL 4,5 s, la
+# pile de tous les threads part sur stderr AVANT que le superviseur uvicorn
+# n abatte le worker (5 s sans reponse au ping, SIGKILL, aucune trace).
+# C est l instrument qui a trouve le `read_text` de 564 Mo le 2026-09-10.
+from tools.sonde_gil import armer_la_sonde_de_famine  # noqa: E402
+
+armer_la_sonde_de_famine()
+
 app = FastAPI(
     title="Cirqix KiCad Service",
     version="1.0.0",
