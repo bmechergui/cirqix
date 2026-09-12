@@ -80,7 +80,10 @@ class TestCablage:
 
     def _boucle(self) -> str:
         i = self.SOURCE.index("essais = _paliers_avec_tirages(")
-        return self.SOURCE[i:i + 4000]
+        # La fenetre doit couvrir toute la boucle des paliers : les blocs
+        # ajoutes depuis (escalade incrementale, tirage de preuve, placement
+        # condamne) l ont allongee au-dela de 4000 caracteres.
+        return self.SOURCE[i:i + 12000]
 
     def test_le_bonus_est_APPELE_dans_la_boucle(self):
         """⚠️ Une regle juste jamais invoquee est indistinguable d une regle

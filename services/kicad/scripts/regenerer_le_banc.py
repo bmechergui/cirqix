@@ -111,12 +111,58 @@ def _note(dossier: Path) -> tuple | None:
     return (_perdus(dossier), int(v["nb_erreurs"]), -int(m["routed_percent"]))
 
 
+def _note_versionnee(dossier: Path) -> tuple | None:
+    """La note du board VERSIONNE, lue dans git — jamais dans le disque.
+
+    ⚠️ MESURE DU 2026-09-08. `_note` lit le repertoire de travail. Si une
+    execution manuelle y a laisse un `mesures.json` a `null` — c est
+    exactement ce qui vient d arriver, en diagnostiquant une panne de jeton —
+    la note de l ANCIEN devient `None`, la comparaison `avant is None` passe
+    pour « rien a comparer », et le script accepte alors N IMPORTE QUOI.
+
+    Constate : un board a 97 % / 8 erreurs a remplace le board versionne a
+    100 % / 0 erreur, en annoncant « GARDE ».
+
+    C est la famille de defauts que ce depot poursuit : une mesure absente
+    lue comme un feu vert. La protection existait deja cote APRES (« pas de
+    verdict = pas de note ») et manquait cote AVANT.
+
+    Le remede : la reference est ce que git contient, pas ce que le disque
+    montre. Un disque se salit, un commit non.
+    """
+    rel = (str((dossier / "expected" / "mesures.json").relative_to(_RACINE))
+           .replace("\\", "/"))
+    r = _git(["show", "HEAD:" + rel])
+    if r.returncode != 0:
+        return None
+    try:
+        m = json.loads(r.stdout)
+    except Exception:
+        return None
+    v = m.get("drc_du_board") or {}
+    if "nb_erreurs" not in v or m.get("routed_percent") is None:
+        return None
+    # Les composants perdus se comptent sur le board versionne lui-meme.
+    b = _git(["show", "HEAD:" + str((dossier / "expected" / "final.kicad_pcb")
+                                    .relative_to(_RACINE)).replace("\\", "/")])
+    perdus = 0
+    sch = dossier / "input" / "schema.json"
+    if b.returncode == 0 and sch.is_file():
+        try:
+            decl = json.loads(sch.read_text(encoding="utf-8"))["components"]
+            poses = re.findall(r'\(property\s+"Reference"\s+"([^"]+)"', b.stdout)
+            perdus = max(0, len(decl) - len(poses))
+        except Exception:
+            perdus = 0
+    return (perdus, int(v["nb_erreurs"]), -int(m["routed_percent"]))
+
+
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + args, cwd=str(_RACINE),
                           capture_output=True, text=True, timeout=120)
 
 
-def _un_essai(dossier: Path, recreer: bool) -> None:
+def _un_essai(dossier: Path, recreer: bool, conteneur: str) -> None:
     if recreer:
         subprocess.run(
             ["wsl.exe", "-e", "bash", "-lc",
@@ -125,18 +171,23 @@ def _un_essai(dossier: Path, recreer: bool) -> None:
             capture_output=True, text=True, timeout=900)
 
     subprocess.run([sys.executable, str(_SCRIPTS / "banc_driver_llm.py"),
-                    str(dossier.relative_to(_SERVICE))],
+                    str(dossier.relative_to(_SERVICE)),
+                    "--conteneur", conteneur],
                    cwd=str(_SERVICE), capture_output=True, text=True,
                    timeout=7200)
 
 
-def rejouer(dossier: Path, recreer: bool, essais: int) -> str:
-    avant = _note(dossier)
+def rejouer(dossier: Path, recreer: bool, essais: int,
+            conteneur: str = "cirqix-kicad") -> str:
+    # ⚠️ La reference est le board VERSIONNE, pas le disque : voir
+    # `_note_versionnee`. Un `mesures.json` sali par une execution
+    # manuelle faisait accepter n importe quel remplacant.
+    avant = _note_versionnee(dossier) or _note(dossier)
     rel = str(dossier.relative_to(_RACINE)).replace("\\", "/")
     vus = []
 
     for n in range(max(1, essais)):
-        _un_essai(dossier, recreer)
+        _un_essai(dossier, recreer, conteneur)
         apres = _note(dossier)
         if apres is None:
             vus.append("non mesure")
@@ -164,6 +215,14 @@ def main(argv: list[str]) -> int:
                    help="tirages maximum par carte avant d abandonner")
     a.add_argument("--recreer", action="store_true",
                    help="recree le conteneur avant chaque carte (memoire)")
+    # ⚠️ Viser un SECOND conteneur permet de rejouer deux cartes en parallele.
+    # Le verrou de routage est un fichier dans /tmp du conteneur : deux
+    # conteneurs ont donc deux verrous, et la garantie « un seul routage sur
+    # toute la machine » ne tient plus. C est un choix, pas un oubli — il se
+    # borne par la memoire allouee au second conteneur, pour qu un depassement
+    # tue le nouveau venu et jamais celui qui travaille.
+    a.add_argument("--conteneur", default="cirqix-kicad",
+                   help="conteneur KiCad a utiliser (cirqix-kicad-2 pour le second)")
     o = a.parse_args(argv[1:])
 
     cibles = ([_EXEMPLES / o.dossier] if o.dossier
@@ -171,7 +230,7 @@ def main(argv: list[str]) -> int:
                           if (d / "input" / "schema.json").is_file()))
     print("%d carte(s) a rejouer\n" % len(cibles))
     for d in cibles:
-        print(rejouer(d, o.recreer, o.essais), flush=True)
+        print(rejouer(d, o.recreer, o.essais, o.conteneur), flush=True)
     return 0
 
 

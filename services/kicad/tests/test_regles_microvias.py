@@ -59,7 +59,14 @@ SIMPLE = _board(_footprint("R1", 2))
 
 
 class TestConditionnement:
-    def test_un_boitier_dense_ouvre_les_regles(self):
+    def test_un_boitier_dense_garde_les_regles_standard_par_defaut(self):
+        """D-2026-09-12-a (B) : le routage juge comme la chaine et JLCPCB."""
+        assert routing_router._projet_kicad(DENSE) is None
+
+    def test_un_boitier_dense_ouvre_les_regles_sur_reglage_de_banc(self, monkeypatch):
+        from tools import reglages_banc
+        monkeypatch.setattr(reglages_banc, "reglage",
+                            lambda nom, defaut=None: True if nom == "regles_fine_pitch" else defaut)
         p = routing_router._projet_kicad(DENSE)
         assert p is not None
         regles = p["board"]["design_settings"]["rules"]
@@ -70,7 +77,10 @@ class TestConditionnement:
         # Ne pas facturer un procede fin a une carte qui n en a pas besoin.
         assert routing_router._projet_kicad(SIMPLE) is None
 
-    def test_le_projet_est_du_JSON_valide(self):
+    def test_le_projet_est_du_JSON_valide(self, monkeypatch):
+        from tools import reglages_banc
+        monkeypatch.setattr(reglages_banc, "reglage",
+                            lambda nom, defaut=None: True if nom == "regles_fine_pitch" else defaut)
         import json
 
         p = routing_router._projet_kicad(DENSE)

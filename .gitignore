@@ -21,6 +21,7 @@ build
 
 # Local shell aliases (contiennent des clés API — jamais commités)
 *.local.ps1
+*.local.sh
 
 # MCP project config (contains access tokens — never commit)
 .mcp.json
@@ -115,3 +116,11 @@ services/kicad/examples/*/output/
 
 # KiCad GUI lock files (created when a board is opened in the GUI)
 *.lck
+
+# Captures d ecran de session (jamais commitees)
+services/kicad/.captures/
+
+# Carte de reference EXTERNE, sans licence : jamais versionnee.
+# Voir services/kicad/examples/reference-astra-pinas/README.md
+services/kicad/examples/reference-astra-pinas/input/
+*.kicad_prl

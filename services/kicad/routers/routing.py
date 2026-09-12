@@ -44,6 +44,21 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
+def _empreinte_du_module() -> str:
+    """Empreinte courte du SOURCE importe. Journalisee au chargement : un
+    worker qui tourne sur un module perime est indistinguable d un worker a
+    jour tant qu on ne la lit pas (`routers/` est monte a chaud, le module
+    importe ne suit pas le fichier)."""
+    import hashlib
+    try:
+        return hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:10]
+    except Exception:  # noqa: BLE001
+        return "inconnue"
+
+
+logger.info("routing.py charge : empreinte %s (pid %d)", _empreinte_du_module(), os.getpid())
+
 router = APIRouter(tags=["routing"])
 
 # 2-layer simple boards usually < 90s, 4-layer ~300s, 8-layer ~600s
@@ -274,6 +289,50 @@ def _freerouting_job_failed(state: str) -> bool:
     return str(state).upper() in ("FAILED", "CANCELLED", "INVALID")
 
 
+def _tuer_la_jvm(attente_s: float = 60.0) -> bool:
+    """Tue la JVM Freerouting et attend qu elle soit relancee par l entrypoint.
+
+    ⚠️ UN JOB ABANDONNE EST UN JOB TUE. `cancel` repond 501 : un job que l on
+    cesse d attendre CONTINUE jusqu a sa passe 999. Mesure du 2026-09-10,
+    19:51-19:58 : huit jobs abandonnes a une minute d intervalle, 999 passes
+    chacun, tous vivants en meme temps — et chaque nouveau job partage la JVM
+    avec eux. C est ce qui faisait « stagner » des cartes que le meme
+    placement route a 100 % en 61 s quand la JVM est seule (A/B esp32).
+
+    La JVM est un processus frere dans le conteneur, relance en boucle par
+    l entrypoint (journal vide au passage). On tue, on attend `/system/status`.
+    Le verrou de routage garantit qu aucun autre appel n a de job en cours.
+    Reglage `tuer_jvm_sur_abandon` (defaut : vrai) pour l A/B.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        if not bool(reglage("tuer_jvm_sur_abandon", True)):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        # ⚠️ Le motif vise LA JVM API, et rien d autre. `pkill -f freerouting.jar`
+        # tuait aussi le `sh -c "while true; do java -jar …freerouting.jar"`
+        # qui la relance (sa ligne de commande contient le nom du jar) — mesure
+        # du 2026-09-10, 23:20 : boucle morte, trois heures de CLI a 48-89 %.
+        # Il epargne aussi les jobs CLI (`java -jar … -de …`), qui n ont pas
+        # `--api_server`.
+        subprocess.run(["pkill", "-f", r"^(/usr/bin/)?java -jar /opt/freerouting/freerouting\.jar --api_server"],
+                       capture_output=True, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("freerouting : impossible de tuer la JVM (%s)", exc)
+        return False
+    limite = time.time() + attente_s
+    time.sleep(3.0)
+    while time.time() < limite:
+        if _find_freerouting_api():
+            logger.info("freerouting : JVM tuee et relancee — les jobs abandonnes sont morts avec elle")
+            return True
+        time.sleep(2.0)
+    logger.warning("freerouting : JVM tuee mais pas revenue en %.0f s", attente_s)
+    return False
+
+
 def _find_freerouting_api() -> Optional[str]:
     """Return Freerouting API base URL if the server is reachable, else None."""
     import urllib.request
@@ -468,9 +527,20 @@ def _routeur_muet(silence_s: float, cadence_s: float, passes_vues: int) -> bool:
     ⚠️ Moins de deux passes vues : aucune cadence n est estimable. « Je n ai
     pas pu mesurer » n est pas « il est mort » — on n abandonne pas.
     """
+    # ⚠️ AUCUNE passe du tout, c est un autre cas que « peu de passes ».
+    # Mesure du 2026-09-12 (carte-08, placement gele) : 24 minutes a 213 %
+    # de CPU sans UNE ligne de passe — le routeur n a jamais fini sa
+    # premiere passe, et rien ne le coupait avant le budget. Une premiere
+    # passe met moins d une minute sur toutes les cartes du banc ; dix
+    # minutes sans elle, c est un gel.
+    if passes_vues == 0:
+        return silence_s > _SILENCE_SANS_PASSE_S
     if passes_vues < 2 or cadence_s <= 0:
         return False
     return silence_s > max(_PLAFOND_ATTENTE_S, _MARGE_CADENCE * cadence_s)
+
+
+_SILENCE_SANS_PASSE_S: float = 600.0
 
 
 # Autorise-t-on la detection de stagnation a ABANDONNER un tirage ?
@@ -501,6 +571,18 @@ def _fenetre_effective(fenetre: int, autorise: bool) -> int:
     une lenteur, et il ne doit jamais tenir le budget.
     """
     return fenetre if autorise else 0
+
+
+def _nouveau_minimum(unrouted: int, meilleur: int) -> bool:
+    """Vrai si `unrouted` est une avancee MESUREE : un compte connu (> 0) qui
+    passe SOUS le meilleur vu jusqu ici (0 = rien vu encore).
+
+    Un compte qui remonte puis redescend au meme niveau n est pas un progres,
+    c est un routeur qui tourne en rond.
+    """
+    if unrouted <= 0:
+        return False
+    return meilleur <= 0 or unrouted < meilleur
 
 
 def _temps_sans_progres(mesure_faite: bool, depuis_s: float) -> float:
@@ -782,7 +864,7 @@ def _route_with_freerouting_api(
             dsn_path.write_text(_injecter_wiring(
                 dsn_path.read_text(encoding="utf-8", errors="replace"),
                 _VIAS_RESERVES,
-                _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                 pistes=_PISTES_A_PROTEGER,
             ), encoding="utf-8")
 
@@ -802,6 +884,12 @@ def _route_with_freerouting_api(
         #
         # `_REGLAGES_FREEROUTING` vaut None par defaut : aucun changement de
         # comportement tant qu on n a pas mesure.
+        # ⚠️ Cree AVANT le depart du job : le lecteur ne rend que ce que le
+        # journal recoit ensuite, donc les lignes de CE job. Relire le journal
+        # entier (564 Mo apres deux jours de JVM) tenait le GIL 6 a 9 s et le
+        # superviseur uvicorn abattait le worker — voir `tools/journal_freerouting.py`.
+        from tools.journal_freerouting import LecteurIncremental
+        lecteur = LecteurIncremental(_FREEROUTING_LOG)
         charge = {"session_id": session_id}
         if _REGLAGES_FREEROUTING:
             charge["router_settings"] = _REGLAGES_FREEROUTING
@@ -845,16 +933,12 @@ def _route_with_freerouting_api(
             # politesse. Le journal est la seule fenetre sur l interieur ; s il
             # est illisible, on retombe sur l attente classique.
             if short_name and _FREEROUTING_LOG.is_file():
+                journal_du_job = lecteur.lire()
                 try:
-                    plat = _passes_sans_progres(
-                        _FREEROUTING_LOG.read_text(encoding="utf-8",
-                                                   errors="replace"),
-                        short_name)
+                    plat = _passes_sans_progres(journal_du_job, short_name)
                 except Exception:
                     plat = 0
-                derniere = _LIGNE_PASSE_RE.findall(
-                    _FREEROUTING_LOG.read_text(encoding="utf-8",
-                                               errors="replace"))
+                derniere = _LIGNE_PASSE_RE.findall(journal_du_job)
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
                                  if j == short_name), 0)
                 fenetre = _fenetre_effective(
@@ -877,7 +961,13 @@ def _route_with_freerouting_api(
                 # passe dure plusieurs minutes. « 3 % » n etait pas un verdict,
                 # c etait un abandon premature. Mon propre commentaire disait
                 # deja « sans progres » ; le code, non.
-                if unrouted and unrouted != dernier_unrouted:
+                # ⚠️ UN PROGRES EST UN NOUVEAU MINIMUM, PAS UN CHANGEMENT.
+                # Mesure du 2026-09-12, stm32-100 : le routeur oscillait
+                # entre 1 et 2 non routes (rip-up, puis reprise) — 200
+                # changements en 35 minutes, jamais mieux que 1. Chaque
+                # changement remettait l horloge a zero : le plafond de
+                # 300 s n a jamais tire, et le tirage a tenu jusqu au budget.
+                if _nouveau_minimum(unrouted, dernier_unrouted):
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
                 passe = _numero_de_passe(derniere, short_name)
@@ -934,6 +1024,9 @@ def _route_with_freerouting_api(
                             100 * (nets_routables - unrouted) / nets_routables))
                         if nets_routables > 0 else 0,
                     })
+                    # Un job abandonne est un job TUE : sinon il court jusqu a
+                    # la passe 999 et ralentit tous les tirages suivants.
+                    _tuer_la_jvm()
                     raise RoutageFige(unrouted=unrouted,
                                       nets=nets_routables)
             time.sleep(2)
@@ -1292,10 +1385,32 @@ _TIRAGES_ROUTAGE_PAR_PALIER = 3
 _TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
 
 
-def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
-    """Repete chaque palier `tirages` fois, dans l ordre.
+def _tirage_de_preuve() -> bool:
+    """D-2026-09-11-a (validee par l utilisateur) : sous le plancher
+    d echappement, UN seul tirage de preuve par palier. Reglage
+    `tirage_de_preuve` pour l A/B."""
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("tirage_de_preuve", True))
+    except Exception:  # noqa: BLE001
+        return True
 
-        [2, 4], 3  ->  [2, 2, 2, 4, 4, 4]
+
+def _paliers_avec_tirages(echelle: list, tirages: int, plancher: int = 0,
+                          preuve: int = 1) -> list:
+    """Repete chaque palier `tirages` fois, dans l ordre — sauf SOUS le
+    plancher d echappement, ou chaque palier n a droit qu a `preuve` tirage.
+
+        [2, 4], 3              ->  [2, 2, 2, 4, 4, 4]
+        [2, 4], 3, plancher=4  ->  [2, 4, 4, 4]
+
+    ⚠️ D-2026-09-11-a. Mesure sur carte-08 (56 composants, plancher 4,
+    budget 1800 s) : trois tirages a 2 couches (fige 80 %, 69 %, fige 80 %)
+    ont brule TOUT le budget et le palier 4 a rendu « 0 % (aucun moteur) »,
+    deux essais de suite. On garde le depart a 2 couches — le client ne paie
+    pas une couche sur une prevision (decision du 2026-08-29) — mais la
+    preuve « 2 ne suffisent pas » ne coute plus qu un tirage. Les bonus de
+    tirages a portee de 100 % (`_tirages_bonus`) s appliquent toujours.
 
     L ordre compte : on epuise 2 couches AVANT de payer 4, une carte a moins de
     couches coutant moins cher a fabriquer.
@@ -1310,7 +1425,8 @@ def _paliers_avec_tirages(echelle: list, tirages: int) -> list:
     """
     if tirages <= 1:
         return list(echelle)
-    return [palier for palier in echelle for _ in range(tirages)]
+    return [palier for palier in echelle
+            for _ in range(max(1, preuve) if palier < plancher else tirages)]
 
 
 def _est_une_panne(res) -> bool:
@@ -1386,6 +1502,56 @@ def _palier_meilleur(candidat: tuple, reference: tuple) -> bool:
 # essaye le 2026-08-28 (tous les paliers a 0 %, revert). Les tirages restent
 # entiers ; seuls ceux d un palier hors d atteinte sont abandonnes.
 _SEUIL_REDRAW_PCT: int = 80
+
+
+def _vaut_la_peine_de_proteger(pct) -> bool:
+    """Le meilleur board merite-t-il d etre COMPLETE au palier suivant ?
+    Meme seuil que le re-tirage : sous `_SEUIL_REDRAW_PCT`, ses pistes sont un
+    handicap, pas un acquis (carte-08 : 55 % proteges -> 59 % fige)."""
+    try:
+        return int(pct) >= _SEUIL_REDRAW_PCT
+    except Exception:  # noqa: BLE001
+        return False
+
+# En dessous de ce pourcentage, un placement dont TOUS les tirages ont fige
+# est CONDAMNE : ni « derniere chance », ni repli GND — on rend la main pour
+# que l appelant RE-PLACE. Mesure du 2026-09-10 sur carte-05, essai 1 :
+#
+#     tirages figes a 62 %, 23 %, 0 %        3 min
+#     derniere chance (job mene a son terme)  10 min   -> 0 %
+#     repli GND sur ce board                   8 min   -> 0 %
+#     total                                   21 min   pour un board a 0 %
+#
+# Le placement suivant, lui, a route a 100 % en 30 s. Vingt minutes de
+# routage ne rachetent pas un placement inroutable ; trois minutes de
+# re-placement, si. La derniere chance reste pour les cartes a portee (mesure
+# nucleo-f401 : tirages figes a 43-79 %, la derniere chance a rendu un board).
+# Decision D-2026-09-10-d (levier valide par l utilisateur : « ne pas router
+# un placement condamne »). Reglage `condamne_pct` pour l A/B.
+_CONDAMNE_PCT: int = 50
+
+
+def _escalade_incrementale() -> bool:
+    """Le palier suivant garde-t-il les pistes du meilleur board du palier
+    quitte ? Defaut : oui (D-2026-09-10-b). Reglage `escalade_incrementale`
+    pour l A/B — la mesure anterieure (kicad-tools, `--preserve-existing`)
+    est perimee et ne vaut pas pour Freerouting."""
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("escalade_incrementale", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _placement_condamne(fige_max: int) -> bool:
+    """Tous les tirages ont fige et le meilleur d entre eux reste sous le
+    seuil : la carte n est pas a portee, on ne paie pas la derniere chance."""
+    try:
+        from tools.reglages_banc import reglage
+        seuil = int(reglage("condamne_pct", _CONDAMNE_PCT))
+    except Exception:  # noqa: BLE001
+        seuil = _CONDAMNE_PCT
+    return fige_max < seuil
 
 
 def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
@@ -1487,8 +1653,20 @@ def _escalade_peut_aider(percent_moteur: int, erreurs: int,
     # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
     # justifie l escalade ; dix nets de plan ne la justifient pas.
     if manquants:
-        plan = set(_NETS_CONFIES_AU_PLAN) or _NETS_DE_PLAN_CONNUS
-        if set(manquants) <= plan:
+        # ⚠️ PLUS DE REPLI SUR `_NETS_DE_PLAN_CONNUS` ICI (2026-09-10). Depuis
+        # qu on route GND (decision validee par l utilisateur), une liste vide
+        # signifie « rien n est confie au plan » — pas « on ne sait pas ». Le
+        # repli faisait retomber sur {GND, AGND, DGND} et REFUSAIT d escalader
+        # sur une masse manquante, alors qu elle est desormais une piste comme
+        # une autre, que du cuivre en plus peut relier. Garde :
+        # tests/test_escalade_selon_le_net.py (un net de masse NON confie au
+        # plan fait escalader).
+        # On lit la CONSTANTE, pas la fonction : le module la reaffecte lui-meme
+        # (`global`) pendant `_router_en_incluant_gnd`, et les gardes la
+        # monkeypatchent. Lire la fonction ici rendrait ces deux mecanismes
+        # inertes — mesure : deux gardes rouges sur une regle pourtant juste.
+        plan = set(_NETS_CONFIES_AU_PLAN)
+        if plan and set(manquants) <= plan:
             return False
     return percent_moteur < 100
 
@@ -1681,9 +1859,49 @@ def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
 # quel que soit le nombre de couches. En 4 couches cela donne GND/SIG/SIG/GND,
 # un empilage blinde ; les couches internes restent aux signaux.
 #
-# Garde : tests/test_ground_planes_avant_routage.py.
+# ⚠️ COMPLETEE PAR D-2026-09-12-b (validee « Gi » = go, 2026-09-12) : a partir
+# de 4 couches, GND vit AUSSI sur In1.Cu. Mesure carte-10 (6 tirages a 4 et
+# 6 couches) et stm32-100 (4 tirages a 4 couches) : les tirages sortent a
+# 96-98 % sur la MEME rupture, le via d echappement d une broche GND du
+# LQFP atterrit sur B.Cu dans un ilot de 1 mm2 isole par les pistes, l ilot
+# ne se coud pas, il est retire, la broche reste orpheline. Les couches
+# internes n avaient AUCUN plan : un via traversant n y trouvait rien. Un
+# plan interne est continu — aucune piste ne le decoupe — et tout via GND
+# le rejoint, ou qu il tombe. C est l empilage standard a 4 couches.
+#
+# ⚠️ REFUTEE PAR LA MESURE UNE HEURE PLUS TARD (banc 2d, carte-08, placement
+# gele identique) : sans plan interne 100 % a 4 couches ; avec, 67 / 96 / 88 /
+# 96 / 96 / 94 / 96 % de 2 a 8 couches, jamais 100. Le plan In1 retire une
+# couche entiere aux signaux d un LQFP qui en manque deja, et l ilot GND
+# F.Cu <-> B.Cu subsiste (l ilot n est pas relie a In1 non plus). Le levier
+# reste disponible comme reglage de BANC (`plan_gnd_interne`), desactive par
+# defaut : une mesure a tue la proposition, c est son travail.
+#
+# Garde : tests/test_ground_planes_avant_routage.py,
+# tests/test_plan_gnd_interne_des_quatre_couches.py.
 
 _GROUND_PLANE_LAYERS: tuple[str, ...] = ("F.Cu", "B.Cu")
+_PLAN_INTERNE: str = "In1.Cu"
+_PLAN_INTERNE_DES_COUCHES: int = 4
+
+
+def _couches_du_plan(pcb_bytes: bytes) -> tuple[str, ...]:
+    """Couches ou couler le plan GND : les deux faces — plus In1.Cu, des que
+    le board declare 4 couches cuivre, SEULEMENT sous le reglage de banc
+    `plan_gnd_interne` (refute par la mesure, voir ci-dessus)."""
+    couches = _GROUND_PLANE_LAYERS
+    from tools.reglages_banc import reglage  # relu a chaque appel, comme ses soeurs
+    if not bool(reglage("plan_gnd_interne", False)):
+        return couches
+    try:
+        if _count_copper_layers(pcb_bytes) >= _PLAN_INTERNE_DES_COUCHES:
+            bloc = _layers_block(pcb_bytes.decode("utf-8", errors="replace"))
+            declarees = {c.strip('"') for c in _COPPER_LAYER_RE.findall(bloc)}
+            if bloc and _PLAN_INTERNE in declarees:
+                couches = ("F.Cu", _PLAN_INTERNE, "B.Cu")
+    except Exception:  # noqa: BLE001 — un plan en moins, jamais une panne
+        return _GROUND_PLANE_LAYERS
+    return couches
 _EDGE_COORD_RE = re.compile(
     r"\((?:start|end|xy)\s+(-?[\d.]+)\s+(-?[\d.]+)\)"
 )
@@ -1808,8 +2026,16 @@ _ZONE_RE = re.compile(r"^Zone\s+\[")
 _ZONE_NET_RE = re.compile(r"^Zone\s+\[([^\]]*)\]")
 
 
-def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
+def _pads_isolees_du_plan(rapport_drc: dict,
+                          pcb_bytes: Optional[bytes] = None) -> list[tuple[str, str]]:
     """Broches que le DRC signale comme non reliees A UNE ZONE.
+
+    ⚠️ Avec le board (`pcb_bytes`), une rupture d un net de plan decrite SANS
+    pastille — « Track [GND] <-> Via [GND] » — designe la pastille sur
+    laquelle l item est pose. Mesure du 2026-09-12 (stm32-100, quatre tirages
+    a 96 %) : U1-8 portait un troncon de 1,2 mm vers un via que le retrait
+    des ilots avait emporte ; le DRC nommait le troncon, jamais la broche, et
+    le repli GND cible ne se declenchait pas.
 
     ⚠️ Les paires « pad <-> pad » relevent en general du ROUTAGE : y poser un via
     ne relierait rien. MAIS si le net est pris en charge par un PLAN, un via sous
@@ -1830,6 +2056,9 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
         ]
         pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descriptions) if m]
         touche_zone = any(_ZONE_RE.match(d) for d in descriptions)
+        if not pads and pcb_bytes:
+            isolees.extend(_pastilles_sous_les_items(item, pcb_bytes))
+            continue
         if not touche_zone:
             # Paire pad <-> pad : on ne la retient que si le net est confie a un
             # plan, seul cas ou un via repare quelque chose.
@@ -1839,6 +2068,38 @@ def _pads_isolees_du_plan(rapport_drc: dict) -> list[tuple[str, str]]:
         for m in pads:
             isolees.append((m.group(3), m.group(1)))
     return isolees
+
+
+_ITEM_NET_RE = re.compile(r"^\w+\s+\[([^\]]*)\]")
+_TOLERANCE_ITEM_SUR_PASTILLE_MM = 0.05
+
+
+def _pastilles_sous_les_items(item: dict, pcb_bytes: bytes) -> list[tuple[str, str]]:
+    """Pastilles d un net de plan sur lesquelles un item du rapport est pose."""
+    import math
+    trouvees: list[tuple[str, str]] = []
+    nets = set()
+    for i in item.get("items") or []:
+        m = _ITEM_NET_RE.match(str(i.get("description", "")))
+        if m:
+            nets.add(m.group(1))
+    if not nets or not nets.issubset(set(_NETS_CONFIES_AU_PLAN)):
+        return trouvees
+    try:
+        positions = _positions_des_pastilles(pcb_bytes, nets)
+    except Exception:  # noqa: BLE001 — une reparation ne leve jamais
+        return trouvees
+    for i in item.get("items") or []:
+        pos = i.get("pos") or {}
+        try:
+            x, y = float(pos["x"]), float(pos["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for (ref, pad), (px, py) in positions.items():
+            if (math.hypot(px - x, py - y) <= _TOLERANCE_ITEM_SUR_PASTILLE_MM
+                    and (ref, pad) not in trouvees):
+                trouvees.append((ref, pad))
+    return trouvees
 
 
 # Regles ouvertes pour une carte portant un boitier fine-pitch. Valeurs
@@ -1870,7 +2131,19 @@ def _projet_kicad(pcb_bytes: bytes):
     chez JLCPCB. La condition est la presence reelle d un boitier dense — meme
     critere que le halo d escape et le keepout de coulee.
     """
+    # ⚠️ D-2026-09-12-a (option B, validee) : le routage juge aux REGLES
+    # STANDARD, comme la chaine et la commande JLCPCB. Les regles ouvertes
+    # (percage 0,15 mm, option payante) faisaient dire « 100 %, 0 erreur » a un
+    # board que la chaine refusait — deux instruments, deux verdicts. Elles
+    # restent disponibles comme levier de BANC (`regles_fine_pitch`).
     if not _boites_fine_pitch(pcb_bytes):
+        return None
+    try:
+        from tools.reglages_banc import reglage
+        ouvrir = bool(reglage("regles_fine_pitch", False))
+    except Exception:  # noqa: BLE001
+        ouvrir = False
+    if not ouvrir:
         return None
     return {
         "board": {"design_settings": {"rules": dict(_REGLES_FINE_PITCH)}},
@@ -1926,7 +2199,26 @@ def _aggrave_le_board(avant: bytes, apres: bytes, *,
             "garde « ne peut qu ameliorer » : aucun verdict DRC — le candidat "
             "est refuse, le board recu est conserve")
         return True
-    return _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+    aggrave = _compte_erreurs(r_apres) > _compte_erreurs(r_avant)
+    if aggrave:
+        # ⚠️ DIRE quelles erreurs : « erreurs ajoutees — board conserve » a
+        # refuse la repose des vias GND du LQFP pendant toute une soiree
+        # (2026-09-11) sans jamais nommer l erreur qu elle ajoutait.
+        logger.warning("garde « ne peut qu ameliorer » : erreurs ajoutees %s",
+                       _erreurs_ajoutees(r_avant, r_apres))
+    return aggrave
+
+
+def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
+    """{type: +n} des erreurs DRC en plus dans `r_apres` (types en hausse seulement)."""
+    def _par_type(rap):
+        c: dict = {}
+        for v in (rap or {}).get("violations") or []:
+            if isinstance(v, dict) and v.get("severity") == "error":
+                c[v.get("type", "?")] = c.get(v.get("type", "?"), 0) + 1
+        return c
+    a, b = _par_type(r_avant), _par_type(r_apres)
+    return {k: b[k] - a.get(k, 0) for k in sorted(b) if b[k] > a.get(k, 0)}
 
 
 def _rapport_drc(pcb_bytes: bytes) -> dict:
@@ -1974,6 +2266,22 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
 # Un nom inconnu ferait rejeter le DSN par Freerouting.
 _PADSTACK_VIA = "Via[0-1]_600:300_um"
 
+# ⚠️ CE NOM N EST JUSTE QUE SUR DEUX COUCHES. pcbnew nomme le padstack par
+# l intervalle de couches du via : `Via[0-1]` a 2 couches, `Via[0-3]` a 4,
+# `Via[0-5]` a 6. Mesure du 2026-09-11, 09:08, palier 4 couches :
+# « Wiring.read_via_scope: via padstack not found » — Freerouting JETAIT tous
+# les vias injectes (dogbones, vias reserves, vias des pistes protegees), et
+# l escalade rendait 79 % apres 88 % a 2 couches. Le nom est donc lu dans le
+# DSN au moment de l injection ; la constante ne sert que de PLACEHOLDER.
+_USE_VIA_RE = re.compile(r'\(use_via\s+"?([^"\s()]+)"?\s*\)')
+
+
+def _padstack_via_du_dsn(dsn_text: str) -> str:
+    """Le padstack de via que CE DSN declare (`(use_via "…")`), ou la
+    constante a 2 couches s il n en declare aucun."""
+    m = _USE_VIA_RE.search(dsn_text or "")
+    return m.group(1) if m else _PADSTACK_VIA
+
 # Vias reserves pour l appel de routage en cours. Variable de module parce que
 # `_export_specctra` est appele depuis deux chemins (API et sous-processus)
 # et qu il faut injecter aux DEUX — un seul site oublie et la reservation ne
@@ -2013,7 +2321,26 @@ def _bloc_wiring(vias: list, net: str) -> str:
             % (_PADSTACK_VIA, x_nm / 1000.0, -y_nm / 1000.0,
                _nom_pour_dsn(str(net_via)))
         )
+        # ⚠️ LE TRONCON AUSSI. Mesure du 2026-09-11 (carte-08) : le via etait
+        # protege, pas le troncon pastille -> via ; le routeur posait un
+        # signal dans ce couloir de 1,2 mm, la repose du troncon echouait, et
+        # le DRC final separait « Via [GND] <-> Pad 23 [GND] of U1 ». Le via
+        # seul ne reserve rien : c est le troncon qui relie la pastille.
+        # Sans nom de couche on ne devine pas — un troncon sur la mauvaise
+        # face serait un court-circuit, pas une approximation.
+        if (isinstance(via, dict) and via.get("layer_nom")
+                and via.get("pad_x") is not None and via.get("pad_y") is not None):
+            lignes.append(
+                "    (wire (path %s %.1f %.1f %.1f %.1f %.1f) (net %s) (type protect))"
+                % (via["layer_nom"], _TRONCON_LARGEUR_MM * 1000.0,
+                   via["pad_x"] / 1000.0, -via["pad_y"] / 1000.0,
+                   x_nm / 1000.0, -y_nm / 1000.0, _nom_pour_dsn(str(net_via))))
     return chr(10).join(lignes)
+
+
+# Largeur du troncon pastille -> via reserve, celle que pose le runner
+# (`trace_mm`, 0,25 mm par defaut).
+_TRONCON_LARGEUR_MM: float = 0.25
 
 
 
@@ -2021,6 +2348,54 @@ def _bloc_wiring(vias: list, net: str) -> str:
 # module, comme `_VIAS_RESERVES` : le DSN est construit plusieurs frames plus
 # bas, et le faire descendre par signature traverserait toute la cascade.
 _PISTES_A_PROTEGER: Optional[bytes] = None
+
+# Positions (mm) des pastilles encore NON RELIEES du meilleur board au moment
+# de l escalade : autour d elles, les pistes protegees sont LIBEREES.
+#
+# ⚠️ Question de l utilisateur, 2026-09-11 : « comment escalade-t-on a 4
+# couches en gardant 96 % ? avec deux couches de plus c est impossible que ce
+# ne soit pas 100 % ». Mesure carte-08 : les nets restants sont `GND` et un
+# signal, et le fanout dit « aucune sortie degagee » — la pastille est
+# ENCERCLEE par les pistes du palier precedent, que l escalade protege
+# toutes. Deux couches libres ne servent a rien si aucun via ne peut etre
+# pose a cote de la pastille. On protege donc tout SAUF un rayon de
+# `_RAYON_LIBERATION_MM` autour de chaque pastille non reliee : le routeur y
+# reprend la main. Reglage `liberer_autour_des_non_reliees`.
+_ZONES_LIBEREES: list = []
+# ⚠️ Rayon = la place d UN via (0,6 mm + 2 x 0,2 mm de degagement), pas plus.
+# Premiere version a 2,5 mm, mesuree sur carte-08 le 2026-09-11 : 159 des 372
+# segments proteges liberes autour de 14 pastilles — 43 % du routage rendu au
+# routeur, qui a fait PIRE (92 % -> 79 %). Un LQFP au pas de 0,5 mm a des
+# dizaines de pistes dans 2,5 mm. Et si malgre tout la liberation depasse
+# `_PART_LIBERATION_MAX`, on renonce a liberer : proteger tout vaut mieux que
+# tout rejouer.
+_RAYON_LIBERATION_MM: float = 1.2
+_PART_LIBERATION_MAX: float = 0.25
+
+
+def _positions_non_reliees(rapport_drc: dict) -> list:
+    """Positions (mm) des items des connexions manquantes du rapport DRC."""
+    out = []
+    for item in (rapport_drc or {}).get("unconnected_items", []) or []:
+        for i in item.get("items") or []:
+            pos = i.get("pos") or {}
+            try:
+                out.append((float(pos["x"]), float(pos["y"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def _liberation_active() -> bool:
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("liberer_autour_des_non_reliees", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _pres_d_une_zone_liberee(x: float, y: float, zones, rayon: float) -> bool:
+    return any((x - zx) ** 2 + (y - zy) ** 2 <= rayon * rayon for zx, zy in zones)
 
 # ⚠️ NOM DISTINCT de `_SEGMENT_RE` (ligne ~847), qui sert a `_track_length_mm`
 # et ne capture que quatre groupes. Reutiliser le nom l ecrasait EN SILENCE :
@@ -2040,6 +2415,7 @@ _SEGMENT_COMPLET_RE = re.compile(
 _NET_NOM_RE = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
 
 
+_CHAMP_AT_RE = re.compile(r"\(at\s+(-?[\d.]+)\s+(-?[\d.]+)")
 _CHAMP_START_RE = re.compile(r"\(start\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
 _CHAMP_END_RE = re.compile(r"\(end\s+(-?[\d.]+)\s+(-?[\d.]+)\)")
 _CHAMP_WIDTH_RE = re.compile(r"\(width\s+([\d.]+)\)")
@@ -2105,6 +2481,51 @@ def _connexion_pleine(pcb_bytes: bytes, pastilles) -> bytes:
     return texte.encode("utf-8")
 
 
+def _pastilles_sur_le_plan_sans_raccord(rapport: dict) -> list[tuple[str, str]]:
+    """(reference, pastille) de chaque pastille que le DRC declare separee de
+    la ZONE de son propre net : « Pad 1 [GND] of U2 on F.Cu <-> Zone [GND] ».
+
+    Mesure du 2026-09-11 (carte-08, a CHAQUE tirage) : U2.1 est sur le plan,
+    le cuivre l entoure, et le relief thermique ne la rejoint pas — « le
+    cuivre est la, la connexion non ». La fanout renonce (aucune sortie) ;
+    la connexion pleine, elle, ne demande aucune place.
+    """
+    trouvees: list[tuple[str, str]] = []
+    for item in (rapport or {}).get("unconnected_items") or []:
+        descs = [str(i.get("description", "")) for i in (item.get("items") or [])]
+        pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descs) if m]
+        zones = [m for m in (_ZONE_NET_RE.match(d) for d in descs) if m]
+        if len(pads) != 1 or not zones:
+            continue
+        if pads[0].group(2) != zones[0].group(1):
+            continue
+        cle = (pads[0].group(3), pads[0].group(1))
+        if cle not in trouvees:
+            trouvees.append(cle)
+    return trouvees
+
+
+_DOSSIER_TRACES = Path(os.environ.get("CIRQIX_TRACES_ROUTAGE", "/tmp/traces-routage"))
+_TRACES_MAX = 12
+
+
+def _garder_une_trace(final: bytes) -> None:
+    """Ecrit le board FINAL de chaque appel dans `_DOSSIER_TRACES` (les
+    `_TRACES_MAX` derniers). La chaine du banc n ecrit un board qu en fin
+    d essai : entre-temps, un defaut vu au DRC (« Via [GND] <-> Pad 23 of
+    U1 ») n a AUCUN artefact a inspecter. Jamais une panne : au moindre
+    doute, on n ecrit rien."""
+    try:
+        _DOSSIER_TRACES.mkdir(parents=True, exist_ok=True)
+        anciens = sorted(_DOSSIER_TRACES.glob("*.kicad_pcb"))
+        for vieux in anciens[:max(0, len(anciens) - _TRACES_MAX + 1)]:
+            vieux.unlink()
+        nom = time.strftime("%Y%m%dT%H%M%S") + "-%d.kicad_pcb" % os.getpid()
+        (_DOSSIER_TRACES / nom).write_bytes(final)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
     """Promeut les pastilles affamees en connexion pleine, puis recoule.
 
@@ -2119,6 +2540,10 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
     """
     rapport = _rapport_drc(pcb_bytes)
     pastilles = _pastilles_affamees(rapport)
+    # Meme remede pour la pastille que sa zone entoure sans la raccorder.
+    for cle in _pastilles_sur_le_plan_sans_raccord(rapport):
+        if cle not in pastilles:
+            pastilles.append(cle)
     if not pastilles:
         return pcb_bytes
 
@@ -2136,15 +2561,21 @@ def _reparer_reliefs_affames(pcb_bytes: bytes) -> bytes:
         logger.warning(
             "reliefs thermiques : aucun verdict DRC — board recu conserve")
         return pcb_bytes
-    avant, apres = _compte_erreurs(rapport), _compte_erreurs(rapport_rempli)
-    if apres < avant:
+    avant = (_compte_erreurs(rapport), len(rapport.get("unconnected_items") or []))
+    apres = (_compte_erreurs(rapport_rempli),
+             len(rapport_rempli.get("unconnected_items") or []))
+    # ⚠️ Les liaisons manquantes comptent aussi : une pastille sans raccord
+    # n est pas une erreur DRC, c est une connexion absente.
+    if _secours_est_meilleur(avant, apres):
         logger.info(
             "reliefs thermiques : %d pastille(s) passee(s) en connexion pleine "
-            "— %d erreur(s) -> %d", len(pastilles), avant, apres)
+            "— (%d erreur, %d manquante) -> (%d erreur, %d manquante)",
+            len(pastilles), avant[0], avant[1], apres[0], apres[1])
         return rempli
     logger.warning(
-        "reliefs thermiques : promotion REFUSEE (%d erreur(s) -> %d) — "
-        "board conserve", avant, apres)
+        "reliefs thermiques : promotion REFUSEE ((%d erreur, %d manquante) -> "
+        "(%d erreur, %d manquante)) — board conserve",
+        avant[0], avant[1], apres[0], apres[1])
     return pcb_bytes
 
 
@@ -2203,7 +2634,7 @@ def _champs_de_segment(bloc: str):
             w.group(1), c.group(1), n.group(1) or "", n.group(2) or "")
 
 
-def _bloc_wiring_pistes(pcb_bytes) -> str:
+def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
     """Pistes du board, au format Specctra, marquees `(type protect)`.
 
     ⚠️ RAISON D ETRE : le DSN produit par pcbnew porte un bloc `(wiring)` VIDE
@@ -2231,15 +2662,23 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
     # routage. Les traiter l un OU l autre perdait l un des deux.
     if isinstance(pcb_bytes, (list, tuple)):
         return chr(10).join(
-            x for x in (_bloc_wiring_pistes(b) for b in pcb_bytes) if x)
+            x for x in (_bloc_wiring_pistes(b, liberer=liberer) for b in pcb_bytes) if x)
     txt = pcb_bytes.decode("utf-8", "replace")
     noms = {int(n): nom for n, nom in _NET_NOM_RE.findall(txt)}
+    zones = list(liberer or ())
+    liberes = 0
     lignes = []
     for bloc in _blocs_equilibres(txt, "(segment"):
         champs = _champs_de_segment(bloc)
         if champs is None:
             continue
         x1, y1, x2, y2, largeur, couche, num, nomme = champs
+        # Autour d une pastille non reliee, on ne protege RIEN : le routeur
+        # doit pouvoir y poser un via (voir `_ZONES_LIBEREES`).
+        if zones and (_pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
+                      or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
+            liberes += 1
+            continue
         # Forme nommee : le nom est la. Forme numerotee : on cherche la
         # declaration ; absente, on ECARTE — jamais on ne devine un net.
         if nomme:
@@ -2256,6 +2695,38 @@ def _bloc_wiring_pistes(pcb_bytes) -> str:
                float(x1) * 1000.0, -float(y1) * 1000.0,
                float(x2) * 1000.0, -float(y2) * 1000.0,
                _nom_pour_dsn(nom)))
+    # ⚠️ LES VIAS AUSSI. On ne protegeait que les segments : chaque changement
+    # de couche d une piste protegee etait ROMPU, et le routeur devait refaire
+    # ces nets — mesure du 2026-09-11 : 88 % a 2 couches, 79 % a 4 « avec »
+    # 673 pistes protegees. Meme transformation d unites que les segments ;
+    # le padstack est un placeholder remplace par celui du DSN a l injection.
+    for bloc in _blocs_equilibres(txt, "(via"):
+        at = _CHAMP_AT_RE.search(bloc)
+        n = _CHAMP_NET_RE.search(bloc)
+        if not (at and n):
+            continue
+        num, nomme = n.group(1) or "", n.group(2) or ""
+        nom = nomme or (noms.get(int(num)) if num and int(num) else None)
+        if not nom:
+            continue
+        if zones and _pres_d_une_zone_liberee(float(at.group(1)), float(at.group(2)),
+                                              zones, _RAYON_LIBERATION_MM):
+            liberes += 1
+            continue
+        lignes.append(
+            '    (via "%s" %.1f %.1f (net %s) (type protect))'
+            % (_PADSTACK_VIA, float(at.group(1)) * 1000.0,
+               -float(at.group(2)) * 1000.0, _nom_pour_dsn(nom)))
+    if liberes:
+        total = liberes + len(lignes)
+        if total and liberes / total > _PART_LIBERATION_MAX:
+            logger.warning("pistes protegees : liberer %d/%d elements (%.0f %%) rendrait au "
+                           "routeur presque tout le palier precedent — on protege TOUT",
+                           liberes, total, 100.0 * liberes / total)
+            return _bloc_wiring_pistes(pcb_bytes, liberer=None)
+        logger.info("pistes protegees : %d segment(s)/via(s) LIBERE(S) autour de %d "
+                    "pastille(s) non reliee(s) (rayon %.1f mm) — le routeur y reprend la main",
+                    liberes, len(zones), _RAYON_LIBERATION_MM)
     return chr(10).join(lignes)
 
 
@@ -2471,12 +2942,18 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
     # Les pistes deja routees du meilleur board, protegees pour le palier
     # suivant : c est ce qui rend l escalade CUMULATIVE au lieu de repartir de
     # zero a chaque fois.
-    fils = _bloc_wiring_pistes(pistes) if pistes else ""
+    fils = (_bloc_wiring_pistes(pistes, liberer=_ZONES_LIBEREES if _liberation_active() else None)
+            if pistes else "")
     if declares:
         fils = _garder_les_nets_declares(fils, declares, "piste")
     bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
+    # Le padstack de via est celui de CE DSN (2, 4 ou 6 couches), jamais la
+    # constante : voir `_padstack_via_du_dsn`.
+    padstack = _padstack_via_du_dsn(dsn_text)
+    if padstack != _PADSTACK_VIA:
+        bloc = bloc.replace('"%s"' % _PADSTACK_VIA, '"%s"' % padstack)
     i = dsn_text.find("(wiring")
     if i == -1:
         logger.warning("DSN sans bloc (wiring) — reservation abandonnee")
@@ -3007,6 +3484,15 @@ def _reposer_vias_reserves(pcb_bytes: bytes, vias: list) -> bytes:
         if not sortie.is_file():
             return pcb_bytes
         repose = sortie.read_bytes()
+        try:
+            bilan = json.loads(resultat.read_text(encoding="utf-8"))
+            logger.info(
+                "repose des vias : %d posee(s) sur %d visee(s) — %d position(s) "
+                "rejouee(s), %d troncon(s) seul(s) (via deja la), %d renoncee(s)",
+                bilan.get("escaped", 0), bilan.get("vises", 0), bilan.get("reprises", 0),
+                bilan.get("troncons_seuls", 0), bilan.get("renonces", 0))
+        except Exception:  # noqa: BLE001
+            pass
     # ⚠️ NE PEUT QU AMELIORER — la garde que ses trois voisines avaient et
     # qu elle n avait pas. Les positions de ces vias sont calculees AVANT le
     # routage ; rien ne garantit qu elles restent valides sur le board final.
@@ -3145,18 +3631,22 @@ def _nets_incomplets(rapport: dict) -> set:
     d escalade. Deux extractions separees divergeraient : le message nommerait
     des nets que la decision ne verrait pas.
     """
+    # ⚠️ TOUTE forme d objet porte son net entre crochets : `PTH pad 1 [X] of
+    # J10`, `Via [GND] on F.Cu - B.Cu`, `Track [X] on F.Cu` — les deux formes
+    # ci-dessus n en voyaient que deux. Mesure du 2026-09-12 (carte-08) : une
+    # paire « PTH pad <-> Track » ne nommait aucun net, le palier restait a
+    # 100 % avec une liaison manquante, et le DRC de la chaine la comptait en
+    # erreur (« 100 %, 2 erreurs »). Un seul filet, general.
     nets = set()
     for item in rapport.get("unconnected_items") or []:
         for i in item.get("items") or []:
-            d = str(i.get("description", ""))
-            m = _PAD_ISOLEE_RE.match(d)
-            if m:
-                nets.add(m.group(2))
-                continue
-            z = _ZONE_NET_RE.match(d)
-            if z:
-                nets.add(z.group(1))
+            m = _NET_ENTRE_CROCHETS_RE.search(str(i.get("description", "")))
+            if m and m.group(1):
+                nets.add(m.group(1))
     return nets
+
+
+_NET_ENTRE_CROCHETS_RE = re.compile(r"\[([^\]]*)\]")
 
 
 def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> int:
@@ -3203,6 +3693,13 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
             "incomplet(s) sur %d — pourcentage ramene a %d %% ; net(s) : %s",
             percent_moteur, len(nets), routables, reel,
             ", ".join(sorted(nets)[:12]))
+        # ⚠️ DIRE quels OBJETS restent separes, pas seulement le net. « GND
+        # incomplet » sans pastille orpheline (2026-09-11, carte-08) peut etre
+        # deux ilots de plan, un via borgne, une piste : chacun se repare
+        # ailleurs, et le nom du net ne les distingue pas.
+        for u in manquants[:6]:
+            logger.warning("  manquant : %s", " <-> ".join(
+                str(i.get("description", "?")) for i in (u.get("items") or [])))
         return reel
     return percent_moteur
 
@@ -3432,6 +3929,28 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
         return 0
 
 
+# Au-dela de ce nombre de connexions manquantes, le repli GND n a rien a
+# refermer : il existe pour les DERNIERES broches d une carte presque complete.
+# Mesure du 2026-09-10 sur carte-08 (56 composants, 2 couches) :
+#
+#     (2 err, 36 manq) -> (2 err, 33 manq)    17 min   retenu, +3 connexions
+#     (5 err, 10 manq) -> (5 err, 27 manq)    11 min   REFUSE
+#
+# et le 2026-09-02 : 11 replis, 0 retenu. Un tirage de placement coute 75 s
+# et un routage propre 30 s : 17 min pour trois connexions est le pire usage
+# du temps de la chaine. Reglage `repli_gnd_max_manquantes` pour l A/B.
+_REPLI_GND_MAX_MANQUANTES: int = 8
+
+
+def _repli_gnd_vaut_le_coup(manquantes: int) -> bool:
+    try:
+        from tools.reglages_banc import reglage
+        seuil = int(reglage("repli_gnd_max_manquantes", _REPLI_GND_MAX_MANQUANTES))
+    except Exception:  # noqa: BLE001
+        seuil = _REPLI_GND_MAX_MANQUANTES
+    return int(manquantes) <= seuil
+
+
 def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
     """Le board de secours vaut-il mieux que celui qu il remplacerait ?
 
@@ -3530,6 +4049,189 @@ def _router_en_incluant_gnd(pcb_bytes: bytes, req: "RouteAutoRequest",
         _PISTES_A_PROTEGER = memoire_pistes
 
 
+_FP_AT_RE = re.compile(r"\(at\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+))?")
+_REPLI_CIBLE_VOISINES = 2
+# Nombre de pastilles par boitier, releve par `_positions_des_pastilles` : les
+# voisines GND d un boitier DENSE (>= _DENSE_PAD_COUNT) passent en dernier —
+# une broche de LQFP est aussi difficile d acces que l orpheline elle-meme.
+_PADS_PAR_BOITIER: dict = {}
+
+
+def _positions_des_pastilles(pcb_bytes: bytes, nets_plan) -> dict:
+    """{(ref, pad): (x, y)} des pastilles d un net de plan, en coordonnees carte.
+
+    La rotation du boitier est appliquee : une 0402 tournee de 90 degres a
+    ses broches sur l axe y, pas sur l axe x. Rend {} au moindre doute.
+    """
+    import math
+    if not pcb_bytes or not nets_plan:
+        return {}
+    try:
+        texte = pcb_bytes.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    positions: dict = {}
+    for bloc_fp in re.split(r"\(footprint", texte)[1:]:
+        ref = (re.search(r'\(property "Reference" "([^"]+)"', bloc_fp)
+               or re.search(r'\(fp_text reference "?([^"\s\)]+)', bloc_fp))
+        at = _FP_AT_RE.search(bloc_fp)
+        if not ref or not at:
+            continue
+        _PADS_PAR_BOITIER[ref.group(1)] = bloc_fp.count('(pad "')
+        fx, fy = float(at.group(1)), float(at.group(2))
+        a = math.radians(float(at.group(3) or 0.0))
+        ca, sa = math.cos(a), math.sin(a)
+        for morceau in bloc_fp.split('(pad "')[1:]:
+            nom, reste = morceau.split('"', 1)
+            m_net = _NET_TOUTES_FORMES_RE.search(morceau)
+            m_at = _FP_AT_RE.search(reste)
+            if not m_net or m_net.group(1) not in nets_plan or not m_at:
+                continue
+            dx, dy = float(m_at.group(1)), float(m_at.group(2))
+            # KiCad : y vers le bas, rotation positive antihoraire a l ecran.
+            positions[(ref.group(1), nom)] = (fx + dx * ca + dy * sa,
+                                              fy - dx * sa + dy * ca)
+    return positions
+
+
+def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
+                       voisines: int = _REPLI_CIBLE_VOISINES) -> set:
+    """Broches Specctra `REF-PAD` rendues au routeur par le repli GND cible :
+    chaque orpheline et ses `voisines` broches du meme plan les plus proches.
+
+    Le routeur n a plus qu a tirer une piste courte de l orpheline vers une
+    broche que le plan atteint deja — au lieu de router TOUT le GND.
+    """
+    if not orphelines:
+        return set()
+    positions = _positions_des_pastilles(pcb_bytes, nets_plan)
+    if not positions:
+        return set()
+    import math
+    pins: set = set()
+    for ref, pad in orphelines:
+        cle = (str(ref), str(pad))
+        if cle not in positions:
+            continue
+        pins.add("%s-%s" % cle)
+        ox, oy = positions[cle]
+        # ⚠️ Mesure du 2026-09-11 (carte-08) : les deux voisines les plus
+        # proches de C37.2 etaient U1.23 et U1.35, deux broches de LQFP — le
+        # routeur n a rien pu tirer. On prefere une voisine d un boitier
+        # ordinaire, meme un peu plus loin.
+        autres = sorted(
+            (_PADS_PAR_BOITIER.get(k[0], 0) >= _DENSE_PAD_COUNT,
+             math.hypot(x - ox, y - oy), k)
+            for k, (x, y) in positions.items()
+            if k != cle and k not in orphelines)
+        autres = [(d, k) for _, d, k in autres]
+        for _, k in autres[:max(0, int(voisines))]:
+            pins.add("%s-%s" % k)
+        # ⚠️ DIRE le choix : le 2026-09-11 le worker rendait des broches de
+        # LQFP la ou le meme code, hors service, choisissait C32/C35.
+        logger.info(
+            "repli GND cible : %s-%s -> %d pastille(s) %s connue(s), %d candidate(s), "
+            "retenues %s", cle[0], cle[1], len(positions), "/".join(sorted(nets_plan)),
+            len(autres), ", ".join("%s-%s (%.1f mm, %d pads)" % (k[0], k[1], d, _PADS_PAR_BOITIER.get(k[0], 0))
+                                   for d, k in autres[:max(0, int(voisines))]) or "aucune")
+    return pins
+
+
+_REPLI_CIBLE_TOURS = 4
+
+
+def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: float,
+                              orphelines, final: bytes) -> tuple:
+    """Repete le repli GND cible tant qu il referme des broches (au plus
+    `_REPLI_CIBLE_TOURS` tours). Rend (board retenu, orphelines restantes).
+
+    Mesure du 2026-09-11 (carte-08) : un tour passe de 6 a 5 orphelines en
+    11 s ; s arreter la laissait 5 broches pour un repli global de 15 min.
+    """
+    for tour in range(1, _REPLI_CIBLE_TOURS + 1):
+        if not orphelines:
+            break
+        cible = _router_gnd_cible(etendu, req, budget_s, orphelines, deja_route=final)
+        if cible is None:
+            break
+        avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
+        if not _secours_est_meilleur(avant_c, apres_c):
+            logger.warning(
+                "repli GND CIBLE tour %d refuse : (%d erreur, %d manquante) "
+                "ne fait pas mieux que (%d erreur, %d manquante)",
+                tour, apres_c[0], apres_c[1], avant_c[0], avant_c[1])
+            break
+        logger.info(
+            "repli GND CIBLE tour %d retenu : (%d erreur, %d manquante) -> "
+            "(%d erreur, %d manquante)",
+            tour, avant_c[0], avant_c[1], apres_c[0], apres_c[1])
+        final = cible
+        try:
+            orphelines = _pads_isolees_du_plan(_rapport_drc(final), final)
+        except Exception:  # noqa: BLE001
+            orphelines = []
+    return final, orphelines
+
+
+def _bilan_drc(pcb_bytes: bytes) -> tuple:
+    rap = _rapport_drc(pcb_bytes)
+    return (_compte_erreurs(rap), len(rap.get("unconnected_items") or []))
+
+
+def _router_gnd_cible(pcb_bytes: bytes, req: "RouteAutoRequest", budget_s: float,
+                      orphelines, deja_route: Optional[bytes] = None):
+    """Repli GND CIBLE : rend au routeur la seule broche orpheline du plan et
+    ses voisines GND les plus proches, pistes existantes protegees.
+
+    Mesure du 2026-09-11 (carte-08, carte-10, 60 tirages rates) : le net
+    incomplet est GND dans 100 % des cas, pour UNE broche sans sortie. Le
+    repli global (`_router_en_incluant_gnd`) demande au routeur de router
+    TOUT le GND en pistes sur deux couches : « (0 erreur, 16 manquante) ne
+    fait pas mieux que (0 erreur, 2 manquante) », 0 retenu sur 11. Ici le
+    routeur ne tire qu une piste courte vers du cuivre que le plan atteint.
+
+    Rend None sur echec ; l appelant compare avant de remplacer.
+    """
+    global _PINS_GND_A_GARDER, _PISTES_A_PROTEGER, _ZONES_LIBEREES
+    nets_plan = set(_NETS_CONFIES_AU_PLAN)
+    pins = _pins_gnd_a_garder(pcb_bytes, orphelines, nets_plan)
+    if not pins:
+        return None
+    memoire_pins = _PINS_GND_A_GARDER
+    memoire_pistes = _PISTES_A_PROTEGER
+    memoire_zones = _ZONES_LIBEREES
+    try:
+        _PINS_GND_A_GARDER = frozenset(pins)
+        if deja_route:
+            _PISTES_A_PROTEGER = deja_route
+        # ⚠️ LIBERER les pistes autour de l orpheline, comme a l escalade :
+        # toutes protegees, le routeur n avait aucune place pour la piste
+        # courte — « (0 erreur, 4 manquante) ne fait pas mieux que (0, 4) ».
+        positions = _positions_des_pastilles(pcb_bytes, nets_plan)
+        _ZONES_LIBEREES = [positions[(str(r), str(p))] for r, p in orphelines
+                           if (str(r), str(p)) in positions]
+        logger.info("repli GND CIBLE : %d broche(s) rendue(s) au routeur (%s)",
+                    len(pins), ", ".join(sorted(pins)))
+        tentative = RouteAutoRequest(
+            kicad_pcb_b64=base64.b64encode(pcb_bytes).decode("ascii"),
+            layers=req.layers,
+            timeout_s=max(budget_s, _MIN_LEVEL_BUDGET_S),
+            progress_key=req.progress_key,
+        )
+        res = _route_auto_once(tentative)
+        if not res.kicad_pcb_b64 or res.skipped:
+            return None
+        board = _fill_zones(_add_ground_planes(base64.b64decode(res.kicad_pcb_b64)))
+        return _fanout_pads_isolees(board)
+    except Exception as exc:
+        logger.warning("repli GND cible impossible (%s) — sequence conservee", exc)
+        return None
+    finally:
+        _PINS_GND_A_GARDER = memoire_pins
+        _PISTES_A_PROTEGER = memoire_pistes
+        _ZONES_LIBEREES = memoire_zones
+
+
 def _fill_zones(pcb_bytes: bytes) -> bytes:
     """Remplit les zones de cuivre. Reparation : au moindre doute, board rendu tel quel.
 
@@ -3599,7 +4301,9 @@ def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
         bilan = json.loads(resultat.read_text(encoding="utf-8"))
         n = bilan.get("escaped", 0)
         renonces = bilan.get("renonces", 0)
-        logger.info("fanout: %d broche(s) sortie(s) vers le plan", n)
+        logger.info("fanout: %d broche(s) sortie(s) vers le plan (%d position(s) "
+                    "reservee(s) rejouee(s), %d visee(s))",
+                    n, bilan.get("reprises", 0), bilan.get("vises", 0))
         # ⚠️ DIRE les renoncements. Ce compteur existait, etait rendu dans le
         # resultat, et etait JETE : on abandonnait des broches en silence.
         #
@@ -3647,7 +4351,9 @@ def _fanout_pads_isolees(pcb_bytes: bytes) -> bytes:
     Garde : tests/test_fanout_jamais_regression.py.
     """
     rapport = _rapport_drc(pcb_bytes)
-    isolees = _pads_isolees_du_plan(rapport)
+    # Avec le board : une broche dont la rupture est decrite par son troncon
+    # (« Track [GND] <-> Via [GND] ») est une orpheline comme les autres.
+    isolees = _pads_isolees_du_plan(rapport, pcb_bytes)
     if not isolees:
         return pcb_bytes
 
@@ -3890,7 +4596,7 @@ def _add_ground_planes(pcb_bytes: bytes) -> bytes:
     # le DRC signale « Zone <-> Zone ». La couture est la reponse industrielle
     # standard a un plan fragmente.
     # Garde : tests/test_ground_planes_avant_routage.py.
-    a_couler = [c for c in _GROUND_PLANE_LAYERS if c not in existantes]
+    a_couler = [c for c in _couches_du_plan(pcb_bytes) if c not in existantes]
     if not a_couler:
         return pcb_bytes
 
@@ -4133,12 +4839,102 @@ def _run_pcbnew_operation(payload: dict[str, str]) -> None:
 # l echappement (`_fanout_pads_isolees`) et la couture, pas le renoncement au
 # plan. Le chiffre est consigne ici pour que la comparaison reste disponible —
 # il suffit de vider ce tuple pour la refaire.
-_NETS_CONFIES_AU_PLAN: tuple[str, ...] = ("GND",)
+# ⚠️ DECISION PRODUIT VALIDEE PAR L UTILISATEUR le 2026-09-10 : ON ROUTE GND.
+#
+# Il a montre une carte STM32 produite par un autre outil (Astra/Codex),
+# `examples/STM32-Test-2026-09-10`, **100 % routee, 0 non connecte, 0 erreur**,
+# et a releve qu elle route GND EN PISTES :
+#
+#     2 couches · 38 empreintes · 289 segments · 41 vias
+#     zone GND sur B.Cu (67 ko)  +  47 SEGMENTS de GND
+#
+# Elle a un plan ET des pistes. Ce n est pas l un OU l autre.
+#
+# ⚠️ LA RAISON EST GEOMETRIQUE. Sur deux couches, le plan B.Cu est DECOUPE par
+# les pistes de signal qui passent sur cette meme face. « Le plan relie tout »
+# est faux des que le routage le traverse — d ou nos ilots, nos
+# « 1 net incomplet ; net(s) : GND », et les DOUZE fonctions de rattrapage que
+# ce fichier porte : `_vias_gnd_preventifs`, `_vias_a_reserver`,
+# `_reposer_vias_reserves`, `_compte_ilots_de_plan`, `_recoudre_les_ilots`,
+# `_retirer_ilots_flottants`, `_sans_derniers_vias`...
+#
+# Router GND garantit la connectivite INDEPENDAMMENT de la fragmentation. Le
+# plan redevient ce qu il doit etre : une amelioration d impedance et de retour
+# de courant, pas la connexion elle-meme. On ne confie pas la connectivite a
+# quelque chose qu on va trouer.
+#
+# ⚠️ LA MESURE EXISTAIT DEJA ICI, du 2026-08-28, et elle allait dans ce sens :
+#
+#     carte          GND confie au plan        GND route en pistes
+#     arduino-uno    93 % · 1 manq · 0 err     100 % · 0 manq · 0 err
+#     nucleo-f401    81 % · 12 manq · 1 err     81 % · 12 manq · 0 err
+#
+# Router GND rendait l Arduino COMPLETE et supprimait une erreur sur la Nucleo.
+# La decision d alors fut neanmoins de garder le plan en charge — « le levier a
+# actionner est l echappement et la couture ». C est ce renoncement qui a
+# produit les douze fonctions ci-dessus, et le plantage natif de pcbnew qui
+# tue le worker sur les cartes denses (assertion `PROPERTY_ENUM`, mesuree neuf
+# fois en quarante minutes le 2026-09-10) : il tombe pendant CE
+# post-traitement.
+#
+# ⚠️ CE QUI RESTE A VERIFIER. Le depot a aussi mesure que couler le plan AVANT
+# le routage faisait passer la Nucleo de 68 % a 94 %. Il faut s assurer que ce
+# gain venait du plan lui-meme et non du fait que le routeur le VOYAIT — car un
+# GND route est vu de toute facon. Le plan reste coule avant, cette sequence ne
+# change pas.
+#
+# ⚠️ PILOTABLE, pour que l A/B reste possible sans editer ce fichier :
+# `{"gnd_route": true}` dans `/tmp/cirqix-reglages.json` route GND en pistes.
+# Le defaut est REVENU au plan le 2026-09-10 : voir la mesure dans la fonction.
+def _nets_confies_au_plan() -> tuple[str, ...]:
+    """Les nets que le routeur NE route pas, laisses au plan.
+
+    ⚠️ Appelee A L IMPORT pour `_NETS_CONFIES_AU_PLAN`, et directement par
+    quelques sites. Un changement de reglage exige un redemarrage du service
+    — le module reaffecte cette constante pendant `_router_en_incluant_gnd`.
+    """
+    # MESURE DU 2026-09-10 (A/B, MEME board place, carte-05, 2 couches) :
+    #
+    #     GND en pistes    92 %   92 %    119-154 s
+    #     GND au plan     100 %  100 %     27-31 s
+    #
+    # Router GND en pistes sur DEUX couches coute le 100 % et quintuple le
+    # temps : chaque piste de masse coupe le plan et occupe le canal des
+    # signaux. La reference STM32 d Astra route GND en pistes sur SIX couches,
+    # avec deux plans dedies — pas notre cas. Sur nos cartes, la pratique pro
+    # (docs/methodologie-routage.md, Hartley/Bogatin/IPC) est le plan coule sur
+    # les faces exterieures, avec dogbones et couture — ce que la sequence
+    # ci-dessous fait deja. Decision D-2026-09-10-c, sous la delegation de
+    # validation confiee par l utilisateur. `{"gnd_route": true}` dans
+    # `/tmp/cirqix-reglages.json` remet GND en pistes pour un A/B.
+    try:
+        from tools.reglages_banc import reglage
+        if bool(reglage("gnd_route", False)):
+            return ()
+    except Exception:  # noqa: BLE001
+        pass
+    return ("GND",)
+
+
+# ⚠️ LUE A L IMPORT, donc un changement de reglage exige un REDEMARRAGE du
+# service. C est assume : ce module la reaffecte lui-meme (`global`) pendant
+# `_router_en_incluant_gnd`, et une valeur qui changerait sous ses pieds au
+# milieu d un routage serait pire qu une valeur figee.
+#
+# Mesure du 2026-09-10 : un reglage lu a l import rend tout A/B inerte tant
+# qu on ne redemarre pas — verifier que le `mtime` du module precede le
+# demarrage du processus avant de mesurer quoi que ce soit.
+_NETS_CONFIES_AU_PLAN: tuple[str, ...] = _nets_confies_au_plan()
 
 
 def _strip_net_from_dsn(dsn_text: str, net_name: str,
-                        garder_declaration: bool = False) -> tuple[str, int]:
+                        garder_declaration: bool = False,
+                        garder_pins=()) -> tuple[str, int]:
     """Retire les BROCHES d un net de la section network. Rend (texte, broches).
+
+    `garder_pins` (identifiants Specctra `REF-PAD`) : ces broches-la RESTENT
+    au routeur, les autres sont retirees — c est le repli GND CIBLE. Le compte
+    rendu est celui des broches retirees.
 
     `garder_declaration=False` supprime l entree entiere — le routeur ignore
     jusqu a l existence du net.
@@ -4176,6 +4972,7 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
     bloc = dsn_text[debut : i + 1]
     pins = bloc[bloc.find("(pins") :].replace("(pins", "").replace(")", "")
     n = len(pins.split())
+    gardees = [pin for pin in pins.split() if pin in set(garder_pins or ())]
 
     fin = i + 1
     while fin < len(dsn_text) and dsn_text[fin] in " " + chr(9):
@@ -4183,6 +4980,9 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
     if dsn_text[fin : fin + 1] == chr(10):
         fin += 1
     tete = dsn_text[:debut].rstrip(" " + chr(9))
+    if gardees:
+        return (dsn_text[:debut] + "(net %s (pins %s))" % (net_name, " ".join(gardees))
+                + chr(10) + dsn_text[fin:], n - len(gardees))
     if garder_declaration:
         # L indentation d origine est conservee : `tete` s arrete juste avant.
         marge = dsn_text[:debut]
@@ -4191,6 +4991,10 @@ def _strip_net_from_dsn(dsn_text: str, net_name: str,
                 + dsn_text[fin:], n)
     return tete + dsn_text[fin:], n
 
+
+# Broches `REF-PAD` d un net de plan que le repli GND CIBLE rend au routeur
+# (l orpheline et ses voisines GND les plus proches). Vide hors repli.
+_PINS_GND_A_GARDER: frozenset = frozenset()
 
 # Garder le net du plan DECLARE dans le DSN, sans broches, au lieu de le
 # supprimer. Rend resoluble la protection du cuivre de masse pose a l etape ③,
@@ -4206,7 +5010,8 @@ def _confier_au_plan(dsn_path: Path) -> int:
     total = 0
     for net in _NETS_CONFIES_AU_PLAN:
         texte, n = _strip_net_from_dsn(
-            texte, net, garder_declaration=_GARDER_LE_NET_DU_PLAN_DECLARE)
+            texte, net, garder_declaration=_GARDER_LE_NET_DU_PLAN_DECLARE,
+            garder_pins=_PINS_GND_A_GARDER)
         total += n
     if total:
         dsn_path.write_text(texte, encoding="utf-8")
@@ -4277,6 +5082,25 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
         })
     if not dsn_path.is_file():
         raise RuntimeError("pcbnew Specctra child produced no DSN output")
+    dsn_path.write_text(_marger_les_clearances(dsn_path.read_text(encoding="utf-8")),
+                        encoding="utf-8")
+
+
+# Marge donnee au routeur sur les degagements du DSN. Mesure du 2026-09-12
+# (carte-08) : « clearance 0.2000 mm ; actual 0.1987 mm » entre une piste
+# du routeur et une pastille — Freerouting travaille exactement a la regle et
+# l aller-retour Specctra (resolution 10 um, arrondis) rend 13 um de moins.
+# Un routeur qui vise 5 % plus large ne peut plus tomber sous la regle.
+_MARGE_CLEARANCE_DSN = 1.05
+_CLEARANCE_DSN_RE = re.compile(r"\(clearance\s+([0-9.]+)")
+
+
+def _marger_les_clearances(dsn_text: str, facteur: float = _MARGE_CLEARANCE_DSN) -> str:
+    """Multiplie chaque `(clearance N ...)` des regles du DSN par `facteur`."""
+    def _rempl(m):
+        v = float(m.group(1)) * facteur
+        return "(clearance %s" % (("%.1f" % v).rstrip("0").rstrip("."))
+    return _CLEARANCE_DSN_RE.sub(_rempl, dsn_text)
 
 
 def _measure_routing(pcb_bytes: bytes) -> tuple[int, int]:
@@ -4553,7 +5377,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                     dsn.write_text(_injecter_wiring(
                         dsn.read_text(encoding="utf-8", errors="replace"),
                         _VIAS_RESERVES,
-                        _NETS_CONFIES_AU_PLAN[0] if _NETS_CONFIES_AU_PLAN else "GND",
+                        (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
                 _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
@@ -4750,6 +5574,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
 
     Garde : tests/test_stackup_escalade.py.
     """
+    from tools.reglages_banc import journaliser_les_reglages
+    journaliser_les_reglages("routage")
     try:
         pcb_bytes = base64.b64decode(req.kicad_pcb_b64)
     except (ValueError, TypeError) as exc:
@@ -4814,13 +5640,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # ⚠️ Etat de MODULE, arme a l entree comme `_ABANDON_AUTORISE` : le laisser
     # traîner ferait proteger, dans une requete suivante, les pistes d une
     # carte qui n a rien a voir.
-    global _PISTES_A_PROTEGER
+    global _PISTES_A_PROTEGER, _ZONES_LIBEREES
     _PISTES_A_PROTEGER = None
+    _ZONES_LIBEREES = []
     # ⚠️ Etat de module : sans remise a zero on recupererait le job d une AUTRE
     # carte, routee dans la requete precedente du meme worker.
     _JOBS_ABANDONNES.clear()
     essais = _paliers_avec_tirages(
-        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER)
+        _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER,
+        plancher=plancher if _tirage_de_preuve() else 0)
+    if plancher > 2 and _tirage_de_preuve():
+        logger.info("route_auto: sous le plancher de %d couches, un seul tirage de "
+                    "preuve par palier (D-2026-09-11-a) — echelle %s", plancher, essais)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
@@ -4834,6 +5665,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
     derniere_chance_donnee = False
+    fige_max = 0  # meilleur pourcentage vu sur un tirage FIGE
     while True:
         if i_essai >= len(essais):
             # ⚠️ DERNIERE CHANCE. Tous les tirages ont fige et il ne reste
@@ -4853,6 +5685,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # sans fin.
             if (meilleur is not None or derniere_chance_donnee
                     or not _budget_suffisant(_remaining_budget_s(deadline))):
+                break
+            if _placement_condamne(fige_max):
+                logger.warning(
+                    "route_auto: placement CONDAMNE — meilleur tirage fige a "
+                    "%d%% (< %d%%) : ni derniere chance ni repli GND, on rend "
+                    "la main pour RE-PLACER (mesure carte-05 : 21 min pour 0 %%)",
+                    fige_max, _CONDAMNE_PCT)
                 break
             derniere_chance_donnee = True
             _armer_abandon(False)
@@ -4902,8 +5741,28 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Mon objection initiale citait la mesure du 2026-08-01 sur
             # `--preserve-existing` de `kct route` : un moteur que la cascade
             # n emprunte JAMAIS (16 routages sur 16 par l API Freerouting).
-            if meilleur is not None and meilleur.kicad_pcb_b64:
+            if (meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale()
+                    and not _vaut_la_peine_de_proteger(meilleur.routed_percent)):
+                # Hors de portee, on REFAIT (55 % proteges -> 59 % fige, carte-08).
+                _PISTES_A_PROTEGER = None
+                _ZONES_LIBEREES = []
+                logger.info(
+                    "route_auto: %d%% est hors de portee (seuil %d%%) — le palier "
+                    "%d couches repart de zero, rien n est protege",
+                    meilleur.routed_percent, _SEUIL_REDRAW_PCT, palier)
+            elif meilleur is not None and meilleur.kicad_pcb_b64 and _escalade_incrementale():
                 _PISTES_A_PROTEGER = [base64.b64decode(meilleur.kicad_pcb_b64)]
+                # Autour des pastilles que ce board n a PAS reliees, on ne
+                # protege rien : sinon deux couches de plus ne debloquent pas
+                # une pastille encerclee (question de l utilisateur, carte-08
+                # a 96 % de 2 a 6 couches). Un DRC du meilleur board (~5 s).
+                if _liberation_active():
+                    try:
+                        _ZONES_LIBEREES = _positions_non_reliees(
+                            _rapport_drc(_PISTES_A_PROTEGER[0]))
+                    except Exception as exc:  # noqa: BLE001
+                        _ZONES_LIBEREES = []
+                        logger.warning("liberation autour des non reliees impossible (%s)", exc)
                 # ⚠️ COMPTER les fils, ne pas se contenter d annoncer. Le
                 # 2026-08-31 au matin, ce meme mecanisme en injectait ZERO
                 # (le net nomme de KiCad 10) tout en affichant un message
@@ -4920,6 +5779,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "meilleur board (%d%%) PROTEGEES, le routeur complete "
                         "au lieu de repartir de zero",
                         palier, n_fils, meilleur.routed_percent)
+            # ⚠️ ESCALADE INCREMENTALE (D-2026-09-10-b, validee par l utilisateur
+            # le 2026-09-11 : « normalement on garde le routage et on ajoute »).
+            # Le palier suivant recoit les pistes du MEILLEUR board du palier
+            # quitte, PROTEGEES dans le DSN : il n a plus qu a router ce qui
+            # manque sur les couches ajoutees. Jusqu ici chaque palier
+            # repartait du board place — un autre tirage, donc parfois pire
+            # (stm32-100 : 99 % a 2 couches, puis 87 % a 4).
+            # La protection elle-meme est faite quinze lignes plus haut
+            # (« passage a N couches — pistes PROTEGEES ») ; l ajouter ici une
+            # seconde fois DOUBLAIT les fils dans le DSN (mesure du 2026-09-11,
+            # 09:08 : 673 pistes protegees deux fois, 4 couches -> 79 % apres
+            # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
             palier_courant, meilleur_du_palier = palier, 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
@@ -5067,6 +5938,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             logger.warning(
                 "route_auto: tirage fige a ~%d%% au palier %d couches — "
                 "on passe au tirage suivant", fige.routed_percent, palier)
+            fige_max = max(fige_max, int(fige.routed_percent or 0))
             sans_gain += 1
             continue
 
@@ -5134,9 +6006,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # ⚠️ QUELLES broches, pas seulement COMBIEN : c est leur identite
             # qui dit si ce repli a deja ete tente en vain pendant cet appel.
             try:
-                orphelines = _pads_isolees_du_plan(_rapport_drc(final))
+                rap_final = _rapport_drc(final)
+                orphelines = _pads_isolees_du_plan(rap_final, final)
             except Exception:
-                orphelines = []
+                rap_final, orphelines = {}, []
+            manquantes_avant = len((rap_final or {}).get("unconnected_items") or [])
             if (_NETS_CONFIES_AU_PLAN and orphelines
                     and _repli_deja_tente(orphelines)):
                 logger.info(
@@ -5145,14 +6019,30 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
                     len(orphelines))
             elif _NETS_CONFIES_AU_PLAN and orphelines:
-                logger.warning(
-                    "plan de masse : %d broche(s) GND non reliée(s) — "
-                    "repli sur un routage incluant GND", len(orphelines))
-                # `final` = le board ROUTE : ses pistes seront protegees, le
-                # routeur ne fera qu ajouter les liaisons GND manquantes.
-                secours = _router_en_incluant_gnd(etendu, req, restant,
-                                                  deja_route=final)
-                if secours is None:
+                # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND) :
+                # 11 s mesurees, il n est PAS soumis au seuil du repli global
+                # (qui coute 10-17 min). Repete tant qu il referme des broches.
+                final, orphelines = _repli_gnd_cible_iteratif(
+                    etendu, req, restant, orphelines, final)
+                manquantes_avant = _bilan_drc(final)[1] if orphelines else 0
+                secours = None
+                if orphelines and not _repli_gnd_vaut_le_coup(manquantes_avant):
+                    logger.info(
+                        "plan de masse : %d broche(s) GND non reliée(s) mais %d "
+                        "connexion(s) manquante(s) au total — le repli GND global ne "
+                        "referme que les dernieres broches d une carte presque "
+                        "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
+                        len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
+                    orphelines = []
+                elif orphelines and not _repli_deja_tente(orphelines):
+                    logger.warning(
+                        "plan de masse : %d broche(s) GND non reliée(s) — "
+                        "repli sur un routage incluant GND", len(orphelines))
+                    # `final` = le board ROUTE : ses pistes seront protegees, le
+                    # routeur ne fera qu ajouter les liaisons GND manquantes.
+                    secours = _router_en_incluant_gnd(etendu, req, restant,
+                                                      deja_route=final)
+                if secours is None and orphelines:
                     # ⚠️ NOTER l echec, sinon la memoire reste vide et le
                     # correctif est inerte — un repli qui rend None a coute
                     # tout son temps sans rien produire.
@@ -5199,6 +6089,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # correctifs justes qui s annulent. L ordre fait partie du
             # correctif, pas de son emballage.
             final = _retirer_ilots_flottants(final)
+            # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du
+            # 2026-09-12 (carte-08/10, stm32-100, tirages a 96-98 %) : le
+            # retrait emportait le via d echappement d une broche GND pose
+            # dans un ilot B.Cu de 1 mm2 — la broche n etait orpheline
+            # QU APRES, et plus rien ne la sortait. Le fanout prefere
+            # desormais un via qui touche le plan principal d en face.
+            final = _fanout_pads_isolees(final)
+            _garder_une_trace(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
             res.layers = _count_copper_layers(final)

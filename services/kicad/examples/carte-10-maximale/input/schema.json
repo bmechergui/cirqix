@@ -1474,5 +1474,7 @@
         }
       ]
     }
-  ]
+  ],
+  "max_layers": 6,
+  "_max_layers_note": "PLAFOND PORTE A 6 le 2026-09-10, sur demande de l utilisateur. Douze essais mesures sur ces trois cartes plafonnent a 98 % avec DEUX couches : 98/91/97/98 sur carte-08, 98/98/98/98 sur carte-09, 98/88/96/100 sur carte-10. Le plafond etait le defaut (2), donc l escalade `_layer_ladder` ne pouvait JAMAIS servir. ⚠️ Le plafond n est pas une consigne : le routeur part de 2 et ne monte que sur PREUVE d echec. Une carte qui tient sur deux couches en gardera deux — on ne vend pas du cuivre inutile, une carte 4 ou 6 couches coute plus cher a fabriquer."
 }

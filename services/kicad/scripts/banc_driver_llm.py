@@ -248,6 +248,27 @@ def executer(dossier: Path, conteneur: str) -> dict:
         # ⚠️ LE VERDICT VIENT DU BOARD, pas du resume du pipeline.
         mesures["drc_du_board"] = _drc_du_board(conteneur, board)
 
+    # ⚠️ LE BOARD PLACE NON ROUTE EST LIVRE AUSSI (2026-09-08). Demande
+    # explicite de l utilisateur — « je veux toujours voir le fichier placement
+    # et routage » — et surtout : c est le TEMOIN. Sans lui, on impute au
+    # routage des defauts qui preexistaient au placement, faute deja commise
+    # dans ce depot (204 erreurs DRC sur un board sans la moindre piste).
+    #
+    # Il ne remplace jamais `final.kicad_pcb` : ce sont deux etapes, pas deux
+    # versions. Un echec de recuperation ne fait pas echouer la carte, mais il
+    # EFFACE l ancien placement plutot que de laisser croire qu il correspond
+    # au routage livre — un temoin perime ment plus qu un temoin absent.
+    place_dist = "%s/output/5_placed.kicad_pcb" % dist
+    place_local = dossier / "expected" / "placement.kicad_pcb"
+    pris = _wsl("docker cp %s /tmp/p.kicad_pcb && cp /tmp/p.kicad_pcb %s"
+                % (shlex.quote("%s:%s" % (conteneur, place_dist)),
+                   shlex.quote(_wslifier(place_local))), 300)
+    if pris.returncode != 0:
+        place_local.unlink(missing_ok=True)
+    else:
+        mesures["board_place"] = _mesurer_board(conteneur, place_dist)
+        mesures["drc_du_placement"] = _drc_du_board(conteneur, place_dist)
+
     (dossier / "expected" / "journal.txt").write_text(journal, encoding="utf-8")
     (dossier / "expected" / "mesures.json").write_text(
         json.dumps(mesures, indent=2, ensure_ascii=False), encoding="utf-8")

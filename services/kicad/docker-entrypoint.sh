@@ -59,12 +59,39 @@ Xvfb :99 -screen 0 1024x768x24 -ac &
 # invisible — sans journal la fonction rend 0 passe plate, ce qui signifie
 # « tout va bien ».
 mkdir -p /tmp/freerouting
-java -jar /opt/freerouting/freerouting.jar \
-    --api_server.enabled=true \
-    --user_data_path=/tmp/freerouting &
+# ⚠️ Le journal grossit toute la vie de la JVM — 564 Mo mesures le 2026-09-10,
+# et c est sa TAILLE qui faisait abattre les workers (voir
+# tools/journal_freerouting.py). Il n est lu que par increments depuis le
+# depart d un job : rien d anterieur au demarrage ne sert. On repart vide.
+: > /tmp/freerouting/freerouting.log
+# ⚠️ LA JVM EST RELANCEE EN BOUCLE, et c est voulu : un job Freerouting
+# abandonne (`cancel` repond 501) CONTINUE jusqu a sa passe 999 et ralentit
+# tous les suivants. Mesure du 2026-09-10, 19:51-19:58 : huit jobs abandonnes
+# lances a une minute d intervalle, chacun a 999 passes, tous vivants en meme
+# temps dans la JVM. Le service TUE la JVM quand il abandonne un job
+# (`_tuer_la_jvm`, routers/routing.py) ; cette boucle la remet debout en
+# quelques secondes, journal vide.
+(
+  while true; do
+    : > /tmp/freerouting/freerouting.log
+    # ⚠️ `|| true` OBLIGATOIRE : le script tourne sous `set -e`, et une JVM
+    # tuee rend 143 — sans lui la boucle meurt avec elle. Mesure du
+    # 2026-09-10, 21:50 : « JVM tuee mais pas revenue en 60 s », puis trois
+    # heures de routage par le CLI (une JVM par job, 48-89 %) sans que rien
+    # ne le dise en dehors de l etiquette `freerouting-cli` du journal.
+    java -jar /opt/freerouting/freerouting.jar \
+        --api_server.enabled=true \
+        --user_data_path=/tmp/freerouting || true
+    echo "freerouting: JVM terminee, relance dans 2 s" >&2
+    sleep 2
+  done
+) &
 
 # Laisse Xvfb + la JVM Freerouting démarrer avant uvicorn
 sleep 5
 
 # 4 workers = 4 processus séparés (pcbnew n'est PAS thread-safe — cf. CLAUDE.md)
-exec uvicorn main:app --host 0.0.0.0 --port 8766 --workers 4
+# Par le lanceur, pas `uvicorn` nu : le superviseur d uvicorn 0.30 abat en 5 s
+# un worker qui ne repond pas a son ping — un worker qui route, ou qui attend
+# ses pages quand la VM pagine, n est pas pendu. Voir lancer_service.py.
+exec python3 /app/lancer_service.py main:app --host 0.0.0.0 --port 8766 --workers 4

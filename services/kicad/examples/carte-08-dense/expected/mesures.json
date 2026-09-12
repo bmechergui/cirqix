@@ -9,7 +9,7 @@
   "duree_s": 368,
   "git": "4c45c7a",
   "routed_percent": 100,
-  "drc_violations": 77,
+  "drc_violations": 356,
   "drc_clean": true,
   "fichiers_exportes": 20,
   "types_violations": "silk_overlap:38,silk_over_copper:38,track_dangling:1",
@@ -21,11 +21,14 @@
     "empreintes": 57
   },
   "drc_du_board": {
-    "violations": 40,
+    "violations": 2,
     "non_connectes": 0,
-    "types": "silk_over_copper:19,silk_overlap:19,track_dangling:1,via_dangling:1",
+    "types": "track_dangling:2",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-08-dense-t1",
+  "serigraphie_degagee": "2026-09-12"
 }

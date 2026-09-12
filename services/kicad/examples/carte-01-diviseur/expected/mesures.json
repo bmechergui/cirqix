@@ -6,26 +6,27 @@
     25,
     20
   ],
-  "duree_s": 50,
-  "git": "4c45c7a",
+  "duree_s": 48,
+  "git": "6fb7359",
   "routed_percent": 100,
-  "drc_violations": 6,
+  "drc_violations": 4,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:4,silk_over_copper:2",
+  "types_violations": "silk_overlap:4",
   "abouti": true,
   "board": {
-    "segments": 17,
-    "vias": 11,
+    "segments": 14,
+    "vias": 10,
     "zones": 2,
     "empreintes": 5
   },
   "drc_du_board": {
-    "violations": 3,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "silk_over_copper:1,silk_overlap:2",
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "serigraphie_degagee": "2026-09-12"
 }

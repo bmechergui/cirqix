@@ -23,6 +23,16 @@ services:
       - ./observability.py:/app/observability.py:ro
     environment:
       - PYTHONUNBUFFERED=1
+      # ⚠️ Un worker qui meurt pendant un routage ne dit RIEN : le client voit
+      # un `RemoteDisconnected`, le journal un `Child process died`, et aucune
+      # ligne ne designe la cause. Avec ce drapeau, un crash natif (SIGSEGV,
+      # SIGABRT, SIGBUS...) ecrit sa pile d appels Python avant de partir.
+      #
+      # ⚠️ Il ne capture PAS une mise a mort par le systeme (SIGKILL, donc
+      # l OOM killer) : ce signal ne se detourne pas. Un silence complet est
+      # donc lui-meme une information — il DESIGNE l OOM, qu on lit alors
+      # dans `dmesg` ou `/sys/fs/cgroup/memory.events`.
+      - PYTHONFAULTHANDLER=1
       - KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
       - KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
       - FREEROUTING_API_URL=http://127.0.0.1:37864
