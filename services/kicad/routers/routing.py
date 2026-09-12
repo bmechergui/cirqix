@@ -1869,6 +1869,14 @@ def _expand_stackup(pcb_bytes: bytes, n_couches: int) -> bytes:
 # plan interne est continu — aucune piste ne le decoupe — et tout via GND
 # le rejoint, ou qu il tombe. C est l empilage standard a 4 couches.
 #
+# ⚠️ REFUTEE PAR LA MESURE UNE HEURE PLUS TARD (banc 2d, carte-08, placement
+# gele identique) : sans plan interne 100 % a 4 couches ; avec, 67 / 96 / 88 /
+# 96 / 96 / 94 / 96 % de 2 a 8 couches, jamais 100. Le plan In1 retire une
+# couche entiere aux signaux d un LQFP qui en manque deja, et l ilot GND
+# F.Cu <-> B.Cu subsiste (l ilot n est pas relie a In1 non plus). Le levier
+# reste disponible comme reglage de BANC (`plan_gnd_interne`), desactive par
+# defaut : une mesure a tue la proposition, c est son travail.
+#
 # Garde : tests/test_ground_planes_avant_routage.py,
 # tests/test_plan_gnd_interne_des_quatre_couches.py.
 
@@ -1878,9 +1886,13 @@ _PLAN_INTERNE_DES_COUCHES: int = 4
 
 
 def _couches_du_plan(pcb_bytes: bytes) -> tuple[str, ...]:
-    """Couches ou couler le plan GND : les deux faces, plus In1.Cu des que le
-    board declare au moins 4 couches cuivre (et declare bien In1.Cu)."""
+    """Couches ou couler le plan GND : les deux faces — plus In1.Cu, des que
+    le board declare 4 couches cuivre, SEULEMENT sous le reglage de banc
+    `plan_gnd_interne` (refute par la mesure, voir ci-dessus)."""
     couches = _GROUND_PLANE_LAYERS
+    from tools.reglages_banc import reglage  # relu a chaque appel, comme ses soeurs
+    if not bool(reglage("plan_gnd_interne", False)):
+        return couches
     try:
         if _count_copper_layers(pcb_bytes) >= _PLAN_INTERNE_DES_COUCHES:
             bloc = _layers_block(pcb_bytes.decode("utf-8", errors="replace"))

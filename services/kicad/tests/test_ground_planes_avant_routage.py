@@ -43,6 +43,7 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVICE_ROOT))
 
 from routers import routing as routing_router  # noqa: E402
+from tools import reglages_banc  # noqa: E402
 
 
 def _board(contour: str, gnd: str = '\t(net 3 "GND")') -> bytes:
@@ -126,9 +127,11 @@ class TestPlansDeMasse:
         assert abs(max(x for x, _ in pts) - (160.0 - marge)) < 0.01
         assert "(xy 0 0)" not in out
 
-    def test_en_quatre_couches_gnd_vit_aussi_sur_in1(self):
+    def test_en_quatre_couches_gnd_vit_aussi_sur_in1(self, monkeypatch):
         # D-2026-09-12-b : les deux faces, PLUS In1.Cu — jamais In2, qui reste
-        # aux signaux.
+        # aux signaux. Sous reglage de banc seulement (refute par la mesure).
+        monkeypatch.setattr(reglages_banc, "reglage",
+                            lambda nom, defaut: True if nom == "plan_gnd_interne" else defaut)
         quatre = routing_router._expand_stackup(_board(RECT), 4)
         out = routing_router._add_ground_planes(quatre).decode("utf-8")
         zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
@@ -269,15 +272,25 @@ class TestRegleDeCouche:
         zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
         assert zones == ["B.Cu", "F.Cu"]
 
-    def test_quatre_couches_coulent_les_deux_faces_et_in1(self):
-        # D-2026-09-12-b (validee le 2026-09-12) : a partir de 4 couches GND
-        # vit aussi sur In1.Cu, plan continu qu aucune piste ne decoupe.
+    def test_quatre_couches_coulent_les_deux_faces_par_defaut(self):
+        # D-2026-09-12-b refutee par la mesure : par defaut, les faces seules.
+        quatre = routing_router._expand_stackup(_board(RECT), 4)
+        out = routing_router._add_ground_planes(quatre).decode("utf-8")
+        zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
+        assert zones == ["B.Cu", "F.Cu"]
+
+    def test_quatre_couches_coulent_les_deux_faces_et_in1(self, monkeypatch):
+        # D-2026-09-12-b sous reglage de banc `plan_gnd_interne`.
+        monkeypatch.setattr(reglages_banc, "reglage",
+                            lambda nom, defaut: True if nom == "plan_gnd_interne" else defaut)
         quatre = routing_router._expand_stackup(_board(RECT), 4)
         out = routing_router._add_ground_planes(quatre).decode("utf-8")
         zones = sorted(re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out))
         assert zones == ["B.Cu", "F.Cu", "In1.Cu"], f"attendu les deux faces et In1, obtenu {zones}"
 
-    def test_in2_et_au_dela_restent_aux_signaux(self):
+    def test_in2_et_au_dela_restent_aux_signaux(self, monkeypatch):
+        monkeypatch.setattr(reglages_banc, "reglage",
+                            lambda nom, defaut: True if nom == "plan_gnd_interne" else defaut)
         six = routing_router._expand_stackup(_board(RECT), 6)
         out = routing_router._add_ground_planes(six).decode("utf-8")
         zones = re.findall(r'\(zone[^\n]*\(net_name "GND"\)[^\n]*\(layer "([^"]+)"', out)

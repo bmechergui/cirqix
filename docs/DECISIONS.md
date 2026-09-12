@@ -657,11 +657,19 @@ qu un nombre COMPTE avant d en tirer une decision.**
 ## D-2026-09-12-b — à partir de 4 couches, le plan GND vit aussi sur une couche INTERNE
 
 **Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
-sur l'option recommandée A). Implémentée : `_couches_du_plan` ajoute
-`In1.Cu` aux faces dès que le board déclare 4 couches cuivre ; In2 et au-delà
-restent aux signaux. Gardes : `tests/test_plan_gnd_interne_des_quatre_couches.py`,
-`tests/test_ground_planes_avant_routage.py`. Coût sur carte-08/09/10 : à mesurer
-au prochain banc.
+sur l'option recommandée A), **puis réfutée par la mesure** une heure plus
+tard. Banc 2d, carte-08, placement gelé identique :
+
+| plan GND | 2 c. | 4 c. | 6 c. | 8 c. |
+|---|---|---|---|---|
+| faces seules (matin) | 67 % | **100 %** | — | — |
+| faces + In1 | 67 % | 96 / 88 % | 96 / 96 / 94 % | 96 % |
+
+Le plan In1 retire une couche entière aux signaux du LQFP, et l'îlot GND
+F.Cu ↔ B.Cu subsiste (il n'est pas relié à In1 non plus). **Par défaut, les
+faces seules** ; le levier reste un réglage de banc (`plan_gnd_interne`),
+code et gardes conservés (`tests/test_plan_gnd_interne_des_quatre_couches.py`).
+Une mesure étaye une proposition ; elle peut aussi la tuer, et c'est son travail.
 
 Mesure du 2026-09-12 (carte-10, phase 2c, 6 tirages à 4 et 6 couches) : les
 tirages sortent à 98 % avec la MÊME rupture — « Track [GND] 1,2 mm ↔ Via
