@@ -9,7 +9,7 @@
   "duree_s": 1585,
   "git": "4c45c7a",
   "routed_percent": 100,
-  "drc_violations": 104,
+  "drc_violations": 203,
   "drc_clean": true,
   "fichiers_exportes": 20,
   "types_violations": "silk_over_copper:70,silk_overlap:34",
@@ -21,11 +21,13 @@
     "empreintes": 71
   },
   "drc_du_board": {
-    "violations": 52,
+    "violations": 203,
     "non_connectes": 0,
-    "types": "silk_over_copper:35,silk_overlap:17",
+    "types": "silk_over_copper:140,silk_overlap:58,track_dangling:5",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-10-maximale-t1"
 }
