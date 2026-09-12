@@ -923,3 +923,33 @@ def snap_cluster_members(
                          ref, cluster.anchor, dist - portee, necart)
 
     return deplaces
+
+
+def qualite_decouplage(pcb) -> tuple[float, float, int]:
+    """(moyenne, max, nombre) de l ecart LIBRE entre chaque condensateur de
+    decouplage et sa broche d alimentation la plus proche — la mesure de
+    `scripts/comparer_a_la_reference.py`, disponible AU SERVICE pour que le
+    journal dise la qualite qu il livre (2026-09-12 : 3 mm hors service,
+    31 mm par HTTP, et aucune ligne pour le voir)."""
+    fps = {f.reference: f for f in pcb.footprints if f.reference}
+    vals = []
+    for c in _clusters_natifs(_composants(pcb)):
+        if not str(getattr(c, "cluster_type", "")).upper().endswith("POWER"):
+            continue
+        ci = fps.get(c.anchor)
+        if ci is None:
+            continue
+        for r in c.members:
+            f = fps.get(r)
+            if f is None:
+                continue
+            b = _pastille_partagee(ci, f)
+            if b is None:
+                continue
+            cx, cy, hw, hh = _centre_et_demi(f)
+            dx, dy = cx - b[0], cy - b[1]
+            d = math.hypot(dx, dy) or 1e-9
+            vals.append(max(0.0, d - _portee(hw, hh, dx / d, dy / d) - 0.35))
+    if not vals:
+        return (0.0, 0.0, 0)
+    return (sum(vals) / len(vals), max(vals), len(vals))

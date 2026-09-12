@@ -2081,6 +2081,19 @@ def _redimensionner_contour(chemin: Path, largeur: float, hauteur: float) -> boo
     return True
 
 
+def _journaliser_qualite(out: Path, etape: str) -> None:
+    """Ecrit la qualite du decouplage (moy/max) du board `out` a cette etape.
+    Jamais une panne : la mesure est un temoin, pas un verrou."""
+    try:
+        from kicad_tools.schema.pcb import PCB as _PCB
+        from tools.placement_bypass import qualite_decouplage
+        moy, maxi, n = qualite_decouplage(_PCB.load(str(out)))
+        logger.info("auto_place: decouplage %s — moyenne %.1f mm, max %.1f mm (%d capa(s))",
+                    etape, moy, maxi, n)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("auto_place: decouplage %s — non mesure (%s)", etape, exc)
+
+
 def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                          board_height_mm: float) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
@@ -2475,8 +2488,9 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             else:
                 logger.info(
                     "auto_place: snap bypass — %d membre(s) de cluster ramene(s) "
-                    "a portee de leur ancre, %d conflit(s) ERROR",
-                    n_snap, n_err_apres)
+                    "a portee de leur ancre, %d conflit(s) ERROR (%d avant)",
+                    n_snap, n_err_apres, n_err_avant)
+            _journaliser_qualite(out, "apres snap")
 
         # ── Filet final : aucun composant ne sort du contour. Le GA peut parquer
         # un footprint au-delà du bord (mesuré 2026-07-30 : U1 à X=183,37 sur une
@@ -2605,6 +2619,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 "board est livre en l etat, le DRC les signalera",
                 conflits_restants)
 
+        _journaliser_qualite(out, "livre")
         footprints = PCB.load(str(out)).footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
