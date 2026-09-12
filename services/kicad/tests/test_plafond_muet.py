@@ -111,3 +111,12 @@ class TestCablage:
     def test_le_numero_de_passe_est_suivi(self):
         # Sans lui, impossible de distinguer « lent » de « muet ».
         assert "_numero_de_passe(" in self.SOURCE
+
+
+def test_un_routeur_sans_aucune_passe_est_fige_apres_dix_minutes():
+    """carte-08 (2026-09-12) : 24 min a 213 % CPU sans une ligne de passe."""
+    from routers import routing as R
+    assert R._routeur_muet(599.0, 0.0, 0) is False
+    assert R._routeur_muet(601.0, 0.0, 0) is True
+    assert R._routeur_muet(601.0, 0.0, 1) is False   # une passe vue : cadence inconnue, on attend
+    assert 300 <= R._SILENCE_SANS_PASSE_S <= 900

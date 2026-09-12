@@ -527,9 +527,20 @@ def _routeur_muet(silence_s: float, cadence_s: float, passes_vues: int) -> bool:
     ⚠️ Moins de deux passes vues : aucune cadence n est estimable. « Je n ai
     pas pu mesurer » n est pas « il est mort » — on n abandonne pas.
     """
+    # ⚠️ AUCUNE passe du tout, c est un autre cas que « peu de passes ».
+    # Mesure du 2026-09-12 (carte-08, placement gele) : 24 minutes a 213 %
+    # de CPU sans UNE ligne de passe — le routeur n a jamais fini sa
+    # premiere passe, et rien ne le coupait avant le budget. Une premiere
+    # passe met moins d une minute sur toutes les cartes du banc ; dix
+    # minutes sans elle, c est un gel.
+    if passes_vues == 0:
+        return silence_s > _SILENCE_SANS_PASSE_S
     if passes_vues < 2 or cadence_s <= 0:
         return False
     return silence_s > max(_PLAFOND_ATTENTE_S, _MARGE_CADENCE * cadence_s)
+
+
+_SILENCE_SANS_PASSE_S: float = 600.0
 
 
 # Autorise-t-on la detection de stagnation a ABANDONNER un tirage ?
