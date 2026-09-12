@@ -573,6 +573,18 @@ def _fenetre_effective(fenetre: int, autorise: bool) -> int:
     return fenetre if autorise else 0
 
 
+def _nouveau_minimum(unrouted: int, meilleur: int) -> bool:
+    """Vrai si `unrouted` est une avancee MESUREE : un compte connu (> 0) qui
+    passe SOUS le meilleur vu jusqu ici (0 = rien vu encore).
+
+    Un compte qui remonte puis redescend au meme niveau n est pas un progres,
+    c est un routeur qui tourne en rond.
+    """
+    if unrouted <= 0:
+        return False
+    return meilleur <= 0 or unrouted < meilleur
+
+
 def _temps_sans_progres(mesure_faite: bool, depuis_s: float) -> float:
     """Temps sans progres a opposer au plafond — 0 tant que rien n est mesure.
 
@@ -949,7 +961,13 @@ def _route_with_freerouting_api(
                 # passe dure plusieurs minutes. « 3 % » n etait pas un verdict,
                 # c etait un abandon premature. Mon propre commentaire disait
                 # deja « sans progres » ; le code, non.
-                if unrouted and unrouted != dernier_unrouted:
+                # ⚠️ UN PROGRES EST UN NOUVEAU MINIMUM, PAS UN CHANGEMENT.
+                # Mesure du 2026-09-12, stm32-100 : le routeur oscillait
+                # entre 1 et 2 non routes (rip-up, puis reprise) — 200
+                # changements en 35 minutes, jamais mieux que 1. Chaque
+                # changement remettait l horloge a zero : le plafond de
+                # 300 s n a jamais tire, et le tirage a tenu jusqu au budget.
+                if _nouveau_minimum(unrouted, dernier_unrouted):
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
                 passe = _numero_de_passe(derniere, short_name)
