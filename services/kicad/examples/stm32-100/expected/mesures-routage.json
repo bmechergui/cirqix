@@ -1,24 +1,24 @@
 {
   "routed_percent": 100,
   "couches": 2,
-  "vias": 167,
+  "vias": 165,
   "longueur_mm": 9376.625,
   "moteur": "freerouting-api",
   "note": "",
-  "duree_s": 207.9,
+  "duree_s": 181.3,
   "drc_du_board": {
-    "violations": 130,
+    "violations": 263,
     "non_connectes": 0,
-    "types": "silk_over_copper:73,silk_overlap:57",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "tirage": 1,
   "tirages": 2,
   "board": {
-    "segments": 808,
-    "vias": 168,
+    "segments": 547,
+    "vias": 165,
     "empreintes": 101
-  }
+  },
+  "date": "2026-09-12",
+  "methode": "placement valide (phase 1) puis routage sur placement gele (phase 2)"
 }
