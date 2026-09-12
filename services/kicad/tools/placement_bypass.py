@@ -880,9 +880,36 @@ def snap_cluster_members(
             # ⚠️ DECOUPLAGE : on vise la BROCHE, pas le corps. Voir
             # `_pastille_partagee`. Le rayon d ancre devient celui d une pastille
             # (quasi nul) : « a 3 mm » signifie alors 3 mm de la broche.
+            marge_membre = marge
+            sortant = None
             if est_power:
-                cible = _pastille_partagee(ancre, fp, exclure=pads_prises.get(cluster.anchor, ()))
+                deja = pads_prises.get(cluster.anchor, set())
+                cible = _pastille_partagee(ancre, fp, exclure=deja)
                 if cible is not None:
+                    # ⚠️ ON APPROCHE PAR L EXTERIEUR DE LA BROCHE. La direction
+                    # « du GA » va de la broche vers la position actuelle de la
+                    # capa : quand celle-ci est de l autre cote du boitier, ce
+                    # rayon traverse le CI, chaque candidat proche est occupe
+                    # par le corps, et la recherche s eloigne jusqu a 6-20 mm
+                    # (carte-08/09, 2026-09-12 : decouplages a 13-32 mm alors
+                    # que la broche etait visee). La normale sortante de la
+                    # broche — du centre du CI vers elle — pose la capa contre
+                    # sa broche, du bon cote, au premier candidat.
+                    sx, sy = cible[0] - acx, cible[1] - acy
+                    ns = math.hypot(sx, sy)
+                    if ns > 1e-6:
+                        sortant = (sx / ns, sy / ns)
+                    # ⚠️ UNE capa par broche DANS le halo, les autres DEHORS.
+                    # Mesure du 2026-09-12, carte-10 (22 decouplages pour 3
+                    # broches VDD d un LQFP-48) : les 22 collees a 2-8 mm
+                    # formaient un mur autour de la puce et le routage
+                    # s effondrait (53-85 % de 2 a 8 couches, contre 100 % a
+                    # 4 avec les capas dispersees). La capa qui COUVRE la
+                    # broche reste contre elle ; une capa supplementaire d une
+                    # broche deja couverte se pose a la marge du halo d escape
+                    # (5 mm), hors des couloirs de sortie des signaux.
+                    if cible in deja and cluster.anchor in denses:
+                        marge_membre = max(marge_mm, marge_dense_mm)
                     acx, acy = cible
                     ahw = ahh = _DEMI_MINIMUM_MM
                     pads_prises.setdefault(cluster.anchor, set()).add(cible)
@@ -902,8 +929,8 @@ def snap_cluster_members(
             # ⚠️ La marge du HALO ne vaut que pour l ancre. Les voisins gardent
             # la marge ordinaire : imposer 5 mm entre deux 0603 rendait
             # l anneau proche inhabitable et poussait la recherche au large.
-            place = _cible_libre(pcb, fp, (acx, acy), (ahw, ahh), (ux, uy),
-                                 marge, ref, ecart_actuel=dist - portee,
+            place = _cible_libre(pcb, fp, (acx, acy), (ahw, ahh), sortant or (ux, uy),
+                                 marge_membre, ref, ecart_actuel=dist - portee,
                                  marge_voisins=marge_mm)
             if place is None:
                 # ⚠️ Mieux vaut laisser un membre LOIN que le poser sur un
