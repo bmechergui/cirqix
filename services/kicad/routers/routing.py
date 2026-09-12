@@ -4952,6 +4952,25 @@ def _export_specctra(pcb_bytes: bytes, dsn_path: Path) -> None:
         })
     if not dsn_path.is_file():
         raise RuntimeError("pcbnew Specctra child produced no DSN output")
+    dsn_path.write_text(_marger_les_clearances(dsn_path.read_text(encoding="utf-8")),
+                        encoding="utf-8")
+
+
+# Marge donnee au routeur sur les degagements du DSN. Mesure du 2026-09-12
+# (carte-08) : « clearance 0.2000 mm ; actual 0.1987 mm » entre une piste
+# du routeur et une pastille — Freerouting travaille exactement a la regle et
+# l aller-retour Specctra (resolution 10 um, arrondis) rend 13 um de moins.
+# Un routeur qui vise 5 % plus large ne peut plus tomber sous la regle.
+_MARGE_CLEARANCE_DSN = 1.05
+_CLEARANCE_DSN_RE = re.compile(r"\(clearance\s+([0-9.]+)")
+
+
+def _marger_les_clearances(dsn_text: str, facteur: float = _MARGE_CLEARANCE_DSN) -> str:
+    """Multiplie chaque `(clearance N ...)` des regles du DSN par `facteur`."""
+    def _rempl(m):
+        v = float(m.group(1)) * facteur
+        return "(clearance %s" % (("%.1f" % v).rstrip("0").rstrip("."))
+    return _CLEARANCE_DSN_RE.sub(_rempl, dsn_text)
 
 
 def _measure_routing(pcb_bytes: bytes) -> tuple[int, int]:
