@@ -11,6 +11,7 @@ ouvre pour juger le placement et le routage carte par carte (demande du
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -83,7 +84,11 @@ def ligne(dossier: Path, rendre: bool) -> str | None:
         _rendre(fin, dossier / "output" / "vue-final.png")
     drc = m.get("drc_du_board") or {}
     texte = fin.read_text(encoding="utf-8", errors="replace")
-    couches = q.get("couches") or 0
+    # ⚠️ Les couches se COMPTENT sur le board route (segments/vias sur les
+    # couches internes), pas dans mesures.json : ce champ disait 2 pour des
+    # boards livres a 4 et 6 couches (2026-09-12).
+    internes = {m_.group(1) for m_ in re.finditer(r'\(layer "(In\d+\.Cu)"\)', texte)}
+    couches = 2 + len(internes)
     dec = ("%.1f / %.1f" % (q["decouplage_moy"], q["decouplage_max"])) if q.get("decouplage_n") else "-"
     paires = ("%.1f" % q["paire_moyenne"]) if q.get("paire_moyenne") is not None else "-"
     pl = ("[placement](%s/output/vue-placement.png)" % dossier.name) if place.is_file() else "pas de temoin"
