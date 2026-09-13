@@ -1,0 +1,36 @@
+{
+  "exemple": "driver-stm32-minimal",
+  "date": "2026-09-13",
+  "run_id": "a52f12df-aac8-48e6-a611-88dcaefe5309",
+  "project_id": "4c6cc7e1-d50b-4aaf-8af9-76da657ad231",
+  "provenance": "driver",
+  "schema_ecrit_par": "Claude Code (driver LLM), sans appel a l API Anthropic",
+  "composants": 27,
+  "nets": 21,
+  "board_mm": [
+    70,
+    50
+  ],
+  "duree_s": 506,
+  "routed_percent": 100,
+  "couches": 2,
+  "vias": 59,
+  "segments": 172,
+  "longueur_piste_mm": 547.861,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "credits_debites": 0,
+  "decouplage_mm": {
+    "moyenne": 2.3,
+    "max": 5.1
+  },
+  "drc_du_board": {
+    "violations": 1,
+    "non_connectes": 0,
+    "types": "via_dangling:1",
+    "nb_erreurs": 0,
+    "fabricable": true
+  },
+  "serigraphie": "degagee hors ligne apres le run — la regle etait inerte en production (NameError), corrigee le 2026-09-13",
+  "commandable": false
+}

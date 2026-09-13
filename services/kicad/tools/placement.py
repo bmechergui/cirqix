@@ -248,6 +248,7 @@ def _degager_la_serigraphie(pcb_path: Path) -> int:
     deplaces ; une panne de la regle ne casse pas le placement.
     """
     try:
+        from kicad_tools.schema.pcb import PCB
         from tools.serigraphie import degager_references
         pcb = PCB.load(str(pcb_path))
         n = degager_references(pcb)
