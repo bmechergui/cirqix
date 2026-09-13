@@ -157,6 +157,38 @@ describe('le second essai porte les problèmes, puis on refuse', () => {
   });
 });
 
+describe('la taille de la carte : imposée ou heuristique (D-2026-09-13-c, A)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pcbStateCache.clear();
+    engineMock.runCircuitSynthEngine.mockResolvedValue({ kicad_sch_content: '(kicad_sch)' });
+  });
+  const BASE = {
+    components: [{ ref: 'J1', value: 'PWR', footprint: 'Conn_2', symbol: 'Connector_Generic:Conn_01x02' }, { ref: 'R1', value: '1k', footprint: '0603', symbol: 'Device:R' }],
+    nets: ['A', 'B'],
+    connections: [{ name: 'A', pins: [{ ref: 'J1', pin: 1 }, { ref: 'R1', pin: 1 }] }, { name: 'B', pins: [{ ref: 'J1', pin: 2 }, { ref: 'R1', pin: 2 }] }],
+  };
+  it('des dimensions avec board_size_imposed:false ne sont PAS imposées', async () => {
+    haikuMock.generateSchemaWithHaiku.mockResolvedValue({ ...BASE, board_width_mm: 40, board_height_mm: 30, board_size_imposed: false });
+    await handleSchema({ user_description: 'x' }, 'pA');
+    expect(pcbStateCache.get('pA')?.boardSizeImposed).toBe(false);
+    expect(pcbStateCache.get('pA')?.boardW).toBe(40);
+  });
+  it('des dimensions avec board_size_imposed:true, ou sans le drapeau, sont imposées', async () => {
+    haikuMock.generateSchemaWithHaiku.mockResolvedValue({ ...BASE, board_width_mm: 40, board_height_mm: 30, board_size_imposed: true });
+    await handleSchema({ user_description: 'x' }, 'pB');
+    expect(pcbStateCache.get('pB')?.boardSizeImposed).toBe(true);
+    haikuMock.generateSchemaWithHaiku.mockResolvedValue({ ...BASE, board_width_mm: 40, board_height_mm: 30 });
+    await handleSchema({ user_description: 'x' }, 'pC');
+    expect(pcbStateCache.get('pC')?.boardSizeImposed).toBe(true);
+  });
+  it('sans dimensions, la taille est une heuristique : pas imposée', async () => {
+    haikuMock.generateSchemaWithHaiku.mockResolvedValue(BASE);
+    await handleSchema({ user_description: 'x' }, 'pD');
+    expect(pcbStateCache.get('pD')?.boardSizeImposed).toBe(false);
+  });
+});
+
 describe('l enrichissement des footprints', () => {
   beforeEach(() => {
     vi.clearAllMocks();

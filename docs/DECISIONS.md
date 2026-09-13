@@ -703,7 +703,40 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-13-c — occupation de la surface : la carte livrée a la moitié basse vide
 
-**Statut : en attente.**
+**Statut : validée** par l'utilisateur le 2026-09-13 (« C », les deux options) — **B ensuite RÉFUTÉE par la mesure le jour même, retirée ; A livrée.**
+
+**La mesure qui a tué B** (banc des onze cartes, phase 1, deux variantes de la
+règle — « tout au bord gauche puis droit », puis « bord le plus proche,
+réparti ») contre les placements déjà livrés :
+
+| carte | centrage av → ap (dx,dy %) | découplage av → ap (moy/max mm) | vide max av → ap (mm) |
+|---|---|---|---|
+| carte-01 | +1,−11 → +1,+1 | 0/0 | 7,8 → 6,8 |
+| carte-03 | +1,+2 → 0,+5 | 2,3/2,3 → 1,8/1,9 | 3,2 → 6,8 |
+| carte-05 | +1,+1 → −11,0 | 1,9/3,3 → 2,1/3,5 | 3,2 → 17,3 |
+| carte-08 | +1,+1 → +3,0 | 2,6/4,2 → 3,9/7,0 | 5,5 → 10,5 |
+| carte-09 | +1,0 → +7,0 | 3,2/5,2 → 4,4/6,4 | 4,8 → 19,6 |
+| carte-10 | +1,+1 → +2,0 | 4,1/9,6 → 5,6/9,5 (non valide) | 6,5 → 8,3 |
+
+Le centrage était déjà à ±1 % sur huit cartes ; la règle **dégrade le
+découplage sur sept** et agrandit le plus grand vide. Elle n'aide que le cas
+« petit circuit + connecteur au coin » (carte-01 ; la v2 du dashboard). On ne
+livre pas une règle qui empire sept cartes pour en aider deux : B est retirée
+du pipeline (`auto_place`), la fonction reste dans `tools/contour_et_bords.py`,
+testée, pour un usage ciblé à décider.
+
+**Trouvé en chemin, gardé :** le clamp des ancrages « reposait » presque
+chaque connecteur loin du bord (collision jugée contre la grille initiale que
+le génétique déplace) et jusqu'à 4,6 mm HORS carte (bornes testées sur
+l'origine, pas sur le corps — carte-06 J10, `copper_edge_clearance`). Corrigé,
+`tests/test_ancrage_reste_au_bord.py`.
+
+**A, précisée :** une taille n'est *imposée* que si la description la donne
+— le driver le dit par `board_size_imposed` dans le contrat du schéma ; des
+dimensions choisies par le modèle sans ce drapeau sont une heuristique et le
+contour suit le placement.
+
+**Livré :** `tools/contour_et_bords.py` — B `ancrer_connecteurs_au_bord` (avant les tirages, dans `auto_place`), A `ajuster_contour_au_placement` (après le placement retenu, sur `auto_size_board`, posé par le client quand ni l'appelant ni la description n'imposent de taille). Gardes : `tests/test_contour_et_bords.py`, `handler-placement.test.ts`.
 
 **La mesure** (projet « Thermometre I2C TMP102 (driver) » v2, clignotant NE555,
 9 composants, carte 40 × 35 mm demandée « environ 40 × 30 » par l'utilisateur) :

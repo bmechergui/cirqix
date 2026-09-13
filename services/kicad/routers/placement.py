@@ -95,12 +95,19 @@ class AutoPlacementRequest(BaseModel):
     kicad_pcb_b64: str = Field(..., description="Contenu .kicad_pcb encodé base64")
     board_width_mm: float = Field(default=100.0, ge=10.0, le=500.0)
     board_height_mm: float = Field(default=80.0, ge=10.0, le=500.0)
+    # D-2026-09-13-c (A) : quand la description n impose pas de taille, le
+    # contour est resserre sur le placement. Le CLIENT sait si elle etait
+    # imposee ; le service, non. Defaut False : rien ne change sans le dire.
+    auto_size_board: bool = False
 
 
 class AutoPlacementResponse(BaseModel):
     kicad_pcb_b64: str
     placed_count: int
     positions: list[dict]  # [{ref, x_mm, y_mm}]
+    # Taille du contour APRES resserrement (D-2026-09-13-c A) ; absente sinon.
+    board_width_mm: Optional[float] = None
+    board_height_mm: Optional[float] = None
     # ⚠️ Conflits de placement que l Inspecteur n a PAS su resoudre.
     # Mesure du 2026-08-26, ESP32 du banc : 9 `courtyards_overlap`,
     # 8 `shorting_items` et 2 `pth_inside_courtyard` livres SANS un mot.
@@ -179,6 +186,7 @@ def place_auto(req: AutoPlacementRequest) -> AutoPlacementResponse:
             kicad_pcb_b64=req.kicad_pcb_b64,
             board_width_mm=req.board_width_mm,
             board_height_mm=req.board_height_mm,
+            auto_size_board=req.auto_size_board,
         )
     except Exception as exc:
         logger.exception("Erreur auto_place: %s", exc)

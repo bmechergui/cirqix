@@ -154,6 +154,15 @@ export async function handleSchema(
     ? largeur : (n <= 5 ? 30 : n <= 12 ? 40 : 50);
   const boardH = Number.isFinite(hauteur) && hauteur > 0
     ? hauteur : (n <= 5 ? 25 : n <= 12 ? 35 : 40);
+  // D-2026-09-13-c (A) : une taille n est IMPOSEE que si la description la
+  // donne — le driver le dit par `board_size_imposed`. Des dimensions choisies
+  // par le modele sans ce drapeau sont une heuristique : le contour suivra le
+  // placement. Sans le drapeau (chemin Haiku, anciens schemas), des dimensions
+  // presentes restent imposees : rien ne change sans le dire.
+  const dimsPresentes = (Number.isFinite(largeur) && largeur > 0) || (Number.isFinite(hauteur) && hauteur > 0);
+  const boardSizeImposed = typeof demande['board_size_imposed'] === 'boolean'
+    ? demande['board_size_imposed']
+    : dimsPresentes;
 
   // Path B génère le .kicad_sch via /schematic/generate (Docker) ou TS inline
   const csResult = await runCircuitSynthEngine(schema, boardW, boardH, projectId);
@@ -177,6 +186,7 @@ export async function handleSchema(
     schema: enrichedSchema,
     boardW,
     boardH,
+    boardSizeImposed,
     kicad_sch_content: csResult.kicad_sch_content,
     // kicad_pcb_content intentionnellement absent — call_agent_gen_pcb le génère
   });

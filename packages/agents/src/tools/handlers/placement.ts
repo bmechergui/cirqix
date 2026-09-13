@@ -12,6 +12,12 @@ export async function handlePlacement(
   const cachedDims = pcbStateCache.get(projectId);
   const boardW = Number(input['board_width_mm'] ?? cachedDims?.boardW ?? 50);
   const boardH = Number(input['board_height_mm'] ?? cachedDims?.boardH ?? 40);
+  // D-2026-09-13-c (A) : le contour suit le placement SAUF si une taille a
+  // ete imposee — par l appelant ici, ou par la description au schema.
+  const autoSizeBoard =
+    input['board_width_mm'] == null &&
+    input['board_height_mm'] == null &&
+    cachedDims?.boardSizeImposed !== true;
 
   // Parse schema_json from input if provided. Fall back to the cached schema
   // from call_agent_schema if the agent passes nothing valid here.
@@ -68,6 +74,7 @@ export async function handlePlacement(
       kicadPcbContent: base.kicad_pcb_content,
       boardWidthMm: boardW,
       boardHeightMm: boardH,
+      autoSizeBoard,
     });
     const placements = service.positions.map((p) => ({
       ref: p.ref,
@@ -76,18 +83,24 @@ export async function handlePlacement(
       rotation: 0,
       side: 'front',
     }));
+    // La taille retenue est celle du board LIVRE : si le service a resserre
+    // le contour, l etat, le cache et la note la disent.
+    const finalW = service.boardWidthMm ?? boardW;
+    const finalH = service.boardHeightMm ?? boardH;
     pcbStateCache.set(projectId, {
-      schema, boardW, boardH, kicad_pcb_content: service.kicadPcbContent,
+      schema, boardW: finalW, boardH: finalH, kicad_pcb_content: service.kicadPcbContent,
+      ...(cachedDims?.boardSizeImposed !== undefined ? { boardSizeImposed: cachedDims.boardSizeImposed } : {}),
     });
     return {
       status: 'success',
       pcb_status: 'PLACEMENT_DONE',
       placements,
       kicad_pcb_content: service.kicadPcbContent,
-      board_width_mm: boardW,
-      board_height_mm: boardH,
+      board_width_mm: finalW,
+      board_height_mm: finalH,
       engine: 'pcbnew',
-      note: `Placement pcbnew — PCB ${boardW}×${boardH} mm, ${placements.length} composants.`,
+      note: `Placement pcbnew — PCB ${finalW}×${finalH} mm, ${placements.length} composants.`
+        + (service.boardWidthMm !== undefined ? ' Contour resserré sur le placement.' : ''),
     };
   } catch (err) {
     log.error({ err, projectId }, 'placement service unavailable');
