@@ -9,7 +9,43 @@ interface KiCanvasViewerProps {
   zoom?: string;
 }
 
-type KiViewer = { zoom_to_board?: () => void; zoom_to_page?: () => void };
+type KiViewer = {
+  zoom_to_board?: () => void;
+  zoom_to_page?: () => void;
+  // ⚠️ `zoom_to_board()` de KiCanvas pose la caméra SANS redessiner (contrairement
+  // à `zoom_to_page()`) : sans `draw()` derrière, rien ne bouge à l'écran.
+  draw?: () => void;
+  loaded?: PromiseLike<unknown>;
+};
+
+/**
+ * Ce que KiCanvas met dans `kicanvas:select` : l'objet du board cliqué (une
+ * empreinte porte `reference`/`value`, une piste ou un via `net`/`layer`).
+ * On n'en lit que ce qui sert à nommer la sélection.
+ */
+export interface KiCanvasSelection {
+  readonly kind: string;
+  readonly label: string;
+  readonly detail?: string;
+}
+
+export function describeSelection(item: unknown): KiCanvasSelection | null {
+  if (!item || typeof item !== 'object') return null;
+  const o = item as Record<string, unknown>;
+  const kind = (o['constructor'] as { name?: string } | undefined)?.name ?? 'item';
+  const ref = o['reference'];
+  if (typeof ref === 'string' && ref) {
+    const value = o['value'];
+    return { kind: 'Footprint', label: ref, ...(typeof value === 'string' && value ? { detail: value } : {}) };
+  }
+  const net = o['net'];
+  const layer = o['layer'];
+  const parts = [
+    typeof net === 'string' || typeof net === 'number' ? `net ${net}` : null,
+    typeof layer === 'string' ? layer : null,
+  ].filter((x): x is string => x !== null);
+  return { kind, label: parts[0] ?? kind, ...(parts[1] ? { detail: parts[1] } : {}) };
+}
 
 function findKiCanvasViewer(el: Element): KiViewer | null {
   const shadow = (el as HTMLElement).shadowRoot;
@@ -103,6 +139,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const embedRef = useRef<HTMLElement | null>(null);
+  const [selection, setSelection] = useState<KiCanvasSelection | null>(null);
 
   const dispatchZoomWheel = useCallback((deltaY: number) => {
     const el = embedRef.current;
@@ -129,8 +166,34 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     const viewer = findKiCanvasViewer(el);
     if (viewer) {
       viewer.zoom_to_board?.() ?? viewer.zoom_to_page?.();
+      viewer.draw?.();
     }
   }, []);
+
+  // Au chargement, KiCanvas cadre la FEUILLE (A4) : une carte de 40 mm y tient
+  // dans un timbre-poste. On cadre la carte dès que le viewer a fini de charger.
+  useEffect(() => {
+    const el = embedRef.current;
+    if (!el || status !== 'ready') return;
+    let cancelled = false;
+    let essais = 0;
+    const timer = setInterval(() => {
+      const viewer = findKiCanvasViewer(el);
+      essais += 1;
+      if (!viewer && essais < 75) return; // ~15 s
+      clearInterval(timer);
+      if (!viewer) return;
+      Promise.resolve(viewer.loaded).then(() => {
+        // `draw()` passe par requestAnimationFrame : sur un viewer déjà démonté
+        // (bascule vers PNG/3D), KiCanvas lève « Uninitialized ». On ne dessine
+        // que si l'élément est encore dans le document.
+        if (cancelled || !el.isConnected) return;
+        viewer.zoom_to_board?.();
+        viewer.draw?.();
+      });
+    }, 200);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [status, src]);
 
   const startHints = useCallback((cancelled: () => boolean) => {
     hintTimerRef.current = setTimeout(() => {
@@ -194,6 +257,19 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     el.addEventListener('error', handleError);
     return () => el.removeEventListener('error', handleError);
   }, [status, src]);
+
+  // Sélection « comme KiCad » : KiCanvas émet `kicanvas:select` (bubbles +
+  // composed) à chaque clic sur un objet du board ; on nomme l'objet en HUD.
+  useEffect(() => {
+    const el = embedRef.current;
+    if (!el || status !== 'ready') return;
+    const handleSelect = (e: Event) => {
+      const detail = (e as CustomEvent<{ item?: unknown } | undefined>).detail;
+      setSelection(describeSelection(detail?.item));
+    };
+    el.addEventListener('kicanvas:select', handleSelect);
+    return () => el.removeEventListener('kicanvas:select', handleSelect);
+  }, [status]);
 
   // Synchronize custom elements attributes manually because React 18
   // does not always map JSX properties to DOM attributes for custom elements.
@@ -481,7 +557,8 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
           <kicanvas-embed
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
             src={src}
-            controls="basic"
+            controls="full"
+            controlslist="nooverlay"
             theme="witchhazel"
             {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}
@@ -543,6 +620,19 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
               </button>
             </div>
           </div>
+
+          {/* Sélection courante (clic sur un objet du board) */}
+          {selection && (
+            <div
+              data-testid="kicanvas-selection"
+              className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0a0a0a]/85 border border-primary/30 backdrop-blur-sm pointer-events-none"
+            >
+              <MousePointer size={10} className="text-primary/70" />
+              <span className="text-[10px] font-mono text-[#8a8a8a] tracking-wider">{selection.kind}</span>
+              <span className="text-[11px] font-semibold text-foreground/90">{selection.label}</span>
+              {selection.detail && <span className="text-[10px] font-mono text-[#5a5a5a]">{selection.detail}</span>}
+            </div>
+          )}
 
           {/* File type badge */}
           <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0a0a0a]/80 border border-[#1e1e1e] backdrop-blur-sm pointer-events-none">

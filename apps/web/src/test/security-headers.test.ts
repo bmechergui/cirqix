@@ -55,4 +55,15 @@ describe('next.config security headers', () => {
     expect(scriptSrc).toContain('https://kicanvas.org');
     expect(connectSrc).toContain('https://kicanvas.org');
   });
+
+  it('autorise Google Fonts — les icônes de la barre latérale KiCanvas (controls="full")', async () => {
+    const rules = await nextConfig.headers!();
+    const global = rules.find((r) => r.source === '/:path*')!;
+    const csp = global.headers.find((h) => h.key === 'Content-Security-Policy')!.value;
+    const styleSrc = csp.split(';').find((d) => d.trim().startsWith('style-src'))!;
+    const fontSrc = csp.split(';').find((d) => d.trim().startsWith('font-src'))!;
+
+    expect(styleSrc).toContain('https://fonts.googleapis.com');
+    expect(fontSrc).toContain('https://fonts.gstatic.com');
+  });
 });

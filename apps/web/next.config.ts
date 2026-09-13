@@ -17,9 +17,12 @@ import path from 'path';
 const csp = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://kicanvas.org",
-  "style-src 'self' 'unsafe-inline'",
+  // KiCanvas en `controls="full"` charge ses icônes (Material Symbols) et sa
+  // police depuis Google Fonts ; sans ces deux origines, la barre latérale
+  // affiche des mots à la place des icônes (constaté le 2026-09-13).
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https://*.supabase.co",
-  "font-src 'self' data:",
+  "font-src 'self' data: https://fonts.gstatic.com",
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://kicanvas.org",
   "worker-src 'self' blob:",
   "object-src 'none'",
