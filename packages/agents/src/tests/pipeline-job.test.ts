@@ -6,6 +6,7 @@ import {
   JOB_OPTIONS,
   jobIdForProject,
 } from '../pipeline/job';
+import { enqueuePipelineRun } from '../pipeline/queue';
 
 /**
  * Contrat du job de pipeline.
@@ -94,6 +95,24 @@ describe('réglages BullMQ — les défauts sont dangereux ici', () => {
 
   it('traite un seul job à la fois — le service KiCad est le goulot', () => {
     expect(WORKER_OPTIONS.concurrency).toBe(1);
+  });
+});
+
+describe('un job terminé ne bloque pas la soumission suivante du même projet', () => {
+  it('enfile avec removeOnComplete et removeOnFail, sous l id du projet', async () => {
+    const appels: Array<[string, unknown, Record<string, unknown>]> = [];
+    const queue = { add: async (n: string, d: unknown, o: Record<string, unknown>) => { appels.push([n, d, o]); } };
+    await enqueuePipelineRun(queue as never, {
+      runId: '11111111-1111-4111-8111-111111111111', projectId: '22222222-2222-4222-8222-222222222222',
+      userId: '33333333-3333-4333-8333-333333333333', prompt: 'x', iterationStart: 0,
+    });
+    expect(appels).toHaveLength(1);
+    const options = appels[0]![2];
+    expect(options['jobId']).toBe(jobIdForProject('22222222-2222-4222-8222-222222222222'));
+    // Sans ces deux options, BullMQ garde le job terminé sous son id et
+    // IGNORE la soumission suivante — mesuré le 2026-09-13 depuis le dashboard.
+    expect(options['removeOnComplete']).toBe(true);
+    expect(options['removeOnFail']).toBe(true);
   });
 });
 

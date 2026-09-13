@@ -43,7 +43,22 @@ export function createPipelineQueue(redisUrl: string): Queue<PipelineJobPayload>
  *
  * `jobId` dérive du projet : BullMQ déduplique donc nativement. Un second
  * enfilage sur le même projet est ignoré plutôt que de doubler le travail.
+ *
+ * ⚠️ CETTE DÉDUPLICATION VAUT AUSSI POUR LES JOBS TERMINÉS (2026-09-13). Par
+ * défaut BullMQ garde un job `completed` / `failed` sous son id : la seconde
+ * soumission d'un projet — depuis le dashboard, des heures après la première —
+ * était IGNORÉE en silence. La route répondait 202, `pcb_runs` gardait un run
+ * `queued` pour toujours, et aucun journal ne le disait. Mesuré : 17 jobs
+ * terminés et 5 échoués retenus dans Redis, un projet impossible à relancer.
+ * Les jobs terminés sont donc RETIRÉS : la déduplication ne porte plus que sur
+ * un job en attente ou en cours — ce qu'elle a toujours voulu dire.
+ * Garde : tests/pipeline-job.test.ts (« un job terminé ne bloque pas… »).
  */
+export const PIPELINE_JOB_OPTIONS = {
+  removeOnComplete: true,
+  removeOnFail: true,
+} as const;
+
 export async function enqueuePipelineRun(
   queue: Queue<PipelineJobPayload>,
   payload: PipelineJobPayload,
@@ -51,6 +66,7 @@ export async function enqueuePipelineRun(
   const parsed = PipelineJobPayload.parse(payload);
   await queue.add(PIPELINE_QUEUE_NAME, parsed, {
     jobId: jobIdForProject(parsed.projectId),
+    ...PIPELINE_JOB_OPTIONS,
   });
 }
 
