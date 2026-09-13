@@ -701,6 +701,34 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-13-c — occupation de la surface : la carte livrée a la moitié basse vide
+
+**Statut : en attente.**
+
+**La mesure** (projet « Thermometre I2C TMP102 (driver) » v2, clignotant NE555,
+9 composants, carte 40 × 35 mm demandée « environ 40 × 30 » par l'utilisateur) :
+les composants occupent y = 5 à 22,5 mm sur 35 — **la moitié basse est vide**.
+Sérigraphie propre (0 référence sur du cuivre, 0 chevauchement), 100 % routé,
+0 erreur : rien de faux, mais c'est la première chose qu'un relecteur voit.
+
+**La cause** : `gen_pcb` ancre le connecteur J1 dans le coin haut-gauche
+(5, 5) et le GA groupe le reste autour de lui ; la surface demandée n'est
+pas un objectif du placement.
+
+**Options, à trancher par l'utilisateur :**
+
+- **A — auto-dimensionner la carte** au placement : contour = boîte des
+  composants + marge (par exemple 3 mm), SAUF quand la description impose une
+  taille. Carte moins chère, aspect « fait exprès » ; ne change rien à la v2,
+  dont la taille était imposée.
+- **B — ancrer les connecteurs au MILIEU d'un bord** plutôt qu'au coin, puis
+  laisser le GA équilibrer autour. Traite la v2 ; change le placement de
+  TOUTES les cartes à connecteur (banc à rejouer, 11 cartes, ~1 h).
+- **C — les deux**, A puis B.
+
+Recommandation : **C**. A est la pratique standard, B corrige l'asymétrie
+visible ; l'un sans l'autre laisse un cas.
+
 ## D-2026-09-13-b — `CIRQIX_AGENT_MODE=driver` : la route enfile des runs de provenance `driver`
 
 **Statut : validée** par l'utilisateur le 2026-09-13 (« Oui » sur l'option A

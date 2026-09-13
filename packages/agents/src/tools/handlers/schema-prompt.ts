@@ -88,6 +88,7 @@ HARD RULES (a schema breaking one is rejected and you will be asked again):
     Conn_01x04 → "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", never 1x02.
   - "footprint" is a full KiCad footprint "Library:Name" whenever you know it; the short keys below are the only accepted shortcuts.
   - Every pin of a power/bus signal named in the description (SDA, SCL, TX, RX…) reaches its connector.
+  - "ref" is a KiCad reference: 1-2 uppercase letters then a number (U1, C12, J2, SW1). Never a name like U_TMP1 or SENSOR — the reference is printed on the silkscreen next to a small footprint.
 
 Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
 {"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
@@ -134,6 +135,8 @@ export function padsDuFootprint(footprint: string): number | null {
  * - un connecteur dont le symbole (Conn_01xNN) et le footprint n ont pas le
  *   meme nombre de broches perd des broches au trace.
  */
+export const REFERENCE_KICAD = /^[A-Z]{1,2}[0-9]{1,3}$/;
+
 export function problemesDuSchema(schema: SchemaJson): string[] {
   const problemes: string[] = [];
   for (const conn of schema.connections ?? []) {
@@ -142,6 +145,12 @@ export function problemesDuSchema(schema: SchemaJson): string[] {
     }
   }
   for (const c of schema.components ?? []) {
+    // Une référence « U_TMP1 » (livrée le 2026-09-13) déborde de son
+    // empreinte 1x4 sur la sérigraphie : le préfixe est une lettre KiCad,
+    // suivie d un numéro, rien d autre.
+    if (!REFERENCE_KICAD.test(c.ref ?? '')) {
+      problemes.push(`component "${c.ref}": a reference is 1-2 uppercase letters and a number (U1, C12, J2), not a name`);
+    }
     const m = /Conn_(\d+)x(\d+)/i.exec(c.symbol ?? '');
     if (!m) continue;
     const attendu = Number(m[1]) * Number(m[2]);
