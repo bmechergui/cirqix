@@ -7,9 +7,10 @@ composants, contour 25 x 20 mm, origine de feuille (136, 95)) :
   - A : le contour est resserré sur les courtyards + marge, en repère
     FEUILLE (le piège de repère de ce dépôt), sans déplacer une empreinte,
     et jamais agrandi ; un second passage ne change rien ;
-  - le câblage : `auto_place` ancre AVANT les tirages et resserre APRÈS,
-    seulement sur `auto_size_board` — une règle jamais appelée est
-    indistinguable d'une règle absente.
+  - le câblage : `auto_place` ne touche PAS aux connecteurs (B mesurée et
+    retirée le 2026-09-13) et resserre APRÈS, seulement sur `auto_size_board`
+    — une règle jamais appelée est indistinguable d'une règle absente, et une
+    règle retirée doit l'être vraiment.
 """
 from __future__ import annotations
 
@@ -180,7 +181,9 @@ def _faux_tirage(kicad_pcb_b64: str, w: float, h: float) -> dict:
     return {"kicad_pcb_b64": kicad_pcb_b64, "placed_count": 5, "positions": [], "conflits_restants": 0}
 
 
-def test_auto_place_ancre_avant_les_tirages_et_resserre_seulement_sur_demande(board: Path, monkeypatch):
+def test_auto_place_ne_touche_pas_aux_connecteurs_et_resserre_seulement_sur_demande(board: Path, monkeypatch):
+    """B a ete mesuree et RETIREE (voir auto_place) : le tirage recoit le board
+    tel quel ; A ne s applique que sur `auto_size_board`."""
     b64 = base64.b64encode(board.read_bytes()).decode()
     recus: list[str] = []
 
@@ -195,7 +198,7 @@ def test_auto_place_ancre_avant_les_tirages_et_resserre_seulement_sur_demande(bo
     sans = placement_mod.auto_place(b64, 25.0, 20.0)
     assert recus, "un tirage a eu lieu"
     pcb_recu = PCB.load(str(_ecrire(board.parent / "recu.kicad_pcb", recus[0])))
-    assert _positions(pcb_recu)["J1"] != (5.0, 5.0), "le tirage recoit le board avec J1 au bord"
+    assert _positions(pcb_recu)["J1"] == (5.0, 5.0), "le tirage recoit le board TEL QUEL (B retiree)"
     assert "board_width_mm" not in sans
     assert taille_contour_texte(base64.b64decode(sans["kicad_pcb_b64"]).decode()) == (25.0, 20.0)
 

@@ -1960,14 +1960,15 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     """
     from tools.reglages_banc import journaliser_les_reglages
     journaliser_les_reglages("placement")
-    # D-2026-09-13-c (B) : les connecteurs partent du MILIEU d un bord, pas du
-    # coin de la grille. Une seule fois, avant les tirages — `fixed_refs` les
-    # garde la. Une panne ici ne vaut pas un placement rate : on continue.
-    try:
-        from tools.contour_et_bords import ancrer_connecteurs_au_bord_b64
-        kicad_pcb_b64 = ancrer_connecteurs_au_bord_b64(kicad_pcb_b64)
-    except Exception as exc:  # pragma: no cover - defensif
-        logger.warning("auto_place: ancrage des connecteurs impossible (%s)", exc)
+    # ⚠️ D-2026-09-13-c (B) — les connecteurs au milieu d un bord — a ete
+    # ESSAYEE ICI ET RETIREE LE JOUR MEME, mesuree sur le banc des onze cartes
+    # (phase 1, deux variantes de la regle) : le centrage etait deja a ±1 % sur
+    # huit cartes, et la regle DEGRADAIT le decouplage sur sept (carte-08
+    # 2,6 -> 3,9 mm, carte-09 3,2 -> 4,4, carte-10 4,1 -> 5,6) en agrandissant
+    # le plus grand vide (carte-05 3 -> 17 mm). Elle n aidait que le cas
+    # « petit circuit + connecteur au coin ». `tools/contour_et_bords.py`
+    # garde la fonction, testee, pour un usage cible ; on ne l applique pas
+    # a toutes les cartes. Voir docs/DECISIONS.md.
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))

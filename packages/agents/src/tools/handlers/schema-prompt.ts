@@ -89,6 +89,7 @@ HARD RULES (a schema breaking one is rejected and you will be asked again):
   - "footprint" is a full KiCad footprint "Library:Name" whenever you know it; the short keys below are the only accepted shortcuts.
   - Every pin of a power/bus signal named in the description (SDA, SCL, TX, RX…) reaches its connector.
   - "ref" is a KiCad reference: 1-2 uppercase letters then a number (U1, C12, J2, SW1). Never a name like U_TMP1 or SENSOR — the reference is printed on the silkscreen next to a small footprint.
+  - If you choose the board size, add "board_width_mm" and "board_height_mm" (numbers) AND "board_size_imposed": true ONLY when the description itself states dimensions ("40 x 30 mm", "carte de 50 mm de large"). Otherwise "board_size_imposed": false — the outline will then be tightened to the placement.
 
 Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
 {"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
