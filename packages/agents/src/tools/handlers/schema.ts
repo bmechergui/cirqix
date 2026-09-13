@@ -158,9 +158,14 @@ export async function handleSchema(
   // Path B génère le .kicad_sch via /schematic/generate (Docker) ou TS inline
   const csResult = await runCircuitSynthEngine(schema, boardW, boardH, projectId);
 
+  // ⚠️ N ENRICHIR QUE CE QUI MANQUE. `quickLookup('J1', …)` rend un PinHeader
+  // 1x02 pour TOUT connecteur, quel que soit l indice : un footprint complet
+  // `Lib:Nom` correct (PinHeader_1x04) etait REECRIT en 1x02 dans l etat
+  // publie et la BOM — le board, lui, gardait le bon (mesure 2026-09-13,
+  // run 537dc8a5). Un footprint deja qualifie ne se cherche pas.
   const enrichedComponents = schema.components.map((c) => ({
     ...c,
-    footprint: quickLookup(c.ref, c.footprint) ?? c.footprint,
+    footprint: c.footprint.includes(':') ? c.footprint : (quickLookup(c.ref, c.footprint) ?? c.footprint),
   }));
   const unresolvedFootprints = enrichedComponents
     .filter((c) => !c.footprint.includes(':'))

@@ -5,8 +5,18 @@ une simple phrase déposée dans la file suffit-elle pour qu'un PCB sorte, le
 schéma étant écrit par Claude Code en ligne de commande — ni par Haiku (solde
 API à zéro), ni à la main ?
 
-**Réponse (2026-09-13) : oui pour la chaîne, non pour la qualité du schéma.**
-Run `25a6853c`, projet `2be02059`, provenance `driver`, 279 s, 0 crédit.
+**Réponse (2026-09-13) : oui — et le premier essai a révélé que « 100 % routé,
+0 erreur » ne disait rien de la fidélité du schéma.** Deux runs, même phrase :
+
+| run | contrat de schéma | SDA | SCL | routage | DRC | durée |
+|---|---|---|---|---|---|---|
+| `25a6853c` | d'origine | **1 broche** | 2 | 100 % | 0 erreur | 279 s |
+| `537dc8a5` | durci | **3 broches** (capteur, pull-up, connecteur) | 3 | 100 % | 0 erreur | 198 s |
+
+Le premier board était fabricable et **sans bus I2C** : le filtre de broches
+comptait 2 pastilles pour tout footprint qu'il ne connaissait pas
+(`PinHeader_1x04` compris) et effaçait en silence les broches 3 et 4 du
+connecteur. Une net à une broche n'est pas « manquante » pour le DRC.
 
 ## La description (le seul texte fourni)
 
@@ -16,45 +26,25 @@ Run `25a6853c`, projet `2be02059`, provenance `driver`, 279 s, 0 crédit.
 > sur le capteur, un connecteur 4 broches (5V, GND, SDA, SCL) et une LED
 > d'alimentation verte avec sa résistance 1k.
 
-## Ce que la chaîne a produit
+## Le contrat durci (commun à Haiku et à Claude Code)
 
-| étape | résultat |
-|---|---|
-| SCHEMA (`engine: claude-code`) | 10 composants, 6 nets, écrits par `claude -p` en ~20 s |
-| ERC, PLACEMENT, ROUTING | 100 % sur 2 couches, 14 vias, 68 mm de piste |
-| DRC, EXPORT | `drc_clean`, 20 Gerbers, `PCB_LIVRÉ` |
+- le compte de pastilles se **lit dans le nom** du footprint (`1x04`, `2x15`,
+  `LQFP-48`, `SOIC-8`, `SOT-223-3`…) ; un nom muet ne filtre plus rien ;
+- `problemesDuSchema` nomme ce que le DRC ne voit pas : net à moins de deux
+  broches, connecteur dont le footprint ne suit pas le symbole ;
+- `call_agent_schema` rejoue **une** fois avec les problèmes, puis refuse ;
+- l'enrichissement ne réécrit plus un footprint déjà qualifié (`quickLookup`
+  rendait un 1x02 pour tout `J…`, quel que soit l'indice).
 
-Vérifié en local (`kicad-cli pcb drc`) : **0 erreur, 0 connexion manquante**,
-2 `silk_overlap` et 1 `silk_edge_clearance`.
+## Ce que le schéma vaut encore
 
-## Ce que le schéma vaut — lu honnêtement
-
-`input/schema.json` est **exactement** ce que le modèle a rendu, extrait de
-l'événement `SCHEMA_DONE`. Il est fabricable, il n'est pas fidèle :
-
-- le TMP102 est modélisé en **connecteur 6 broches** (`Conn_01x06`), pas en
-  capteur SOT-563 ;
-- la net **SDA ne porte qu'une broche** : le bus I2C n'atteint pas le
-  connecteur, et un net à une broche n'est pas « manquant » pour le DRC ;
-- la LED est un boîtier traversant 5 mm (`LED` nu, résolu par le repli), le
-  connecteur 4 broches portait une empreinte 1x02 corrigée par la validation.
-
-Le DRC ne juge pas l'intention électrique. Ce run prouve le **pont** (CLI, stdin,
-enveloppe JSON, provenance, file, worker), pas que le prompt système hérité de
-Haiku suffit à un modèle de ligne de commande sans relecture. Prochain levier :
-enrichir le contrat de schéma (comptes de broches par empreinte, nets à ≥ 2
-broches exigés, symboles de capteurs), commun aux deux fournisseurs.
-
-## Ce que ce run a aussi révélé (corrigé)
-
-- `claude -p` héritait de `ANTHROPIC_API_KEY` du worker et la préférait à la
-  session claude.ai → échec sur le solde à zéro. Le CLI est lancé sans les
-  variables d'authentification API.
-- Un pipeline arrêté sur une erreur sans `done` était marqué `succeeded`.
-- Un job échoué par BullMQ hors de `runJob` (worker tué en plein placement)
-  laissait le run `running` pour toujours.
+`input/schema.json` est ce que le modèle a rendu au second run. Le TMP102 y est
+un **connecteur 6 broches** : c'est la stratégie du prompt (« module →
+connecteur »), pas une erreur du modèle. La LED est un boîtier traversant 5 mm
+(`LED` nu, résolu par le repli). Fidèle à la description, pas à un vrai TMP102
+en SOT-563 — prochain levier, s'il est voulu : des symboles de capteurs réels.
 
 ## Fichiers
 
-- `input/schema.json` — le schéma rendu par Claude Code, tel quel
+- `input/schema.json` — le schéma rendu par Claude Code (run `537dc8a5`)
 - `expected/schema.kicad_sch`, `expected/final.kicad_pcb`, `expected/rendu-3d.png`, `expected/mesures.json`

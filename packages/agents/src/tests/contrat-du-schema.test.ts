@@ -141,3 +141,24 @@ describe('le second essai porte les problèmes, puis on refuse', () => {
     expect(haikuMock.generateSchemaWithHaiku).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('l enrichissement des footprints', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pcbStateCache.clear();
+    engineMock.runCircuitSynthEngine.mockResolvedValue({ kicad_sch_content: '(kicad_sch)' });
+  });
+  it('ne réécrit JAMAIS un footprint déjà qualifié Lib:Nom (J1 1x04 restait 1x02 dans l état publié)', async () => {
+    haikuMock.generateSchemaWithHaiku.mockResolvedValue({
+      components: [
+        { ref: 'J1', value: 'I2C', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical', symbol: 'Connector_Generic:Conn_01x04' },
+        { ref: 'R1', value: '1k', footprint: 'Resistor_SMD:R_0603_1608Metric', symbol: 'Device:R' },
+      ],
+      nets: ['A', 'B'],
+      connections: [{ name: 'A', pins: [{ ref: 'J1', pin: 3 }, { ref: 'R1', pin: 1 }] }, { name: 'B', pins: [{ ref: 'J1', pin: 4 }, { ref: 'R1', pin: 2 }] }],
+    });
+    const r = await handleSchema({ user_description: 'x' }, 'p9');
+    const j1 = (r['components'] as Array<{ ref: string; footprint: string }>).find((c) => c.ref === 'J1')!;
+    expect(j1.footprint).toBe('Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical');
+  });
+});
