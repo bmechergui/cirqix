@@ -54,4 +54,11 @@ export interface PipelineStore {
    * La provenance appartient au porteur, jamais au pipeline.
    */
   finalizeSuccess(status: PCBStatus, state: PCBState): Promise<void>;
+
+  /**
+   * Dépose un rendu PNG pré-calculé sous sa clé de cache (`render-cache.ts`),
+   * pour que la route `GET /api/projects/[id]/render` le serve sans rendre.
+   * Optionnel et best-effort : un porteur sans stockage d'images n'en a pas.
+   */
+  uploadRender?(cle: string, png: Uint8Array): Promise<void>;
 }

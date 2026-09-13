@@ -19,15 +19,17 @@ vi.mock('@/shared/lib/supabase-server', () => supabaseMock);
 
 import { GET } from '@/app/api/projects/[id]/render/route';
 import { parseRenderQuery, renderQueryString, serviceRenderOptions, appliquerYaw } from '@/shared/lib/render-presets';
+import { cleDeRendu, cheminDuRendu } from '@cirqix/agents';
 
 const BOARD = new TextEncoder().encode('(kicad_pcb (version 20240108))');
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const TOKEN = 'x'.repeat(40);
 
-function makeClient(opts: { user?: { id: string } | null; projet?: boolean; fichier?: boolean } = {}) {
-  const { user = { id: 'u1' }, projet = true, fichier = true } = opts;
+function makeClient(opts: { user?: { id: string } | null; projet?: boolean; fichier?: boolean; enCache?: Uint8Array } = {}) {
+  const { user = { id: 'u1' }, projet = true, fichier = true, enCache } = opts;
   const filters: Array<[string, unknown]> = [];
   const telechargements: string[] = [];
+  const depots: Array<{ chemin: string; octets: number }> = [];
   const chain: Record<string, unknown> = {};
   chain['eq'] = (col: string, val: unknown) => { filters.push([col, val]); return chain; };
   chain['single'] = async () => (projet ? { data: { id: 'p1' }, error: null } : { data: null, error: { message: 'no row' } });
@@ -38,14 +40,21 @@ function makeClient(opts: { user?: { id: string } | null; projet?: boolean; fich
       from: () => ({
         download: async (chemin: string) => {
           telechargements.push(chemin);
+          if (chemin.includes('/renders/')) {
+            return enCache ? { data: new Blob([Buffer.from(enCache)]), error: null } : { data: null, error: { message: 'Object not found' } };
+          }
           return fichier
             ? { data: new Blob([BOARD]), error: null }
             : { data: null, error: { message: 'Object not found' } };
         },
+        upload: async (chemin: string, blob: Blob) => {
+          depots.push({ chemin, octets: blob.size });
+          return { data: { path: chemin }, error: null };
+        },
       }),
     },
   };
-  return { client, filters, telechargements };
+  return { client, filters, telechargements, depots };
 }
 
 function requete(query = 'view=top', headers: Record<string, string> = {}) {
@@ -95,7 +104,7 @@ describe('accès', () => {
     expect(r.status).toBe(200);
     expect(filters).toContainEqual(['user_id', 'u1']);
     expect(filters).toContainEqual(['id', 'p1']);
-    expect(telechargements).toEqual(['u1/p1/pcb.kicad_pcb']);
+    expect(telechargements[0]).toBe('u1/p1/pcb.kicad_pcb');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -179,6 +188,35 @@ describe('sortie et cache', () => {
     const autreVue = await GET(requete('view=bottom', { 'if-none-match': etag }), ctx);
     expect(autreVue.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('le cache de stockage — la clé partagée avec le pipeline', () => {
+  it('sert un rendu déjà déposé sans appeler le service', async () => {
+    const enCache = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]);
+    const { client, telechargements } = makeClient({ enCache });
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(client);
+    const fetchMock = serviceQuiRepond(200, { png_b64: Buffer.from(PNG).toString('base64') });
+    const r = await GET(requete('view=iso'), ctx);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('x-render-source')).toBe('storage');
+    expect(new Uint8Array(await r.arrayBuffer())).toEqual(enCache);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const board = new Uint8Array(BOARD);
+    const cle = cleDeRendu(board, { view: 'iso', quality: 'basic', yaw: 0, zoom: 1, width: 1600, height: 900 });
+    expect(telechargements[1]).toBe(`u1/p1/${cheminDuRendu(cle)}`);
+    expect(r.headers.get('etag')).toBe(`"${cle}"`);
+  });
+
+  it('après un rendu par le service, le PNG est déposé sous la même clé pour la fois suivante', async () => {
+    const { client, depots } = makeClient();
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(client);
+    serviceQuiRepond(200, { png_b64: Buffer.from(PNG).toString('base64') });
+    const r = await GET(requete('view=top&quality=high'), ctx);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('x-render-source')).toBe('service');
+    const cle = cleDeRendu(new Uint8Array(BOARD), { view: 'top', quality: 'high', yaw: 0, zoom: 1, width: 1600, height: 900 });
+    expect(depots).toEqual([{ chemin: `u1/p1/${cheminDuRendu(cle)}`, octets: PNG.byteLength }]);
   });
 });
 

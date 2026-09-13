@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
 import { createRouteHandlerClient } from '@/shared/lib/supabase-server';
-import { parseRenderQuery, serviceRenderOptions, type RenderParams } from '@/shared/lib/render-presets';
+import { logger } from '@cirqix/logger';
+import { cleDeRendu, cheminDuRendu } from '@cirqix/agents';
+import { parseRenderQuery, serviceRenderOptions } from '@/shared/lib/render-presets';
 
 /**
  * `GET /api/projects/[id]/render?view=top|bottom|iso|…&quality=basic|high&yaw=&zoom=&w=&h=`
@@ -10,10 +11,14 @@ import { parseRenderQuery, serviceRenderOptions, type RenderParams } from '@/sha
  * `kicad-cli pcb render`) et le renvoie tel quel en `image/png` — le viewer
  * le met dans un `<img>`. Rien n'est dessiné côté web : c'est le rendu de KiCad.
  *
- * Cache : l'ETag dérive du CONTENU du board et des paramètres. Un `<img>`
- * revalidé avec `If-None-Match` reçoit 304 sans qu'aucun rendu ne tourne ; un
- * board régénéré change d'ETag et se re-rend. Le `.kicad_pcb` est de toute
- * façon téléchargé (quelques centaines de ko) — c'est le rendu qui coûte.
+ * Cache, à deux niveaux, sur la même clé (`cleDeRendu` : contenu du board +
+ * paramètres, partagée avec le pipeline) :
+ *  - l'ETag : un `<img>` revalidé avec `If-None-Match` reçoit 304 sans rien
+ *    rendre ;
+ *  - le stockage : un rendu déjà déposé sous `renders/<clé>.png` — par le
+ *    pipeline à la livraison (`prerendus.ts`) ou par un appel précédent — est
+ *    servi tel quel. Sinon on rend, puis on dépose pour la fois suivante.
+ * Un board régénéré change de clé : jamais une image périmée.
  *
  * FAIL CLOSED : service non configuré → 503 ; rendu en échec → 502 avec le
  * message du service. Jamais une image de remplacement.
@@ -25,13 +30,6 @@ const BUCKET = 'kicad-files';
 const MIN_SERVICE_TOKEN_LENGTH = 32;
 const RENDER_TIMEOUT_MS = 110_000;
 const CACHE_CONTROL = 'private, max-age=600';
-
-function etagPour(board: Uint8Array, params: RenderParams): string {
-  const h = createHash('sha1');
-  h.update(board);
-  h.update(JSON.stringify(params));
-  return `"${h.digest('hex')}"`;
-}
 
 function configurationDuService(env: NodeJS.ProcessEnv): { url: string; headers: Record<string, string> } | null {
   const url = env['KICAD_SERVICE_URL']?.trim().replace(/\/+$/, '');
@@ -78,9 +76,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
   const board = new Uint8Array(await fichier.arrayBuffer());
 
-  const etag = etagPour(board, parsed.params);
+  const cle = cleDeRendu(board, parsed.params);
+  const etag = `"${cle}"`;
   if (req.headers.get('if-none-match') === etag) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag, 'Cache-Control': CACHE_CONTROL } });
+  }
+
+  const cheminCache = `${user.id}/${id}/${cheminDuRendu(cle)}`;
+  const { data: enCache } = await supabase.storage.from(BUCKET).download(cheminCache);
+  if (enCache) {
+    const png = Buffer.from(await enCache.arrayBuffer());
+    if (png.byteLength > 0) return reponsePng(png, etag, 0, 'storage');
   }
 
   let reponse: Response;
@@ -116,14 +122,27 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
   const png = Buffer.from(corps.png_b64, 'base64');
 
-  return new NextResponse(png, {
+  // Dépôt pour la fois suivante — best-effort, l'image part sans attendre.
+  const { error: erreurDepot } = await supabase.storage
+    .from(BUCKET)
+    .upload(cheminCache, new Blob([png], { type: 'image/png' }), { upsert: true, contentType: 'image/png' });
+  if (erreurDepot) {
+    logger.child({ module: 'render-route' }).warn({ err: erreurDepot, cheminCache }, 'dépôt du rendu en cache échoué');
+  }
+
+  return reponsePng(png, etag, typeof corps.duration_ms === 'number' ? corps.duration_ms : -1, 'service');
+}
+
+function reponsePng(png: Buffer, etag: string, durationMs: number, source: 'storage' | 'service'): NextResponse {
+  return new NextResponse(new Uint8Array(png), {
     status: 200,
     headers: {
       'Content-Type': 'image/png',
       'Content-Length': String(png.byteLength),
       'Cache-Control': CACHE_CONTROL,
       ETag: etag,
-      'X-Render-Duration-Ms': String(typeof corps.duration_ms === 'number' ? corps.duration_ms : -1),
+      'X-Render-Duration-Ms': String(durationMs),
+      'X-Render-Source': source,
     },
   });
 }

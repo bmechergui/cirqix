@@ -20,6 +20,7 @@ import type {
   RunEventWriter,
   StoredArtifact,
 } from '@cirqix/agents';
+import { cheminDuRendu } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 
 import { extendReservationForRun, releaseReservationForRun } from './reservations.js';
@@ -69,6 +70,23 @@ async function uploadArtifact(
   return { signedUrl: data?.signedUrl };
 }
 
+/** Dépose un rendu PNG pré-calculé sous `${userId}/${projectId}/renders/<clé>.png`. */
+async function uploadRender(
+  supabase: SupabaseClient,
+  userId: string,
+  projectId: string,
+  cle: string,
+  png: Uint8Array,
+): Promise<void> {
+  const path = `${userId}/${projectId}/${cheminDuRendu(cle)}`;
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, new Blob([png], { type: 'image/png' }), { upsert: true, contentType: 'image/png' });
+  if (error) {
+    log.warn({ err: error, path }, 'dépôt du pré-rendu échoué — le viewer rendra à la demande');
+  }
+}
+
 /**
  * Magasin de persistance d'un run, côté worker.
  *
@@ -95,6 +113,8 @@ export function createWorkerStore(
   return {
     uploadArtifact: (name, content) =>
       uploadArtifact(supabase, userId, projectId, name, content),
+
+    uploadRender: (cle, png) => uploadRender(supabase, userId, projectId, cle, png),
 
     async persistProgress(status: PCBStatus, state: PCBState): Promise<void> {
       const { error } = await supabase

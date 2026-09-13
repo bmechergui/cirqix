@@ -278,6 +278,11 @@ services/
   que la taille demandée (800×500 → 784×480) et refuse les vieux boards écrits
   par kicad_tools (« Failed to load board »). Gardes : `tests/test_render_auto.py`,
   `apps/web/src/test/project-render-route.test.ts`, `viewer-render-and-selection.test.tsx`.
+  **Pré-rendus à la livraison** : après `done`, le pipeline rend top + iso et les
+  dépose sous `renders/<clé>.png` (`pipeline/prerendus.ts`, `render-cache.ts`) ;
+  la route sert ce cache avant de rendre, et dépose ce qu'elle rend. UNE clé
+  (`cleDeRendu`, contenu du board + paramètres) partagée route ↔ pipeline — une
+  sérialisation différente rendrait le cache aveugle. Best-effort de bout en bout.
 
 ## Règles agents Claude
 

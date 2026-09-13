@@ -21,6 +21,7 @@ import { runOrchestrator } from '../orchestrator';
 import type { SSEEvent } from '../orchestrator';
 import type { RunSink } from './run-sink';
 import type { PipelineStore } from './store';
+import { prerendre } from './prerendus';
 
 /** Étapes qui apparaissent dans la Timeline (SPEC est interne). */
 type UiStep = 'SCHEMA' | 'ERC' | 'PLACEMENT' | 'ROUTING' | 'DRC' | 'EXPORT';
@@ -65,6 +66,8 @@ export interface RunPipelineOptions {
    * pas, et n a pas besoin de savoir, si les evenements viennent d un modele.
    */
   source?: AsyncGenerator<SSEEvent>;
+  /** Reçoit la promesse des pré-rendus lancés après `done` (gardes de câblage). */
+  onPrerendus?: (p: Promise<number>) => void;
 }
 
 type OrchestratorPcbState = Record<string, unknown> & {
@@ -96,6 +99,8 @@ export async function runOrchestratorPipeline(
   // que rien n avait LEVE. Un generateur qui se tait apres une erreur, sans
   // `done`, est un echec — meme famille que les statuts fantomes de 2026-07.
   let doneVu = false;
+  // Le dernier board déposé : c'est lui que l'on pré-rend à la livraison.
+  let dernierBoard: string | null = null;
   let derniereErreur: string | null = null;
 
   // ⚠️ SUIVI DE L'ETAPE LONGUE. Le routage dure de 5 s a 20 min selon la carte
@@ -180,6 +185,7 @@ export async function runOrchestratorPipeline(
             // pads : placement et routage appartiennent à leurs handlers.
             const up = await store.uploadArtifact('pcb.kicad_pcb', raw.kicad_pcb_content);
             if (up.signedUrl) kicadPcbUrl = up.signedUrl;
+            dernierBoard = raw.kicad_pcb_content;
           }
 
           // Fusion incrémentale : l'UI garde les champs antérieurs (composants,
@@ -263,6 +269,15 @@ export async function runOrchestratorPipeline(
           await sink.emit({ type: 'status', status: lastStatus });
           await sink.emit({ type: 'done' });
           doneVu = true;
+          // Pré-rendus APRÈS `done`, et DÉTACHÉS : le run est déjà finalisé et
+          // facturé ; l'attendre ici retiendrait la clôture du job (jusqu'à
+          // 2 × 120 s) et laisserait un run livré en `running` si le worker
+          // tombait dans l'intervalle (revue du 2026-09-13). `prerendre` ne
+          // lève jamais ; `onPrerendus` sert aux gardes de câblage.
+          if (dernierBoard) {
+            const p = prerendre(store, dernierBoard);
+            if (opts.onPrerendus) opts.onPrerendus(p);
+          }
           break;
 
         case 'iteration':
