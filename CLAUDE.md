@@ -835,6 +835,16 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
   ④ **Halo d'escape** (`_reserve_escape_halos`, 5 mm) — écarte les voisins mobiles
      des boîtiers fine-pitch (≥16 pads) pour dégager leur canal de sortie. No-op
      sur une carte sans composant dense.
+  ⓪ **Bords** (`tools/contour_et_bords.py::ancrer_connecteurs_au_bord`, D-2026-09-13-c B,
+     AVANT les tirages) — les connecteurs J*/P* partent du MILIEU du bord gauche (puis
+     droit au-delà de trois), corps à 3 mm du bord, et non du coin (5, 5) de la grille où
+     le générateur les laissait. Mesure : carte v2 (9 composants, 40 × 35) avec la moitié
+     basse vide, J1 dans le coin et le GA groupé autour.
+  ⑥ **Contour** (`ajuster_contour_au_placement`, D-2026-09-13-c A, EN DERNIER) — quand
+     ni l'appelant ni la description n'imposent de taille (`auto_size_board`, posé par
+     `handlePlacement`), `Edge.Cuts` est resserré sur les courtyards + 3 mm, en repère
+     FEUILLE, jamais agrandi. ⚠️ `board_origin` de kicad-tools SUIT le contour : les
+     positions relatives changent, pas les positions de feuille.
   ⑤ **Snap bypass** (`tools/placement_bypass.py::snap_cluster_members`) — TÉLÉPORTE
      chaque membre de cluster à portée de son ancre, puis l'Inspecteur repasse.
      Détection 100 % native (`detect_functional_clusters`) ; le plafond lu est

@@ -154,6 +154,7 @@ export async function handleSchema(
     ? largeur : (n <= 5 ? 30 : n <= 12 ? 40 : 50);
   const boardH = Number.isFinite(hauteur) && hauteur > 0
     ? hauteur : (n <= 5 ? 25 : n <= 12 ? 35 : 40);
+  const boardSizeImposed = (Number.isFinite(largeur) && largeur > 0) || (Number.isFinite(hauteur) && hauteur > 0);
 
   // Path B génère le .kicad_sch via /schematic/generate (Docker) ou TS inline
   const csResult = await runCircuitSynthEngine(schema, boardW, boardH, projectId);
@@ -177,6 +178,7 @@ export async function handleSchema(
     schema: enrichedSchema,
     boardW,
     boardH,
+    boardSizeImposed,
     kicad_sch_content: csResult.kicad_sch_content,
     // kicad_pcb_content intentionnellement absent — call_agent_gen_pcb le génère
   });

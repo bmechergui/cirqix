@@ -24,6 +24,12 @@ export interface PcbStateCacheEntry {
   schema: SchemaJson;
   boardW: number;
   boardH: number;
+  /**
+   * D-2026-09-13-c (A) : `true` quand la description (ou le driver) a IMPOSE
+   * une taille — le placement ne resserre alors pas le contour. Absent ou
+   * `false` : la taille est une heuristique, le contour suit le placement.
+   */
+  boardSizeImposed?: boolean;
   kicad_sch_content?: string;
   kicad_pcb_content?: string;
   /**

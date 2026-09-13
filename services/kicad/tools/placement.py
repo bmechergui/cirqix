@@ -1886,7 +1886,7 @@ def _tirages_utiles(dominants: list) -> int:
 
 
 def auto_place(kicad_pcb_b64: str, board_width_mm: float,
-               board_height_mm: float) -> dict:
+               board_height_mm: float, auto_size_board: bool = False) -> dict:
     """Place, et RE-TIRE tant que des conflits subsistent.
 
     ⚠️ `OptimizationWorkflow` n a pas de seed fixe. Mesure du 2026-08-27 sur
@@ -1901,6 +1901,14 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     """
     from tools.reglages_banc import journaliser_les_reglages
     journaliser_les_reglages("placement")
+    # D-2026-09-13-c (B) : les connecteurs partent du MILIEU d un bord, pas du
+    # coin de la grille. Une seule fois, avant les tirages — `fixed_refs` les
+    # garde la. Une panne ici ne vaut pas un placement rate : on continue.
+    try:
+        from tools.contour_et_bords import ancrer_connecteurs_au_bord_b64
+        kicad_pcb_b64 = ancrer_connecteurs_au_bord_b64(kicad_pcb_b64)
+    except Exception as exc:  # pragma: no cover - defensif
+        logger.warning("auto_place: ancrage des connecteurs impossible (%s)", exc)
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
@@ -1937,11 +1945,38 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
         # passifs en couronne — qui ne depend d aucun tirage.
         secours = _couronne_de_secours(kicad_pcb_b64, meilleur)
         if secours is not None:
-            return secours
-        logger.error(
-            "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
-            meilleur["conflits_restants"], tirages)
+            meilleur = secours
+        else:
+            logger.error(
+                "auto_place: %d conflit(s) apres %d tirages — board livre en l etat",
+                meilleur["conflits_restants"], tirages)
+    if auto_size_board:
+        meilleur = _resserrer_le_contour(meilleur)
     return meilleur
+
+
+def _resserrer_le_contour(resultat: dict) -> dict:
+    """D-2026-09-13-c (A) : le contour suit le placement quand la taille n est
+    pas imposee. Rend le resultat enrichi de `board_width_mm`/`board_height_mm`.
+    Une panne ici laisse le board tel quel : la carte est juste plus grande."""
+    import base64 as _b64
+    try:
+        from tools.contour_et_bords import ajuster_contour_au_placement
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "b.kicad_pcb"
+            f.write_bytes(_b64.b64decode(resultat["kicad_pcb_b64"]))
+            taille = ajuster_contour_au_placement(f)
+            if taille is None:
+                return resultat
+            return {
+                **resultat,
+                "kicad_pcb_b64": _b64.b64encode(f.read_bytes()).decode(),
+                "board_width_mm": round(taille[0], 2),
+                "board_height_mm": round(taille[1], 2),
+            }
+    except Exception as exc:  # pragma: no cover - defensif
+        logger.warning("auto_place: contour non resserre (%s)", exc)
+        return resultat
 
 
 def _couronne_de_secours(kicad_pcb_b64: str, meilleur: dict):

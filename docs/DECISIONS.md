@@ -703,7 +703,9 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-13-c — occupation de la surface : la carte livrée a la moitié basse vide
 
-**Statut : en attente.**
+**Statut : validée** par l'utilisateur le 2026-09-13 (« C », les deux options).
+
+**Livré :** `tools/contour_et_bords.py` — B `ancrer_connecteurs_au_bord` (avant les tirages, dans `auto_place`), A `ajuster_contour_au_placement` (après le placement retenu, sur `auto_size_board`, posé par le client quand ni l'appelant ni la description n'imposent de taille). Gardes : `tests/test_contour_et_bords.py`, `handler-placement.test.ts`.
 
 **La mesure** (projet « Thermometre I2C TMP102 (driver) » v2, clignotant NE555,
 9 composants, carte 40 × 35 mm demandée « environ 40 × 30 » par l'utilisateur) :

@@ -29,18 +29,25 @@ export interface RealPlacementInput {
   kicadPcbContent: string;
   boardWidthMm: number;
   boardHeightMm: number;
+  /** D-2026-09-13-c (A) : le service resserre le contour sur le placement. */
+  autoSizeBoard?: boolean;
 }
 
 export interface RealPlacementResult {
   /** Updated `.kicad_pcb` file content (UTF-8 text). */
   kicadPcbContent: string;
   positions: Array<{ ref: string; x_mm: number; y_mm: number }>;
+  /** Taille du contour apres resserrement — absente si le service n a rien resserre. */
+  boardWidthMm?: number;
+  boardHeightMm?: number;
 }
 
 interface ServiceResponseBody {
   kicad_pcb_b64?: unknown;
   placed_count?: unknown;
   positions?: unknown;
+  board_width_mm?: unknown;
+  board_height_mm?: unknown;
 }
 
 function isValidPosition(value: unknown): value is { ref: string; x_mm: number; y_mm: number } {
@@ -67,6 +74,7 @@ export async function runRealPlacement(
     kicad_pcb_b64: Buffer.from(input.kicadPcbContent, 'utf-8').toString('base64'),
     board_width_mm: input.boardWidthMm,
     board_height_mm: input.boardHeightMm,
+    auto_size_board: input.autoSizeBoard === true,
   });
 
   let response: Response;
@@ -108,5 +116,11 @@ export async function runRealPlacement(
     : [];
 
   const decoded = Buffer.from(parsed.kicad_pcb_b64, 'base64').toString('utf-8');
-  return { kicadPcbContent: decoded, positions };
+  const w = parsed.board_width_mm;
+  const h = parsed.board_height_mm;
+  const taille =
+    typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0
+      ? { boardWidthMm: w, boardHeightMm: h }
+      : {};
+  return { kicadPcbContent: decoded, positions, ...taille };
 }

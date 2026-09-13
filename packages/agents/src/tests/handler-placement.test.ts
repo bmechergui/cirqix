@@ -154,6 +154,37 @@ describe('board envoyé au service pcbnew', () => {
   });
 });
 
+describe('contour resserre sur le placement (D-2026-09-13-c, A)', () => {
+  it('demande le resserrement quand rien n impose la taille, et retient la taille rendue', async () => {
+    seedCache();
+    placementMock.runRealPlacement.mockResolvedValue({
+      positions: [], kicadPcbContent: PLACED_PCB, boardWidthMm: 31.5, boardHeightMm: 22,
+    });
+    const result = await handlePlacement({}, PROJECT);
+    const envoye = placementMock.runRealPlacement.mock.calls[0]?.[0] as { autoSizeBoard?: boolean };
+    expect(envoye.autoSizeBoard).toBe(true);
+    expect(result['board_width_mm']).toBe(31.5);
+    expect(result['board_height_mm']).toBe(22);
+    expect(pcbStateCache.get(PROJECT)?.boardW).toBe(31.5);
+  });
+
+  it('ne resserre PAS quand l appelant impose une taille', async () => {
+    seedCache();
+    await handlePlacement({ board_width_mm: 100, board_height_mm: 80 }, PROJECT);
+    const envoye = placementMock.runRealPlacement.mock.calls[0]?.[0] as { autoSizeBoard?: boolean };
+    expect(envoye.autoSizeBoard).toBe(false);
+  });
+
+  it('ne resserre PAS quand la description a impose la taille au schema', async () => {
+    seedCache();
+    const entree = pcbStateCache.get(PROJECT)!;
+    pcbStateCache.set(PROJECT, { ...entree, boardSizeImposed: true });
+    await handlePlacement({}, PROJECT);
+    const envoye = placementMock.runRealPlacement.mock.calls[0]?.[0] as { autoSizeBoard?: boolean };
+    expect(envoye.autoSizeBoard).toBe(false);
+  });
+});
+
 describe('placement nominal via pcbnew', () => {
   it('mappe les positions du service et normalise rotation/face', async () => {
     seedCache();
