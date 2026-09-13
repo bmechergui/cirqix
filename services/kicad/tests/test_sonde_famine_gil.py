@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import faulthandler
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,23 +19,43 @@ sys.path.insert(0, str(_SERVICE))
 from tools import sonde_gil  # noqa: E402
 
 
+def _dans_un_processus_neuf(lignes: list[str], tmp_path: Path) -> str:
+    """Execute `lignes` dans un interprete NEUF et rend ce que faulthandler y a ecrit.
+
+    ⚠️ `faulthandler` n a qu UN minuteur par processus. La sonde de production
+    (`_boucle`) le re-arme chaque seconde des qu un test a importe `main` —
+    `test_service_security`, `test_rl_*` — et remplace alors le minuteur de
+    0,2 s pose ici avant qu il ne tire. Mesure du 2026-09-13 : la suite entiere
+    dans un seul processus (CI, image Docker) rendait `assert "Timeout" in ""`,
+    la meme suite en local passait selon l ordre. Un processus neuf n a pas de
+    sonde.
+    """
+    sortie = tmp_path / "s.txt"
+    script = "\n".join(
+        ["import faulthandler, time", f"with open({str(sortie)!r}, 'w') as f:"]
+        + ["    " + l for l in lignes]
+        + ["    faulthandler.cancel_dump_traceback_later()", ""]
+    )
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=30)
+    return sortie.read_text()
+
+
 def test_le_minuteur_re_arme_ne_tire_pas(tmp_path):
     # faulthandler ecrit sur un DESCRIPTEUR : un vrai fichier, pas un StringIO.
-    with open(tmp_path / "s.txt", "w") as sortie:
-        for _ in range(4):
-            faulthandler.dump_traceback_later(0.3, repeat=False, file=sortie)
-            time.sleep(0.1)
-        faulthandler.cancel_dump_traceback_later()
-    assert (tmp_path / "s.txt").read_text() == ""
+    texte = _dans_un_processus_neuf([
+        "for _ in range(4):",
+        "    faulthandler.dump_traceback_later(0.3, repeat=False, file=f)",
+        "    time.sleep(0.1)",
+    ], tmp_path)
+    assert texte == ""
 
 
 def test_le_minuteur_non_re_arme_tire(tmp_path):
     """Simule la famine : personne ne re-arme pendant plus que le seuil."""
-    with open(tmp_path / "s.txt", "w") as sortie:
-        faulthandler.dump_traceback_later(0.2, repeat=False, file=sortie)
-        time.sleep(0.6)
-        faulthandler.cancel_dump_traceback_later()
-    texte = (tmp_path / "s.txt").read_text()
+    texte = _dans_un_processus_neuf([
+        "faulthandler.dump_traceback_later(0.2, repeat=False, file=f)",
+        "time.sleep(0.6)",
+    ], tmp_path)
     assert "Timeout" in texte and "Thread" in texte
 
 

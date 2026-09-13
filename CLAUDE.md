@@ -287,6 +287,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         écrire le schéma par Claude Code (`claude -p`, stdin, cwd temporaire)
         au lieu de Haiku ; contrat unique dans `tools/handlers/schema-prompt.ts`.
         Seulement là où le CLI est connecté (worker sur l'hôte, pas le conteneur).
+        ⚠️ Cela ne remplace PAS l'orchestrateur Sonnet : depuis le dashboard,
+        `CIRQIX_AGENT_MODE=driver` (D-2026-09-13-b) enfile des runs `driver`
+        sans retenue ni commandabilité — zéro appel API de bout en bout.
      Haiku 4.5 → JSON typé → POST /schematic/generate :
        ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
      Stocke : kicad_sch_content dans _pcbStateCache
