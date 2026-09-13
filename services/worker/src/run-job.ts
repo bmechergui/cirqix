@@ -120,7 +120,14 @@ export async function runJob(
       iterationStart,
       // `exactOptionalPropertyTypes` interdit un `undefined` explicite :
       // la propriete est posee, ou elle n existe pas.
-      ...(schema ? { source: runDriver({ schema, projectId }) } : {}),
+      // Le porteur du driver prend la main sur un schema fourni, OU sur un run
+      // dont la provenance est `driver` sans schema : `call_agent_schema` confie
+      // alors la description au fournisseur configure (D-2026-09-13-a).
+      ...(schema
+        ? { source: runDriver({ schema, projectId }) }
+        : agentMode === 'driver'
+          ? { source: runDriver({ prompt, projectId }) }
+          : {}),
     });
 
     // Le pipeline ne lève pas sur annulation : il s'arrête simplement de relancer

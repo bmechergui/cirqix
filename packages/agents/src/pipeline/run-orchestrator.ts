@@ -89,6 +89,14 @@ export async function runOrchestratorPipeline(
     status: 'INITIAL',
   };
   let lastStatus: PCBStatus = 'INITIAL';
+  // ⚠️ L ISSUE SE MESURE, ELLE NE SE PRESUME PAS. Mesure du 2026-09-13, run
+  // 0525dc97 : la chaine du driver s est arretee au SCHEMA sur une erreur,
+  // l evenement `error` a bien ete relaye... et le run a ete marque
+  // `succeeded`, parce que la sortie de boucle rendait `ok: true` des lors
+  // que rien n avait LEVE. Un generateur qui se tait apres une erreur, sans
+  // `done`, est un echec — meme famille que les statuts fantomes de 2026-07.
+  let doneVu = false;
+  let derniereErreur: string | null = null;
 
   // ⚠️ SUIVI DE L'ETAPE LONGUE. Le routage dure de 5 s a 20 min selon la carte
   // et l'appel HTTP est BLOQUANT : sans ce sondage, rien ne parvient a
@@ -220,6 +228,7 @@ export async function runOrchestratorPipeline(
 
         case 'error':
           if (isCreditFailure(ev.message)) throw new Error(ev.message);
+          derniereErreur = ev.message;
           await sink.emit({ type: 'error', message: ev.message });
           break;
 
@@ -253,6 +262,7 @@ export async function runOrchestratorPipeline(
           await sink.emit({ type: 'pcb_state', state: mergedState as PCBState });
           await sink.emit({ type: 'status', status: lastStatus });
           await sink.emit({ type: 'done' });
+          doneVu = true;
           break;
 
         case 'iteration':
@@ -273,5 +283,8 @@ export async function runOrchestratorPipeline(
     arreterLeSuivi();
   }
 
+  if (!doneVu && derniereErreur) {
+    return { ok: false, error: derniereErreur };
+  }
   return { ok: true };
 }

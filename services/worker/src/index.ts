@@ -19,6 +19,7 @@ import {
   type PipelineJobPayload,
 } from './adapters.js';
 import { runJob } from './run-job.js';
+import { cloturerLeRunDuJobEchoue } from './job-echoue.js';
 import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'worker' });
@@ -51,8 +52,19 @@ async function main(): Promise<void> {
     await runJob(payload, deps);
   });
 
-  worker.on('failed', (job: { id?: string } | undefined, err: unknown) => {
+  worker.on('failed', (job: { id?: string; data?: { runId?: unknown } } | undefined, err: unknown) => {
     log.error({ err, jobId: job?.id }, 'job échoué');
+    // Un job échoué HORS de runJob (stalled, données illisibles) laisserait son
+    // run `running` pour toujours : on le clôture, sans réécrire un run déjà clos.
+    void cloturerLeRunDuJobEchoue(job, err, {
+      lireStatut: async (runId) => {
+        const { data } = await supabase.from('pcb_runs').select('status').eq('id', runId).maybeSingle();
+        return (data?.status as string | undefined) ?? null;
+      },
+      finish: (runId, status, message) => deps.finish(runId, status, message),
+    }).then((clos) => {
+      if (clos) log.warn({ jobId: job?.id }, 'run clôturé en échec après un job échoué hors pipeline');
+    }).catch((e: unknown) => log.error({ err: e, jobId: job?.id }, 'clôture du run échoué impossible'));
   });
   worker.on('error', (err: unknown) => {
     log.error({ err }, 'erreur du worker');

@@ -32,9 +32,14 @@ import { Queue } from 'bullmq';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
-const [, , cheminSchema, cheminEnv = 'apps/web/.env.local'] = process.argv;
-if (!cheminSchema) {
-  console.error('usage : node enfiler-driver.mjs <schema.json> [.env.local]');
+const argv = process.argv.slice(2);
+const iPrompt = argv.indexOf('--prompt');
+const promptSeul = iPrompt >= 0 ? argv[iPrompt + 1] : null;
+if (iPrompt >= 0) argv.splice(iPrompt, 2);
+const [cheminSchema, cheminEnv = 'apps/web/.env.local'] = promptSeul ? [null, ...argv] : argv;
+if (!cheminSchema && !promptSeul) {
+  console.error('usage : node enfiler-driver.mjs <schema.json> [.env.local]\n'
+              + '        node enfiler-driver.mjs --prompt "description" [.env.local]   (schema par CIRQIX_SCHEMA_PROVIDER)');
   process.exit(2);
 }
 
@@ -47,16 +52,16 @@ const env = Object.fromEntries(
 const admin = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_KEY,
                            { auth: { persistSession: false } });
 
-const schema = JSON.parse(readFileSync(cheminSchema, 'utf8'));
-if (!Array.isArray(schema.components) || schema.components.length === 0) {
+const schema = cheminSchema ? JSON.parse(readFileSync(cheminSchema, 'utf8')) : null;
+if (schema && (!Array.isArray(schema.components) || schema.components.length === 0)) {
   console.error('schéma sans composants — rien à router');
   process.exit(2);
 }
 // Le banc écrit ses schémas avec des clés de commentaire ; elles ne servent à
 // rien ici et alourdiraient le payload du job.
-for (const cle of Object.keys(schema)) if (cle.startsWith('_')) delete schema[cle];
+if (schema) for (const cle of Object.keys(schema)) if (cle.startsWith('_')) delete schema[cle];
 
-const nom = cheminSchema.split(/[\\/]/).slice(-3)[0] ?? 'driver';
+const nom = cheminSchema ? (cheminSchema.split(/[\\/]/).slice(-3)[0] ?? 'driver') : 'prompt';
 
 // L'utilisateur : le premier compte réel du projet. On ne CRÉE pas de compte —
 // ce run laisse un projet et des artefacts derrière lui, il doit appartenir à
@@ -91,12 +96,12 @@ await file.add('run', {
   runId,
   projectId: projet.id,
   userId,
-  prompt: `Carte ${nom} — schéma fourni par le driver.`,
+  prompt: promptSeul ?? `Carte ${nom} - schema fourni par le driver.`,
   iterationStart: 0,
-  schema,
+  ...(schema ? { schema } : {}),
 }, { jobId: `project-${projet.id}`, attempts: 1 });
 
-console.log(`run ${runId} enfilé · projet ${projet.id} · ${schema.components.length} composants`);
+console.log(`run ${runId} enfilé · projet ${projet.id} · ${schema ? schema.components.length + ' composants' : 'schema par le fournisseur configure'}`);
 console.log('suivi du journal (Ctrl+C pour arrêter le suivi, le run continue) :\n');
 
 let vus = 0;

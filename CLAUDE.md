@@ -283,6 +283,10 @@ services/
 ```
 User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   ① call_agent_schema     → Ingénieur Schéma
+     ⚠️ (2026-09-13, D-2026-09-13-a) `CIRQIX_SCHEMA_PROVIDER=claude-code` fait
+        écrire le schéma par Claude Code (`claude -p`, stdin, cwd temporaire)
+        au lieu de Haiku ; contrat unique dans `tools/handlers/schema-prompt.ts`.
+        Seulement là où le CLI est connecté (worker sur l'hôte, pas le conteneur).
      Haiku 4.5 → JSON typé → POST /schematic/generate :
        ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
      Stocke : kicad_sch_content dans _pcbStateCache

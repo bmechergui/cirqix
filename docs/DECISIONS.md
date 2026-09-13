@@ -701,6 +701,40 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-13-a — Claude Code écrit le schéma à la place de Haiku (`CIRQIX_SCHEMA_PROVIDER=claude-code`)
+
+**Statut : validée** par l'utilisateur le 2026-09-13 (choix explicite « Remplacer
+Haiku par Claude Code dans call_agent_schema » parmi trois options proposées).
+
+**Le fait :** le solde de l'API Anthropic est à zéro (400 « credit balance too
+low », vérifié le 2026-09-13) ; l'abonnement Claude Code ne l'est pas. Claude Code
+a déjà écrit deux schémas livrés à 100 % par la file (`examples/driver-clignotant-
+ne555`, `examples/driver-stm32-minimal`), mais à la main, par un fichier JSON.
+
+**Ce qui est fait :**
+- un seul contrat de schéma, partagé (`tools/handlers/schema-prompt.ts` :
+  prompt système + `parseSchemaText`) — Haiku et Claude Code ne peuvent plus
+  diverger ;
+- `tools/handlers/schema-claude-code.ts` : `claude -p --output-format json`,
+  prompt par **stdin** (jamais en argument : `.cmd` sous Windows, injection),
+  répertoire de travail **temporaire** (depuis le dépôt, le CLI charge
+  `CLAUDE.md` : 130 000 jetons et 2,6 $ pour répondre `{"ok":true}`, contre
+  0,96 $ depuis un dossier neutre), délai 5 min, `null` sur toute panne ;
+- `call_agent_schema` choisit par `CIRQIX_SCHEMA_PROVIDER` (`haiku` défaut,
+  échec fermé sur toute autre valeur) et annonce `engine: 'claude-code'` ;
+- le porteur du driver accepte une **description** sans schéma
+  (`runDriver({ prompt })`), le worker l'emprunte pour un run de provenance
+  `driver` sans schéma, et `enfiler-driver.mjs --prompt "…"` l'enfile.
+
+**Ce que ça ne change pas :** la provenance. Un run `driver` reste non
+commandable (`POST /api/jlcpcb/order` exige `orchestrator`). Faire écrire le
+schéma par Claude Code dans un run `orchestrator` n'est pas décidé ici : le
+gate JLCPCB n'a pas été touché.
+
+**Contrainte de déploiement :** le conteneur `cirqix-worker` n'a pas de `claude`
+ni de session. Le fournisseur `claude-code` ne fonctionne que là où le CLI est
+connecté — le worker lancé sur l'hôte (`node services/worker/dist/worker.cjs`).
+
 ## D-2026-09-12-b — à partir de 4 couches, le plan GND vit aussi sur une couche INTERNE
 
 **Statut : validée** par l'utilisateur le 2026-09-12 (« Gi », lu comme « go »
