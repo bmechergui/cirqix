@@ -50,6 +50,13 @@ describe('ViewModeSwitch', () => {
     expect(onChange.mock.calls.map((c) => c[0])).toEqual(['3d', 'png']);
   });
 
+  it('sans `renders`, ni PNG ni 3D — l’étape Schéma n’a pas de board à rendre', () => {
+    render(<ViewModeSwitch mode="native" onChange={vi.fn()} renders={false} />);
+    expect(screen.getByText('Native')).toBeInTheDocument();
+    expect(screen.queryByText('PNG')).toBeNull();
+    expect(screen.queryByText('3D')).toBeNull();
+  });
+
   it('verrouille Native, PNG et 3D sans board — seule la vue Cirqix reste', () => {
     const onChange = vi.fn();
     render(<ViewModeSwitch mode="spec" onChange={onChange} nativeDisabled />);
@@ -127,6 +134,7 @@ describe('KiCanvasViewer — sélection comme KiCad', () => {
       });
       expect(embed.getAttribute('controls')).toBe('full');
       expect(embed.getAttribute('controlslist')).toContain('nooverlay');
+      expect(embed.getAttribute('theme')).toBe('kicad'); // les couleurs de KiCad, pas witchhazel
       expect(screen.queryByTestId('kicanvas-selection')).toBeNull();
 
       // Le viewer de KiCanvas vit dans le shadow DOM (kicanvas-embed → kc-board-viewer.viewer)

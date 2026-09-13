@@ -576,7 +576,10 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
             src={src}
             controls="full"
             controlslist="nooverlay"
-            theme="witchhazel"
+            // Thème « kicad » : les couleurs de l'éditeur KiCad (F.Cu rouge, B.Cu
+            // bleu, fond sombre ; schéma sur fond clair). Demandé le 2026-09-13 :
+            // « afficher KiCanvas comme KiCad ». `witchhazel` rendait la carte rose.
+            theme="kicad"
             {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}
           />

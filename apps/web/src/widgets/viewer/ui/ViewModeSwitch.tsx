@@ -16,9 +16,11 @@ interface ViewModeSwitchProps {
   mode: ViewMode;
   onChange: (mode: ViewMode) => void;
   nativeDisabled?: boolean;
+  /** PNG et 3D ne valent que pour un BOARD ; l'étape Schéma les cache. */
+  renders?: boolean;
 }
 
-export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitchProps) {
+export function ViewModeSwitch({ mode, onChange, nativeDisabled, renders = true }: ViewModeSwitchProps) {
   return (
     <div className="flex items-center gap-0.5 bg-[#111111] rounded-lg p-0.5 border border-[#1e1e1e]">
       {/* Native button */}
@@ -59,7 +61,7 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
         <span>Cirqix</span>
       </button>
 
-      {([['png', <ImageIcon key="png" size={10} className="shrink-0" />, 'PNG', 'KiCad PNG render — top / bottom'],
+      {renders && ([['png', <ImageIcon key="png" size={10} className="shrink-0" />, 'PNG', 'KiCad PNG render — top / bottom'],
          ['3d', <Box key="3d" size={10} className="shrink-0" />, '3D', 'KiCad 3D render — iso, front, back, sides']] as const
       ).map(([id, icon, label, title]) => (
         <button
