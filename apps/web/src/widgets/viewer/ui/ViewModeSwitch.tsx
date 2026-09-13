@@ -1,9 +1,16 @@
 'use client';
 
-import { Cpu, LayoutList, Lock } from 'lucide-react';
+import { Cpu, LayoutList, Lock, Image as ImageIcon, Box } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 
-export type ViewMode = 'native' | 'spec';
+/**
+ * `native` — KiCanvas (le rendu officiel, sélection, couches, nets, propriétés) ;
+ * `spec`   — la vue Cirqix (netlist, composants) ;
+ * `png`    — le rendu PNG de KiCad (`kicad-cli pcb render`, top / bottom) ;
+ * `3d`     — la vue 3D de KiCad (perspective, iso / front / back / left / right).
+ * Les trois vues du board exigent un `.kicad_pcb` livré ; sans lui, seule `spec`.
+ */
+export type ViewMode = 'native' | 'spec' | 'png' | '3d';
 
 interface ViewModeSwitchProps {
   mode: ViewMode;
@@ -51,6 +58,29 @@ export function ViewModeSwitch({ mode, onChange, nativeDisabled }: ViewModeSwitc
         <LayoutList size={10} className="shrink-0" />
         <span>Cirqix</span>
       </button>
+
+      {([['png', <ImageIcon key="png" size={10} className="shrink-0" />, 'PNG', 'KiCad PNG render — top / bottom'],
+         ['3d', <Box key="3d" size={10} className="shrink-0" />, '3D', 'KiCad 3D render — iso, front, back, sides']] as const
+      ).map(([id, icon, label, title]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => !nativeDisabled && onChange(id)}
+          disabled={nativeDisabled}
+          title={nativeDisabled ? 'Generate a design first to unlock KiCad renders' : title}
+          className={cn(
+            'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all duration-150',
+            mode === id && !nativeDisabled
+              ? 'bg-[#1a2a14] text-[#8be05a] border border-[#3f7a2a]/40 shadow-sm'
+              : nativeDisabled
+                ? 'text-[#2e2e2e] cursor-not-allowed'
+                : 'text-[#555] hover:text-[#888] hover:bg-[#161616]',
+          )}
+        >
+          {nativeDisabled ? <Lock size={9} className="shrink-0" /> : icon}
+          <span>{label}</span>
+        </button>
+      ))}
     </div>
   );
 }

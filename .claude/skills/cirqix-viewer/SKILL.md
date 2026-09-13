@@ -12,7 +12,16 @@ version: 0.2.0
 Schéma (.kicad_sch) → KiCanvas web component → onglet Schematic
 PCB    (.kicad_pcb) → KiCanvas web component → onglet Routing
 STEP               → Three.js + occt-import-js → onglet 3D (plan Pro+)
+PCB    (.kicad_pcb) → service POST /render/auto (kicad-cli pcb render)
+                     → GET /api/projects/[id]/render?view=&quality=&yaw=
+                     → modes `png` (top/bottom) et `3d` (iso/front/back/left/right)
 ```
+
+KiCanvas est monté en `controls="full"` + `controlslist="nooverlay"` : panneaux
+couches / nets / objets / empreintes / propriétés comme dans KiCad ; l'événement
+`kicanvas:select` (bubbles + composed, `detail.item`) porte l'objet cliqué —
+`describeSelection()` dans `KiCanvasViewer.tsx` le nomme. Presets et bornes des
+rendus : `apps/web/src/shared/lib/render-presets.ts` (partagé route ↔ viewer).
 
 Les fichiers `.kicad_sch` et `.kicad_pcb` sont stockés dans Supabase Storage :
 ```

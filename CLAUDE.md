@@ -267,6 +267,17 @@ services/
 - Paiement : Lemon Squeezy (MVP)
 - Viewer Schéma + PCB : KiCanvas (rendu natif .kicad_sch / .kicad_pcb depuis Supabase Storage)
 - Viewer 3D : Three.js + STEP via occt-import-js
+- Rendu PNG / 3D « comme KiCad » (2026-09-13) : `POST /render/auto` du service
+  (`kicad-cli pcb render`, fail closed, `routers/render.py`) → route web
+  `GET /api/projects/[id]/render?view=top|bottom|iso|front|…&quality=&yaw=`
+  (auth + propriétaire, ETag sur le contenu du board → 304 sans rendu) → modes
+  `png` / `3d` du viewer (`RenderView.tsx`). Le viewer KiCanvas est en
+  `controls="full"` : couches, nets, objets, empreintes, propriétés, et la
+  sélection au clic (`kicanvas:select`) nommée dans le HUD. Mesuré : basic top
+  ≈ 1 s, high iso ≈ 4 s sur 8 composants via HTTP ; kicad-cli rend un peu MOINS
+  que la taille demandée (800×500 → 784×480) et refuse les vieux boards écrits
+  par kicad_tools (« Failed to load board »). Gardes : `tests/test_render_auto.py`,
+  `apps/web/src/test/project-render-route.test.ts`, `viewer-render-and-selection.test.tsx`.
 
 ## Règles agents Claude
 

@@ -18,6 +18,7 @@ import { Button } from '@/shared/ui/button';
 import { StageHeader } from './StageHeader';
 import { KiCanvasViewer } from './KiCanvasViewer';
 import { ViewModeSwitch, type ViewMode } from './ViewModeSwitch';
+import { RenderView } from './RenderView';
 import { layoutBoard, type PlacedComponent } from '../lib/layout-engine';
 import { cn } from '@/shared/lib/utils';
 
@@ -756,6 +757,12 @@ export function PcbView({ state, title = 'PCB Layout', showRouting = false }: Pc
 
       {effectiveMode === 'native' && nativeUrl ? (
         <KiCanvasViewer src={nativeUrl} zoom="objects" />
+      ) : (effectiveMode === 'png' || effectiveMode === '3d') && nativeUrl ? (
+        <RenderView
+          projectId={state.projectId}
+          family={effectiveMode}
+          version={state.iteration}
+        />
       ) : (
         <>
           {/* Sub-tab bar */}

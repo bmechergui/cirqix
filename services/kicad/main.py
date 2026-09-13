@@ -176,6 +176,10 @@ app.include_router(drc_router)
 from routers.export import router as export_router  # noqa: E402
 app.include_router(export_router)
 
+# Render router — /render/auto (kicad-cli pcb render : PNG top/bottom, 3D perspective, base64 I/O, fail closed)
+from routers.render import router as render_router  # noqa: E402
+app.include_router(render_router)
+
 # Simulate router — /simulate/auto (kicad-cli → ngspice, base64 I/O, fallback demo)
 from routers.simulate import router as simulate_router  # noqa: E402
 app.include_router(simulate_router)
