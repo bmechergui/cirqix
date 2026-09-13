@@ -82,6 +82,13 @@ Reference designators: R=resistor, C=capacitor, U=module/IC (use U_ESP, U_ARD, U
 IMPORTANT: For MCU/sensor modules, use ref prefix U_ followed by short name (U_ESP1, U_ARD1, U_BME1).
 Keep it to ≤ 20 components.
 
+HARD RULES (a schema breaking one is rejected and you will be asked again):
+  - EVERY net in "connections" joins AT LEAST 2 pins. A one-pin net is an error.
+  - For a connector, the footprint pin count MUST equal the symbol pin count:
+    Conn_01x04 → "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", never 1x02.
+  - "footprint" is a full KiCad footprint "Library:Name" whenever you know it; the short keys below are the only accepted shortcuts.
+  - Every pin of a power/bus signal named in the description (SDA, SCL, TX, RX…) reaches its connector.
+
 Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
 {"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
 
@@ -89,6 +96,62 @@ Example — "LM7805 5V regulator" (IC uses pin names):
 {"components":[{"ref":"U1","value":"LM7805","footprint":"TO-220","symbol":"Regulator_Linear:L7805"},{"ref":"C1","value":"100nF","footprint":"0603","symbol":"Device:C"},{"ref":"J1","value":"VIN","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"}],"nets":["GND","VIN","VOUT"],"connections":[{"name":"VIN","pins":[{"ref":"J1","pin":1},{"ref":"U1","pin":"IN"},{"ref":"C1","pin":1}]},{"name":"VOUT","pins":[{"ref":"U1","pin":"OUT"},{"ref":"C1","pin":1}]},{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"U1","pin":"GND"},{"ref":"C1","pin":2}]}]}
 
 Return ONLY valid JSON. No markdown fences. No explanation.`;
+
+/**
+ * Nombre de pastilles d un footprint, LU dans son nom — ou null si le nom ne
+ * le dit pas. Formes reconnues : `_1x04_`, `_2x15_` (produit), `LQFP-48`,
+ * `SOIC-8`, `SOT-23-5`, `SOT-223-3`, `DIP-8`, `TO-220-3`, et les cles courtes
+ * du prompt (`0603`, `LED`, `Conn_4`, `TO-220`, `SOT-223`).
+ */
+/** Le message utilisateur : la description, plus les problemes de l essai precedent s il y en a eu. */
+export function messageUtilisateur(description: string, retour?: string): string {
+  if (!retour) return `Circuit: ${description}`;
+  return `Circuit: ${description}\n\nYour previous JSON was rejected for these problems:\n${retour}\nReturn a corrected JSON that fixes every one of them.`;
+}
+
+export function padsDuFootprint(footprint: string): number | null {
+  const f = (footprint ?? '').trim();
+  if (!f) return null;
+  const grille = /(\d+)x(\d+)(?:_|$)/i.exec(f);
+  if (grille) return Number(grille[1]) * Number(grille[2]);
+  const boitier = /(?:LQFP|TQFP|QFP|QFN|SOIC|SOP|TSSOP|SSOP|MSOP|DIP|PDIP|SOT-23|SOT-223|SOT-89|TO-220|TO-252|TO-263|DFN|WSON)-(\d+)/i.exec(f);
+  if (boitier) return Number(boitier[1]);
+  const conn = /^CONN_(\d+)$/i.exec(f);
+  if (conn) return Number(conn[1]);
+  const haut = f.toUpperCase();
+  if (/^(0402|0603|0805|1206|LED)$/.test(haut) || /_(0402|0603|0805|1206)_/.test(haut)) return 2;
+  if (haut === 'SOT-23' || haut === 'SOT-223' || haut === 'TO-220') return 3;
+  if (haut === 'TSSOP-8' || haut === 'DIP-8') return 8;
+  return null;
+}
+
+/**
+ * Ce qui rend un schema inutilisable meme s il est lisible : les defauts que
+ * le DRC ne voit PAS, parce qu ils ne creent aucune connexion manquante.
+ *
+ * - une net a moins de deux broches ne relie rien (mesure 2026-09-13 : SDA
+ *   a une broche, board « 100 % route, 0 erreur », bus I2C absent) ;
+ * - un connecteur dont le symbole (Conn_01xNN) et le footprint n ont pas le
+ *   meme nombre de broches perd des broches au trace.
+ */
+export function problemesDuSchema(schema: SchemaJson): string[] {
+  const problemes: string[] = [];
+  for (const conn of schema.connections ?? []) {
+    if ((conn.pins?.length ?? 0) < 2) {
+      problemes.push(`net "${conn.name}" has ${conn.pins?.length ?? 0} pin(s) — a net must join at least 2 pins`);
+    }
+  }
+  for (const c of schema.components ?? []) {
+    const m = /Conn_(\d+)x(\d+)/i.exec(c.symbol ?? '');
+    if (!m) continue;
+    const attendu = Number(m[1]) * Number(m[2]);
+    const pads = padsDuFootprint(c.footprint);
+    if (pads !== null && pads !== attendu) {
+      problemes.push(`component ${c.ref}: symbol ${c.symbol} has ${attendu} pins but footprint ${c.footprint} has ${pads} pads`);
+    }
+  }
+  return problemes;
+}
 
 /**
  * Le texte rendu par le modele -> SchemaJson, ou null s il est illisible.
@@ -105,18 +168,15 @@ export function parseSchemaText(text: string): SchemaJson | null {
     // Validate + repair connections
     // ICs use KiCad pin name strings ("IN", "GND", "TR"…) — always valid if ref exists
     // Passives use 1-indexed pad numbers — validate against footprint pad count
-    const padCountMap: Record<string, number> = {
-      '0402': 2, '0603': 2, '0805': 2, '1206': 2, 'LED': 2,
-      'SOT-23': 3, 'SOT-23-5': 5, 'TSSOP-8': 8, 'DIP-8': 8,
-      'TO-220': 3, 'SOT-223': 3, 'CONN_2': 2, 'CONN_3': 3, 'CONN_4': 4,
-    };
+    // ⚠️ Un footprint INCONNU ne vaut pas « 2 pastilles ». Mesure du
+    // 2026-09-13 (run 25a6853c) : `PinHeader_1x04` ne figurait pas dans la
+    // table, le connecteur etait compte a 2 pastilles, ses broches 3 et 4
+    // etaient SUPPRIMEES en silence — et la net SDA finissait a une broche,
+    // invisible au DRC (un net a une broche n est pas « manquant »). Le
+    // compte se LIT dans le nom du footprint ; s il ne se lit pas, on ne
+    // filtre pas : une broche douteuse vaut mieux qu une broche effacee.
     const compPads = new Map(
-      parsed.components.map((c) => {
-        const key = Object.keys(padCountMap).find((k) =>
-          c.footprint.toUpperCase().includes(k.toUpperCase())
-        );
-        return [c.ref, padCountMap[key ?? '0402'] ?? 2] as [string, number];
-      })
+      parsed.components.map((c) => [c.ref, padsDuFootprint(c.footprint)] as [string, number | null])
     );
     const validRefs = new Set(parsed.components.map((c) => c.ref));
 
@@ -129,7 +189,8 @@ export function parseSchemaText(text: string): SchemaJson | null {
             // String pin name → IC pin (e.g. "IN", "GND", "TR") — trust it
             if (typeof p.pin === 'string') return p.pin.length > 0;
             // Numeric pin → validate against pad count
-            const maxPin = compPads.get(p.ref) ?? 2;
+            const maxPin = compPads.get(p.ref) ?? null;
+            if (maxPin === null) return p.pin >= 1;
             return p.pin >= 1 && p.pin <= maxPin;
           }),
         }))

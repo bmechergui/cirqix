@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import type { SchemaJson } from '../../engines/engine-router';
 import { log } from '../shared';
-import { SCHEMA_SYSTEM_PROMPT, parseSchemaText } from './schema-prompt';
+import { SCHEMA_SYSTEM_PROMPT, parseSchemaText, messageUtilisateur } from './schema-prompt';
 
 /**
  * Claude Code écrit le schéma — `claude -p`, sortie JSON, MÊME contrat que
@@ -104,13 +104,14 @@ export function texteDeLEnveloppe(stdout: string): string | null {
 export async function generateSchemaWithClaudeCode(
   description: string,
   options: ClaudeCodeOptions = {},
+  retour?: string,
 ): Promise<SchemaJson | null> {
   const bin = options.bin ?? process.env['CIRQIX_CLAUDE_CODE_BIN'] ?? 'claude';
   const model = options.model ?? process.env['CIRQIX_CLAUDE_CODE_MODEL'];
   const timeoutMs = options.timeoutMs ?? DELAI_PAR_DEFAUT_MS;
   const executer = options.executer ?? executerClaudeCode;
   const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : [])];
-  const stdin = `${SCHEMA_SYSTEM_PROMPT}\n\nCircuit: ${description}`;
+  const stdin = `${SCHEMA_SYSTEM_PROMPT}\n\n${messageUtilisateur(description, retour)}`;
   try {
     const debut = Date.now();
     const { stdout } = await executer(bin, args, stdin, timeoutMs);

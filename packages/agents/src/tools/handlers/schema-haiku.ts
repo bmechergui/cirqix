@@ -1,10 +1,10 @@
 import type { SchemaJson } from '../../engines/engine-router';
 import { log, getAnthropicClient } from '../shared';
-import { SCHEMA_SYSTEM_PROMPT, parseSchemaText } from './schema-prompt';
+import { SCHEMA_SYSTEM_PROMPT, parseSchemaText, messageUtilisateur } from './schema-prompt';
 
 // --- Haiku schema generator ----------------------------------------------
 
-export async function generateSchemaWithHaiku(description: string): Promise<SchemaJson | null> {
+export async function generateSchemaWithHaiku(description: string, retour?: string): Promise<SchemaJson | null> {
   // Review fix HIGH-1: reuse module-level singleton client.
   const client = getAnthropicClient();
   if (!client) {
@@ -17,7 +17,7 @@ export async function generateSchemaWithHaiku(description: string): Promise<Sche
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 4096,
       system: SCHEMA_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `Circuit: ${description}` }],
+      messages: [{ role: 'user', content: messageUtilisateur(description, retour) }],
     });
 
     const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';

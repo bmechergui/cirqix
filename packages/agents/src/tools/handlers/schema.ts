@@ -2,6 +2,7 @@ import { pcbStateCache, log } from '../shared';
 import { generateSchemaWithHaiku } from './schema-haiku';
 import { generateSchemaWithClaudeCode } from './schema-claude-code';
 import { schemaProvider } from './schema-provider';
+import { problemesDuSchema } from './schema-prompt';
 import { validateAndCorrectSchema } from '../../engines/schematic-engine';
 import { runCircuitSynthEngine } from '../../engines/engine-router';
 import type { SchemaJson } from '../../engines/engine-router';
@@ -79,11 +80,37 @@ export async function handleSchema(
     // `CIRQIX_SCHEMA_PROVIDER=claude-code` fait ecrire le schema par Claude
     // Code en ligne de commande (D-2026-09-13-a), `haiku` (defaut) par l API.
     const fournisseur = schemaProvider(process.env);
-    if (fournisseur === 'claude-code') {
-      schema = await generateSchemaWithClaudeCode(desc);
-      provenance = 'claude-code';
-    } else {
-      schema = await generateSchemaWithHaiku(desc);
+    const generer = (retour?: string): Promise<SchemaJson | null> => {
+      if (fournisseur === 'claude-code') {
+        return retour === undefined
+          ? generateSchemaWithClaudeCode(desc)
+          : generateSchemaWithClaudeCode(desc, {}, retour);
+      }
+      return retour === undefined ? generateSchemaWithHaiku(desc) : generateSchemaWithHaiku(desc, retour);
+    };
+    if (fournisseur === 'claude-code') provenance = 'claude-code';
+    schema = await generer();
+    // ⚠️ UN SCHEMA LISIBLE N EST PAS UN SCHEMA JUSTE. Mesure du 2026-09-13
+    // (run 25a6853c) : « 100 % route, 0 erreur » avec une net SDA a UNE
+    // broche — le DRC ne voit pas un bus absent. On rejoue UNE fois avec les
+    // problemes nommes ; s ils restent, on refuse : rien n est fabrique.
+    if (schema) {
+      const problemes = problemesDuSchema(schema);
+      if (problemes.length > 0) {
+        log.warn({ projectId, problemes }, 'call_agent_schema: schema rejete — second essai avec les problemes');
+        const second = await generer(problemes.map((x) => `- ${x}`).join('\n'));
+        const restants = second ? problemesDuSchema(second) : problemes;
+        if (second && restants.length === 0) {
+          schema = second;
+        } else {
+          log.error({ projectId, restants }, 'call_agent_schema: schema toujours invalide apres le second essai — aucun repli');
+          return {
+            status: 'error',
+            error: `Schema rejected after retry — ${restants.join('; ')}. Refine the description.`,
+            note: 'Schéma rejeté après un second essai — aucun schéma fabriqué.',
+          };
+        }
+      }
     }
   }
 
