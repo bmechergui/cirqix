@@ -1,0 +1,32 @@
+﻿{
+    "date":  "2026-09-13",
+    "fichiers_exportes":  20,
+    "nets":  7,
+    "vias":  20,
+    "exemple":  "driver-clignotant-ne555",
+    "routed_percent":  100,
+    "drc_du_board":  {
+                         "non_connectes":  0,
+                         "fabricable":  true,
+                         "types":  "silk_overlap:3",
+                         "nb_erreurs":  0,
+                         "violations":  3
+                     },
+    "couches":  2,
+    "segments":  49,
+    "commandable":  false,
+    "git":  "21109c0",
+    "board_mm":  [
+                     45,
+                     30
+                 ],
+    "schema_ecrit_par":  "Claude Code (driver LLM), sans appel a l API Anthropic",
+    "provenance":  "driver",
+    "composants":  9,
+    "credits_debites":  0,
+    "longueur_piste_mm":  104.301,
+    "duree_s":  156,
+    "project_id":  "645802b1-fab9-42a2-98f6-92a47556aba9",
+    "drc_clean":  true,
+    "run_id":  "6d3af3b3-db95-4d72-9f7d-b7c78fc5098c"
+}
