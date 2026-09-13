@@ -17,7 +17,7 @@ vi.mock('../tools/handlers/schema-claude-code', () => claudeMock);
 const engineMock = vi.hoisted(() => ({ runCircuitSynthEngine: vi.fn(), runPCBEngine: vi.fn() }));
 vi.mock('../engines/engine-router', () => engineMock);
 
-import { padsDuFootprint, problemesDuSchema, parseSchemaText, messageUtilisateur } from '../tools/handlers/schema-prompt';
+import { padsDuFootprint, problemesDuSchema, parseSchemaText, messageUtilisateur, REFERENCE_KICAD } from '../tools/handlers/schema-prompt';
 import { handleSchema } from '../tools/handlers/schema';
 import { pcbStateCache } from '../tools/shared';
 
@@ -81,6 +81,21 @@ describe('problemesDuSchema — ce que le DRC ne voit pas', () => {
     expect(p[0]).toContain('net "SDA" has 1 pin(s)');
     expect(p[1]).toContain('J1');
   });
+  it('refuse une référence qui n est pas une référence KiCad (U_TMP1 débordait de son empreinte)', () => {
+    const p = problemesDuSchema({
+      components: [
+        { ref: 'U_TMP1', value: 'TMP102', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical', symbol: 'Connector_Generic:Conn_01x04' },
+        { ref: 'R1', value: '4.7k', footprint: '0603', symbol: 'Device:R' },
+      ],
+      nets: ['A'],
+      connections: [{ name: 'A', pins: [{ ref: 'U_TMP1', pin: 1 }, { ref: 'R1', pin: 1 }] }],
+    });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toContain('"U_TMP1"');
+    for (const bon of ['U1', 'C12', 'J2', 'SW1', 'Y1', 'RN3']) expect(REFERENCE_KICAD.test(bon)).toBe(true);
+    for (const mauvais of ['U_TMP1', 'SENSOR', 'u1', 'U', '1', 'U1A']) expect(REFERENCE_KICAD.test(mauvais)).toBe(false);
+  });
+
   it('un schéma sain n a aucun problème', () => {
     expect(problemesDuSchema({
       components: [{ ref: 'J1', value: 'PWR', footprint: 'Conn_2', symbol: 'Connector_Generic:Conn_01x02' }, { ref: 'R1', value: '1k', footprint: '0603', symbol: 'Device:R' }],
