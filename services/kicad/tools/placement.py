@@ -713,7 +713,8 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
             nx, ny = cx, cy
         else:
             nx, ny = _position_libre_pour_ancrage(pcb, fp.reference, cx, cy,
-                                                  min_x, max_x, min_y, max_y)
+                                                  min_x, max_x, min_y, max_y,
+                                                  ancres=set(fixed_refs))
         if (nx, ny) != (x, y):
             logger.warning("ancrage %s (%.2f,%.2f) -> reposé (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)
@@ -745,9 +746,29 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
+def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
+    """Boite absolue (courtyard + marge) des footprints `refs`, par reference."""
+    out = {}
+    for fp in pcb.footprints:
+        if fp.reference in refs:
+            x, y = fp.position
+            b = _boite_locale_fp(fp)
+            out[fp.reference] = (x + b[0] - marge, y + b[1] - marge,
+                                 x + b[2] + marge, y + b[3] + marge)
+    return out
+
+
+def _corps_dans_le_contour(fp, x: float, y: float,
+                           min_x: float, max_x: float, min_y: float, max_y: float) -> bool:
+    b = _boite_locale_fp(fp)
+    return (min_x <= x + b[0] and x + b[2] <= max_x
+            and min_y <= y + b[1] and y + b[3] <= max_y)
+
+
 def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
                                  min_x: float, max_x: float,
-                                 min_y: float, max_y: float) -> tuple:
+                                 min_y: float, max_y: float,
+                                 ancres=None) -> tuple:
     """Repose un ancrage clampé là où il n'entre en collision avec RIEN.
 
     ⚠️ Le clamp traitait chaque ancrage INDÉPENDAMMENT : deux connecteurs
@@ -766,6 +787,44 @@ def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
     Aucune constante d'écart, donc aucune hypothèse sur la taille des
     boîtiers — un connecteur 40 broches est traité comme tel.
     """
+    # ⚠️ DEUX DEFAUTS mesures le 2026-09-13 (banc, regle des bords) :
+    #
+    # 1. La collision etait jugee contre TOUS les footprints, y compris ceux
+    #    de la grille initiale du generateur que l optimiseur va de toute facon
+    #    deplacer. Presque chaque connecteur ancre au bord etait « repose »
+    #    plus loin pour eviter une resistance qui n allait pas rester la —
+    #    la regle des bords etait defaite avant meme le premier tirage.
+    #    Seuls les AUTRES ANCRAGES comptent : eux ne bougeront pas.
+    #
+    # 2. Le test de bornes portait sur l ORIGINE du footprint, pas sur son
+    #    corps : un en-tete 1x04 dont l origine est sur la pastille 1 finissait
+    #    4,6 mm hors carte (carte-06, J10 : `copper_edge_clearance`, trois
+    #    tirages sur trois). Le corps doit tenir dans le contour.
+    if ancres is not None:
+        fp = next((f for f in pcb.footprints if f.reference == ref), None)
+        if fp is None:
+            return cx, cy
+        autres = _boites_absolues(pcb, set(ancres) - {ref})
+
+        def libre(x, y):
+            b = _boite_locale_fp(fp)
+            bx0, by0, bx1, by1 = x + b[0], y + b[1], x + b[2], y + b[3]
+            return not any(bx0 < ox1 and bx1 > ox0 and by0 < oy1 and by1 > oy0
+                           for ox0, oy0, ox1, oy1 in autres.values())
+
+        if libre(cx, cy):
+            return cx, cy
+        pas = _encombrement_mm(pcb, ref)
+        for i in range(1, 41):
+            for nx, ny in ((cx, cy + i * pas), (cx, cy - i * pas),
+                           (cx + i * pas, cy), (cx - i * pas, cy)):
+                if not _corps_dans_le_contour(fp, nx, ny, min_x, max_x, min_y, max_y):
+                    continue
+                if libre(nx, ny):
+                    return nx, ny
+        logger.warning("ancrage %s : aucune position libre entre ancrages", ref)
+        return cx, cy
+
     try:
         if not pcb.check_placement_collision(ref, cx, cy).has_collision:
             return cx, cy
