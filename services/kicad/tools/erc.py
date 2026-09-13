@@ -124,12 +124,20 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
                 pos = item.get("pos") if isinstance(item.get("pos"), dict) else {}
                 x_mm = pos.get("x") if isinstance(pos, dict) else None
                 y_mm = pos.get("y") if isinstance(pos, dict) else None
+                # L id doit etre UNIQUE PAR ENTREE, pas par objet du schema : un
+                # meme pin (meme uuid KiCad) figure dans plusieurs violations —
+                # « pin non connecte » ET « entree non pilotee » —, et React
+                # refusait deux enfants de meme cle dans ErcView (run 09f7ee80,
+                # 2026-09-13). L uuid de l objet reste disponible dans `item_uuid`.
+                item_uuid = str(item.get("uuid") or "")
                 entry: dict[str, Any] = {
-                    "id": str(item.get("uuid") or uuid.uuid4()),
+                    "id": f"{len(out)}-{item_uuid}" if item_uuid else str(uuid.uuid4()),
                     "severity": severity,
                     "message": message,
                     "type": v_type,
                 }
+                if item_uuid:
+                    entry["item_uuid"] = item_uuid
                 if ref is not None:
                     entry["ref"] = ref
                 if pin is not None:
