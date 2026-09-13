@@ -84,23 +84,35 @@ def test_le_connecteur_part_du_milieu_du_bord_gauche(board: Path):
     assert corps_cy == pytest.approx(10.0, abs=0.01)
 
 
-def test_plusieurs_connecteurs_sont_repartis_puis_passent_a_droite(board: Path):
+def test_chaque_connecteur_va_au_bord_le_plus_proche_et_les_bords_sont_repartis(board: Path):
     pcb = PCB.load(str(board))
-    # On promeut R1..R3 et D1 en connecteurs pour tester la répartition.
+    # Contour 25 x 20. On promeut R1..R3 et D1 en connecteurs et on les pose
+    # explicitement : deux pres du bas, un pres de la droite, J1 au coin.
     renommage = {"R1": "J2", "R2": "J3", "R3": "J4", "D1": "P9"}
+    positions = {"J2": (8.0, 18.0), "J3": (16.0, 17.5), "J4": (23.0, 6.0), "P9": (12.0, 12.0)}
     for fp in pcb.footprints:
         if fp.reference in renommage:
             fp.reference = renommage[fp.reference]
+            fp.position = positions[fp.reference]
     deplaces = ancrer_connecteurs_au_bord(pcb)
-    assert len(deplaces) == 5
+    assert sorted(deplaces) == ["J1", "J2", "J3", "J4", "P9"]
     par_ref = {fp.reference: fp for fp in pcb.footprints}
-    gauche = [par_ref[r] for r in deplaces[:3]]
-    droite = [par_ref[r] for r in deplaces[3:]]
-    ys = [fp.position[1] + sum(placement_mod._boite_locale_fp(fp)[1::2]) / 2.0 for fp in gauche]
-    assert ys == pytest.approx([5.0, 10.0, 15.0], abs=0.01)
-    for fp in droite:
-        bx1 = placement_mod._boite_locale_fp(fp)[2]
-        assert fp.position[0] + bx1 == pytest.approx(25.0 - MARGE_BORD_MM, abs=0.01)
+
+    def corps(ref):
+        fp = par_ref[ref]; b = placement_mod._boite_locale_fp(fp)
+        return (fp.position[0] + b[0], fp.position[1] + b[1], fp.position[0] + b[2], fp.position[1] + b[3])
+
+    # J1 (coin) -> bord gauche, seul dessus : centre a mi-hauteur.
+    assert corps("J1")[0] == pytest.approx(MARGE_BORD_MM, abs=0.01)
+    assert (corps("J1")[1] + corps("J1")[3]) / 2 == pytest.approx(10.0, abs=0.01)
+    # J2, P9 et J3 -> bord bas (P9 au centre : 7,3 mm du bas, son plus proche),
+    # repartis a 25/4, 50/4, 75/4 dans l ordre de leur x.
+    for ref, cx in (("J2", 6.25), ("P9", 12.5), ("J3", 18.75)):
+        assert corps(ref)[3] == pytest.approx(20.0 - MARGE_BORD_MM, abs=0.01), ref
+        assert (corps(ref)[0] + corps(ref)[2]) / 2 == pytest.approx(cx, abs=0.01), ref
+    # J4 -> bord droit, seul dessus.
+    assert corps("J4")[2] == pytest.approx(25.0 - MARGE_BORD_MM, abs=0.01)
+    assert (corps("J4")[1] + corps("J4")[3]) / 2 == pytest.approx(10.0, abs=0.01)
 
 
 def test_la_variante_b64_rend_un_board_relisible(board: Path):

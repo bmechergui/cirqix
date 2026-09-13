@@ -16,9 +16,17 @@ Rien ne vise la surface demandée.
 
 ## Les deux leviers, dans l'ordre
 
-- **B — `ancrer_connecteurs_au_bord`**, AVANT les tirages : les connecteurs
-  (J*, P*) sont répartis au milieu du bord gauche (puis du bord droit au-delà
-  de trois), corps à `marge` du bord. Le génétique s'équilibre autour d'eux.
+- **B — `ancrer_connecteurs_au_bord`**, AVANT les tirages : chaque
+  connecteur (J*, P*) va au BORD LE PLUS PROCHE de sa position, corps à
+  `marge` du bord, et ceux qui partagent un bord y sont répartis
+  régulièrement, centrés. Le génétique s'équilibre autour d'eux.
+
+  ⚠️ La première version envoyait TOUT au bord gauche (puis droit) : mesuré le
+  2026-09-13 sur le banc, le centrage s'améliorait mais le découplage se
+  dégradait sur les cartes denses (carte-08 2,6 → 4,1 mm, carte-09 3,2 → 5,0,
+  carte-10 4,1 → 5,4) — carte-10 avait cinq connecteurs bien répartis en bas
+  qu'on empilait en colonne à droite. On corrige le CAS (le coin de la
+  grille), on ne défait pas ce qui était bon.
 - **A — `ajuster_contour_au_placement`**, APRÈS le placement retenu : le
   contour `Edge.Cuts` est resserré sur la boîte des courtyards + marge —
   SEULEMENT quand la taille n'était pas imposée par la description (drapeau
@@ -42,8 +50,6 @@ logger = logging.getLogger(__name__)
 # le nouveau contour. 3 mm : assez pour le masque, la sérigraphie et le
 # fraisage ; JLCPCB demande 0,3 mm au minimum.
 MARGE_BORD_MM = 3.0
-# Au-delà, les connecteurs suivants passent sur le bord droit.
-_PAR_BORD = 3
 
 
 def _connecteurs(pcb: Any) -> list[Any]:
@@ -75,10 +81,30 @@ def _boite_locale(fp: Any) -> tuple[float, float, float, float]:
     return _boite_locale_fp(fp)
 
 
-def ancrer_connecteurs_au_bord(pcb: Any, marge_mm: float = MARGE_BORD_MM) -> list[str]:
-    """Répartit les connecteurs au milieu du bord gauche (puis droit).
+def _bord_le_plus_proche(fp: Any, contour: tuple[float, float, float, float]) -> str:
+    """'gauche' | 'droite' | 'haut' | 'bas' — le bord dont le CORPS est le plus près.
+    Egalite (le coin de la grille, 5 mm de chaque cote) : le bord vertical, ou
+    un en-tete vertical sort naturellement ses fils."""
+    x0, y0, x1, y1 = contour
+    bx0, by0, bx1, by1 = _boite_locale(fp)
+    px, py = fp.position
+    d = {
+        "gauche": (px + bx0) - x0,
+        "droite": x1 - (px + bx1),
+        "haut": (py + by0) - y0,
+        "bas": y1 - (py + by1),
+    }
+    mini = min(d.values())
+    for bord in ("gauche", "droite", "haut", "bas"):  # priorite aux verticaux a egalite
+        if d[bord] <= mini + 1e-6:
+            return bord
+    return "gauche"
 
-    Rend les références déplacées. Ne touche à rien d'autre : le génétique
+
+def ancrer_connecteurs_au_bord(pcb: Any, marge_mm: float = MARGE_BORD_MM) -> list[str]:
+    """Chaque connecteur au milieu de son bord le plus proche, repartis par bord.
+
+    Rend les references deplacees. Ne touche a rien d autre : le genetique
     place le reste, et `fixed_refs` gardera ces positions.
     """
     contour = _contour_repere_board(pcb)
@@ -86,23 +112,27 @@ def ancrer_connecteurs_au_bord(pcb: Any, marge_mm: float = MARGE_BORD_MM) -> lis
     if contour is None or not conns:
         return []
     x0, y0, x1, y1 = contour
-    hauteur = y1 - y0
-    gauche = conns[:_PAR_BORD] if len(conns) > _PAR_BORD else conns
-    droite = conns[_PAR_BORD:] if len(conns) > _PAR_BORD else []
+    largeur, hauteur = x1 - x0, y1 - y0
+    par_bord: dict[str, list[Any]] = {"gauche": [], "droite": [], "haut": [], "bas": []}
+    for fp in conns:
+        par_bord[_bord_le_plus_proche(fp, contour)].append(fp)
     deplaces: list[str] = []
-    for groupe, a_gauche in ((gauche, True), (droite, False)):
+    for bord, groupe in par_bord.items():
         n = len(groupe)
-        for i, fp in enumerate(groupe):
+        # Repartis dans l ordre de leur position le long du bord : on garde
+        # l ordre que le generateur (ou l utilisateur) leur avait donne.
+        le_long = (lambda f: f.position[1]) if bord in ("gauche", "droite") else (lambda f: f.position[0])
+        for i, fp in enumerate(sorted(groupe, key=le_long)):
             bx0, by0, bx1, by1 = _boite_locale(fp)
-            # Ordonnée : répartition régulière sur la hauteur, corps centré.
-            cy = y0 + hauteur * (i + 1) / (n + 1) - (by0 + by1) / 2.0
-            if a_gauche:
-                cx = x0 + marge_mm - bx0
+            if bord in ("gauche", "droite"):
+                cy = y0 + hauteur * (i + 1) / (n + 1) - (by0 + by1) / 2.0
+                cx = (x0 + marge_mm - bx0) if bord == "gauche" else (x1 - marge_mm - bx1)
             else:
-                cx = x1 - marge_mm - bx1
+                cx = x0 + largeur * (i + 1) / (n + 1) - (bx0 + bx1) / 2.0
+                cy = (y0 + marge_mm - by0) if bord == "haut" else (y1 - marge_mm - by1)
             fp.position = (cx, cy)
             deplaces.append(fp.reference)
-    logger.info("bords: %d connecteur(s) ancre(s) au milieu du bord — %s",
+    logger.info("bords: %d connecteur(s) ancre(s) au milieu de leur bord — %s",
                 len(deplaces), ", ".join(deplaces))
     return deplaces
 
