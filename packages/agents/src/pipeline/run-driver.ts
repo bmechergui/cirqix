@@ -48,7 +48,14 @@ import type { SSEEvent } from '../orchestrator';
 
 export interface DriverOptions {
   /** Le schéma écrit par le driver : composants, nets, et dimensions de carte. */
-  schema: Record<string, unknown>;
+  schema?: Record<string, unknown>;
+  /**
+   * Sans schema : la description de l utilisateur, que `call_agent_schema`
+   * confie au fournisseur configure (`CIRQIX_SCHEMA_PROVIDER`, par exemple
+   * Claude Code en ligne de commande, D-2026-09-13-a). La provenance du run
+   * reste celle de `pcb_runs.agent_mode`, jamais deduite d ici.
+   */
+  prompt?: string;
   projectId: string;
 }
 
@@ -95,22 +102,26 @@ function messageDErreur(resultat: Record<string, unknown>, outil: string): strin
 
 export async function* runDriver(options: DriverOptions): AsyncGenerator<SSEEvent> {
   const { schema, projectId } = options;
-
-  if (!schema || typeof schema !== 'object') {
-    yield { type: 'error', message: 'Aucun schéma fourni au porteur du driver.' };
+  const prompt = (options.prompt ?? '').trim();
+  const avecSchema = !!schema && typeof schema === 'object';
+  if (!avecSchema && !prompt) {
+    yield { type: 'error', message: 'Aucun schema ni description fournis au porteur du driver.' };
     return;
   }
-
   yield {
     type: 'text',
-    delta: 'Schéma fourni par le driver — la chaîne tourne sans appeler de modèle.\n',
+    delta: avecSchema
+      ? 'Schema fourni par le driver - la chaine tourne sans appeler de modele.\n'
+      : 'Description confiee au fournisseur de schema configure - puis la chaine deterministe.\n',
   };
-
   for (const etape of CHAINE) {
     if (etape.ui) yield { type: 'step', step: etape.ui };
 
     const entree: Record<string, unknown> = { ...(etape.entree ?? {}) };
-    if (etape.outil === 'call_agent_schema') entree['schema_json'] = schema;
+    if (etape.outil === 'call_agent_schema') {
+      if (avecSchema) entree['schema_json'] = schema;
+      else entree['user_description'] = prompt;
+    }
 
     const resultat = await executeToolStub(etape.outil, entree, projectId);
 

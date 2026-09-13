@@ -1,5 +1,7 @@
 import { pcbStateCache, log } from '../shared';
 import { generateSchemaWithHaiku } from './schema-haiku';
+import { generateSchemaWithClaudeCode } from './schema-claude-code';
+import { schemaProvider } from './schema-provider';
 import { validateAndCorrectSchema } from '../../engines/schematic-engine';
 import { runCircuitSynthEngine } from '../../engines/engine-router';
 import type { SchemaJson } from '../../engines/engine-router';
@@ -73,7 +75,16 @@ export async function handleSchema(
     }
     provenance = 'driver-json';
   } else if (desc) {
-    schema = await generateSchemaWithHaiku(desc);
+    // ⚠️ Le FOURNISSEUR du schema est un choix de deploiement, pas du code :
+    // `CIRQIX_SCHEMA_PROVIDER=claude-code` fait ecrire le schema par Claude
+    // Code en ligne de commande (D-2026-09-13-a), `haiku` (defaut) par l API.
+    const fournisseur = schemaProvider(process.env);
+    if (fournisseur === 'claude-code') {
+      schema = await generateSchemaWithClaudeCode(desc);
+      provenance = 'claude-code';
+    } else {
+      schema = await generateSchemaWithHaiku(desc);
+    }
   }
 
   if (!schema) {
@@ -82,15 +93,18 @@ export async function handleSchema(
     // voltage divider, looks like success but is wrong, so the user wastes
     // credits re-iterating. Surface a real, diagnostic error instead so the
     // actual cause (Docker down, missing API key, truncated JSON) is fixed.
+    const fournisseur = schemaProvider(process.env);
     const hasApiKey = !!process.env['ANTHROPIC_API_KEY'];
-    const cause = hasApiKey ? 'invalid or truncated Haiku response' : 'ANTHROPIC_API_KEY not set';
+    const cause = fournisseur === 'claude-code'
+      ? 'Claude Code CLI failed or returned no valid schema'
+      : hasApiKey ? 'invalid or truncated Haiku response' : 'ANTHROPIC_API_KEY not set';
     log.error(
       { projectId, complexity, hasApiKey },
       'call_agent_schema: schema generation failed — no fabricated fallback'
     );
     return {
       status: 'error',
-      error: `Schema generation failed — Haiku JSON: ${cause}. Fix the cause and retry, or refine the description.`,
+      error: `Schema generation failed — ${fournisseur}: ${cause}. Fix the cause and retry, or refine the description.`,
       note: 'Génération du schéma échouée — aucun schéma fabriqué. Corrige la cause puis relance.',
     };
   }
