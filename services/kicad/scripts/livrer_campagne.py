@@ -49,7 +49,12 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 _SERVICE = Path(__file__).resolve().parent.parent
-_RACINE = _SERVICE.parents[1]
+# ⚠️ Dans l image Docker, le service EST /app : il n a qu un seul parent, et
+# `parents[1]` levait IndexError A L IMPORT — la suite pytest de la CI
+# echouait a la collecte de `test_mesures_livrees.py` depuis la fusion du
+# 2026-09-12 (#164), sur main et sur toute PR. La racine du depot ne sert
+# qu aux commandes git, hors conteneur : a defaut, on retombe sur le service.
+_RACINE = _SERVICE.parents[1] if len(_SERVICE.parents) > 1 else _SERVICE
 _CONTENEUR = "cirqix-kicad"
 
 
