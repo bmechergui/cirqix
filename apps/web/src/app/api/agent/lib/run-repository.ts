@@ -17,7 +17,7 @@ import { logger } from '@cirqix/logger';
 
 const log = logger.child({ module: 'run-repository' });
 
-export type AgentMode = 'orchestrator' | 'local_fallback' | 'simulator';
+export type AgentMode = 'orchestrator' | 'local_fallback' | 'simulator' | 'driver';
 
 export interface CreateRunInput {
   projectId: string;

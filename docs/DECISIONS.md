@@ -701,6 +701,26 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-13-b — `CIRQIX_AGENT_MODE=driver` : la route enfile des runs de provenance `driver`
+
+**Statut : validée** par l'utilisateur le 2026-09-13 (« Oui » sur l'option A
+recommandée, contre B « recharger le crédit Anthropic »).
+
+**Le fait :** une soumission depuis le dashboard crée un run `orchestrator`, et
+le worker lance alors l'orchestrateur **Sonnet par l'API** avant même le
+schéma. Remplacer Haiku par Claude Code (D-2026-09-13-a) ne suffit donc pas :
+sans crédit, le run échoue au premier appel.
+
+**Ce qui est fait :** `CIRQIX_AGENT_MODE=driver` fait créer par la route des
+runs de provenance `driver`, **sans retenue de crédit** (rien ne tourne sur
+l'API), enfilés dans la file ; le worker emprunte le porteur du driver et le
+schéma vient du fournisseur configuré. Sans file (`CIRQIX_ASYNC_PIPELINE`,
+`REDIS_URL`), la route répond 503 plutôt que de retomber sur le simulateur.
+
+**Ce que ça ne change pas :** la commandabilité. `POST /api/jlcpcb/order`
+exige `orchestrator` ; un board du mode driver reste non commandable. C'est un
+mode d'exploitation le temps que le crédit revienne, pas le produit vendu.
+
 ## D-2026-09-13-a — Claude Code écrit le schéma à la place de Haiku (`CIRQIX_SCHEMA_PROVIDER=claude-code`)
 
 **Statut : validée** par l'utilisateur le 2026-09-13 (choix explicite « Remplacer

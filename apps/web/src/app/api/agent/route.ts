@@ -161,6 +161,51 @@ export async function POST(req: NextRequest) {
   // Le drapeau exige `REDIS_URL` : sans file, un job enfilé ne serait consommé
   // par personne et l'utilisateur verrait sa demande acceptée puis jamais
   // traitée — pire qu'un refus franc.
+  // ⚠️ MODE DRIVER (D-2026-09-13-b) : provenance `driver`, aucune retenue —
+  // rien n'est facture puisqu'aucun modele de l'API ne tourne. Il n'existe QUE
+  // par la file : le porteur du driver vit dans le worker. Sans file, on
+  // refuse franchement plutot que de retomber sur le simulateur ou l'orchestrateur.
+  if (requestedMode === 'driver') {
+    if (!asyncPipelineEnabled(process.env, { requireRedis: true })) {
+      return NextResponse.json(
+        { success: false, error: 'Driver mode requires the queue (CIRQIX_ASYNC_PIPELINE=1 and REDIS_URL)' },
+        { status: 503 },
+      );
+    }
+    try {
+      const runId = await createRun(pipelineClient, {
+        projectId,
+        userId: user.id,
+        agentMode: 'driver',
+        reservationId: null,
+        iterationStart: project.iteration_count ?? 0,
+      });
+      const queue = createPipelineQueue(process.env['REDIS_URL'] as string);
+      try {
+        await enqueuePipelineRun(queue, {
+          runId,
+          projectId,
+          userId: user.id,
+          prompt,
+          iterationStart: project.iteration_count ?? 0,
+        });
+      } finally {
+        await queue.close();
+      }
+      return NextResponse.json({ success: true, runId, agentMode: 'driver' }, { status: 202 });
+    } catch (err) {
+      if (err instanceof RunAlreadyActiveError) {
+        return NextResponse.json(
+          { success: false, error: 'A pipeline is already running for this project' },
+          { status: 409 },
+        );
+      }
+      clearProjectPlan(projectId);
+      logger.child({ module: 'agent-route' }).error({ err, projectId }, 'enfilage du run driver échoué');
+      return NextResponse.json({ success: false, error: 'Could not queue the pipeline' }, { status: 500 });
+    }
+  }
+
   if (useOrchestrator && asyncPipelineEnabled(process.env, { requireRedis: true })) {
     try {
       const runId = await createRun(pipelineClient, {
