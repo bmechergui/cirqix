@@ -11,7 +11,7 @@ const actif = process.env['CIRQIX_SMOKE_CLAUDE'] === '1';
 
 describe.skipIf(!actif)('claude -p écrit un schéma réel', () => {
   it('rend un schéma lisible pour un diviseur de tension', async () => {
-    const { generateSchemaWithClaudeCode } = await import('../tools/handlers/schema-claude-code');
+    const { generateSchemaWithClaudeCode } = await import('../tools/handlers/schema-claude-code.js');
     const t0 = Date.now();
     const s = await generateSchemaWithClaudeCode(
       'Un diviseur de tension 10k/10k sur 5 V avec un condensateur de 100 nF en sortie et un connecteur 3 broches (VIN, VOUT, GND).',

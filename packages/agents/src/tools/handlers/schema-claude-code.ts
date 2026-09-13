@@ -41,11 +41,30 @@ export type Executer = (
 
 const DELAI_PAR_DEFAUT_MS = 5 * 60_000;
 
+/**
+ * L environnement du CLI, SANS les variables d authentification API.
+ *
+ * ⚠️ Mesure du 2026-09-13, run 0525dc97 : le worker porte `ANTHROPIC_API_KEY`
+ * (pour Haiku) ; `claude -p` l a heritee et l a preferee a la session
+ * claude.ai — « claude.ai connectors are disabled because ANTHROPIC_API_KEY
+ * ... takes precedence over your claude.ai login » — puis a echoue sur le
+ * solde a zero de cette cle. Tout l interet du fournisseur est l abonnement :
+ * on retire la cle, le jeton et l URL de base avant de lancer le CLI.
+ */
+export const VARIABLES_AUTH_API = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'] as const;
+
+export function envPourClaudeCode(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const propre: NodeJS.ProcessEnv = { ...env };
+  for (const nom of VARIABLES_AUTH_API) delete propre[nom];
+  return propre;
+}
+
 /** Exécution réelle : stdin → `claude -p`, stdout collecté, délai respecté. */
 export const executerClaudeCode: Executer = (bin, args, stdin, timeoutMs) =>
   new Promise((resolve, reject) => {
     const enfant = spawn(bin, args, {
       cwd: tmpdir(),
+      env: envPourClaudeCode(process.env),
       shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

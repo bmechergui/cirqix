@@ -12,6 +12,7 @@ vi.hoisted(() => {
 import {
   generateSchemaWithClaudeCode,
   texteDeLEnveloppe,
+  envPourClaudeCode,
 } from '../tools/handlers/schema-claude-code';
 import { SCHEMA_SYSTEM_PROMPT, parseSchemaText } from '../tools/handlers/schema-prompt';
 import { schemaProvider } from '../tools/handlers/schema-provider';
@@ -84,5 +85,12 @@ describe('generateSchemaWithClaudeCode', () => {
     expect(texteDeLEnveloppe(JSON.stringify(SCHEMA))).toBe(JSON.stringify(SCHEMA));
     expect(texteDeLEnveloppe(enveloppe('abc'))).toBe('abc');
     expect(texteDeLEnveloppe('')).toBeNull();
+  });
+});
+
+describe('l environnement du CLI', () => {
+  it('ne transmet jamais la cle API du worker — la session claude.ai doit gagner', () => {
+    const env = envPourClaudeCode({ PATH: '/bin', ANTHROPIC_API_KEY: 'sk-x', ANTHROPIC_AUTH_TOKEN: 't', ANTHROPIC_BASE_URL: 'https://x', HOME: '/h' });
+    expect(env).toEqual({ PATH: '/bin', HOME: '/h' });
   });
 });
