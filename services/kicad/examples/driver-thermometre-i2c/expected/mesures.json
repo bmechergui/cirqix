@@ -1,0 +1,29 @@
+{
+  "exemple": "driver-thermometre-i2c",
+  "date": "2026-09-13",
+  "run_id": "25a6853c-2c23-4a02-8610-41f3edb1806e",
+  "project_id": "2be02059-834b-4858-8c30-65f833ef493a",
+  "provenance": "driver",
+  "schema_ecrit_par": "Claude Code en ligne de commande (claude -p), CIRQIX_SCHEMA_PROVIDER=claude-code, depuis la seule description du run",
+  "composants": 10,
+  "nets": 6,
+  "board_mm": [40, 35],
+  "duree_s": 279,
+  "routed_percent": 100,
+  "couches": 2,
+  "vias": 14,
+  "segments": 27,
+  "longueur_piste_mm": 67.914,
+  "drc_clean": true,
+  "fichiers_exportes": 20,
+  "credits_debites": 0,
+  "drc_du_board": {
+    "violations": 3,
+    "non_connectes": 0,
+    "types": "silk_overlap:2,silk_edge_clearance:1",
+    "nb_erreurs": 0,
+    "fabricable": true
+  },
+  "fidelite_du_schema": "faible : TMP102 en connecteur 6 broches, net SDA a une seule broche, LED traversante — le DRC ne juge pas l intention electrique",
+  "commandable": false
+}
