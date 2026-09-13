@@ -321,6 +321,7 @@ export function SchemaView({ state }: { state: PCBState }) {
             mode={effectiveMode}
             onChange={setMode}
             nativeDisabled={!nativeUrl}
+            renders={false}
           />
         }
       />
