@@ -116,32 +116,49 @@ describe('RenderView', () => {
 });
 
 describe('KiCanvasViewer — sélection comme KiCad', () => {
-  it('monte kicanvas-embed en controls="full" sans overlay, et nomme l’objet sélectionné', async () => {
-    const { container } = render(<KiCanvasViewer src="https://x/pcb.kicad_pcb" />);
-    const embed = await waitFor(() => {
-      const el = container.querySelector('kicanvas-embed');
-      if (!el) throw new Error('pas encore monté');
-      return el;
-    });
-    expect(embed.getAttribute('controls')).toBe('full');
-    expect(embed.getAttribute('controlslist')).toContain('nooverlay');
-    expect(screen.queryByTestId('kicanvas-selection')).toBeNull();
+  it('monte kicanvas-embed en controls="full" sans overlay, cadre la carte et nomme l’objet que le VIEWER sélectionne', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { container } = render(<KiCanvasViewer src="https://x/pcb.kicad_pcb" />);
+      const embed = await waitFor(() => {
+        const el = container.querySelector('kicanvas-embed');
+        if (!el) throw new Error('pas encore monté');
+        return el;
+      });
+      expect(embed.getAttribute('controls')).toBe('full');
+      expect(embed.getAttribute('controlslist')).toContain('nooverlay');
+      expect(screen.queryByTestId('kicanvas-selection')).toBeNull();
 
-    act(() => {
-      embed.dispatchEvent(new CustomEvent('kicanvas:select', {
-        bubbles: true, composed: true,
-        detail: { item: { reference: 'U1', value: 'NE555' }, previous: null },
-      }));
-    });
-    const badge = await screen.findByTestId('kicanvas-selection');
-    expect(badge).toHaveTextContent('Footprint');
-    expect(badge).toHaveTextContent('U1');
-    expect(badge).toHaveTextContent('NE555');
+      // Le viewer de KiCanvas vit dans le shadow DOM (kicanvas-embed → kc-board-viewer.viewer)
+      // et c'est un EventTarget : c'est LUI qui émet `kicanvas:select`, pas l'élément.
+      // Un écouteur posé sur l'élément passait ce test et ne recevait rien en réel.
+      const viewer = Object.assign(new EventTarget(), {
+        loaded: Promise.resolve(true), zoom_to_board: vi.fn(), draw: vi.fn(),
+      });
+      const shadow = embed.attachShadow({ mode: 'open' });
+      const boardViewer = document.createElement('kc-board-viewer') as HTMLElement & { viewer: unknown };
+      boardViewer.viewer = viewer;
+      shadow.appendChild(boardViewer);
 
-    act(() => {
-      embed.dispatchEvent(new CustomEvent('kicanvas:select', { bubbles: true, composed: true, detail: { item: null, previous: null } }));
-    });
-    await waitFor(() => expect(screen.queryByTestId('kicanvas-selection')).toBeNull());
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      expect(viewer.zoom_to_board).toHaveBeenCalled();
+      expect(viewer.draw).toHaveBeenCalled();
+
+      act(() => {
+        viewer.dispatchEvent(new CustomEvent('kicanvas:select', { detail: { item: { reference: 'U1', value: 'NE555' }, previous: null } }));
+      });
+      const badge = await screen.findByTestId('kicanvas-selection');
+      expect(badge).toHaveTextContent('Footprint');
+      expect(badge).toHaveTextContent('U1');
+      expect(badge).toHaveTextContent('NE555');
+
+      act(() => {
+        viewer.dispatchEvent(new CustomEvent('kicanvas:select', { detail: { item: null, previous: null } }));
+      });
+      await waitFor(() => expect(screen.queryByTestId('kicanvas-selection')).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('describeSelection nomme une empreinte, une piste par son net, et rien pour le vide', () => {

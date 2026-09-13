@@ -16,6 +16,12 @@ type KiViewer = {
   // à `zoom_to_page()`) : sans `draw()` derrière, rien ne bouge à l'écran.
   draw?: () => void;
   loaded?: PromiseLike<unknown>;
+  // ⚠️ Le viewer est un EventTarget : c'est SUR LUI que KiCanvas émet
+  // `kicanvas:select` (`this.dispatchEvent(new KiCanvasSelectEvent(…))`), pas
+  // sur l'élément DOM. Un écouteur posé sur `<kicanvas-embed>` ne reçoit rien —
+  // vérifié dans le dashboard le 2026-09-13 : U1 surligné, badge absent.
+  addEventListener?: (type: string, cb: (e: Event) => void) => void;
+  removeEventListener?: (type: string, cb: (e: Event) => void) => void;
 };
 
 /**
@@ -141,6 +147,12 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
   const embedRef = useRef<HTMLElement | null>(null);
   const [selection, setSelection] = useState<KiCanvasSelection | null>(null);
 
+  // Nomme l'objet que KiCanvas vient de sélectionner (voir les effets plus bas).
+  const handleSelect = useCallback((e: Event) => {
+    const detail = (e as CustomEvent<{ item?: unknown } | undefined>).detail;
+    setSelection(describeSelection(detail?.item));
+  }, []);
+
   const dispatchZoomWheel = useCallback((deltaY: number) => {
     const el = embedRef.current;
     if (!el) return;
@@ -177,12 +189,15 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     if (!el || status !== 'ready') return;
     let cancelled = false;
     let essais = 0;
+    let viewerEcoute: KiViewer | null = null;
     const timer = setInterval(() => {
       const viewer = findKiCanvasViewer(el);
       essais += 1;
       if (!viewer && essais < 75) return; // ~15 s
       clearInterval(timer);
       if (!viewer) return;
+      viewer.addEventListener?.('kicanvas:select', handleSelect);
+      viewerEcoute = viewer;
       Promise.resolve(viewer.loaded).then(() => {
         // `draw()` passe par requestAnimationFrame : sur un viewer déjà démonté
         // (bascule vers PNG/3D), KiCanvas lève « Uninitialized ». On ne dessine
@@ -192,8 +207,12 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
         viewer.draw?.();
       });
     }, 200);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [status, src]);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      viewerEcoute?.removeEventListener?.('kicanvas:select', handleSelect);
+    };
+  }, [status, src, handleSelect]);
 
   const startHints = useCallback((cancelled: () => boolean) => {
     hintTimerRef.current = setTimeout(() => {
@@ -258,18 +277,16 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     return () => el.removeEventListener('error', handleError);
   }, [status, src]);
 
-  // Sélection « comme KiCad » : KiCanvas émet `kicanvas:select` (bubbles +
-  // composed) à chaque clic sur un objet du board ; on nomme l'objet en HUD.
+  // Sélection « comme KiCad » : à chaque clic sur un objet du board, KiCanvas
+  // émet `kicanvas:select` sur son VIEWER ; on nomme l'objet en HUD. L'écouteur
+  // est posé sur le viewer dès qu'il existe (voir l'effet de cadrage), et sur
+  // l'élément par sécurité si une version future relaie l'événement au DOM.
   useEffect(() => {
     const el = embedRef.current;
     if (!el || status !== 'ready') return;
-    const handleSelect = (e: Event) => {
-      const detail = (e as CustomEvent<{ item?: unknown } | undefined>).detail;
-      setSelection(describeSelection(detail?.item));
-    };
     el.addEventListener('kicanvas:select', handleSelect);
     return () => el.removeEventListener('kicanvas:select', handleSelect);
-  }, [status]);
+  }, [status, handleSelect]);
 
   // Synchronize custom elements attributes manually because React 18
   // does not always map JSX properties to DOM attributes for custom elements.
