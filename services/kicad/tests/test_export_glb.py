@@ -92,6 +92,37 @@ def test_un_vrai_glb_est_rendu_tel_quel(monkeypatch):
     assert base64.b64decode(rep.glb_b64) == glb and rep.bytes == len(glb)
 
 
+def test_compter_modeles_dit_ce_qui_est_vraiment_present(tmp_path):
+    from routers.render import compter_modeles
+    (tmp_path / "Resistor_SMD.3dshapes").mkdir()
+    (tmp_path / "Resistor_SMD.3dshapes" / "R_0603_1608Metric.step").write_bytes(b"step")
+    board = (
+        b'(footprint "R" (model "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"))'
+        b'(footprint "C" (model "${KICAD10_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603.wrl"))'
+    )
+    # Le .wrl cite par le board compte comme present si son .step voisin existe.
+    assert compter_modeles(board, str(tmp_path)) == (2, 1)
+    # Sans repertoire de modeles : declares, mais rien de present — et on le dit.
+    assert compter_modeles(board, None) == (2, 0)
+    assert compter_modeles(b"(kicad_pcb)", str(tmp_path)) == (0, 0)
+
+
+def test_la_reponse_porte_le_compte_des_modeles(monkeypatch, tmp_path):
+    monkeypatch.setattr(render_router, "_find_kicad_cli", lambda: "kicad-cli")
+    monkeypatch.setenv("KICAD10_3DMODEL_DIR", str(tmp_path))
+    glb = _glb()
+
+    def run(cmd, **kw):
+        Path(cmd[cmd.index("-o") + 1]).write_bytes(glb)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(render_router.subprocess, "run", run)
+    board = b'(kicad_pcb (footprint "R" (model "${KICAD10_3DMODEL_DIR}/X.3dshapes/Y.wrl")))'
+    rep = export_glb(GlbRequest(kicad_pcb_b64=base64.b64encode(board).decode("ascii")))
+    assert (rep.models_declared, rep.models_found) == (1, 0)
+    sans = export_glb(GlbRequest(kicad_pcb_b64=base64.b64encode(board).decode("ascii"), components=False))
+    assert (sans.models_declared, sans.models_found) == (0, 0)
+
+
 def test_la_route_est_exposee():
     chemins = {getattr(r, "path", None): getattr(r, "methods", set()) for r in render_router.router.routes}
     assert "POST" in chemins["/export/glb"]

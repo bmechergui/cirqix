@@ -21,8 +21,12 @@ services:
       # ci-dessus importe un module absent de l'image : ModuleNotFoundError,
       # les 4 workers meurent au démarrage et AUCUNE route n'est servie.
       - ./observability.py:/app/observability.py:ro
+      # Modèles 3D des composants (volume rempli par `scripts/modeles_3d.sh`,
+      # ~1,3 Go) : sans lui, l'export GLB rend la carte sans composants.
+      - cirqix-3dmodels:/usr/share/kicad/3dmodels:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - KICAD10_3DMODEL_DIR=/usr/share/kicad/3dmodels
       # ⚠️ Un worker qui meurt pendant un routage ne dit RIEN : le client voit
       # un `RemoteDisconnected`, le journal un `Child process died`, et aucune
       # ligne ne designe la cause. Avec ce drapeau, un crash natif (SIGSEGV,
@@ -135,3 +139,7 @@ services:
 volumes:
   kicad-jobs:
   redis-data:
+  # Rempli une fois par `scripts/modeles_3d.sh` (bibliothèques 3D KiCad) ;
+  # survit aux reconstructions de l'image.
+  cirqix-3dmodels:
+    external: true

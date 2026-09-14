@@ -628,6 +628,27 @@ def _via_existant_a(vias, x, y, netcode: int, tolerance=_TOLERANCE_VIA_EXISTANT_
     return False
 
 
+def _troncon_deja_la(segments, x0, y0, x1, y1, netcode: int,
+                     tolerance=_TOLERANCE_VIA_EXISTANT_NM) -> bool:
+    """Un troncon du meme net joint-il deja ces deux points (dans un sens ou l autre) ?
+
+    ⚠️ Chaque repose des sorties reservees — un palier, un tirage — reposait le
+    troncon pastille -> via par-dessus le precedent. Mesure du 2026-09-14,
+    carte-10 : jusqu a NEUF troncons identiques de 1,2 mm sur un meme via. Du
+    cuivre superpose ne relie rien de plus et alourdit le board.
+    `segments` : (x_debut, y_debut, x_fin, y_fin, netcode).
+    """
+    def proche(ax, ay, bx, by):
+        return abs(ax - bx) <= tolerance and abs(ay - by) <= tolerance
+    for sx0, sy0, sx1, sy1, n in segments:
+        if int(n) != int(netcode):
+            continue
+        if (proche(sx0, sy0, x0, y0) and proche(sx1, sy1, x1, y1)) or \
+           (proche(sx0, sy0, x1, y1) and proche(sx1, sy1, x0, y0)):
+            return True
+    return False
+
+
 def _trou_libre(x: float, y: float, rayon: float,
                 trous: list[tuple[float, float, float]], ecart: float) -> bool:
     """Vrai si l on peut percer en (x, y) sans toucher un trou existant."""
@@ -797,6 +818,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     # Un via du meme net deja au point de chute : troncon seul (voir `_via_existant_a`).
     vias_existants = [(float(v.GetPosition().x), float(v.GetPosition().y), int(v.GetNetCode()))
                       for v in board.GetTracks() if v.GetClass() == "PCB_VIA"]
+    # Les troncons deja poses : on ne superpose jamais un troncon a son jumeau.
+    segments_existants = []
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA" or not hasattr(t, "GetStart"):
+            continue
+        try:
+            d, f = t.GetStart(), t.GetEnd()
+            segments_existants.append((float(d.x), float(d.y), float(f.x), float(f.y), int(t.GetNetCode())))
+        except Exception:
+            continue
     troncons_seuls = 0
     for cible in cibles:
         # Deux formes : `[ref, pad]` (fanout post-routage, aucune reservation)
@@ -924,13 +955,15 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             renonces += 1
             continue
 
-        piste = pcbnew.PCB_TRACK(board)
-        piste.SetStart(pos)
-        piste.SetEnd(pcbnew.VECTOR2I(vx, vy))
-        piste.SetWidth(largeur)
-        piste.SetLayer(pad.GetLayer())
-        piste.SetNetCode(pad.GetNetCode())
-        board.Add(piste)
+        if not _troncon_deja_la(segments_existants, pos.x, pos.y, vx, vy, pad.GetNetCode()):
+            piste = pcbnew.PCB_TRACK(board)
+            piste.SetStart(pos)
+            piste.SetEnd(pcbnew.VECTOR2I(vx, vy))
+            piste.SetWidth(largeur)
+            piste.SetLayer(pad.GetLayer())
+            piste.SetNetCode(pad.GetNetCode())
+            board.Add(piste)
+            segments_existants.append((float(pos.x), float(pos.y), float(vx), float(vy), int(pad.GetNetCode())))
 
         if existant:
             troncons_seuls += 1
@@ -1688,6 +1721,71 @@ def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     )
 
 
+def _hors_du_plus_grand_amas(amas: list) -> list:
+    """Pure : les pastilles qui ne sont PAS dans le plus grand amas."""
+    if not amas:
+        return []
+    principal = max(amas, key=len)
+    orphelines = []
+    for a in amas:
+        if a is principal:
+            continue
+        orphelines.extend(sorted(a))
+    return orphelines
+
+
+def _pads_hors_cluster_principal(pcbnew, args: dict[str, str]) -> None:
+    """Les pastilles d un net de plan qui ne sont pas reliees a son amas principal.
+
+    ⚠️ Le DRC decrit une coupure par ses deux items les plus PROCHES — deux
+    zones, deux troncons — et ne nomme la pastille que par hasard. Mesure du
+    2026-09-14, carte-10 : « Zone [GND] on F.Cu <-> Zone [GND] on B.Cu » pour
+    U1.8, dont le via tombait dans un ilot de B.Cu de quelques mm2 coupe du
+    plan. Ici c est la CONNECTIVITE reelle qui designe l orpheline : on coule
+    les zones, on demande a pcbnew les pastilles reliees a chaque pastille du
+    net, et tout amas qui n est pas le plus grand est orphelin.
+    """
+    board = _charger_board(pcbnew, args["pcb"])
+    nets = [n for n in json.loads(args.get("nets", "[]")) if n]
+    try:
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    except Exception:
+        pass  # sans coulee, la connectivite ignore les plans : on mesure quand meme
+    if not board.BuildConnectivity():
+        raise RuntimeError("pcbnew failed to build board connectivity")
+    connectivity = board.GetConnectivity()
+    connectivity.RecalculateRatsnest()
+    resultat: list = []
+    for nom in nets:
+        code = board.GetNetcodeFromNetname(nom)
+        if code <= 0:
+            continue
+        # ⚠️ La reference vient de l EMPREINTE parcourue : `pad.GetParent()`
+        # rend un `BOARD_ITEM_CONTAINER` sans `GetReference` (mesure KiCad 10).
+        pads = []
+        cle = {}
+        for fp in board.GetFootprints():
+            for p in fp.Pads():
+                if int(p.GetNetCode()) != code:
+                    continue
+                pads.append(p)
+                cle[str(p.m_Uuid.AsString())] = (str(fp.GetReference()), str(p.GetPadName()))
+        vus: set = set()
+        amas: list = []
+        for p in pads:
+            u = str(p.m_Uuid.AsString())
+            if u in vus:
+                continue
+            relies = {str(q.m_Uuid.AsString()) for q in _connected_pads(connectivity, p, pcbnew)
+                      if int(q.GetNetCode()) == code}
+            relies.add(u)
+            vus |= relies
+            amas.append({cle[v] for v in relies if v in cle})
+        resultat.extend(_hors_du_plus_grand_amas(amas))
+    Path(args["result"]).write_text(
+        json.dumps({"pads": [[r, p] for r, p in resultat]}), encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: routing_pcbnew_runner.py '<json>'", file=sys.stderr)
@@ -1715,6 +1813,8 @@ def main(argv: list[str]) -> int:
         _escape_pads(pcbnew, args)
     elif operation == "measure_connectivity":
         _measure_connectivity(pcbnew, args)
+    elif operation == "pads_hors_cluster_principal":
+        _pads_hors_cluster_principal(pcbnew, args)
     else:
         raise ValueError(f"unsupported operation: {operation!r}")
     return 0

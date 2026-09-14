@@ -37,6 +37,28 @@ class TestViaExistant:
         assert not RUN._via_existant_a([], 1_000_000, 2_000_000, 1)
 
 
+class TestTronconDejaLa:
+    """Mesure du 2026-09-14, carte-10 : neuf troncons identiques de 1,2 mm sur un
+    meme via, un par repose. Du cuivre superpose ne relie rien de plus."""
+    SEGS = [(0.0, 0.0, 1_200_000.0, 0.0, 1), (5_000_000.0, 5_000_000.0, 6_000_000.0, 5_000_000.0, 3)]
+
+    def test_meme_net_memes_bouts(self):
+        assert RUN._troncon_deja_la(self.SEGS, 0, 0, 1_200_000, 0, 1)
+
+    def test_dans_l_autre_sens_aussi(self):
+        assert RUN._troncon_deja_la(self.SEGS, 1_200_000, 0, 0, 0, 1)
+
+    def test_un_autre_net_ou_un_autre_bout_ne_compte_pas(self):
+        assert not RUN._troncon_deja_la(self.SEGS, 0, 0, 1_200_000, 0, 2)
+        assert not RUN._troncon_deja_la(self.SEGS, 0, 0, 1_500_000, 0, 1)
+        assert not RUN._troncon_deja_la([], 0, 0, 1_200_000, 0, 1)
+
+    def test_la_pose_consulte_les_troncons_existants(self):
+        import inspect
+        corps = inspect.getsource(RUN._escape_pads)
+        assert "_troncon_deja_la(segments_existants" in corps
+
+
 class TestCablage:
     SRC = (_SERVICE / "tools" / "routing_pcbnew_runner.py").read_text(encoding="utf-8")
 

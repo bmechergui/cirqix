@@ -2057,7 +2057,16 @@ def _pads_isolees_du_plan(rapport_drc: dict,
         pads = [m for m in (_PAD_ISOLEE_RE.match(d) for d in descriptions) if m]
         touche_zone = any(_ZONE_RE.match(d) for d in descriptions)
         if not pads and pcb_bytes:
-            isolees.extend(_pastilles_sous_les_items(item, pcb_bytes))
+            sous_les_items = _pastilles_sous_les_items(item, pcb_bytes)
+            if not sous_les_items:
+                # ⚠️ Aucun item pose sur une pastille (« Zone <-> Zone »,
+                # « Track <-> Track ») : c est la connectivite qui designe
+                # l orpheline. Mesure du 2026-09-14, carte-10, U1.8 a 98 %
+                # de 2 a 8 couches — personne ne la nommait.
+                nets_item = {m.group(1) for m in (_ITEM_NET_RE.match(d) for d in descriptions) if m}
+                if nets_item and nets_item.issubset(set(_NETS_CONFIES_AU_PLAN)):
+                    sous_les_items = _pads_hors_du_cluster_principal(pcb_bytes, nets_item)
+            isolees.extend(p for p in sous_les_items if p not in isolees)
             continue
         if not touche_zone:
             # Paire pad <-> pad : on ne la retient que si le net est confie a un
@@ -2072,6 +2081,38 @@ def _pads_isolees_du_plan(rapport_drc: dict,
 
 _ITEM_NET_RE = re.compile(r"^\w+\s+\[([^\]]*)\]")
 _TOLERANCE_ITEM_SUR_PASTILLE_MM = 0.05
+
+
+def _pads_hors_du_cluster_principal(pcb_bytes: bytes, nets) -> list[tuple[str, str]]:
+    """Pastilles des nets de plan que la CONNECTIVITE ne relie pas a l amas principal.
+
+    ⚠️ Le DRC decrit une coupure par ses deux items les plus proches — « Zone
+    [GND] <-> Zone [GND] », « Track [GND] <-> Track [GND] » — et ne nomme la
+    pastille que par hasard. Mesure du 2026-09-14, carte-10 : U1.8 restait
+    orpheline a 98 % de 2 a 8 couches parce qu aucune description ne la
+    designait ; ni le fanout ni le repli GND cible ne pouvaient viser une
+    broche sans nom. Ici pcbnew coule les zones, calcule les amas de pastilles
+    du net, et rend celles hors du plus grand. Reparation : toute panne rend [].
+    """
+    nets = sorted({str(n) for n in (nets or []) if n})
+    if not nets:
+        return []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree = Path(tmp) / "in.kicad_pcb"
+            resultat = Path(tmp) / "r.json"
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "pads_hors_cluster_principal",
+                "pcb": str(entree),
+                "result": str(resultat),
+                "nets": json.dumps(nets),
+            })
+            data = json.loads(resultat.read_text(encoding="utf-8"))
+        return [(str(r), str(p)) for r, p in (data.get("pads") or [])]
+    except Exception as exc:  # noqa: BLE001 — une reparation ne leve jamais
+        logger.warning("orphelines par connectivite : mesure impossible (%s)", exc)
+        return []
 
 
 def _pastilles_sous_les_items(item: dict, pcb_bytes: bytes) -> list[tuple[str, str]]:
@@ -3892,16 +3933,24 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
 _replis_gnd_echoues: set = set()
 
 
-def _signature_orphelines(orphelines) -> tuple:
+def _signature_orphelines(orphelines, couches: Optional[int] = None) -> tuple:
     """Ce qu on a ESSAYE DE REPARER, independamment de l ordre du rapport.
 
     Le rapport DRC ne garantit pas l ordre de ses items : deux listes des
     memes broches decrivent le meme probleme et doivent se reconnaitre.
+
+    ⚠️ ET LE PALIER. Un repli refuse a 2 couches ne dit rien de ce qu il
+    donnerait a 4 : Freerouting n avait qu une face de signal pour tirer une
+    piste de masse entre les sorties d un LQFP. Mesure du 2026-09-14,
+    carte-10 : repli cible sur U1.8 refuse au palier 2, puis « DEJA tente »
+    au palier 4 — l escalade montait pour rien, la seule reparation possible
+    etant interdite par un souvenir pris a un autre palier.
     """
-    return tuple(sorted((str(a), str(b)) for a, b in (orphelines or ())))
+    broches = tuple(sorted((str(a), str(b)) for a, b in (orphelines or ())))
+    return broches if couches is None else broches + (("couches", int(couches)),)
 
 
-def _repli_deja_tente(orphelines) -> bool:
+def _repli_deja_tente(orphelines, couches: Optional[int] = None) -> bool:
     """Ce jeu de broches a-t-il DEJA fait echouer un repli pendant cet appel ?
 
     ⚠️ Mesure du 2026-09-02, banc des quatre cartes : ONZE replis GND tentes,
@@ -3919,12 +3968,21 @@ def _repli_deja_tente(orphelines) -> bool:
     Aucun seuil : la regle est « pas deux fois la meme chose », jamais
     « pas plus de N fois ».
     """
-    return _signature_orphelines(orphelines) in _replis_gnd_echoues
+    return _signature_orphelines(orphelines, couches) in _replis_gnd_echoues
 
 
-def _noter_repli_echoue(orphelines) -> None:
-    """Retient qu un repli sur CES broches n a rien donne."""
-    _replis_gnd_echoues.add(_signature_orphelines(orphelines))
+def _noter_repli_echoue(orphelines, couches: Optional[int] = None) -> None:
+    """Retient qu un repli sur CES broches, a CE palier, n a rien donne."""
+    _replis_gnd_echoues.add(_signature_orphelines(orphelines, couches))
+
+
+def _nb_couches_cuivre(pcb_bytes: bytes) -> Optional[int]:
+    """Le nombre de couches cuivre declarees par le board, ou None s il est illisible."""
+    try:
+        couches = _couches_cuivre_declarees(pcb_bytes.decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return None
+    return len(couches) or None
 
 
 def _gnd_orphelines(pcb_bytes: bytes) -> int:
@@ -6020,8 +6078,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             except Exception:
                 rap_final, orphelines = {}, []
             manquantes_avant = len((rap_final or {}).get("unconnected_items") or [])
+            # Le palier fait partie du souvenir : un echec a 2 couches ne dit
+            # rien de ce que 4 ou 6 permettraient.
+            couches_final = _nb_couches_cuivre(final)
             if (_NETS_CONFIES_AU_PLAN and orphelines
-                    and _repli_deja_tente(orphelines)):
+                    and _repli_deja_tente(orphelines, couches=couches_final)):
                 logger.info(
                     "plan de masse : %d broche(s) GND non reliée(s) — repli "
                     "DEJA tenté sans succès sur ces mêmes broches, on ne le "
@@ -6043,7 +6104,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
                         len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
                     orphelines = []
-                elif orphelines and not _repli_deja_tente(orphelines):
+                elif orphelines and not _repli_deja_tente(orphelines, couches=couches_final):
                     logger.warning(
                         "plan de masse : %d broche(s) GND non reliée(s) — "
                         "repli sur un routage incluant GND", len(orphelines))
@@ -6055,7 +6116,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     # ⚠️ NOTER l echec, sinon la memoire reste vide et le
                     # correctif est inerte — un repli qui rend None a coute
                     # tout son temps sans rien produire.
-                    _noter_repli_echoue(orphelines)
+                    _noter_repli_echoue(orphelines, couches=couches_final)
                 if secours is not None:
                     # ⚠️ COMPARER avant de remplacer. Ce mecanisme etait le
                     # seul de la chaine a ecraser le board sans verifier qu il
@@ -6073,7 +6134,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             avant[0], avant[1], apres[0], apres[1])
                         final = secours
                     else:
-                        _noter_repli_echoue(orphelines)
+                        _noter_repli_echoue(orphelines, couches=couches_final)
                         logger.warning(
                             "repli GND REFUSE : (%d erreur, %d manquante) ne "
                             "fait pas mieux que (%d erreur, %d manquante) — "
