@@ -122,9 +122,9 @@ def _decouplage(chemin: str) -> tuple[float, float, int]:
     return qualite_decouplage(PCB.load(chemin))
 
 
-def _couverture(chemin: str) -> float:
-    """Pire des « capa la plus proche » par broche d alimentation (mm).
-    0 s il n y a aucune broche d alimentation a couvrir."""
+def _ecarts_par_broche(chemin: str) -> dict:
+    """{(ancre, x, y) de chaque broche d alimentation: [ecart libre de CHAQUE capa
+    qui la partage]} — la population complete, avant tout jugement."""
     from kicad_tools.schema.pcb import PCB
     from tools.placement_bypass import (_pastille_partagee, _centre_et_demi, _portee,
                                         _clusters_natifs, _composants)
@@ -149,8 +149,40 @@ def _couverture(chemin: str) -> float:
             d = math.hypot(dx, dy) or 1e-9
             libre = max(0.0, d - _portee(hw, hh, dx / d, dy / d) - 0.35)
             cle = (c.anchor, round(b[0], 2), round(b[1], 2))
-            par_broche[cle] = min(par_broche.get(cle, 99.0), libre)
-    return max(par_broche.values()) if par_broche else 0.0
+            par_broche.setdefault(cle, []).append(libre)
+    return par_broche
+
+
+def verdict_decouplage(par_broche: dict) -> dict:
+    """D-2026-09-14-a : le verdict juge les BROCHES, pas la moyenne des capas.
+
+    Pour chaque broche d alimentation, la capa la plus proche la SERT ; les
+    autres sont surnumeraires (reservoir, deuxieme rang) — journalisees, pas
+    jugees. carte-10 met 22 capas sur les quatre broches VDD d un LQFP : la
+    moyenne de toutes ne pouvait pas descendre sous 5 mm, quel que soit le
+    moteur, alors que chaque broche etait servie a 2,1 mm.
+
+    `pro` = chaque broche servie a <= _COUVERTURE_MM ET moyenne des servantes
+    <= _DECOUPLAGE_MOY_MM. Aucun seuil ne change ; seule la population.
+    """
+    servantes = [min(v) for v in par_broche.values() if v]
+    surnumeraires = [x for v in par_broche.values() if v for x in sorted(v)[1:]]
+    couv = max(servantes) if servantes else 0.0
+    moy_serv = sum(servantes) / len(servantes) if servantes else 0.0
+    moy_sur = sum(surnumeraires) / len(surnumeraires) if surnumeraires else 0.0
+    return {
+        "couverture": couv,
+        "moy_servantes": moy_serv,
+        "n_servantes": len(servantes),
+        "n_surnumeraires": len(surnumeraires),
+        "moy_surnumeraires": moy_sur,
+        "pro": couv <= _COUVERTURE_MM and moy_serv <= _DECOUPLAGE_MOY_MM,
+    }
+
+
+def _couverture(chemin: str) -> float:
+    """Pire des « capa la plus proche » par broche d alimentation (mm)."""
+    return verdict_decouplage(_ecarts_par_broche(chemin))["couverture"]
 
 
 def valider(carte: str) -> dict:
@@ -184,18 +216,27 @@ def valider(carte: str) -> dict:
         err, viol = _drc(essai)
         try:
             med, mx, n_capas = _decouplage(essai)
-            couv = _couverture(essai)
+            v = verdict_decouplage(_ecarts_par_broche(essai))
         except Exception as exc:  # noqa: BLE001
-            med, mx, n_capas, couv = 0.0, 0.0, 0, 99.0
+            med, mx, n_capas = 0.0, 0.0, 0
+            v = {"couverture": 99.0, "moy_servantes": 99.0, "n_servantes": 0,
+                 "n_surnumeraires": 0, "moy_surnumeraires": 0.0, "pro": False}
             print("   (decouplage non mesure : %s)" % exc, flush=True)
-        pro = couv <= _COUVERTURE_MM and med <= _DECOUPLAGE_MOY_MM and mx <= _DECOUPLAGE_MAX_MM
+        couv, pro = v["couverture"], v["pro"]
+        # D-2026-09-14-a : `med`/`mx` (toutes les capas) restent journalisees ;
+        # le VERDICT porte sur les broches servies.
         print("   tirage %d/%d : %s erreur(s) · %s violations · decouplage moy %.1f "
-              "max %.1f mm (%d capas) · couverture %.1f mm%s · %.0f s"
+              "max %.1f mm (%d capas) · couverture %.1f mm · servantes %.1f mm (%d)"
+              "%s%s · %.0f s"
               % (i, _TIRAGES, err, viol, med, mx, n_capas, couv,
+                 v["moy_servantes"], v["n_servantes"],
+                 (" · surnumeraires %d a %.1f mm" % (v["n_surnumeraires"], v["moy_surnumeraires"]))
+                 if v["n_surnumeraires"] else "",
                  "" if pro else " (PAS PRO)", time.time() - t0), flush=True)
         # ⚠️ Classement : l'erreur d'abord — une carte non fabricable ne part
-        # pas. Puis la couverture (chaque broche a sa capa), puis la moyenne.
-        cle = (err if err is not None else 99, 0 if pro else 1, round(couv, 1), round(med, 1))
+        # pas. Puis la couverture (chaque broche a sa capa), puis la moyenne
+        # des capas qui servent.
+        cle = (err if err is not None else 99, 0 if pro else 1, round(couv, 1), round(v["moy_servantes"], 1))
         if meilleur is None or cle < meilleur["cle"]:
             meilleur = {"cle": cle, "board": board, "err": err, "viol": viol,
                         "med": med, "max": mx, "tirage": i, "pro": pro, "couv": couv}
