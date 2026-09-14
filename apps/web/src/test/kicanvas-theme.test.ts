@@ -18,10 +18,20 @@ describe('ensureKiCanvasTheme', () => {
     ensureKiCanvasTheme(s);
     expect(JSON.parse(s.m.get(KICANVAS_THEME_PREF_KEY)!)).toEqual({ val: 'kicad' });
   });
-  it('respecte un choix déjà fait dans les réglages de KiCanvas', () => {
+  it('remplace « witchhazel » — le défaut que KiCanvas écrit lui-même, pas un choix (carte rose, 2026-09-14)', () => {
     const s = memoire({ [KICANVAS_THEME_PREF_KEY]: JSON.stringify({ val: 'witchhazel' }) });
     ensureKiCanvasTheme(s);
-    expect(JSON.parse(s.m.get(KICANVAS_THEME_PREF_KEY)!)).toEqual({ val: 'witchhazel' });
+    expect(JSON.parse(s.m.get(KICANVAS_THEME_PREF_KEY)!)).toEqual({ val: 'kicad' });
+  });
+  it('respecte un autre thème choisi dans les réglages de KiCanvas', () => {
+    const s = memoire({ [KICANVAS_THEME_PREF_KEY]: JSON.stringify({ val: 'solarized' }) });
+    ensureKiCanvasTheme(s);
+    expect(JSON.parse(s.m.get(KICANVAS_THEME_PREF_KEY)!)).toEqual({ val: 'solarized' });
+  });
+  it('remplace une valeur illisible', () => {
+    const s = memoire({ [KICANVAS_THEME_PREF_KEY]: 'pas du json' });
+    ensureKiCanvasTheme(s);
+    expect(JSON.parse(s.m.get(KICANVAS_THEME_PREF_KEY)!)).toEqual({ val: 'kicad' });
   });
   it('ne lève pas sans stockage', () => {
     expect(() => ensureKiCanvasTheme(null)).not.toThrow();

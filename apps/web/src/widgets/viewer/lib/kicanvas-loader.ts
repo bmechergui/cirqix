@@ -16,10 +16,26 @@ let loadPromise: Promise<void> | null = null;
 export const KICANVAS_THEME_PREF_KEY = 'kc:prefs:theme';
 export const KICANVAS_DEFAULT_THEME = 'kicad';
 
+/** Le défaut de KiCanvas, écrit par lui-même : ce n'est pas un choix de l'utilisateur. */
+const KICANVAS_BUILTIN_DEFAULT_THEME = 'witchhazel';
+
 export function ensureKiCanvasTheme(storage: Pick<Storage, 'getItem' | 'setItem'> | null | undefined = globalThis.localStorage): void {
   try {
     if (!storage) return;
-    if (storage.getItem(KICANVAS_THEME_PREF_KEY) !== null) return;
+    // ⚠️ « witchhazel » enregistré n'est PAS un choix : KiCanvas écrit son
+    // défaut dès la première ouverture. Un navigateur qui avait ouvert le viewer
+    // avant le 2026-09-13 gardait donc la carte ROSE malgré la préférence
+    // posée « seulement si absente » (capture de l'utilisateur, 2026-09-14).
+    // On remplace le défaut ; un autre thème choisi dans le panneau reste.
+    const actuel = storage.getItem(KICANVAS_THEME_PREF_KEY);
+    if (actuel !== null) {
+      try {
+        const val = (JSON.parse(actuel) as { val?: unknown }).val;
+        if (typeof val === 'string' && val !== KICANVAS_BUILTIN_DEFAULT_THEME) return;
+      } catch {
+        // valeur illisible : on la remplace
+      }
+    }
     storage.setItem(KICANVAS_THEME_PREF_KEY, JSON.stringify({ val: KICANVAS_DEFAULT_THEME }));
   } catch {
     // stockage indisponible (navigation privée, politique) : KiCanvas gardera son défaut
