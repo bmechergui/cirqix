@@ -703,7 +703,38 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-14-b — ne pas arrêter l'escalade sur un manque GND tant qu'une orpheline NOMMÉE n'a pas eu son repli au palier suivant
 
-**Statut : en attente.**
+**Statut : validée** par l'utilisateur le 2026-09-14 (« ok »). Implémentée :
+`_escalade_peut_aider(..., orpheline_sans_issue=)`, drapeau
+`palier_orpheline_accorde` dans `route_auto` (un seul palier de plus). Garde :
+`tests/test_escalade_orpheline_nommee.py`.
+
+⚠️ **LIVRÉE SANS MESURE, et il faut le dire.** Trois bancs sur carte-10 le
+2026-09-14 ; aucun n'a exercé la règle :
+
+| banc | ce qui s'est passé | exploitable ? |
+|---|---|---|
+| 1er | JVM Freerouting morte, tout au CLI, 5474 s | non |
+| 2e | idem, budget épuisé | non |
+| 3e (service reconstruit) | 6 couches, 97 %, 1 manquante, 2686 s | oui, mais… |
+
+Le troisième tourne sur un service sain — et la règle **ne s'est pas
+déclenchée** : aucune ligne « un palier de plus », aucun repli GND ciblé. La
+raison est légitime : à chaque palier il manquait aussi des **signaux**, pas
+seulement de la masse, donc l'escalade 2 → 4 → 6 s'est faite par la voie
+normale et la règle n'avait rien à trancher.
+
+Elle est donc **dormante** : elle ne peut agir que sur une carte dont le seul
+net incomplet est un net de plan, avec une orpheline nommée dont le repli
+ciblé vient d'échouer. Le code est borné (un seul palier supplémentaire, un
+drapeau posé une fois) et gardé par ses tests, mais **aucune mesure ne montre
+qu'elle apporte quelque chose**. La première carte qui tombera dans ce cas
+devra être mesurée avant d'en tirer la moindre conclusion.
+
+⚠️ Cause des deux premiers bancs, trouvée le même jour : **l'image du service
+datait du 19 juillet** et ne contenait ni le superviseur qui relance la JVM
+Freerouting (ajouté le 2026-09-12) ni `lancer_service.py`. Toutes les mesures
+antérieures à sa reconstruction sont inexploitables — y compris le
+« 98 % en 192 s » qui avait servi de référence dans cette même entrée.
 
 **La règle actuelle** (règle de l'utilisateur, `_escalade_peut_aider`) :
 « un net confié au PLAN ne se relie pas avec du cuivre en plus » — quand le
