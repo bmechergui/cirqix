@@ -703,7 +703,7 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-14-a — le verdict « pro » du banc doit juger les broches, pas la moyenne des capas
 
-**Statut : en attente.**
+**Statut : validée** par l'utilisateur le 2026-09-14 (« Ok »).
 
 **Le fait.** `scripts/valider_placements.py` refuse un placement quand la
 moyenne des écarts capa → broche VDD dépasse 5 mm. carte-10 est refusée à
