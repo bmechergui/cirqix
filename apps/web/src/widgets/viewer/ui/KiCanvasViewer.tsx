@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Layers, RefreshCw, ZoomIn, ZoomOut, Move, Hand, MousePointer, Maximize } from 'lucide-react';
 import { loadKiCanvas, normaliserBoardPourKiCanvas } from '../lib/kicanvas-loader';
 import { appliquerSkinCirqix } from '../lib/kicanvas-skin';
+import { remplacerAideParCirqix } from '../lib/kicanvas-aide';
 
 interface KiCanvasViewerProps {
   src: string;
@@ -370,6 +371,8 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       // L'habillage Cirqix : KiCanvas garde ses fonctions, les couleurs sont
       // les nôtres. Posé dans TOUS ses shadow roots, idempotent.
       appliquerSkinCirqix(el);
+      // Et son panneau « Help » devient notre aide : commandes, panneaux, vues.
+      remplacerAideParCirqix(el);
     };
 
     injectCursorStyles();
