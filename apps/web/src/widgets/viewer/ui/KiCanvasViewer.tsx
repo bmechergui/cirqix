@@ -147,33 +147,36 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
   const embedRef = useRef<HTMLElement | null>(null);
   const [selection, setSelection] = useState<KiCanvasSelection | null>(null);
   // Ce que KiCanvas reçoit : un board KiCad 10 est d'abord NORMALISÉ (table
-  // des nets reconstruite, voir `normaliserBoardPourKiCanvas`) et servi par une
-  // URL blob ; un schéma, ou un board illisible, passe tel quel.
+  // des nets reconstruite, voir `normaliserBoardPourKiCanvas`) et donné EN
+  // LIGNE (`<kicanvas-source name="board.kicad_pcb">`) ; un schéma, ou un
+  // board illisible, passe par son URL.
+  // ⚠️ Pas d'URL blob : KiCanvas choisit le chargeur sur la FIN de l'URL
+  // (`t.endsWith(".kicad_pcb")`, lu dans kicanvas.js) — une URL blob n'a pas
+  // d'extension, et la vue Native tombait sur « No vaild root schematic was
+  // found » (rapporté par l'utilisateur le 2026-09-14). La source en ligne
+  // porte un nom, donc une extension.
   const estUnBoard = /\.kicad_pcb(\?|$)/.test(src);
   const [srcEffectif, setSrcEffectif] = useState<string | null>(estUnBoard ? null : src);
+  const [boardEnLigne, setBoardEnLigne] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!estUnBoard) { setSrcEffectif(src); return; }
+    if (!estUnBoard) { setSrcEffectif(src); setBoardEnLigne(null); return; }
     let cancelled = false;
-    let blobUrl: string | null = null;
     setSrcEffectif(null);
+    setBoardEnLigne(null);
     (async () => {
       try {
         const r = await fetch(src);
         if (!r.ok) throw new Error(`board ${r.status}`);
         const texte = normaliserBoardPourKiCanvas(await r.text());
-        if (cancelled) return;
-        blobUrl = URL.createObjectURL(new Blob([texte], { type: 'text/plain' }));
-        setSrcEffectif(blobUrl);
+        if (!cancelled) setBoardEnLigne(texte);
       } catch {
         if (!cancelled) setSrcEffectif(src); // KiCanvas tentera le fichier brut
       }
     })();
-    return () => {
-      cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
+    return () => { cancelled = true; };
   }, [src, estUnBoard]);
+  const pret = srcEffectif !== null || boardEnLigne !== null;
 
   // Nomme l'objet que KiCanvas vient de sélectionner (voir les effets plus bas).
   const handleSelect = useCallback((e: Event) => {
@@ -242,7 +245,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     };
     // `srcEffectif` : l'élément n'est monté qu'une fois le board normalisé —
     // sans lui dans les dépendances, l'effet tournait sur un `embedRef` vide.
-  }, [status, src, srcEffectif, handleSelect]);
+  }, [status, src, srcEffectif, boardEnLigne, handleSelect]);
 
   const startHints = useCallback((cancelled: () => boolean) => {
     hintTimerRef.current = setTimeout(() => {
@@ -316,7 +319,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     if (!el || status !== 'ready') return;
     el.addEventListener('kicanvas:select', handleSelect);
     return () => el.removeEventListener('kicanvas:select', handleSelect);
-  }, [status, srcEffectif, handleSelect]);
+  }, [status, srcEffectif, boardEnLigne, handleSelect]);
 
   // Synchronize custom elements attributes manually because React 18
   // does not always map JSX properties to DOM attributes for custom elements.
@@ -325,7 +328,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     if (!el || status !== 'ready') return;
 
     el.setAttribute('zoom', zoom);
-  }, [zoom, status, srcEffectif]);
+  }, [zoom, status, srcEffectif, boardEnLigne]);
 
   // Zoom & Pan, custom cursors, and zoom=objects re-application
   useEffect(() => {
@@ -543,7 +546,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       el.removeEventListener('load', handleLoad);
       el.removeEventListener('kicanvas:load', handleLoad);
     };
-  }, [status, srcEffectif, zoom, isPanMode]);
+  }, [status, srcEffectif, boardEnLigne, zoom, isPanMode]);
 
   // 400 means the file was not found/expired; other errors are generic failures
   const isExpiredUrl = errorMsg?.includes('400');
@@ -599,11 +602,11 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       )}
 
       {/* Native KiCanvas viewer */}
-      {status === 'ready' && srcEffectif && (
+      {status === 'ready' && pret && (
         <>
           <kicanvas-embed
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
-            src={srcEffectif}
+            {...(srcEffectif ? { src: srcEffectif } : {})}
             controls="full"
             controlslist="nooverlay"
             // Thème « kicad » : les couleurs de l'éditeur KiCad (F.Cu rouge, B.Cu
@@ -612,7 +615,11 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
             theme="kicad"
             {...(zoom ? { zoom } : {})}
             style={{ width: '100%', height: '100%', display: 'block' }}
-          />
+          >
+            {boardEnLigne !== null && (
+              <kicanvas-source name="board.kicad_pcb" data-testid="kicanvas-source-board">{boardEnLigne}</kicanvas-source>
+            )}
+          </kicanvas-embed>
 
           {/* HUD Toolbar */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 p-1 rounded-xl bg-[#0a0a0a]/80 border border-[#1e1e1e] backdrop-blur-md shadow-2xl z-20 select-none">

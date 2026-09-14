@@ -14,7 +14,7 @@ declare global {
         HTMLElement
       >;
       'kicanvas-source': DetailedHTMLProps<
-        HTMLAttributes<HTMLElement> & { src?: string },
+        HTMLAttributes<HTMLElement> & { src?: string; name?: string; type?: string },
         HTMLElement
       >;
     }

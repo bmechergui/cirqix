@@ -74,25 +74,25 @@ describe('normaliserBoardPourKiCanvas', () => {
 });
 
 describe('KiCanvasViewer', () => {
-  beforeEach(() => {
-    vi.stubGlobal('URL', Object.assign(URL, {
-      createObjectURL: vi.fn(() => 'blob:normalise'),
-      revokeObjectURL: vi.fn(),
-    }));
-  });
+  beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.unstubAllGlobals());
 
-  it('confie à KiCanvas le board normalisé, jamais le fichier brut', async () => {
+  it('confie à KiCanvas le board normalisé EN LIGNE, sous un nom en .kicad_pcb — jamais une URL blob', async () => {
+    // ⚠️ KiCanvas choisit son chargeur sur la fin de l'URL (`endsWith(".kicad_pcb")`) :
+    // une URL blob donnait « No vaild root schematic was found » (2026-09-14).
     const fetchMock = vi.fn(async () => new Response(BOARD_10, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const { container } = render(<KiCanvasViewer src="https://stockage/x/pcb.kicad_pcb?token=1" />);
-    await waitFor(() => {
-      const embed = container.querySelector('kicanvas-embed');
-      expect(embed?.getAttribute('src')).toBe('blob:normalise');
+    const source = await waitFor(() => {
+      const s = container.querySelector('kicanvas-embed > kicanvas-source');
+      if (!s) throw new Error('source en ligne pas encore montée');
+      return s;
     });
+    expect(container.querySelector('kicanvas-embed')?.hasAttribute('src')).toBe(false);
+    expect(source.getAttribute('name')).toMatch(/\.kicad_pcb$/);
+    expect(source.textContent).toContain('(net 2 "GND")');
+    expect(source.textContent).not.toMatch(/\(net "[^"]*"\)/);
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('https://stockage/x/pcb.kicad_pcb?token=1');
-    const blobArg = (URL.createObjectURL as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Blob;
-    expect(await blobArg.text()).toContain('(net 2 "GND")');
   });
 
   it('un schéma est passé tel quel', async () => {
