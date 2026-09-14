@@ -1615,8 +1615,14 @@ def _tirages_bonus(meilleur_pct: int) -> int:
 
 
 def _escalade_peut_aider(percent_moteur: int, erreurs: int,
-                         manquants: Optional[set] = None) -> bool:
+                         manquants: Optional[set] = None,
+                         orpheline_sans_issue: bool = False) -> bool:
     """Ajouter des couches peut-il encore servir a quelque chose ?
+
+    ⚠️ `orpheline_sans_issue` (D-2026-09-14-b, validee) : la broche de masse
+    orpheline est NOMMEE et son repli cible vient d echouer a ce palier. Le
+    palier suivant offre alors un chemin — deux couches internes pour une
+    piste de masse courte — et l appelant n accorde ce palier qu UNE fois.
 
     ⚠️ Non quand le ROUTEUR annonce 100 % sur un board propre. Il a tout relie
     par des pistes ; l ecart restant vient de NOTRE verification, qui regarde
@@ -1667,7 +1673,9 @@ def _escalade_peut_aider(percent_moteur: int, erreurs: int,
         # inertes — mesure : deux gardes rouges sur une regle pourtant juste.
         plan = set(_NETS_CONFIES_AU_PLAN)
         if plan and set(manquants) <= plan:
-            return False
+            # D-2026-09-14-b : l orpheline est nommee et son repli vient
+            # d echouer ici — le palier suivant lui donne un chemin.
+            return bool(orpheline_sans_issue)
     return percent_moteur < 100
 
 
@@ -5728,6 +5736,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # est inutile par construction : l ecart restant vient d un net confie au
     # PLAN, que du cuivre supplementaire ne relie pas.
     escalade_inutile = False
+    palier_orpheline_accorde = False  # D-2026-09-14-b : un palier de plus, une fois
     # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
@@ -5769,6 +5778,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 "stagnation (le routeur ira au bout)", essais[-1])
         palier = essais[i_essai]
         i_essai += 1
+        orphelines, couches_final = [], None  # par palier (D-2026-09-14-b)
         if palier != palier_courant:
             # ⚠️ On s apprete a QUITTER le palier precedent. S il est a portee
             # de 100 %, le quitter est le pari perdant — mesure du 2026-08-30
@@ -6212,9 +6222,24 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # un net confie au PLAN ne se relie pas avec du cuivre en plus.
         manquants_du_palier = (
             _nets_incomplets(_rap_final) if _rap_final is not None else set())
+        # D-2026-09-14-b : l orpheline est NOMMEE et son repli cible vient
+        # d echouer a ce palier -> un palier de plus, une seule fois.
+        orpheline_sans_issue = bool(
+            orphelines and not palier_orpheline_accorde
+            and _repli_deja_tente(orphelines, couches=couches_final))
         if not _escalade_peut_aider(percent_moteur, erreurs,
-                                    manquants=manquants_du_palier):
+                                    manquants=manquants_du_palier,
+                                    orpheline_sans_issue=orpheline_sans_issue):
             escalade_inutile = True
+        elif orpheline_sans_issue and (
+                _NETS_CONFIES_AU_PLAN and manquants_du_palier
+                and set(manquants_du_palier) <= set(_NETS_CONFIES_AU_PLAN)):
+            palier_orpheline_accorde = True
+            logger.info(
+                "route_auto: broche(s) de masse orpheline(s) nommee(s) (%s) et repli "
+                "cible refuse a %d couches — UN palier de plus pour lui donner un "
+                "chemin (D-2026-09-14-b)",
+                ", ".join(f"{r}-{p}" for r, p in orphelines), couches_final or 0)
             logger.info(
                 "route_auto: ce qui manque est confie au PLAN (%s) — escalader "
                 "n y changerait rien, c est un probleme d acces a la broche",

@@ -703,7 +703,11 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ## D-2026-09-14-b — ne pas arrêter l'escalade sur un manque GND tant qu'une orpheline NOMMÉE n'a pas eu son repli au palier suivant
 
-**Statut : en attente.**
+**Statut : validée** par l'utilisateur le 2026-09-14 (« ok »). Implémentée :
+`_escalade_peut_aider(..., orpheline_sans_issue=)`, drapeau
+`palier_orpheline_accorde` dans `route_auto` (un seul palier de plus). Garde :
+`tests/test_escalade_orpheline_nommee.py`. Mesure : voir le tableau ajouté
+sous cette entrée dès la fin du banc.
 
 **La règle actuelle** (règle de l'utilisateur, `_escalade_peut_aider`) :
 « un net confié au PLAN ne se relie pas avec du cuivre en plus » — quand le
