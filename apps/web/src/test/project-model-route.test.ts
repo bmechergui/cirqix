@@ -109,6 +109,30 @@ describe('export et cache', () => {
     expect(depots).toEqual([{ chemin: `u1/p1/${cheminDuModele(cle)}`, octets: GLB.byteLength, type: 'model/gltf-binary' }]);
   });
 
+  it('`components=0` demande la carte nue au service, sous une AUTRE clé de cache', async () => {
+    const { client, depots } = makeClient();
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(client);
+    const fetchMock = serviceQuiRepond(200, { glb_b64: Buffer.from(GLB).toString('base64'), duration_ms: 900, models_found: 0, models_declared: 0 });
+    const req = { nextUrl: new URL('http://localhost/api/projects/p1/model?components=0'), headers: new Headers() } as unknown as Parameters<typeof GET>[0];
+    const r = await GET(req, ctx);
+    expect(r.status).toBe(200);
+    const appel = fetchMock.mock.calls[0] as unknown as [string, { body: string }];
+    expect(JSON.parse(appel[1].body).components).toBe(false);
+    const cleNue = cleDuModele(new Uint8Array(BOARD), { components: false });
+    expect(cleNue).not.toBe(cleDuModele(new Uint8Array(BOARD)));
+    expect(r.headers.get('etag')).toBe(`"${cleNue}"`);
+    expect(depots[0]?.chemin).toBe(`u1/p1/${cheminDuModele(cleNue)}`);
+  });
+
+  it('relaie le compte des modèles de composants présents sur le service', async () => {
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient().client);
+    serviceQuiRepond(200, { glb_b64: Buffer.from(GLB).toString('base64'), duration_ms: 1, models_found: 0, models_declared: 9 });
+    const r = await GET(requete(), ctx);
+    expect(r.headers.get('x-model-components')).toBe('0/9');
+    const appel = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, { body: string }];
+    expect(JSON.parse(appel[1].body).components).toBe(true);
+  });
+
   it('sert le modèle déjà déposé sans appeler le service', async () => {
     const enCache = Uint8Array.from([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]);
     supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient({ enCache }).client);

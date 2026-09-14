@@ -27,7 +27,8 @@ export { runOrchestratorPipeline } from './pipeline/run-orchestrator';
 export { runDriver } from './pipeline/run-driver';
 export type { RunPipelineOptions } from './pipeline/run-orchestrator';
 export type { KicadArtifactName, PipelineStore, StoredArtifact, RenderUploadOptions } from './pipeline/store';
-export { cleDeRendu, cheminDuRendu, cleDuModele, cheminDuModele, PRERENDUS } from './pipeline/render-cache';
+export { cleDeRendu, cheminDuRendu, cleDuModele, cheminDuModele, MODELE_PAR_DEFAUT, PRERENDUS } from './pipeline/render-cache';
+export type { ModelCacheOptions } from './pipeline/render-cache';
 export type { RenderCacheParams } from './pipeline/render-cache';
 // File BullMQ.
 //

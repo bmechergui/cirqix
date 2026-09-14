@@ -421,7 +421,31 @@ def _generate_with_cs_lib(
     )
 
     sch_files = list(output_dir.rglob("*.kicad_sch"))
-    return sch_files[0].read_text(encoding="utf-8") if sch_files else None
+    if not sch_files:
+        return None
+    return globaliser_les_labels_hierarchiques(sch_files[0].read_text(encoding="utf-8"))
+
+
+_LABEL_HIERARCHIQUE_RE = re.compile(r'\(hierarchical_label\s+"')
+
+
+def globaliser_les_labels_hierarchiques(sch_content: str) -> str:
+    """Feuille unique : les labels de net sont GLOBAUX, jamais hiérarchiques.
+
+    circuit_synth pose des `hierarchical_label` dans la feuille racine. La
+    connectivité tient, mais l ERC de KiCad les refuse — « Hierarchical label
+    'DIS' in root sheet cannot be connected to non-existent parent sheet » —
+    et chaque broche reliée par un tel label sort en `pin_not_connected`.
+    Mesuré le 2026-09-14 (NE555, kicad-cli 10.99) : 14 erreurs avant, 2 après,
+    les deux restantes étant des `power_pin_not_driven` sans rapport.
+
+    Les deux formes partagent la même S-expression (nom, shape, at, effects,
+    uuid) : la conversion est un renommage du mot-clé, rien d autre. Un texte
+    sans label hiérarchique est rendu tel quel, identité comprise.
+    """
+    if not sch_content or not _LABEL_HIERARCHIQUE_RE.search(sch_content):
+        return sch_content
+    return _LABEL_HIERARCHIQUE_RE.sub('(global_label "', sch_content)
 
 
 def _parse_net_file(net_content: str) -> tuple[list[SchemaComponent], list[str], list[SchemaNet]]:

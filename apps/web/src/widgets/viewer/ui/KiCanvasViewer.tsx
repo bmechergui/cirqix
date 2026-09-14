@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Layers, RefreshCw, ZoomIn, ZoomOut, Move, Hand, MousePointer, Maximize } from 'lucide-react';
-import { loadKiCanvas } from '../lib/kicanvas-loader';
+import { loadKiCanvas, normaliserBoardPourKiCanvas } from '../lib/kicanvas-loader';
 
 interface KiCanvasViewerProps {
   src: string;
@@ -146,6 +146,34 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
   const retryCountRef = useRef(0);
   const embedRef = useRef<HTMLElement | null>(null);
   const [selection, setSelection] = useState<KiCanvasSelection | null>(null);
+  // Ce que KiCanvas reçoit : un board KiCad 10 est d'abord NORMALISÉ (table
+  // des nets reconstruite, voir `normaliserBoardPourKiCanvas`) et servi par une
+  // URL blob ; un schéma, ou un board illisible, passe tel quel.
+  const estUnBoard = /\.kicad_pcb(\?|$)/.test(src);
+  const [srcEffectif, setSrcEffectif] = useState<string | null>(estUnBoard ? null : src);
+
+  useEffect(() => {
+    if (!estUnBoard) { setSrcEffectif(src); return; }
+    let cancelled = false;
+    let blobUrl: string | null = null;
+    setSrcEffectif(null);
+    (async () => {
+      try {
+        const r = await fetch(src);
+        if (!r.ok) throw new Error(`board ${r.status}`);
+        const texte = normaliserBoardPourKiCanvas(await r.text());
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(new Blob([texte], { type: 'text/plain' }));
+        setSrcEffectif(blobUrl);
+      } catch {
+        if (!cancelled) setSrcEffectif(src); // KiCanvas tentera le fichier brut
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [src, estUnBoard]);
 
   // Nomme l'objet que KiCanvas vient de sélectionner (voir les effets plus bas).
   const handleSelect = useCallback((e: Event) => {
@@ -212,7 +240,9 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       clearInterval(timer);
       viewerEcoute?.removeEventListener?.('kicanvas:select', handleSelect);
     };
-  }, [status, src, handleSelect]);
+    // `srcEffectif` : l'élément n'est monté qu'une fois le board normalisé —
+    // sans lui dans les dépendances, l'effet tournait sur un `embedRef` vide.
+  }, [status, src, srcEffectif, handleSelect]);
 
   const startHints = useCallback((cancelled: () => boolean) => {
     hintTimerRef.current = setTimeout(() => {
@@ -262,9 +292,9 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
         retryCountRef.current += 1;
         // Brief delay to let Supabase Storage propagate the uploaded file
         setTimeout(() => {
-          if (embedRef.current) {
+          if (embedRef.current && srcEffectif) {
             embedRef.current.removeAttribute('src');
-            embedRef.current.setAttribute('src', src);
+            embedRef.current.setAttribute('src', srcEffectif);
           }
         }, 2000);
       } else {
@@ -275,7 +305,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
 
     el.addEventListener('error', handleError);
     return () => el.removeEventListener('error', handleError);
-  }, [status, src]);
+  }, [status, srcEffectif]);
 
   // Sélection « comme KiCad » : à chaque clic sur un objet du board, KiCanvas
   // émet `kicanvas:select` sur son VIEWER ; on nomme l'objet en HUD. L'écouteur
@@ -286,7 +316,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     if (!el || status !== 'ready') return;
     el.addEventListener('kicanvas:select', handleSelect);
     return () => el.removeEventListener('kicanvas:select', handleSelect);
-  }, [status, handleSelect]);
+  }, [status, srcEffectif, handleSelect]);
 
   // Synchronize custom elements attributes manually because React 18
   // does not always map JSX properties to DOM attributes for custom elements.
@@ -295,7 +325,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
     if (!el || status !== 'ready') return;
 
     el.setAttribute('zoom', zoom);
-  }, [zoom, status]);
+  }, [zoom, status, srcEffectif]);
 
   // Zoom & Pan, custom cursors, and zoom=objects re-application
   useEffect(() => {
@@ -513,7 +543,7 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       el.removeEventListener('load', handleLoad);
       el.removeEventListener('kicanvas:load', handleLoad);
     };
-  }, [status, zoom, isPanMode]);
+  }, [status, srcEffectif, zoom, isPanMode]);
 
   // 400 means the file was not found/expired; other errors are generic failures
   const isExpiredUrl = errorMsg?.includes('400');
@@ -569,11 +599,11 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
       )}
 
       {/* Native KiCanvas viewer */}
-      {status === 'ready' && (
+      {status === 'ready' && srcEffectif && (
         <>
           <kicanvas-embed
             ref={(el: HTMLElement | null) => { embedRef.current = el; }}
-            src={src}
+            src={srcEffectif}
             controls="full"
             controlslist="nooverlay"
             // Thème « kicad » : les couleurs de l'éditeur KiCad (F.Cu rouge, B.Cu

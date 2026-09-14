@@ -284,8 +284,21 @@ services/
   (même cache à deux niveaux que `render`, clé `cleDuModele`, `renders/<clé>.glb`,
   pré-exporté par le pipeline dans `prerendus.ts`), affiché dans Three.js avec
   des contrôles d'orbite. Le rendu raytracé reste accessible par « Photo ».
-  ⚠️ L'image du service n'a AUCUN modèle 3D de composant (0 dans
-  `/usr/share/kicad/3dmodels`) : seules les pastilles les figurent.
+  **Composants en 3D** (2026-09-14) : le PPA 10.0 ne fournit pas
+  `kicad-packages3d`, et le dépôt complet pèse plusieurs Go. Les 25
+  bibliothèques STEP utiles (~1 Go) vivent dans le VOLUME Docker
+  `cirqix-3dmodels`, rempli par `services/kicad/scripts/modeles_3d.sh`
+  (clone partiel de kicad-packages3D) et monté sur
+  `/usr/share/kicad/3dmodels` (`KICAD10_3DMODEL_DIR`). Le volume survit aux
+  reconstructions de l'image. `POST /export/glb` rend `models_found /
+  models_declared`, relayé par `X-Model-Components` : le viewer DIT « aucun
+  modèle 3D installé (0/9) » plutôt que de laisser croire que la carte porte
+  ses composants. Bouton « Composants » : carte avec corps, ou carte nue
+  (`?components=0`, clé de cache distincte).
+  ⚠️ `alpine/git` ne connaît pas `sparse-checkout` : le script passe par
+  l'image du service. ⚠️ Un conteneur lancé à la main doit recevoir
+  `-v cirqix-3dmodels:/usr/share/kicad/3dmodels:ro` et
+  `-e KICAD10_3DMODEL_DIR=/usr/share/kicad/3dmodels`.
   ⚠️ **Next 15 embarque React 19 pour l'App Router** quel que soit le React
   installé (`react@18.3.1` dans `package.json`) : `@react-three/fiber` 8 lisait
   `ReactCurrentOwner`, un interne de React 18, et faisait tomber TOUTE la page
@@ -2252,6 +2265,48 @@ placement, et deux tirages concordants qui ne prouvaient rien.
 **ALWAYS sortir du conteneur ce qu'on veut garder.** `examples/` n'y est pas
 monté : un board produit par le banc n'existe QUE dans le conteneur et part au
 premier redémarrage — la leçon des worktrees vidés, transposée.
+
+### Leçons inscrites le 2026-09-14 — la broche que personne ne nommait
+
+Question de l'utilisateur : « pourquoi carte-10 n'escalade pas les couches si
+elle ne route pas ». Elle escaladait (2 → 4 → 6, arrêt motivé) ; ce qui
+manquait était UNE broche GND, U1.8, orpheline du plan à tous les paliers —
+et du cuivre en plus ne relie pas une broche que rien ne désigne. Quatre
+défauts génériques, chacun vérifié sur le vrai board :
+
+**NEVER prendre les obstacles d'un TRAJET sur toutes les couches.** La piste
+d'échappement ne vit que sur la couche de sa pastille ; seul le via traverse.
+Une piste IO_L14 sur B.Cu, SOUS la pastille, faisait renoncer le fanout
+(« aucune sortie dégagée ») alors que le couloir F.Cu était libre et qu'un via
+GND attendait à 1,2 mm. Deux listes désormais (`obstacles` pour la piste,
+`obstacles_via` pour le via). Preuve : 7 → 6 manquantes, U1.8 reliée.
+
+**NEVER libérer, à l'escalade, le cuivre d'un net que le routeur ne route
+pas.** Les tronçons et vias GND libérés autour d'une pastille non reliée
+n'étaient pas rendus au routeur — GND est absent du DSN — ils étaient PERDUS
+(« 51 LIBÉRÉ(S) » à chaque palier, puis « Pad 8 [GND] <-> Via [GND] » au DRC
+final). Les nets de `_NETS_CONFIES_AU_PLAN` restent protégés.
+
+**NEVER attendre du DRC qu'il NOMME la pastille en cause.** Il décrit une
+coupure par ses deux items les plus proches — « Zone [GND] <-> Zone [GND] »,
+« Track [GND] 1,2 mm <-> Track [GND] 1,2 mm » — et U1.8 n'apparaissait dans
+aucune. Ni le fanout ni le repli GND ciblé ne visaient une broche sans nom.
+`_pads_hors_du_cluster_principal` demande à pcbnew, zones coulées, quelles
+pastilles du net sont hors de son amas principal : c'est la connectivité qui
+désigne l'orpheline. Preuve : « pastilles visées : [] » → « [('U1', '8')] »,
+et « repli GND CIBLE : … U1-8 » apparaît enfin dans le journal.
+
+**NEVER laisser un souvenir pris à un palier interdire le suivant.** Le repli
+GND ciblé refusé à 2 couches (une seule face de signal) était « DÉJÀ tenté »
+à 4, où deux couches internes lui auraient donné un chemin. La signature d'un
+échec porte le nombre de couches. (Mesure en cours au moment de l'écriture.)
+
+**NEVER reposer un tronçon par-dessus son jumeau.** Neuf tronçons identiques
+de 1,2 mm sur un même via, un par repose. `_troncon_deja_la` avant la pose.
+
+Gardes : `test_sortie_ne_voit_que_sa_couche.py`,
+`test_liberation_epargne_les_nets_du_plan.py`, `test_orphelines_par_cluster.py`,
+`test_repli_gnd_memo_par_palier.py`, `test_via_deja_la_troncon_seul.py`.
 
 ### Leçon inscrite le 2026-09-10 — le worker que son propre superviseur abat
 

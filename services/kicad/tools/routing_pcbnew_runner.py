@@ -252,7 +252,7 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
 
 
 def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
-                            marge_piste=None) -> bool:
+                            marge_piste=None, obstacles_via=None) -> bool:
     """La sortie reservee avant le routage tient-elle encore sur ce board ?
 
     Memes deux criteres que `_choisir_sortie`, appliques a UNE position au lieu
@@ -266,12 +266,26 @@ def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
     """
     if not _trajet_libre(x0, y0, x1, y1, obstacles, marge_piste or marge, exempt):
         return False
-    return not any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles)
+    # ⚠️ Le trajet ne vit que sur la couche de la pastille ; le VIA traverse.
+    # Voir `_choisir_sortie` : deux listes d obstacles, jamais une seule.
+    pour_le_via = obstacles if obstacles_via is None else obstacles_via
+    return not any(_distance_a_obstacle(x1, y1, o) < marge for o in pour_le_via)
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
-                    marge_piste=None, portee=None, pas=None, prefere=None):
+                    marge_piste=None, portee=None, pas=None, prefere=None,
+                    obstacles_via=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
+
+    ⚠️ DEUX listes d obstacles, pas une. `obstacles` est ce que la PISTE doit
+    eviter — le cuivre d un autre net sur la couche de la pastille, la seule
+    ou elle existe. `obstacles_via` est ce que le VIA doit eviter au point de
+    chute — toutes les couches, puisqu il les traverse. Mesure du 2026-09-14,
+    carte-10, U1.8 (GND, F.Cu) : le couloir sur F.Cu etait libre et un via GND
+    attendait a 1,2 mm, mais une piste IO_L14 sur B.Cu, SOUS la pastille,
+    comptait comme obstacle du trajet — la broche restait orpheline du plan a
+    tous les paliers, de 2 a 8 couches. Sans `obstacles_via`, la liste unique
+    sert aux deux (comportement historique).
 
     ⚠️ `prefere(x, y)` ORDONNE les sorties degagees, il n en filtre aucune :
     la premiere sortie degagee que `prefere` accepte est rendue ; a defaut,
@@ -301,6 +315,7 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     depart = distance
     portee = portee if portee is not None else distance
     pas = pas if pas is not None else max(distance / 4.0, 1.0)
+    pour_le_via = obstacles if obstacles_via is None else obstacles_via
     premiere = None  # la premiere sortie degagee, si aucune n est preferee
     # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
     # d une direction avant de tourner. Le couloir reserve par le halo
@@ -321,8 +336,9 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                 if not _trajet_libre(x0, y0, x1, y1, obstacles,
                                      marge_piste or marge, exempt):
                     continue
-                # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
-                if any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles):
+                # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la —
+                # mais sur TOUTES les couches qu il traverse.
+                if any(_distance_a_obstacle(x1, y1, o) < marge for o in pour_le_via):
                     continue
                 if prefere is None or prefere(x1, y1):
                     return int(x1), int(y1)
@@ -612,6 +628,27 @@ def _via_existant_a(vias, x, y, netcode: int, tolerance=_TOLERANCE_VIA_EXISTANT_
     return False
 
 
+def _troncon_deja_la(segments, x0, y0, x1, y1, netcode: int,
+                     tolerance=_TOLERANCE_VIA_EXISTANT_NM) -> bool:
+    """Un troncon du meme net joint-il deja ces deux points (dans un sens ou l autre) ?
+
+    ⚠️ Chaque repose des sorties reservees — un palier, un tirage — reposait le
+    troncon pastille -> via par-dessus le precedent. Mesure du 2026-09-14,
+    carte-10 : jusqu a NEUF troncons identiques de 1,2 mm sur un meme via. Du
+    cuivre superpose ne relie rien de plus et alourdit le board.
+    `segments` : (x_debut, y_debut, x_fin, y_fin, netcode).
+    """
+    def proche(ax, ay, bx, by):
+        return abs(ax - bx) <= tolerance and abs(ay - by) <= tolerance
+    for sx0, sy0, sx1, sy1, n in segments:
+        if int(n) != int(netcode):
+            continue
+        if (proche(sx0, sy0, x0, y0) and proche(sx1, sy1, x1, y1)) or \
+           (proche(sx0, sy0, x1, y1) and proche(sx1, sy1, x0, y0)):
+            return True
+    return False
+
+
 def _trou_libre(x: float, y: float, rayon: float,
                 trous: list[tuple[float, float, float]], ecart: float) -> bool:
     """Vrai si l on peut percer en (x, y) sans toucher un trou existant."""
@@ -781,6 +818,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
     # Un via du meme net deja au point de chute : troncon seul (voir `_via_existant_a`).
     vias_existants = [(float(v.GetPosition().x), float(v.GetPosition().y), int(v.GetNetCode()))
                       for v in board.GetTracks() if v.GetClass() == "PCB_VIA"]
+    # Les troncons deja poses : on ne superpose jamais un troncon a son jumeau.
+    segments_existants = []
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA" or not hasattr(t, "GetStart"):
+            continue
+        try:
+            d, f = t.GetStart(), t.GetEnd()
+            segments_existants.append((float(d.x), float(d.y), float(f.x), float(f.y), int(t.GetNetCode())))
+        except Exception:
+            continue
     troncons_seuls = 0
     for cible in cibles:
         # Deux formes : `[ref, pad]` (fanout post-routage, aucune reservation)
@@ -807,7 +854,14 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # toute broche 1 ronde de connecteur passait par la.
         sans_direction = (dx * dx + dy * dy) ** 0.5 < 1.0
 
-        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        # ⚠️ La PISTE ne vit que sur la couche de la pastille : ses obstacles
+        # sont ceux de cette couche. Le VIA traverse : les siens sont ceux de
+        # toutes les couches. Une piste de signal sur B.Cu, sous une pastille
+        # F.Cu, bloquait le trajet d une sortie qui ne la croise jamais
+        # (carte-10, U1.8, 2026-09-14).
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode(),
+                                              couches={pad.GetLayer()})
+        obstacles_via = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         portee, pas = _portee_d_echappement(fp, via_d)
@@ -824,7 +878,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         sortie = None
         if reserve is not None and _sortie_reservee_valide(
                 pos.x, pos.y, reserve[0], reserve[1], obstacles, marge,
-                propre, marge_piste):
+                propre, marge_piste, obstacles_via=obstacles_via):
             sortie = reserve
             reprises += 1
             # ⚠️ Une position reservee qui ne touche pas le plan principal est
@@ -832,14 +886,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             if not sans_direction and not prefere(reserve[0], reserve[1]):
                 mieux = _choisir_sortie(
                     pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                    marge_piste, portee, pas, prefere=prefere)
+                    marge_piste, portee, pas, prefere=prefere,
+                    obstacles_via=obstacles_via)
                 if mieux is not None and prefere(mieux[0], mieux[1]):
                     sortie = mieux
                     reprises -= 1
         if sortie is None and not sans_direction:
             sortie = _choisir_sortie(
                 pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                marge_piste, portee, pas, prefere=prefere
+                marge_piste, portee, pas, prefere=prefere,
+                obstacles_via=obstacles_via
             )
         if sortie is None:
             # Dernier recours : le via DANS la pastille. Il n a besoin
@@ -859,7 +915,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             # du banc alors qu elles surplombaient le plan de B.Cu.
             # Le TROU, lui, reste verifie — un percage est physique.
             gene = (not _via_in_pad_dispense_de_clearance(d, larg)
-                    and _via_gene_par(pos.x, pos.y, d, clearance, obstacles))
+                    and _via_gene_par(pos.x, pos.y, d, clearance, obstacles_via))
             # ⚠️ LA DISPENSE S ARRETE A LA COUCHE DE LA PASTILLE. Une pastille
             # CMS n existe que sur une face ; le via traverse jusqu a l autre,
             # ou il pose du cuivre que RIEN ne vouche. Mesure du 2026-09-02 sur
@@ -899,13 +955,15 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             renonces += 1
             continue
 
-        piste = pcbnew.PCB_TRACK(board)
-        piste.SetStart(pos)
-        piste.SetEnd(pcbnew.VECTOR2I(vx, vy))
-        piste.SetWidth(largeur)
-        piste.SetLayer(pad.GetLayer())
-        piste.SetNetCode(pad.GetNetCode())
-        board.Add(piste)
+        if not _troncon_deja_la(segments_existants, pos.x, pos.y, vx, vy, pad.GetNetCode()):
+            piste = pcbnew.PCB_TRACK(board)
+            piste.SetStart(pos)
+            piste.SetEnd(pcbnew.VECTOR2I(vx, vy))
+            piste.SetWidth(largeur)
+            piste.SetLayer(pad.GetLayer())
+            piste.SetNetCode(pad.GetNetCode())
+            board.Add(piste)
+            segments_existants.append((float(pos.x), float(pos.y), float(vx), float(vy), int(pad.GetNetCode())))
 
         if existant:
             troncons_seuls += 1
@@ -988,12 +1046,16 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
         dx, dy = _direction_d_echappement(pad, fp.GetPosition())
         if (dx * dx + dy * dy) ** 0.5 < 1.0:
             continue
-        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        # Meme regle que `_escape_pads` : la piste sur SA couche, le via sur toutes.
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode(),
+                                              couches={pad.GetLayer()})
+        obstacles_via = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         portee, pas = _portee_d_echappement(fp, via_d)
         sortie = _choisir_sortie(pos.x, pos.y, dx, dy, distance, obstacles,
-                                 marge, propre, marge_piste, portee, pas)
+                                 marge, propre, marge_piste, portee, pas,
+                                 obstacles_via=obstacles_via)
         if sortie is None:
             renonces += 1
             continue
@@ -1659,6 +1721,71 @@ def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     )
 
 
+def _hors_du_plus_grand_amas(amas: list) -> list:
+    """Pure : les pastilles qui ne sont PAS dans le plus grand amas."""
+    if not amas:
+        return []
+    principal = max(amas, key=len)
+    orphelines = []
+    for a in amas:
+        if a is principal:
+            continue
+        orphelines.extend(sorted(a))
+    return orphelines
+
+
+def _pads_hors_cluster_principal(pcbnew, args: dict[str, str]) -> None:
+    """Les pastilles d un net de plan qui ne sont pas reliees a son amas principal.
+
+    ⚠️ Le DRC decrit une coupure par ses deux items les plus PROCHES — deux
+    zones, deux troncons — et ne nomme la pastille que par hasard. Mesure du
+    2026-09-14, carte-10 : « Zone [GND] on F.Cu <-> Zone [GND] on B.Cu » pour
+    U1.8, dont le via tombait dans un ilot de B.Cu de quelques mm2 coupe du
+    plan. Ici c est la CONNECTIVITE reelle qui designe l orpheline : on coule
+    les zones, on demande a pcbnew les pastilles reliees a chaque pastille du
+    net, et tout amas qui n est pas le plus grand est orphelin.
+    """
+    board = _charger_board(pcbnew, args["pcb"])
+    nets = [n for n in json.loads(args.get("nets", "[]")) if n]
+    try:
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    except Exception:
+        pass  # sans coulee, la connectivite ignore les plans : on mesure quand meme
+    if not board.BuildConnectivity():
+        raise RuntimeError("pcbnew failed to build board connectivity")
+    connectivity = board.GetConnectivity()
+    connectivity.RecalculateRatsnest()
+    resultat: list = []
+    for nom in nets:
+        code = board.GetNetcodeFromNetname(nom)
+        if code <= 0:
+            continue
+        # ⚠️ La reference vient de l EMPREINTE parcourue : `pad.GetParent()`
+        # rend un `BOARD_ITEM_CONTAINER` sans `GetReference` (mesure KiCad 10).
+        pads = []
+        cle = {}
+        for fp in board.GetFootprints():
+            for p in fp.Pads():
+                if int(p.GetNetCode()) != code:
+                    continue
+                pads.append(p)
+                cle[str(p.m_Uuid.AsString())] = (str(fp.GetReference()), str(p.GetPadName()))
+        vus: set = set()
+        amas: list = []
+        for p in pads:
+            u = str(p.m_Uuid.AsString())
+            if u in vus:
+                continue
+            relies = {str(q.m_Uuid.AsString()) for q in _connected_pads(connectivity, p, pcbnew)
+                      if int(q.GetNetCode()) == code}
+            relies.add(u)
+            vus |= relies
+            amas.append({cle[v] for v in relies if v in cle})
+        resultat.extend(_hors_du_plus_grand_amas(amas))
+    Path(args["result"]).write_text(
+        json.dumps({"pads": [[r, p] for r, p in resultat]}), encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: routing_pcbnew_runner.py '<json>'", file=sys.stderr)
@@ -1686,6 +1813,8 @@ def main(argv: list[str]) -> int:
         _escape_pads(pcbnew, args)
     elif operation == "measure_connectivity":
         _measure_connectivity(pcbnew, args)
+    elif operation == "pads_hors_cluster_principal":
+        _pads_hors_cluster_principal(pcbnew, args)
     else:
         raise ValueError(f"unsupported operation: {operation!r}")
     return 0

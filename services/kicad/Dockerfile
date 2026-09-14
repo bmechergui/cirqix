@@ -57,6 +57,12 @@ ENV PATH=/opt/venv/bin:$PATH
 
 ENV KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
 ENV KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
+# Modeles 3D des composants (2026-09-14). Le paquet `kicad-packages3d` n'existe
+# pas dans le PPA 10.0, et le depot complet pese plusieurs Go : les
+# bibliotheques utiles (~1,3 Go) vivent dans le VOLUME `cirqix-3dmodels`,
+# rempli par `scripts/modeles_3d.sh` et monte ici. Sans lui, `pcb export glb`
+# rend la carte sans composants — le viewer 3D le dit.
+ENV KICAD10_3DMODEL_DIR=/usr/share/kicad/3dmodels
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 

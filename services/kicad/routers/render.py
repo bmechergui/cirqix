@@ -187,6 +187,40 @@ class GlbResponse(BaseModel):
     glb_b64: str
     bytes: int
     duration_ms: int
+    # Honnetete du modele : combien de composants DECLARENT un modele 3D dans
+    # le board, et combien de ces fichiers existent sur ce service. 0 trouve
+    # sur N declares = la carte sort nue, et le viewer doit le dire.
+    models_declared: int = 0
+    models_found: int = 0
+
+
+_MODEL_RE = re.compile(r'\(model\s+"([^"]+)"')
+_VARIABLES_MODELES = ("KICAD10_3DMODEL_DIR", "KICAD9_3DMODEL_DIR", "KICAD8_3DMODEL_DIR", "KISYS3DMOD")
+
+
+def compter_modeles(pcb: bytes, model_dir: Optional[str]) -> tuple[int, int]:
+    """(modeles declares dans le board, fichiers reellement presents).
+
+    `kicad-cli pcb export glb` charge le STEP d un modele meme quand le board
+    cite le `.wrl` : un `.step`/`.stp` voisin compte comme present. Sans
+    repertoire de modeles, rien n est present — et on le dit, plutot que de
+    laisser croire que le GLB porte les composants.
+    """
+    chemins = _MODEL_RE.findall(pcb.decode("utf-8", "replace"))
+    if not chemins:
+        return 0, 0
+    trouves = 0
+    for chemin in chemins:
+        resolu = chemin
+        for var in _VARIABLES_MODELES:
+            resolu = resolu.replace("${%s}" % var, model_dir or "")
+        if not model_dir and resolu == chemin and chemin.startswith("${"):
+            continue
+        base = Path(resolu)
+        candidats = [base] + [base.with_suffix(ext) for ext in (".step", ".stp", ".STEP")]
+        if any(c.is_file() for c in candidats):
+            trouves += 1
+    return len(chemins), trouves
 
 
 def construire_commande_glb(cli: str, req: GlbRequest, entree: Path, sortie: Path) -> list[str]:
@@ -253,8 +287,10 @@ def export_glb(req: GlbRequest) -> GlbResponse:
     except RuntimeError as exc:
         logger.error("export/glb: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    logger.info("export/glb: %d octets en %d ms", len(glb), duree_ms)
-    return GlbResponse(glb_b64=base64.b64encode(glb).decode("ascii"), bytes=len(glb), duration_ms=duree_ms)
+    declares, trouves = compter_modeles(pcb, os.environ.get("KICAD10_3DMODEL_DIR")) if req.components else (0, 0)
+    logger.info("export/glb: %d octets en %d ms — modeles 3D %d/%d", len(glb), duree_ms, trouves, declares)
+    return GlbResponse(glb_b64=base64.b64encode(glb).decode("ascii"), bytes=len(glb), duration_ms=duree_ms,
+                       models_declared=declares, models_found=trouves)
 
 
 @router.post("/render/auto", response_model=RenderResponse)

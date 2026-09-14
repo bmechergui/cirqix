@@ -26,6 +26,37 @@ export function ensureKiCanvasTheme(storage: Pick<Storage, 'getItem' | 'setItem'
   }
 }
 
+/**
+ * Un board écrit par pcbnew 10 n'a AUCUNE table de nets : chaque objet porte
+ * `(net "GND")` — le nom — là où KiCad ≤ 9 déclarait `(net 3 "GND")` en tête et
+ * posait `(net 3)` sur les objets. KiCanvas ne connaît que cette seconde forme :
+ * un clic sur une piste plantait la page entière (`getNetNumber: Cannot read
+ * properties of undefined (reading 'number')`, rapporté le 2026-09-14) et le
+ * panneau des nets restait vide.
+ *
+ * On reconstruit la table (0 = net vide, puis les noms triés) et on renumérote
+ * les objets. Un board qui a déjà sa table est rendu tel quel : la fonction est
+ * idempotente. `net_name` des zones n'est pas touché, KiCanvas le lit tel quel.
+ */
+const NET_NOMME_RE = /\(net "((?:[^"\\]|\\.)*)"\)/g;
+const NET_DECLARE_RE = /\n\t\(net \d+ "/;
+const PREMIER_OBJET_RE = /\n\t\((?:footprint|segment|arc|via|zone|gr_|dimension|target|group)/;
+
+export function normaliserBoardPourKiCanvas(texte: string): string {
+  if (!texte || NET_DECLARE_RE.test(texte)) return texte;
+  const noms = new Set<string>();
+  for (const m of texte.matchAll(NET_NOMME_RE)) noms.add(m[1] ?? '');
+  if (noms.size === 0) return texte;
+  noms.delete('');
+  const table = new Map<string, number>([['', 0]]);
+  for (const nom of Array.from(noms).sort()) table.set(nom, table.size);
+  const renumerote = texte.replace(NET_NOMME_RE, (_tout, nom: string) => `(net ${table.get(nom) ?? 0})`);
+  const declarations = Array.from(table.entries()).map(([nom, n]) => `\n\t(net ${n} "${nom}")`).join('');
+  const m = PREMIER_OBJET_RE.exec(renumerote);
+  if (!m) return renumerote + declarations;
+  return renumerote.slice(0, m.index) + declarations + renumerote.slice(m.index);
+}
+
 export function loadKiCanvas(): Promise<void> {
   if (typeof window === 'undefined') {
     return Promise.reject(new Error('KiCanvas requires a browser environment'));

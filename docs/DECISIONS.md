@@ -701,6 +701,39 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-14-b — ne pas arrêter l'escalade sur un manque GND tant qu'une orpheline NOMMÉE n'a pas eu son repli au palier suivant
+
+**Statut : en attente.**
+
+**La règle actuelle** (règle de l'utilisateur, `_escalade_peut_aider`) :
+« un net confié au PLAN ne se relie pas avec du cuivre en plus » — quand le
+seul net incomplet est GND, l'escalade s'arrête. Elle était juste tant que
+personne ne savait QUELLE broche manquait : monter d'une couche ne change
+rien à un via qui tombe dans un îlot.
+
+**Ce qui a changé le 2026-09-14** (PR #182) : l'orpheline est désormais
+désignée par la connectivité (U1.8 sur carte-10), et le repli GND CIBLÉ —
+qui rend au routeur cette broche et ses deux voisines GND, pistes existantes
+protégées — se déclenche enfin. Mais il est tenté au palier COURANT, puis
+l'escalade s'arrête sur la règle ci-dessus. Mesuré, placement gelé du verdict
+par broches, carte-10 :
+
+    palier 2 : repli ciblé U1-8 + C68-2 + C65-2 refusé (1 → 1 manquante)
+               Freerouting n'a qu'UNE face de signal entre les sorties du LQFP
+    palier 4 : jamais tenté — « escalade arrêtée avant 4 couches »
+    verdict  : 98 %, 1 manquante, 192 s (vs 98 % / 1165 s / 2542 s avant)
+
+**Proposition.** Quand une orpheline est nommée et que son repli ciblé a
+échoué au palier courant, l'escalade CONTINUE d'un palier (deux couches
+internes = un chemin pour une piste de masse courte), et le repli ciblé y est
+rejoué (la mémoire des échecs porte déjà le palier). Si ce repli échoue aussi,
+la règle actuelle s'applique. Coût : un palier de plus (≈ 5-10 min) sur les
+seules cartes dont une broche de masse reste orpheline ; aucun changement sur
+les cartes qui sortent à 100 % au premier palier.
+
+**Ce que ça ne promet pas** : que Freerouting réussisse à 4 couches. La mesure
+tranchera ; si elle réfute, la règle de l'utilisateur reste telle quelle.
+
 ## D-2026-09-14-a — le verdict « pro » du banc doit juger les broches, pas la moyenne des capas
 
 **Statut : validée** par l'utilisateur le 2026-09-14 (« Ok »).

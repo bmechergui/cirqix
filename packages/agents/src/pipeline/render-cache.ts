@@ -49,11 +49,31 @@ export function cheminDuRendu(cle: string): string {
   return `renders/${cle}.png`;
 }
 
-/** Clé du MODÈLE 3D (GLB) : le contenu du board seul — l'export n'a pas de paramètre. */
-export function cleDuModele(board: Uint8Array): string {
+/** Options du MODÈLE 3D : avec ou sans les corps des composants (demandé le 2026-09-14). */
+export interface ModelCacheOptions {
+  readonly components: boolean;
+}
+
+export const MODELE_PAR_DEFAUT: ModelCacheOptions = { components: true };
+
+/**
+ * Clé du MODÈLE 3D (GLB) : le contenu du board et l'option `components`.
+ * Sans option, la clé est celle du modèle AVEC composants — celle que le
+ * pipeline pré-exporte à la livraison.
+ */
+/**
+ * Génération du modèle. À incrémenter quand le CONTENU d'un GLB change pour un
+ * même board : la v2 (2026-09-14) embarque les corps des composants — les
+ * modèles déposés avant, exportés sans aucun modèle 3D installé, ne doivent
+ * plus être servis.
+ */
+const GENERATION_MODELE = 'glb2';
+
+export function cleDuModele(board: Uint8Array, options: ModelCacheOptions = MODELE_PAR_DEFAUT): string {
   const h = createHash('sha1');
   h.update(board);
-  h.update('glb');
+  h.update(GENERATION_MODELE);
+  if (!options.components) h.update(JSON.stringify({ components: false }));
   return h.digest('hex');
 }
 

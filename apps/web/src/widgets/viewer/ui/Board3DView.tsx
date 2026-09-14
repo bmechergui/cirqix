@@ -4,7 +4,7 @@ import { Component, Suspense, useEffect, useMemo, useState, type ReactNode } fro
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Box3, Vector3 } from 'three';
-import { Loader2, ImageOff, RefreshCw, RotateCcw, Camera, Move3d } from 'lucide-react';
+import { Loader2, ImageOff, RefreshCw, RotateCcw, Camera, Move3d, Box } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { RenderView } from './RenderView';
 
@@ -26,9 +26,15 @@ export interface Board3DViewProps {
   version?: number | string | undefined;
 }
 
-export function modelUrl(projectId: string, version?: number | string, attempt = 0): string {
+export interface ModelUrlOptions {
+  /** Les corps des composants (défaut) ou la carte nue — option demandée le 2026-09-14. */
+  readonly components?: boolean;
+}
+
+export function modelUrl(projectId: string, version?: number | string, attempt = 0, options: ModelUrlOptions = {}): string {
   const q = new URLSearchParams();
   if (version !== undefined) q.set('v', String(version));
+  if (options.components === false) q.set('components', '0');
   if (attempt) q.set('r', String(attempt));
   const s = q.toString();
   return `/api/projects/${encodeURIComponent(projectId)}/model${s ? `?${s}` : ''}`;
@@ -62,7 +68,21 @@ function Board({ url }: { url: string }) {
   );
 }
 
-type Etat = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string };
+/** Ce que le serveur dit des modèles de composants : `X-Model-Components: trouvés/déclarés`. */
+export interface ComposantsInfo {
+  readonly found: number;
+  readonly declared: number;
+}
+
+export function lireComposantsInfo(entete: string | null): ComposantsInfo | undefined {
+  const m = /^(\d+)\/(\d+)$/.exec((entete ?? '').trim());
+  return m ? { found: Number(m[1]), declared: Number(m[2]) } : undefined;
+}
+
+type Etat =
+  | { kind: 'loading' }
+  | { kind: 'ready'; composants?: ComposantsInfo | undefined }
+  | { kind: 'error'; message: string };
 
 /**
  * Un chargeur glTF qui échoue (modèle corrompu, WebGL absent) lève pendant
@@ -107,7 +127,7 @@ function useModeleDisponible(url: string): [Etat, () => void, (message: string) 
         }
         // Le corps est lu pour que le cache HTTP le garde ; le chargeur glTF le relira de là.
         await r.arrayBuffer();
-        if (!cancelled) setEtat({ kind: 'ready' });
+        if (!cancelled) setEtat({ kind: 'ready', composants: lireComposantsInfo(r.headers.get('x-model-components')) });
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
         setEtat({ kind: 'error', message: err instanceof Error ? err.message : '3D model request failed' });
@@ -121,8 +141,20 @@ function useModeleDisponible(url: string): [Etat, () => void, (message: string) 
 export function Board3DView({ projectId, version }: Board3DViewProps) {
   const [photo, setPhoto] = useState(false);
   const [resetKey, setResetKey] = useState(0);
-  const url = useMemo(() => modelUrl(projectId, version), [projectId, version]);
+  const [composants, setComposants] = useState(true);
+  const url = useMemo(() => modelUrl(projectId, version, 0, { components: composants }), [projectId, version, composants]);
   const [etat, reessayer, signalerErreur] = useModeleDisponible(url);
+  // Ce que le serveur sait des corps de composants : `n/m` présents, ou rien.
+  const infoComposants = etat.kind === 'ready' ? etat.composants : undefined;
+  const texteComposants = !composants
+    ? 'carte nue'
+    : infoComposants === undefined
+      ? null
+      : infoComposants.declared === 0
+        ? 'aucun composant à modéliser'
+        : infoComposants.found === 0
+          ? `aucun modèle 3D installé sur le service (0/${infoComposants.declared})`
+          : `composants ${infoComposants.found}/${infoComposants.declared}`;
 
   if (photo) {
     return (
@@ -145,8 +177,15 @@ export function Board3DView({ projectId, version }: Board3DViewProps) {
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[#1a1a1a] bg-[#0a0a0a]">
         <span className="text-[10px] font-mono text-[#3d3d3d] tracking-wider">
           GLB KiCad · glisser pour tourner · molette pour zoomer · clic droit pour déplacer
+          {texteComposants && <span data-testid="board-3d-composants"> · {texteComposants}</span>}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          <button type="button" onClick={() => setComposants((c) => !c)} aria-label="Toggle components" aria-pressed={composants}
+            title={composants ? 'Afficher la carte nue (sans les corps des composants)' : 'Afficher les corps des composants'}
+            className={cn('flex items-center gap-1 px-2 py-1 rounded-md text-[10px] border transition-all',
+              composants ? 'text-[#8be05a] border-[#3f7a2a]/40' : 'text-[#555] border-[#1e1e1e] hover:text-[#888]')}>
+            <Box size={10} /> Composants
+          </button>
           <button type="button" onClick={() => setResetKey((k) => k + 1)} aria-label="Reset view" title="Recentrer"
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] text-[#555] border border-[#1e1e1e] hover:text-[#888]">
             <RotateCcw size={10} /> Recentrer

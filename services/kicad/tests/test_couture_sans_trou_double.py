@@ -262,7 +262,7 @@ class TestExecutionReelle:
     def _coudre(self, board, tmp_path, monkeypatch):
         faux = _faux_pcbnew(board)
         monkeypatch.setattr(RUN, "_charger_board", lambda p, c: board)
-        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n: [])
+        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n, couches=None: [])
         res = tmp_path / "r.json"
         RUN._stitch_zones(faux, {
             "pcb": str(tmp_path / "in.kicad_pcb"),
