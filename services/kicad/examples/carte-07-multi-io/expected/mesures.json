@@ -3,11 +3,11 @@
   "composants": 44,
   "nets": 37,
   "board_mm": [
-    110,
-    80
+    99.5,
+    79.8
   ],
   "duree_s": 1103,
-  "git": "1614670",
+  "git": "02f7b26",
   "routed_percent": 100,
   "drc_violations": 260,
   "drc_clean": true,
@@ -15,7 +15,7 @@
   "types_violations": "silk_over_copper:82,silk_overlap:36",
   "abouti": true,
   "board": {
-    "segments": 350,
+    "segments": 281,
     "vias": 75,
     "zones": 3,
     "empreintes": 45
@@ -30,5 +30,13 @@
   },
   "livre_par": "livrer_campagne.py",
   "tirage": "carte-07-multi-io-t1",
-  "serigraphie_degagee": "2026-09-12"
+  "serigraphie_degagee": "2026-09-12",
+  "contour_resserre": {
+    "date": "2026-09-14",
+    "decision": "D-2026-09-13-c A",
+    "avant_mm": [
+      110,
+      80
+    ]
+  }
 }
