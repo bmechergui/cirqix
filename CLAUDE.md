@@ -2308,6 +2308,38 @@ Gardes : `test_sortie_ne_voit_que_sa_couche.py`,
 `test_liberation_epargne_les_nets_du_plan.py`, `test_orphelines_par_cluster.py`,
 `test_repli_gnd_memo_par_palier.py`, `test_via_deja_la_troncon_seul.py`.
 
+### Leçon inscrite le 2026-09-14 — le service tournait sur une image de juillet
+
+**NEVER mesurer sans avoir vérifié que le SERVICE porte le code qu'on croit.**
+Trois bancs de carte-10 ont été perdus le 2026-09-14 avant de comprendre :
+l'image `cirqix-kicad:latest` datait du **19 juillet**, et
+`docker-compose.yml` ne monte à chaud que `routers/`, `tools/`, `main.py`,
+`security.py` et `observability.py`. Tout le reste — entrypoint compris —
+vient de l'image.
+
+Ce qui manquait, dans le dépôt depuis le 2026-09-12 :
+
+    superviseur qui RELANCE la JVM Freerouting   absent  -> « JVM tuee mais pas revenue en 60 s »
+    lancer_service.py (ping uvicorn 5 s)         absent  -> PID 1 = uvicorn nu
+
+Conséquence mesurée : dès qu'un job figé faisait tuer la JVM, elle ne revenait
+jamais et TOUT le routage basculait sur `freerouting-cli` — une JVM par job.
+carte-10 : **5474 s** au lieu de 2686 s, paliers abandonnés à 86 %.
+
+Le symptôme se lisait dans le journal (`freerouting-cli` au lieu de
+`freerouting-api`) et j'ai mis trois bancs à le voir. Le diagnostic tient en
+une commande :
+
+    docker exec cirqix-kicad ps -eo pid,args --no-headers | head -1
+    #  attendu : python3 /app/lancer_service.py …
+    #  trouvé  : /opt/venv/bin/uvicorn …        <- image perimee
+
+**ALWAYS** reconstruire l'image du service après tout commit touchant
+`docker-entrypoint.sh`, `lancer_service.py`, le `Dockerfile` ou les
+sous-modules — exactement la règle déjà inscrite pour `cirqix-worker` le
+2026-09-12, jamais appliquée à `cirqix-kicad`. Vérification après
+reconstruction : tuer la JVM et confirmer qu'elle revient.
+
 ### Leçon inscrite le 2026-09-10 — le worker que son propre superviseur abat
 
 **NEVER lire deux lignes voisines d'un journal comme une cause et son effet
