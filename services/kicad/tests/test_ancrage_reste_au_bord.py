@@ -30,8 +30,11 @@ from kicad_tools.schema.pcb import PCB  # noqa: E402
 from tools import placement as placement_mod  # noqa: E402
 from tools.contour_et_bords import ancrer_connecteurs_au_bord  # noqa: E402
 
-_FIXTURE = _SERVICE_ROOT / "examples" / "carte-01-diviseur" / "expected" / "placement.kicad_pcb"
-pytestmark = pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture carte-01 absente")
+# ⚠️ Fixture FIGEE : le placement livre de carte-01 (25 x 20, J1 au coin de la
+# grille) tel qu il etait avant le contour resserre. `examples/` bouge a chaque
+# livraison ; un test qui y lit ses hypotheses casse a la premiere (CI de #179).
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "carte-01-placement-25x20.kicad_pcb"
+pytestmark = pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture carte-01-placement-25x20 absente")
 
 
 @pytest.fixture

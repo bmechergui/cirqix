@@ -9,7 +9,7 @@
 	(paper "A4")
 	(title_block
 		(title "Cirqix PCB")
-		(date "2026-09-13")
+		(date "2026-09-12")
 		(rev 1.0)
 		(company "")
 	)
@@ -39,7 +39,17 @@
 	(net 2 "MID")
 	(net 3 "LED_A")
 	(net 4 "VIN")
-	
+	(gr_rect
+		(start 136 95)
+		(end 161 115)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill none)
+		(layer "Edge.Cuts")
+		(uuid "f921f41c-ebd6-40cb-8678-ce9acf8ca777")
+	)
 	(footprint "PinHeader_1x02_P2.54mm_Vertical"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
@@ -220,13 +230,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "cffa84c4-1d35-4ce8-ad77-f8bdede87659")
+		(uuid "8116bfd3-caa0-465d-97ef-afbf142c7bfe")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 145.5 108.5 0)
+		(at 147 103.5 0)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R1"
@@ -327,13 +337,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "da9c9a33-637a-4a8f-b72b-35a7c551c935")
+		(uuid "bd6c6898-62bb-472a-a1ee-d1e9ffc970ab")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 148.1929 106.8842 270)
+		(at 145 106.5 270)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R2"
@@ -434,7 +444,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "54b1106e-6dae-48f8-8804-3679f8f2e08d")
+		(uuid "e278ac07-8698-4936-8f8c-1e986842a0ed")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -541,7 +551,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "5e74e066-5f81-403f-82b4-201de5c96556")
+		(uuid "d13434d9-37a7-4c86-a134-6c73d3743c9f")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -694,16 +704,6 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9f5466c3-e046-4afd-9e23-d08c131ae9df")
-	)
-	(gr_rect
-		(start 136.230 95.230)
-		(end 161.000 112.230)
-		(stroke
-			(width 0.1)
-			(type default)
-		)
-		(fill no)
-		(layer "Edge.Cuts")
+		(uuid "fea8094e-b0ce-43a3-b6c5-001150640cb1")
 	)
 )

@@ -107,7 +107,11 @@ def _grille(carte: str) -> bytes | None:
         kicad_sch_b64=_b64(sch.kicad_sch_content.encode()), **charge))
     if not pcb.success:
         return None
-    return pcb.kicad_pcb_content.encode(), charge["board_width_mm"], charge["board_height_mm"]
+    # D-2026-09-13-c (A) : comme en production, des dimensions sans le drapeau
+    # `board_size_imposed` restent imposees ; `false` = heuristique, le contour
+    # suivra le placement.
+    imposee = circuit.get("board_size_imposed", True) is not False
+    return pcb.kicad_pcb_content.encode(), charge["board_width_mm"], charge["board_height_mm"], not imposee
 
 
 def _decouplage(chemin: str) -> tuple[float, float, int]:
@@ -157,16 +161,21 @@ def valider(carte: str) -> dict:
     g = _grille(carte)
     if g is None:
         return {"carte": carte, "erreur": "pas d entree exploitable (circuit.json / schema.json)"}
-    grille, largeur, hauteur = g
+    grille, largeur, hauteur, auto_size = g
     (sortie / "1_grille.kicad_pcb").write_bytes(grille)
+    if auto_size:
+        print("   (taille heuristique %sx%s : le contour suivra le placement)" % (largeur, hauteur), flush=True)
 
     meilleur = None
     for i in range(1, _TIRAGES + 1):
         t0 = time.time()
         try:
-            board = base64.b64decode(place_auto(
+            reponse = place_auto(
                 AutoPlacementRequest(kicad_pcb_b64=_b64(grille), board_width_mm=largeur,
-                                     board_height_mm=hauteur)).kicad_pcb_b64)
+                                     board_height_mm=hauteur, auto_size_board=auto_size))
+            board = base64.b64decode(reponse.kicad_pcb_b64)
+            if reponse.board_width_mm:
+                print("   contour resserre : %.1fx%.1f mm" % (reponse.board_width_mm, reponse.board_height_mm), flush=True)
         except Exception as exc:
             print("   tirage %d : ECHEC %s" % (i, exc), flush=True)
             continue

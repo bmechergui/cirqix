@@ -731,6 +731,28 @@ le génétique déplace) et jusqu'à 4,6 mm HORS carte (bornes testées sur
 l'origine, pas sur le corps — carte-06 J10, `copper_edge_clearance`). Corrigé,
 `tests/test_ancrage_reste_au_bord.py`.
 
+**A, mesurée sur le banc le 2026-09-14** (onze cartes en taille heuristique,
+phase 1 puis phase 2 à placement gelé, 2 tirages) :
+
+| carte | contour av → ap (mm) | surface | routage (A) | livrée ? |
+|---|---|---|---|---|
+| carte-01 | 25×20 → 24,8×17,0 | 84 % | 100 %, 0 err | **oui** |
+| carte-03 | 50×35 → 49,8×34,8 | 99 % | 100 %, 0 err | non (gain nul) |
+| carte-04 | 60×45 → 45,0×44,8 | 75 % | 100 %, 0 err, 3 warn | **oui** |
+| carte-05 | 70×50 → 69,8×49,8 | 99 % | 100 %, 0 err | non (gain nul) |
+| carte-06 | 80×60 → 65,2×59,8 | 81 % | 100 %, 0 err | **oui** |
+| carte-07 | 110×80 → 99,5×79,8 | 90 % | 100 %, 0 err | **oui** |
+| carte-08 | 125×95 → 125×94,8 | 100 % | 94 %, 3 manq (4 couches) | non |
+| carte-09 | 130×100 → 128×99,8 | 98 % | 96 %, 2 manq | non |
+| carte-11 | 140×120 → 47,2×69,0 | 19 % | 100 %, 0 err | non (carte d'escalade, « ne pas la réparer ») |
+
+carte-02 et carte-10 : placement sous le seuil de découplage, non routées.
+Le contour ne resserre que ce que le génétique n'a pas rempli : gain réel sur
+les circuits petits devant leur carte (−16 à −25 %), nul sur les cartes
+denses. Les échecs de routage de 08 et 09 sont la dispersion connue (surface
+inchangée), pas l'effet de A. Quatre cartes livrées plus petites, DRC local
+0 erreur, rendus 3D régénérés.
+
 **A, précisée :** une taille n'est *imposée* que si la description la donne
 — le driver le dit par `board_size_imposed` dans le contrat du schéma ; des
 dimensions choisies par le modèle sans ce drapeau sont une heuristique et le

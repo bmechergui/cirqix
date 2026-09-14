@@ -846,6 +846,9 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
      `handlePlacement` ; le driver dit `board_size_imposed` dans le schéma), `Edge.Cuts` est resserré sur les courtyards + 3 mm, en repère
      FEUILLE, jamais agrandi. ⚠️ `board_origin` de kicad-tools SUIT le contour : les
      positions relatives changent, pas les positions de feuille.
+     Mesuré le 2026-09-14 sur le banc : −16 à −25 % de surface sur les circuits petits
+     devant leur carte (01, 04, 06, 07 livrées, 100 % / 0 erreur), gain nul sur les
+     cartes denses — le génétique remplit la carte. Tableau : D-2026-09-13-c.
   ⑤ **Snap bypass** (`tools/placement_bypass.py::snap_cluster_members`) — TÉLÉPORTE
      chaque membre de cluster à portée de son ancre, puis l'Inspecteur repasse.
      Détection 100 % native (`detect_functional_clusters`) ; le plafond lu est

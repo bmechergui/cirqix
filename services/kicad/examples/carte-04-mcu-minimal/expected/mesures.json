@@ -3,11 +3,11 @@
   "composants": 15,
   "nets": 7,
   "board_mm": [
-    60,
-    45
+    45.0,
+    44.8
   ],
   "duree_s": 156,
-  "git": "6fb7359",
+  "git": "02f7b26",
   "routed_percent": 100,
   "drc_violations": 18,
   "drc_clean": true,
@@ -15,18 +15,26 @@
   "types_violations": "silk_over_copper:12,silk_overlap:6",
   "abouti": true,
   "board": {
-    "segments": 85,
+    "segments": 81,
     "vias": 15,
     "zones": 3,
     "empreintes": 16
   },
   "drc_du_board": {
-    "violations": 0,
+    "violations": 3,
     "non_connectes": 0,
     "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "serigraphie_degagee": "2026-09-12"
+  "serigraphie_degagee": "2026-09-12",
+  "contour_resserre": {
+    "date": "2026-09-14",
+    "decision": "D-2026-09-13-c A",
+    "avant_mm": [
+      60,
+      45
+    ]
+  }
 }

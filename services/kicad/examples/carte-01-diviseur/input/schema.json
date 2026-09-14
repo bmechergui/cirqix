@@ -102,5 +102,6 @@
         }
       ]
     }
-  ]
+  ],
+  "board_size_imposed": false
 }
