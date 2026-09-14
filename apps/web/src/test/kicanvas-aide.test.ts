@@ -68,6 +68,12 @@ describe('construireAideCirqix', () => {
     const texte = AIDE_CIRQIX.flatMap((s) => s.lignes).map((l) => l.terme).join(' ');
     for (const vue of ['Native', 'Cirqix', 'PNG', '3D']) expect(texte).toContain(vue);
   });
+
+  it('est en ANGLAIS, comme le produit — aucun accent, aucun mot français', () => {
+    const tout = [TITRE_AIDE, ...AIDE_CIRQIX.flatMap((s) => [s.titre, ...s.lignes.flatMap((l) => [l.terme, l.texte])])].join(' ');
+    expect(tout).not.toMatch(/[àâäéèêëîïôöùûüç]/i);
+    expect(tout.toLowerCase()).not.toMatch(/\b(les|des|une|avec|sans|dans|pour|carte|couches|glisser)\b/);
+  });
 });
 
 describe('remplacerAideParCirqix', () => {
@@ -82,8 +88,12 @@ describe('remplacerAideParCirqix', () => {
     expect(corps.querySelectorAll('li').length).toBeGreaterThan(5);
   });
 
-  it('pose notre titre à la place de « Help »', () => {
+  it('pose NOTRE titre, quel que soit celui que KiCanvas avait mis', () => {
+    // ⚠️ Notre titre vaut « Help », comme celui de KiCanvas : vérifier
+    // `title === TITRE_AIDE` sur son titre d'origine passerait sans notre code.
+    // On part donc d'un titre différent — seul notre passage peut le changer.
     const { embed, panneau } = arbreAvecAide();
+    panneau.shadowRoot!.querySelector('kc-ui-panel-title')!.setAttribute('title', 'KiCanvas info');
     remplacerAideParCirqix(embed);
     expect(panneau.shadowRoot!.querySelector('kc-ui-panel-title')!.getAttribute('title')).toBe(TITRE_AIDE);
   });

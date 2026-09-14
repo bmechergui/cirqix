@@ -15,7 +15,8 @@
  * porte qui n'a pas besoin de l'être.
  */
 
-export const TITRE_AIDE = 'Aide';
+/** Le viewer parle anglais, comme le produit (demandé le 2026-09-14). */
+export const TITRE_AIDE = 'Help';
 
 export interface LigneAide {
   readonly terme: string;
@@ -29,29 +30,29 @@ export interface SectionAide {
 
 export const AIDE_CIRQIX: readonly SectionAide[] = [
   {
-    titre: 'Se déplacer',
+    titre: 'Navigate',
     lignes: [
-      { terme: 'Glisser', texte: 'déplace la vue (mode main dans la barre du bas).' },
-      { terme: 'Ctrl + molette', texte: 'zoome ; la molette seule fait défiler la page.' },
-      { terme: 'Cadrer', texte: 'le bouton ⛶ recentre la carte ou le schéma.' },
+      { terme: 'Drag', texte: 'pans the view (hand mode in the bottom toolbar).' },
+      { terme: 'Ctrl + wheel', texte: 'zooms; the wheel alone scrolls the page.' },
+      { terme: 'Fit', texte: 'the ⛶ button recenters the board or the schematic.' },
     ],
   },
   {
-    titre: 'Inspecter',
+    titre: 'Inspect',
     lignes: [
-      { terme: 'Clic', texte: 'sélectionne une empreinte, une piste ou un via ; son nom s’affiche en haut à droite.' },
-      { terme: 'Couches', texte: 'affiche ou masque F.Cu, B.Cu, sérigraphie, masque, contour.' },
-      { terme: 'Nets', texte: 'liste les liaisons de la carte et les met en évidence.' },
-      { terme: 'Empreintes', texte: 'liste les composants, par face, avec leur valeur.' },
+      { terme: 'Click', texte: 'selects a footprint, a track or a via; its name shows in the top right.' },
+      { terme: 'Layers', texte: 'show or hide F.Cu, B.Cu, silkscreen, solder mask, board outline.' },
+      { terme: 'Nets', texte: 'lists the connections of the board and highlights them.' },
+      { terme: 'Footprints', texte: 'lists the components, by side, with their value.' },
     ],
   },
   {
-    titre: 'Les quatre vues',
+    titre: 'The four views',
     lignes: [
-      { terme: 'Native', texte: 'le schéma et le routage tels que KiCad les écrit — c’est cette vue.' },
-      { terme: 'Cirqix', texte: 'notre rendu simplifié, plus lisible sur une petite carte.' },
-      { terme: 'PNG', texte: 'un rendu image produit par KiCad, dessus et dessous.' },
-      { terme: '3D', texte: 'la carte en volume, à faire tourner à la souris, avec ou sans les composants.' },
+      { terme: 'Native', texte: 'the schematic and the routing exactly as KiCad writes them — this view.' },
+      { terme: 'Cirqix', texte: 'our simplified rendering, easier to read on a small board.' },
+      { terme: 'PNG', texte: 'an image rendered by KiCad, top and bottom.' },
+      { terme: '3D', texte: 'the board in volume, drag to rotate, with or without component bodies.' },
     ],
   },
 ];
