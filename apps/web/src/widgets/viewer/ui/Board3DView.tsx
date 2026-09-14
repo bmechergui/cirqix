@@ -3,7 +3,7 @@
 import { Component, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
-import { Box3, Vector3 } from 'three';
+import { Box3, Vector3, type Object3D, type Mesh, type MeshStandardMaterial } from 'three';
 import { Loader2, ImageOff, RefreshCw, RotateCcw, Camera, Move3d, Box } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { RenderView } from './RenderView';
@@ -46,8 +46,48 @@ export function modelUrl(projectId: string, version?: number | string, attempt =
  * zoom deviennent indépendantes de la taille de la carte — un 20 × 15 mm et
  * un 208 × 156 mm arrivent cadrés pareil.
  */
+/**
+ * Le style du visualiseur 3D de KiCad, demandé le 2026-09-14 : carte VERTE,
+ * pastilles dorées, composants, fond dégradé bleu-gris. Le GLB porte le vert
+ * sombre du masque (0.08/0.20/0.14, ce que KiCad écrit) et un gris pour le
+ * cœur FR4 : ce sont l'éclairage et la teinte de KiCad qui font le rendu.
+ * Fonction PURE, testée : (r, g, b) ∈ [0,1] → couleur KiCad ou null (on ne
+ * touche pas aux composants ni au cuivre).
+ */
+export const VERT_MASQUE_KICAD = '#2a8a4a';
+export const FR4_KICAD = '#b9b47a';
+
+export function couleurStyleKiCad(r: number, g: number, b: number): string | null {
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  // Le masque : vert dominant, sombre.
+  if (g > r * 1.5 && g > b * 1.2 && lum < 0.35) return VERT_MASQUE_KICAD;
+  // Le cœur de la carte : gris neutre à mi-luminance (le `mat_1` 0.5/0.5/0.5 du GLB).
+  if (Math.abs(r - g) < 0.03 && Math.abs(g - b) < 0.03 && lum > 0.4 && lum < 0.6) return FR4_KICAD;
+  return null;
+}
+
+function appliquerStyleKiCad(scene: Object3D): void {
+  scene.traverse((o) => {
+    const mesh = o as Mesh;
+    if (!mesh.isMesh) return;
+    const materiaux = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of materiaux) {
+      const std = m as MeshStandardMaterial;
+      if (!std.color || (std.userData as { kicadStyle?: boolean }).kicadStyle) continue;
+      const teinte = couleurStyleKiCad(std.color.r, std.color.g, std.color.b);
+      if (teinte) {
+        std.color.set(teinte);
+        std.roughness = 0.45;
+        std.metalness = 0.05;
+      }
+      (std.userData as { kicadStyle?: boolean }).kicadStyle = true;
+    }
+  });
+}
+
 function Board({ url }: { url: string }) {
   const { scene } = useGLTF(url);
+  useMemo(() => appliquerStyleKiCad(scene), [scene]);
   const { scale, position } = useMemo(() => {
     const box = new Box3().setFromObject(scene);
     const size = new Vector3();
@@ -202,10 +242,12 @@ export function Board3DView({ projectId, version }: Board3DViewProps) {
           <FrontiereCanvas onError={signalerErreur}>
             {/* Éclairage local seulement : un `Environment` de drei irait chercher un HDR sur un CDN, que la CSP bloque. */}
             <Canvas key={resetKey} camera={{ position: [0.5, 1.0, 1.1], fov: 40, near: 0.01, far: 100 }} dpr={[1, 2]} data-testid="board-3d-canvas">
-              <color attach="background" args={['#0b0f14']} />
-              <hemisphereLight args={['#dfe8f0', '#2a2f36', 0.9]} />
-              <directionalLight position={[2, 3, 4]} intensity={1.6} />
-              <directionalLight position={[-3, -2, 2]} intensity={0.6} />
+              {/* Fond dégradé bleu-gris et éclairage doux : le visualiseur 3D de KiCad. */}
+              <color attach="background" args={['#8f93a8']} />
+              <fog attach="fog" args={['#8f93a8', 3, 9]} />
+              <hemisphereLight args={['#ffffff', '#5b6070', 1.1]} />
+              <directionalLight position={[2, 3, 4]} intensity={1.5} />
+              <directionalLight position={[-3, -2, 2]} intensity={0.5} />
               <Suspense fallback={null}>
                 <Board url={url} />
               </Suspense>

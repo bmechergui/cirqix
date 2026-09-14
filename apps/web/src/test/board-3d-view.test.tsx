@@ -36,7 +36,22 @@ vi.mock('@/widgets/viewer/ui/RenderView', () => ({
   RenderView: ({ family }: { family: string }) => <div data-testid="render-view">photo:{family}</div>,
 }));
 
-import { Board3DView, modelUrl } from '@/widgets/viewer/ui/Board3DView';
+import { Board3DView, modelUrl, couleurStyleKiCad, VERT_MASQUE_KICAD, FR4_KICAD } from '@/widgets/viewer/ui/Board3DView';
+
+describe('couleurStyleKiCad', () => {
+  it('le masque du GLB (vert sombre) devient le vert de KiCad', () => {
+    // Ce que `kicad-cli pcb export glb` ecrit pour le masque : 0.08 / 0.20 / 0.14.
+    expect(couleurStyleKiCad(0.08, 0.2, 0.14)).toBe(VERT_MASQUE_KICAD);
+  });
+  it('le cœur FR4 (gris neutre a mi-luminance) prend la teinte KiCad', () => {
+    expect(couleurStyleKiCad(0.5, 0.5, 0.5)).toBe(FR4_KICAD);
+  });
+  it('le cuivre et les composants ne sont jamais reteints', () => {
+    expect(couleurStyleKiCad(0.7, 0.61, 0.0)).toBeNull();   // pastilles dorees
+    expect(couleurStyleKiCad(0.9, 0.1, 0.1)).toBeNull();    // un corps rouge
+    expect(couleurStyleKiCad(0.05, 0.05, 0.05)).toBeNull(); // un boitier noir
+  });
+});
 
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 12, 0, 0, 0]);
 
