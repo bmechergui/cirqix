@@ -62,7 +62,10 @@ export async function runRealRender(input: RealRenderInput): Promise<Uint8Array>
 }
 
 /** `POST /export/glb` — le modèle 3D du board (glTF binaire), pour le viewer interactif. */
-export async function runRealGlb(kicadPcbContent: string): Promise<Uint8Array> {
+export async function runRealGlb(
+  kicadPcbContent: string,
+  options: { readonly components: boolean } = { components: true },
+): Promise<Uint8Array> {
   const baseUrl = process.env['KICAD_SERVICE_URL'];
   if (!baseUrl) throw new RenderServiceUnavailableError('KICAD_SERVICE_URL not configured');
   const url = `${baseUrl.replace(/\/+$/, '')}/export/glb`;
@@ -71,7 +74,10 @@ export async function runRealGlb(kicadPcbContent: string): Promise<Uint8Array> {
     reponse = await fetch(url, {
       method: 'POST',
       headers: buildKicadServiceHeaders(),
-      body: JSON.stringify({ kicad_pcb_b64: Buffer.from(kicadPcbContent, 'utf-8').toString('base64') }),
+      body: JSON.stringify({
+        kicad_pcb_b64: Buffer.from(kicadPcbContent, 'utf-8').toString('base64'),
+        components: options.components,
+      }),
       signal: AbortSignal.timeout(RENDER_TIMEOUT_MS),
     });
   } catch (err) {

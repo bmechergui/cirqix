@@ -56,6 +56,30 @@ describe('modelUrl', () => {
     expect(modelUrl('p1', 3)).toBe('/api/projects/p1/model?v=3');
     expect(modelUrl('p1', 3, 2)).toBe('/api/projects/p1/model?v=3&r=2');
   });
+  it('« carte nue » se dit `components=0`, et seulement dans ce cas', () => {
+    expect(modelUrl('p1', 3, 0, { components: false })).toBe('/api/projects/p1/model?v=3&components=0');
+    expect(modelUrl('p1', 3, 0, { components: true })).toBe('/api/projects/p1/model?v=3');
+  });
+});
+
+describe('option composants', () => {
+  it('le bouton bascule entre la carte avec composants et la carte nue, et le serveur dit ce qu’il a', async () => {
+    const fetchMock = vi.fn(async (url: string) => new Response(GLB, {
+      status: 200,
+      headers: { 'Content-Type': 'model/gltf-binary', ...(url.includes('components=0') ? {} : { 'X-Model-Components': '0/9' }) },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<Board3DView projectId="p1" version={4} />);
+    await waitFor(() => expect(screen.getByTestId('board-3d-canvas')).toBeInTheDocument());
+    // Avec composants par défaut ; le serveur n'a aucun modèle : on le dit, on ne le cache pas.
+    expect(screen.getByLabelText('Toggle components').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('board-3d-composants')).toHaveTextContent('aucun modèle 3D installé sur le service (0/9)');
+
+    fireEvent.click(screen.getByLabelText('Toggle components'));
+    await waitFor(() => expect(String((fetchMock.mock.calls.at(-1) as unknown[])[0])).toBe('/api/projects/p1/model?v=4&components=0'));
+    await waitFor(() => expect(screen.getByTestId('board-3d-composants')).toHaveTextContent('carte nue'));
+    expect(screen.getByLabelText('Toggle components').getAttribute('aria-pressed')).toBe('false');
+  });
 });
 
 describe('Board3DView', () => {

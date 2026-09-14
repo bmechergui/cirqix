@@ -31,7 +31,18 @@ function configurationDuService(env: NodeJS.ProcessEnv): { url: string; headers:
   return { url, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } };
 }
 
-function reponseGlb(glb: Buffer, etag: string, source: 'storage' | 'service', durationMs: number): NextResponse {
+/** `?components=0|false` : le modèle sans les corps des composants (demandé le 2026-09-14). */
+function lireOptionComposants(valeur: string | null): boolean {
+  return !['0', 'false', 'no', 'non'].includes((valeur ?? '1').trim().toLowerCase());
+}
+
+function reponseGlb(
+  glb: Buffer,
+  etag: string,
+  source: 'storage' | 'service',
+  durationMs: number,
+  composants?: { found: number; declared: number },
+): NextResponse {
   return new NextResponse(new Uint8Array(glb), {
     status: 200,
     headers: {
@@ -41,6 +52,9 @@ function reponseGlb(glb: Buffer, etag: string, source: 'storage' | 'service', du
       ETag: etag,
       'X-Model-Source': source,
       'X-Model-Duration-Ms': String(durationMs),
+      // Honnêteté : combien de composants ont un modèle 3D réellement présent
+      // sur le service. `0/9` = la carte sort nue, et le viewer le dit.
+      ...(composants ? { 'X-Model-Components': `${composants.found}/${composants.declared}` } : {}),
     },
   });
 }
@@ -76,7 +90,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
   const board = new Uint8Array(await fichier.arrayBuffer());
 
-  const cle = cleDuModele(board);
+  const composants = lireOptionComposants(req.nextUrl.searchParams.get('components'));
+  const cle = cleDuModele(board, { components: composants });
   const etag = `"${cle}"`;
   if (req.headers.get('if-none-match') === etag) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag, 'Cache-Control': CACHE_CONTROL } });
@@ -94,7 +109,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     reponse = await fetch(`${service.url}/export/glb`, {
       method: 'POST',
       headers: service.headers,
-      body: JSON.stringify({ kicad_pcb_b64: Buffer.from(board).toString('base64') }),
+      body: JSON.stringify({ kicad_pcb_b64: Buffer.from(board).toString('base64'), components: composants }),
       signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS),
     });
   } catch (err) {
@@ -113,11 +128,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     return NextResponse.json({ success: false, error: `3D export failed: ${detail}` }, { status: 502 });
   }
 
-  const corps = (await reponse.json()) as { glb_b64?: unknown; duration_ms?: unknown };
+  const corps = (await reponse.json()) as {
+    glb_b64?: unknown; duration_ms?: unknown; models_found?: unknown; models_declared?: unknown;
+  };
   if (typeof corps.glb_b64 !== 'string' || corps.glb_b64.length === 0) {
     return NextResponse.json({ success: false, error: '3D export failed: service returned no model' }, { status: 502 });
   }
   const glb = Buffer.from(corps.glb_b64, 'base64');
+  const comptes = typeof corps.models_found === 'number' && typeof corps.models_declared === 'number'
+    ? { found: corps.models_found, declared: corps.models_declared }
+    : undefined;
 
   const { error: erreurDepot } = await supabase.storage
     .from(BUCKET)
@@ -126,5 +146,5 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     logger.child({ module: 'model-route' }).warn({ err: erreurDepot, cheminCache }, 'dépôt du modèle en cache échoué');
   }
 
-  return reponseGlb(glb, etag, 'service', typeof corps.duration_ms === 'number' ? corps.duration_ms : -1);
+  return reponseGlb(glb, etag, 'service', typeof corps.duration_ms === 'number' ? corps.duration_ms : -1, comptes);
 }
