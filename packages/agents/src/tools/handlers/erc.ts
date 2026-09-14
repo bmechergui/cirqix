@@ -18,6 +18,47 @@ function ercFailure(cause: string): Record<string, unknown> {
   };
 }
 
+interface ViolationErc { readonly severity?: unknown }
+
+/**
+ * Les violations de sévérité ERREUR — les seules qui arrêtent le pipeline.
+ *
+ * ⚠️ Les AVERTISSEMENTS ne bloquent pas, et c'est mesuré. Sur le schéma NE555
+ * du 2026-09-14, 29 des 31 violations restantes sont `lib_symbol_issues` et
+ * `footprint_link_issues` : le conteneur n'a pas de table de bibliothèques.
+ * Bloquer dessus arrêterait toutes les cartes pour du bruit d'environnement.
+ */
+function compterErreurs(violations: readonly ViolationErc[] | undefined): number {
+  return (violations ?? []).filter((v) => String(v?.severity ?? '') === 'error').length;
+}
+
+/**
+ * Le verdict de l'ERC, RENDU EXÉCUTOIRE.
+ *
+ * ⚠️ Mesuré le 2026-09-14 : le handler rendait `status: 'success'` avec la note
+ * « Pipeline arrêté avant placement » alors que RIEN ne l'arrêtait —
+ * `run-driver.ts` ne s'interrompt que sur `status: 'error'`, et l'orchestrateur
+ * est un modèle qui lit cette note. Un schéma portant 15 erreurs ERC allait au
+ * placement, au routage, au DRC et à l'export, et ressortait `PCB_LIVRÉ`.
+ * Une phrase qui annonce un arrêt qui n'a pas lieu est pire qu'une phrase
+ * absente : elle rassure.
+ */
+function verdictErc(
+  base: Record<string, unknown>,
+  violations: readonly ViolationErc[] | undefined,
+  moteur: string,
+): Record<string, unknown> {
+  const erreurs = compterErreurs(violations);
+  if (erreurs === 0) return base;
+  const cause = `${erreurs} erreur(s) ERC (${moteur}) — le schéma n'est pas valide`;
+  return {
+    ...base,
+    status: 'error',
+    error: cause,
+    note: `ERC — ${cause}. Pipeline arrêté avant placement ; corrige le schéma.`,
+  };
+}
+
 /**
  * Repli quand kicad-cli ne statue pas (indisponible, ou service injoignable).
  *
@@ -36,8 +77,7 @@ function runDegradedErc(
   if (fallback.skipped) {
     return ercFailure('kicad-cli indisponible et aucun schéma à contrôler');
   }
-  const errorCount = fallback.violations.filter((v) => v.severity === 'error').length;
-  return {
+  return verdictErc({
     status: 'success',
     pcb_status: fallback.ercClean ? 'ERC_CLEAN' : 'SCHEMA_DONE',
     ercViolations: fallback.violations,
@@ -49,8 +89,8 @@ function runDegradedErc(
     note: fallback.ercClean
       ? `ERC TypeScript OK — 0 erreur (${fallback.violations.length} warnings). ` +
         'kicad-cli indisponible pour validation complète.'
-      : `ERC TypeScript — ${errorCount} erreur(s) détectée(s). Corriger avant placement.`,
-  };
+      : `ERC TypeScript — ${fallback.violations.length} violation(s), aucune bloquante.`,
+  }, fallback.violations, 'ERC TypeScript');
 }
 
 export async function handleErc(
@@ -85,7 +125,7 @@ export async function handleErc(
     // Only promote status when ERC actually passes. Unresolved violations keep
     // the project at SCHEMA_DONE so the orchestrator can surface them and the
     // user knows the schema is dirty.
-    return {
+    return verdictErc({
       status: 'success',
       pcb_status: result.ercClean ? 'ERC_CLEAN' : 'SCHEMA_DONE',
       ercViolations: result.violations,
@@ -96,8 +136,8 @@ export async function handleErc(
       warning: result.warning,
       note: result.ercClean
         ? `ERC OK — 0 violation${result.fixedCount > 0 ? `, ${result.fixedCount} auto-fix appliqués` : ''}.`
-        : `ERC — ${result.violations.length} violations restantes après auto-fix. Pipeline arrêté avant placement.`,
-    };
+        : `ERC — ${result.violations.length} violation(s) restantes après auto-fix, aucune bloquante.`,
+    }, result.violations, 'kicad-cli');
   } catch (err) {
     if (!(err instanceof ErcServiceUnavailableError)) {
       log.warn({ err }, 'ERC service threw unexpected error');
