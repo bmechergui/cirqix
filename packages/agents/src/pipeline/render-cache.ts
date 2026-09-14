@@ -65,9 +65,9 @@ export const MODELE_PAR_DEFAUT: ModelCacheOptions = { components: true };
  * Génération du modèle. À incrémenter quand le CONTENU d'un GLB change pour un
  * même board : la v2 (2026-09-14) embarque les corps des composants — les
  * modèles déposés avant, exportés sans aucun modèle 3D installé, ne doivent
- * plus être servis.
+ * plus être servis. La v3, le même jour, ajoute le vernis et la sérigraphie.
  */
-const GENERATION_MODELE = 'glb2';
+const GENERATION_MODELE = 'glb3';
 
 export function cleDuModele(board: Uint8Array, options: ModelCacheOptions = MODELE_PAR_DEFAUT): string {
   const h = createHash('sha1');

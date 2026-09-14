@@ -47,12 +47,18 @@ def _glb(charge: bytes = b"\x00" * 64) -> bytes:
 def test_la_commande_transmet_chaque_option():
     cmd = construire_commande_glb("kicad-cli", GlbRequest(kicad_pcb_b64=_BOARD_B64), Path("/i"), Path("/o.glb"))
     assert cmd[:4] == ["kicad-cli", "pcb", "export", "glb"]
-    for opt in ("--force", "--no-unspecified", "--no-dnp", "--include-tracks", "--include-pads", "--include-zones"):
+    for opt in ("--force", "--no-unspecified", "--no-dnp", "--include-tracks", "--include-pads",
+                "--include-zones", "--include-silkscreen", "--include-soldermask"):
         assert opt in cmd
     assert "--no-components" not in cmd
     assert cmd[-3:] == ["-o", str(Path("/o.glb")), str(Path("/i"))]
     sans = construire_commande_glb("kicad-cli", GlbRequest(kicad_pcb_b64=_BOARD_B64, include_zones=False, components=False), Path("i"), Path("o"))
     assert "--include-zones" not in sans and "--no-components" in sans
+    nu = construire_commande_glb(
+        "kicad-cli",
+        GlbRequest(kicad_pcb_b64=_BOARD_B64, include_silkscreen=False, include_soldermask=False),
+        Path("i"), Path("o"))
+    assert "--include-silkscreen" not in nu and "--include-soldermask" not in nu
 
 
 def test_verifier_glb_accepte_un_vrai_glb_et_refuse_le_reste():

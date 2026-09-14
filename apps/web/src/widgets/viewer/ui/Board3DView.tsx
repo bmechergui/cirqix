@@ -47,22 +47,31 @@ export function modelUrl(projectId: string, version?: number | string, attempt =
  * un 208 × 156 mm arrivent cadrés pareil.
  */
 /**
- * Le style du visualiseur 3D de KiCad, demandé le 2026-09-14 : carte VERTE,
- * pastilles dorées, composants, fond dégradé bleu-gris. Le GLB porte le vert
- * sombre du masque (0.08/0.20/0.14, ce que KiCad écrit) et un gris pour le
- * cœur FR4 : ce sont l'éclairage et la teinte de KiCad qui font le rendu.
- * Fonction PURE, testée : (r, g, b) ∈ [0,1] → couleur KiCad ou null (on ne
- * touche pas aux composants ni au cuivre).
+ * Le style du visualiseur 3D de KiCad, demandé le 2026-09-14 (captures à
+ * l'appui). L'essentiel vient du GLB lui-même depuis qu'on exporte le VERNIS
+ * et la SÉRIGRAPHIE (`--include-soldermask --include-silkscreen`) : masque
+ * vert semi-transparent (alpha 0,83 — on voit les pistes au travers, comme
+ * dans KiCad) et sérigraphie blanche. On ne reteint donc rien de tout cela.
+ *
+ * ⚠️ Reste UN défaut de l'export : le corps FR4 sort en gris 0,5 avec
+ * `metallicFactor = 1` — de la fibre de verre annoncée métallique, d'où la
+ * tranche sombre et terne. On lui rend sa matière. Fonction PURE, testée.
  */
-export const VERT_MASQUE_KICAD = '#2a8a4a';
 export const FR4_KICAD = '#b9b47a';
 
-export function couleurStyleKiCad(r: number, g: number, b: number): string | null {
+export interface AjustementMatiere {
+  readonly color: string;
+  readonly metalness: number;
+  readonly roughness: number;
+}
+
+export function ajustementKiCad(r: number, g: number, b: number, metalness: number): AjustementMatiere | null {
   const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  // Le masque : vert dominant, sombre.
-  if (g > r * 1.5 && g > b * 1.2 && lum < 0.35) return VERT_MASQUE_KICAD;
-  // Le cœur de la carte : gris neutre à mi-luminance (le `mat_1` 0.5/0.5/0.5 du GLB).
-  if (Math.abs(r - g) < 0.03 && Math.abs(g - b) < 0.03 && lum > 0.4 && lum < 0.6) return FR4_KICAD;
+  const neutre = Math.abs(r - g) < 0.03 && Math.abs(g - b) < 0.03;
+  // Le cœur de la carte : gris neutre à mi-luminance, annoncé métallique.
+  if (neutre && metalness > 0.5 && lum > 0.4 && lum < 0.6) {
+    return { color: FR4_KICAD, metalness: 0, roughness: 0.8 };
+  }
   return null;
 }
 
@@ -74,11 +83,11 @@ function appliquerStyleKiCad(scene: Object3D): void {
     for (const m of materiaux) {
       const std = m as MeshStandardMaterial;
       if (!std.color || (std.userData as { kicadStyle?: boolean }).kicadStyle) continue;
-      const teinte = couleurStyleKiCad(std.color.r, std.color.g, std.color.b);
-      if (teinte) {
-        std.color.set(teinte);
-        std.roughness = 0.45;
-        std.metalness = 0.05;
+      const ajust = ajustementKiCad(std.color.r, std.color.g, std.color.b, std.metalness ?? 0);
+      if (ajust) {
+        std.color.set(ajust.color);
+        std.metalness = ajust.metalness;
+        std.roughness = ajust.roughness;
       }
       (std.userData as { kicadStyle?: boolean }).kicadStyle = true;
     }

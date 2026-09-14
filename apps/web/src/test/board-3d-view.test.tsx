@@ -36,20 +36,25 @@ vi.mock('@/widgets/viewer/ui/RenderView', () => ({
   RenderView: ({ family }: { family: string }) => <div data-testid="render-view">photo:{family}</div>,
 }));
 
-import { Board3DView, modelUrl, couleurStyleKiCad, VERT_MASQUE_KICAD, FR4_KICAD } from '@/widgets/viewer/ui/Board3DView';
+import { Board3DView, modelUrl, ajustementKiCad, FR4_KICAD } from '@/widgets/viewer/ui/Board3DView';
 
-describe('couleurStyleKiCad', () => {
-  it('le masque du GLB (vert sombre) devient le vert de KiCad', () => {
-    // Ce que `kicad-cli pcb export glb` ecrit pour le masque : 0.08 / 0.20 / 0.14.
-    expect(couleurStyleKiCad(0.08, 0.2, 0.14)).toBe(VERT_MASQUE_KICAD);
+describe('ajustementKiCad', () => {
+  it('le cœur FR4 — gris neutre annonce METALLIQUE par l export — retrouve sa matiere', () => {
+    // `kicad-cli pcb export glb` ecrit 0.5/0.5/0.5 avec metallicFactor 1.0.
+    expect(ajustementKiCad(0.5, 0.5, 0.5, 1)).toEqual({ color: FR4_KICAD, metalness: 0, roughness: 0.8 });
   });
-  it('le cœur FR4 (gris neutre a mi-luminance) prend la teinte KiCad', () => {
-    expect(couleurStyleKiCad(0.5, 0.5, 0.5)).toBe(FR4_KICAD);
+  it('le vernis et la serigraphie de KiCad ne sont JAMAIS reteints', () => {
+    // Ils sortent deja justes du GLB, semi-transparents (alpha 0,83 et 0,9).
+    expect(ajustementKiCad(0.08, 0.2, 0.14, 0)).toBeNull();
+    expect(ajustementKiCad(1, 1, 1, 0)).toBeNull();
   });
   it('le cuivre et les composants ne sont jamais reteints', () => {
-    expect(couleurStyleKiCad(0.7, 0.61, 0.0)).toBeNull();   // pastilles dorees
-    expect(couleurStyleKiCad(0.9, 0.1, 0.1)).toBeNull();    // un corps rouge
-    expect(couleurStyleKiCad(0.05, 0.05, 0.05)).toBeNull(); // un boitier noir
+    expect(ajustementKiCad(0.7, 0.61, 0.0, 1)).toBeNull();   // pastilles dorees
+    expect(ajustementKiCad(0.9, 0.1, 0.1, 0)).toBeNull();    // un corps rouge
+    expect(ajustementKiCad(0.05, 0.05, 0.05, 0)).toBeNull(); // un boitier noir
+  });
+  it('un gris NON metallique est laisse tel quel — c est un composant, pas la carte', () => {
+    expect(ajustementKiCad(0.5, 0.5, 0.5, 0)).toBeNull();
   });
 });
 
