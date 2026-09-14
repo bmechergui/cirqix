@@ -35,6 +35,11 @@ export interface StoredArtifact {
   signedUrl?: string | undefined;
 }
 
+/** Ce que l'on dépose : un PNG (`renders/<clé>.png`) ou le modèle GLB (`renders/<clé>.glb`). */
+export interface RenderUploadOptions {
+  readonly kind: 'png' | 'glb';
+}
+
 export interface PipelineStore {
   /**
    * Dépose un fichier KiCad et renvoie une URL signée pour le viewer.
@@ -60,5 +65,5 @@ export interface PipelineStore {
    * pour que la route `GET /api/projects/[id]/render` le serve sans rendre.
    * Optionnel et best-effort : un porteur sans stockage d'images n'en a pas.
    */
-  uploadRender?(cle: string, png: Uint8Array): Promise<void>;
+  uploadRender?(cle: string, octets: Uint8Array, options?: RenderUploadOptions): Promise<void>;
 }

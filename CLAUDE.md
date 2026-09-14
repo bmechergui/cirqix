@@ -278,6 +278,25 @@ services/
   que la taille demandée (800×500 → 784×480) et refuse les vieux boards écrits
   par kicad_tools (« Failed to load board »). Gardes : `tests/test_render_auto.py`,
   `apps/web/src/test/project-render-route.test.ts`, `viewer-render-and-selection.test.tsx`.
+- 3D INTERACTIVE (2026-09-14) : le mode `3d` du viewer est `Board3DView.tsx` —
+  le GLB exporté par `POST /export/glb` (`kicad-cli pcb export glb`, pistes,
+  pastilles, zones ; ~850 Ko, 1-3 s), servi par `GET /api/projects/[id]/model`
+  (même cache à deux niveaux que `render`, clé `cleDuModele`, `renders/<clé>.glb`,
+  pré-exporté par le pipeline dans `prerendus.ts`), affiché dans Three.js avec
+  des contrôles d'orbite. Le rendu raytracé reste accessible par « Photo ».
+  ⚠️ L'image du service n'a AUCUN modèle 3D de composant (0 dans
+  `/usr/share/kicad/3dmodels`) : seules les pastilles les figurent.
+  ⚠️ **Next 15 embarque React 19 pour l'App Router** quel que soit le React
+  installé (`react@18.3.1` dans `package.json`) : `@react-three/fiber` 8 lisait
+  `ReactCurrentOwner`, un interne de React 18, et faisait tomber TOUTE la page
+  — l'ancien `View3D` de l'export n'a donc jamais pu s'afficher là. Passé en
+  fiber 9 + drei 10 (pnpm signale des pairs non satisfaits : attendu).
+  ⚠️ Pas de `<Environment>` de drei : il va chercher un HDR sur un CDN que la
+  CSP bloque, et l'erreur sortait du viewer. Éclairage local, et une frontière
+  d'erreur garde l'échec DANS le viewer. Le bucket doit accepter
+  `model/gltf-binary` (migration 025, même cause que 024 pour les PNG).
+  Gardes : `tests/test_export_glb.py`, `project-model-route.test.ts`,
+  `board-3d-view.test.tsx`.
   **Pré-rendus à la livraison** : après `done`, le pipeline rend top + iso et les
   dépose sous `renders/<clé>.png` (`pipeline/prerendus.ts`, `render-cache.ts`) ;
   la route sert ce cache avant de rendre, et dépose ce qu'elle rend. UNE clé

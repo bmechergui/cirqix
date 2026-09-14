@@ -1,4 +1,4 @@
-"""FastAPI router — rendu PNG / 3D d'un board par `kicad-cli pcb render`.
+"""FastAPI router — rendu PNG / 3D (`kicad-cli pcb render`) et modèle GLB (`kicad-cli pcb export glb`) d'un board.
 
 POST /render/auto prend un `.kicad_pcb` en base64 et rend UNE image PNG,
 produite par le lanceur de rayons de KiCad (le même que la vue 3D de l'éditeur).
@@ -162,6 +162,99 @@ def rendre(cli: str, req: RenderRequest, pcb: bytes) -> tuple[bytes, int, int, i
         data = sortie.read_bytes()
         largeur, hauteur = verifier_png(data)
         return data, largeur, hauteur, duree_ms
+
+
+# ---------------------------------------------------------------------------
+# Modèle 3D interactif — `kicad-cli pcb export glb`
+# ---------------------------------------------------------------------------
+
+_GLB_SIGNATURE = b"glTF"
+_GLB_TIMEOUT_S: int = 120
+
+
+class GlbRequest(BaseModel):
+    kicad_pcb_b64: str = Field(..., description=".kicad_pcb encodé en base64")
+    include_tracks: bool = True
+    include_pads: bool = True
+    include_zones: bool = True
+    # ⚠️ L image n embarque AUCUN modèle 3D de composant (0 dans
+    # /usr/share/kicad/3dmodels, mesuré le 2026-09-14) : le GLB porte la carte,
+    # les pistes, les pastilles et les zones — la géométrie réelle du board.
+    components: bool = True
+
+
+class GlbResponse(BaseModel):
+    glb_b64: str
+    bytes: int
+    duration_ms: int
+
+
+def construire_commande_glb(cli: str, req: GlbRequest, entree: Path, sortie: Path) -> list[str]:
+    """La ligne de commande exacte — pure, testable sans exporter."""
+    cmd = [cli, "pcb", "export", "glb", "--force", "--no-unspecified", "--no-dnp"]
+    if req.include_tracks:
+        cmd.append("--include-tracks")
+    if req.include_pads:
+        cmd.append("--include-pads")
+    if req.include_zones:
+        cmd.append("--include-zones")
+    if not req.components:
+        cmd.append("--no-components")
+    cmd += ["-o", str(sortie), str(entree)]
+    return cmd
+
+
+def verifier_glb(data: bytes) -> int:
+    """Un GLB recevable : l en-tête binaire glTF (`glTF`, version 2) et une taille réelle."""
+    if len(data) < 20 or data[:4] != _GLB_SIGNATURE:
+        raise RuntimeError("kicad-cli did not produce a GLB")
+    version = int.from_bytes(data[4:8], "little")
+    if version != 2:
+        raise RuntimeError(f"unexpected glTF version {version}")
+    longueur = int.from_bytes(data[8:12], "little")
+    if longueur != len(data):
+        raise RuntimeError(f"GLB length header {longueur} != {len(data)} bytes — truncated export")
+    return len(data)
+
+
+def exporter_glb(cli: str, req: GlbRequest, pcb: bytes) -> tuple[bytes, int]:
+    with tempfile.TemporaryDirectory(prefix="cirqix-glb-") as tmp:
+        entree = Path(tmp) / "board.kicad_pcb"
+        sortie = Path(tmp) / "board.glb"
+        entree.write_bytes(pcb)
+        debut = time.monotonic()
+        try:
+            result = subprocess.run(
+                construire_commande_glb(cli, req, entree, sortie),
+                capture_output=True, text=True, errors="replace", timeout=_GLB_TIMEOUT_S, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"kicad-cli pcb export glb timed out after {_GLB_TIMEOUT_S}s") from exc
+        duree_ms = int((time.monotonic() - debut) * 1000)
+        if result.returncode != 0:
+            extrait = (result.stderr or result.stdout or "").strip()[-400:]
+            raise RuntimeError(f"kicad-cli pcb export glb failed (rc={result.returncode}): {extrait}")
+        if not sortie.exists():
+            raise RuntimeError("kicad-cli pcb export glb exited 0 but wrote no file")
+        data = sortie.read_bytes()
+        verifier_glb(data)
+        return data, duree_ms
+
+
+@router.post("/export/glb", response_model=GlbResponse)
+def export_glb(req: GlbRequest) -> GlbResponse:
+    """Le modèle 3D du board, pour le viewer interactif (Three.js). Fail closed."""
+    pcb = _decoder_board(req.kicad_pcb_b64)
+    cli = _find_kicad_cli()
+    if not cli:
+        raise HTTPException(status_code=503, detail="kicad-cli not available — no 3D export possible")
+    try:
+        glb, duree_ms = exporter_glb(cli, req, pcb)
+    except RuntimeError as exc:
+        logger.error("export/glb: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    logger.info("export/glb: %d octets en %d ms", len(glb), duree_ms)
+    return GlbResponse(glb_b64=base64.b64encode(glb).decode("ascii"), bytes=len(glb), duration_ms=duree_ms)
 
 
 @router.post("/render/auto", response_model=RenderResponse)
