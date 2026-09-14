@@ -48,3 +48,16 @@ export function cleDeRendu(board: Uint8Array, params: RenderCacheParams): string
 export function cheminDuRendu(cle: string): string {
   return `renders/${cle}.png`;
 }
+
+/** Clé du MODÈLE 3D (GLB) : le contenu du board seul — l'export n'a pas de paramètre. */
+export function cleDuModele(board: Uint8Array): string {
+  const h = createHash('sha1');
+  h.update(board);
+  h.update('glb');
+  return h.digest('hex');
+}
+
+/** Chemin, sous `${userId}/${projectId}/`, du modèle GLB de clé `cle`. */
+export function cheminDuModele(cle: string): string {
+  return `renders/${cle}.glb`;
+}

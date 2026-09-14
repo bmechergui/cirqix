@@ -1,6 +1,6 @@
 import pino from 'pino';
-import { runRealRender } from '../engines/render-service';
-import { PRERENDUS, OPTIONS_PRERENDUS, cleDeRendu } from './render-cache';
+import { runRealRender, runRealGlb } from '../engines/render-service';
+import { PRERENDUS, OPTIONS_PRERENDUS, cleDeRendu, cleDuModele } from './render-cache';
 import type { PipelineStore } from './store';
 
 const log = pino({ name: 'cirqix.agents.prerendus', level: process.env['LOG_LEVEL'] ?? 'info' });
@@ -26,11 +26,19 @@ export async function prerendre(store: PipelineStore, kicadPcbContent: string): 
         side: options.side, rotate: options.rotate, perspective: options.perspective,
         zoom: params.zoom, quality: params.quality, width: params.width, height: params.height,
       });
-      await store.uploadRender(cle, png);
+      await store.uploadRender(cle, png, { kind: 'png' });
       deposes += 1;
     } catch (err) {
       log.warn({ err, view: params.view }, 'pré-rendu échoué — le viewer rendra à la demande');
     }
+  }
+  // Le modèle 3D interactif (GLB) : ~1 Mo, 1-3 s ; déposé sous sa propre clé.
+  try {
+    const glb = await runRealGlb(kicadPcbContent);
+    await store.uploadRender(cleDuModele(board), glb, { kind: 'glb' });
+    deposes += 1;
+  } catch (err) {
+    log.warn({ err }, 'pré-export GLB échoué — le viewer exportera à la demande');
   }
   return deposes;
 }

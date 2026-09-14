@@ -19,8 +19,9 @@ import type {
   RunEventRow,
   RunEventWriter,
   StoredArtifact,
+  RenderUploadOptions,
 } from '@cirqix/agents';
-import { cheminDuRendu } from '@cirqix/agents';
+import { cheminDuRendu, cheminDuModele } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 
 import { extendReservationForRun, releaseReservationForRun } from './reservations.js';
@@ -70,18 +71,21 @@ async function uploadArtifact(
   return { signedUrl: data?.signedUrl };
 }
 
-/** Dépose un rendu PNG pré-calculé sous `${userId}/${projectId}/renders/<clé>.png`. */
+/** Dépose un rendu PNG ou un modèle GLB pré-calculé sous `${userId}/${projectId}/renders/<clé>.<ext>`. */
 async function uploadRender(
   supabase: SupabaseClient,
   userId: string,
   projectId: string,
   cle: string,
-  png: Uint8Array,
+  octets: Uint8Array,
+  options: RenderUploadOptions = { kind: 'png' },
 ): Promise<void> {
-  const path = `${userId}/${projectId}/${cheminDuRendu(cle)}`;
+  const glb = options.kind === 'glb';
+  const path = `${userId}/${projectId}/${glb ? cheminDuModele(cle) : cheminDuRendu(cle)}`;
+  const type = glb ? 'model/gltf-binary' : 'image/png';
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(path, new Blob([png], { type: 'image/png' }), { upsert: true, contentType: 'image/png' });
+    .upload(path, new Blob([octets], { type }), { upsert: true, contentType: type });
   if (error) {
     log.warn({ err: error, path }, 'dépôt du pré-rendu échoué — le viewer rendra à la demande');
   }
@@ -114,7 +118,7 @@ export function createWorkerStore(
     uploadArtifact: (name, content) =>
       uploadArtifact(supabase, userId, projectId, name, content),
 
-    uploadRender: (cle, png) => uploadRender(supabase, userId, projectId, cle, png),
+    uploadRender: (cle, octets, options) => uploadRender(supabase, userId, projectId, cle, octets, options),
 
     async persistProgress(status: PCBStatus, state: PCBState): Promise<void> {
       const { error } = await supabase

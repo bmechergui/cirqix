@@ -1,0 +1,114 @@
+"""`POST /export/glb` — le modèle 3D du board pour le viewer interactif, fail closed.
+
+Ce que ces tests discriminent : chaque option atteint la ligne de commande ;
+rien n'est annoncé exporté sans un vrai GLB (en-tête `glTF` v2, longueur
+déclarée = longueur réelle — un export tronqué se voit) ; la route est
+exposée ; et, là où kicad-cli existe, un board livré donne un GLB de plus de
+100 ko contenant une scène.
+"""
+from __future__ import annotations
+
+import base64
+import os
+import shutil
+import struct
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+_SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(_SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SERVICE_ROOT))
+
+from routers import render as render_router  # noqa: E402
+from routers.render import (  # noqa: E402
+    GlbRequest,
+    construire_commande_glb,
+    export_glb,
+    verifier_glb,
+)
+
+_BOARD_B64 = base64.b64encode(b"(kicad_pcb (version 20240108) (generator pcbnew))").decode("ascii")
+
+
+def _glb(charge: bytes = b"\x00" * 64) -> bytes:
+    """Un GLB minimal valide : en-tete 12 octets + un chunk JSON."""
+    json_chunk = b'{"asset":{"version":"2.0"}}'
+    json_chunk += b" " * ((4 - len(json_chunk) % 4) % 4)
+    corps = struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
+    corps += struct.pack("<II", len(charge), 0x004E4942) + charge
+    total = 12 + len(corps)
+    return b"glTF" + struct.pack("<II", 2, total) + corps
+
+
+def test_la_commande_transmet_chaque_option():
+    cmd = construire_commande_glb("kicad-cli", GlbRequest(kicad_pcb_b64=_BOARD_B64), Path("/i"), Path("/o.glb"))
+    assert cmd[:4] == ["kicad-cli", "pcb", "export", "glb"]
+    for opt in ("--force", "--no-unspecified", "--no-dnp", "--include-tracks", "--include-pads", "--include-zones"):
+        assert opt in cmd
+    assert "--no-components" not in cmd
+    assert cmd[-3:] == ["-o", str(Path("/o.glb")), str(Path("/i"))]
+    sans = construire_commande_glb("kicad-cli", GlbRequest(kicad_pcb_b64=_BOARD_B64, include_zones=False, components=False), Path("i"), Path("o"))
+    assert "--include-zones" not in sans and "--no-components" in sans
+
+
+def test_verifier_glb_accepte_un_vrai_glb_et_refuse_le_reste():
+    assert verifier_glb(_glb()) == len(_glb())
+    with pytest.raises(RuntimeError, match="not produce a GLB"):
+        verifier_glb(b"<html>" + b"\x00" * 40)
+    tronque = _glb()[:-10]
+    with pytest.raises(RuntimeError, match="truncated"):
+        verifier_glb(tronque)
+
+
+def test_sans_kicad_cli_503(monkeypatch):
+    monkeypatch.setattr(render_router, "_find_kicad_cli", lambda: None)
+    with pytest.raises(HTTPException) as exc:
+        export_glb(GlbRequest(kicad_pcb_b64=_BOARD_B64))
+    assert exc.value.status_code == 503
+
+
+def test_export_en_echec_500_avec_stderr(monkeypatch):
+    monkeypatch.setattr(render_router, "_find_kicad_cli", lambda: "kicad-cli")
+    monkeypatch.setattr(render_router.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="Failed to load board"))
+    with pytest.raises(HTTPException) as exc:
+        export_glb(GlbRequest(kicad_pcb_b64=_BOARD_B64))
+    assert exc.value.status_code == 500 and "Failed to load board" in str(exc.value.detail)
+
+
+def test_un_vrai_glb_est_rendu_tel_quel(monkeypatch):
+    monkeypatch.setattr(render_router, "_find_kicad_cli", lambda: "kicad-cli")
+    glb = _glb(b"\x01" * 128)
+
+    def run(cmd, **kw):
+        Path(cmd[cmd.index("-o") + 1]).write_bytes(glb)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(render_router.subprocess, "run", run)
+    rep = export_glb(GlbRequest(kicad_pcb_b64=_BOARD_B64))
+    assert base64.b64decode(rep.glb_b64) == glb and rep.bytes == len(glb)
+
+
+def test_la_route_est_exposee():
+    chemins = {getattr(r, "path", None): getattr(r, "methods", set()) for r in render_router.router.routes}
+    assert "POST" in chemins["/export/glb"]
+
+
+_CANDIDATS = [
+    Path(os.environ["CIRQIX_RENDER_BOARD"]) if os.environ.get("CIRQIX_RENDER_BOARD") else None,
+    _SERVICE_ROOT / "examples" / "carte-01-diviseur" / "expected" / "final.kicad_pcb",
+]
+_BOARD = next((c for c in _CANDIDATS if c and c.exists()), None)
+
+
+@pytest.mark.skipif(shutil.which("kicad-cli") is None or _BOARD is None, reason="kicad-cli ou board de référence absent")
+def test_export_reel_d_un_board_livre():
+    rep = export_glb(GlbRequest(kicad_pcb_b64=base64.b64encode(_BOARD.read_bytes()).decode("ascii")))
+    glb = base64.b64decode(rep.glb_b64)
+    assert verifier_glb(glb) > 100_000, "une carte routée pèse plus qu un cadre vide"
+    # Le chunk JSON du NE555 pese ~395 ko : on cherche dans tout le chunk.
+    longueur_json = int.from_bytes(glb[12:16], "little")
+    assert b'"meshes"' in glb[20:20 + longueur_json]
