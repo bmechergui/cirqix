@@ -185,7 +185,7 @@ class TestExecutionReelle:
                 lambda c, b: Path(c).write_text("(pcb)", encoding="utf-8"))
 
         monkeypatch.setattr(RUN, "_charger_board", lambda p, c: board)
-        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n: [])
+        monkeypatch.setattr(RUN, "_obstacles_d_un_autre_net", lambda b, n, couches=None: [])
         res = tmp_path / "r.json"
         RUN._escape_pads(_Faux, {
             "pcb": str(tmp_path / "in.kicad_pcb"),

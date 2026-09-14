@@ -2673,12 +2673,6 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
         if champs is None:
             continue
         x1, y1, x2, y2, largeur, couche, num, nomme = champs
-        # Autour d une pastille non reliee, on ne protege RIEN : le routeur
-        # doit pouvoir y poser un via (voir `_ZONES_LIBEREES`).
-        if zones and (_pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
-                      or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
-            liberes += 1
-            continue
         # Forme nommee : le nom est la. Forme numerotee : on cherche la
         # declaration ; absente, on ECARTE — jamais on ne devine un net.
         if nomme:
@@ -2687,6 +2681,19 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
             code = int(num) if num else 0
             nom = noms.get(code) if code else None
         if not nom:
+            continue
+        # Autour d une pastille non reliee, on ne protege RIEN : le routeur
+        # doit pouvoir y poser un via (voir `_ZONES_LIBEREES`).
+        # ⚠️ SAUF les nets confies au plan. Le routeur ne les route jamais (ils
+        # sont absents du DSN) : un troncon de dogbone ou un via GND libere n est
+        # pas rendu au routeur, il est PERDU, et sa broche redevient orpheline du
+        # plan. Mesure du 2026-09-14, carte-10 : « 51 LIBERE(S) » a chaque palier,
+        # puis « Pad 8 [GND] of U1 <-> Via [GND] » au DRC final — le via reste, le
+        # troncon a disparu.
+        if zones and nom not in _NETS_CONFIES_AU_PLAN and (
+                _pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
+                or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
+            liberes += 1
             continue
         lignes.append(
             "    (wire (path %s %.1f %.1f %.1f %.1f %.1f)"
@@ -2709,8 +2716,10 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
         nom = nomme or (noms.get(int(num)) if num and int(num) else None)
         if not nom:
             continue
-        if zones and _pres_d_une_zone_liberee(float(at.group(1)), float(at.group(2)),
-                                              zones, _RAYON_LIBERATION_MM):
+        # Meme regle que les segments : un via d un net confie au plan n est
+        # jamais libere — personne ne le reposerait.
+        if zones and nom not in _NETS_CONFIES_AU_PLAN and _pres_d_une_zone_liberee(
+                float(at.group(1)), float(at.group(2)), zones, _RAYON_LIBERATION_MM):
             liberes += 1
             continue
         lignes.append(

@@ -252,7 +252,7 @@ def _trajet_libre(x0, y0, x1, y1, obstacles, marge, exempt=None) -> bool:
 
 
 def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
-                            marge_piste=None) -> bool:
+                            marge_piste=None, obstacles_via=None) -> bool:
     """La sortie reservee avant le routage tient-elle encore sur ce board ?
 
     Memes deux criteres que `_choisir_sortie`, appliques a UNE position au lieu
@@ -266,12 +266,26 @@ def _sortie_reservee_valide(x0, y0, x1, y1, obstacles, marge, exempt=None,
     """
     if not _trajet_libre(x0, y0, x1, y1, obstacles, marge_piste or marge, exempt):
         return False
-    return not any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles)
+    # ⚠️ Le trajet ne vit que sur la couche de la pastille ; le VIA traverse.
+    # Voir `_choisir_sortie` : deux listes d obstacles, jamais une seule.
+    pour_le_via = obstacles if obstacles_via is None else obstacles_via
+    return not any(_distance_a_obstacle(x1, y1, o) < marge for o in pour_le_via)
 
 
 def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
-                    marge_piste=None, portee=None, pas=None, prefere=None):
+                    marge_piste=None, portee=None, pas=None, prefere=None,
+                    obstacles_via=None):
     """Premiere direction dont le trajet ENTIER est degage, sinon None.
+
+    ⚠️ DEUX listes d obstacles, pas une. `obstacles` est ce que la PISTE doit
+    eviter — le cuivre d un autre net sur la couche de la pastille, la seule
+    ou elle existe. `obstacles_via` est ce que le VIA doit eviter au point de
+    chute — toutes les couches, puisqu il les traverse. Mesure du 2026-09-14,
+    carte-10, U1.8 (GND, F.Cu) : le couloir sur F.Cu etait libre et un via GND
+    attendait a 1,2 mm, mais une piste IO_L14 sur B.Cu, SOUS la pastille,
+    comptait comme obstacle du trajet — la broche restait orpheline du plan a
+    tous les paliers, de 2 a 8 couches. Sans `obstacles_via`, la liste unique
+    sert aux deux (comportement historique).
 
     ⚠️ `prefere(x, y)` ORDONNE les sorties degagees, il n en filtre aucune :
     la premiere sortie degagee que `prefere` accepte est rendue ; a defaut,
@@ -301,6 +315,7 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
     depart = distance
     portee = portee if portee is not None else distance
     pas = pas if pas is not None else max(distance / 4.0, 1.0)
+    pour_le_via = obstacles if obstacles_via is None else obstacles_via
     premiere = None  # la premiere sortie degagee, si aucune n est preferee
     # ⚠️ La DIRECTION prime sur la longueur : on epuise toutes les distances
     # d une direction avant de tourner. Le couloir reserve par le halo
@@ -321,8 +336,9 @@ def _choisir_sortie(x0, y0, vx, vy, distance, obstacles, marge, exempt=None,
                 if not _trajet_libre(x0, y0, x1, y1, obstacles,
                                      marge_piste or marge, exempt):
                     continue
-                # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la.
-                if any(_distance_a_obstacle(x1, y1, o) < marge for o in obstacles):
+                # Le via, lui, ne se pose qu au BOUT : sa marge ne vaut que la —
+                # mais sur TOUTES les couches qu il traverse.
+                if any(_distance_a_obstacle(x1, y1, o) < marge for o in pour_le_via):
                     continue
                 if prefere is None or prefere(x1, y1):
                     return int(x1), int(y1)
@@ -807,7 +823,14 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         # toute broche 1 ronde de connecteur passait par la.
         sans_direction = (dx * dx + dy * dy) ** 0.5 < 1.0
 
-        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        # ⚠️ La PISTE ne vit que sur la couche de la pastille : ses obstacles
+        # sont ceux de cette couche. Le VIA traverse : les siens sont ceux de
+        # toutes les couches. Une piste de signal sur B.Cu, sous une pastille
+        # F.Cu, bloquait le trajet d une sortie qui ne la croise jamais
+        # (carte-10, U1.8, 2026-09-14).
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode(),
+                                              couches={pad.GetLayer()})
+        obstacles_via = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         portee, pas = _portee_d_echappement(fp, via_d)
@@ -824,7 +847,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
         sortie = None
         if reserve is not None and _sortie_reservee_valide(
                 pos.x, pos.y, reserve[0], reserve[1], obstacles, marge,
-                propre, marge_piste):
+                propre, marge_piste, obstacles_via=obstacles_via):
             sortie = reserve
             reprises += 1
             # ⚠️ Une position reservee qui ne touche pas le plan principal est
@@ -832,14 +855,16 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             if not sans_direction and not prefere(reserve[0], reserve[1]):
                 mieux = _choisir_sortie(
                     pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                    marge_piste, portee, pas, prefere=prefere)
+                    marge_piste, portee, pas, prefere=prefere,
+                    obstacles_via=obstacles_via)
                 if mieux is not None and prefere(mieux[0], mieux[1]):
                     sortie = mieux
                     reprises -= 1
         if sortie is None and not sans_direction:
             sortie = _choisir_sortie(
                 pos.x, pos.y, dx, dy, distance, obstacles, marge, propre,
-                marge_piste, portee, pas, prefere=prefere
+                marge_piste, portee, pas, prefere=prefere,
+                obstacles_via=obstacles_via
             )
         if sortie is None:
             # Dernier recours : le via DANS la pastille. Il n a besoin
@@ -859,7 +884,7 @@ def _escape_pads(pcbnew, args: dict[str, str]) -> None:
             # du banc alors qu elles surplombaient le plan de B.Cu.
             # Le TROU, lui, reste verifie — un percage est physique.
             gene = (not _via_in_pad_dispense_de_clearance(d, larg)
-                    and _via_gene_par(pos.x, pos.y, d, clearance, obstacles))
+                    and _via_gene_par(pos.x, pos.y, d, clearance, obstacles_via))
             # ⚠️ LA DISPENSE S ARRETE A LA COUCHE DE LA PASTILLE. Une pastille
             # CMS n existe que sur une face ; le via traverse jusqu a l autre,
             # ou il pose du cuivre que RIEN ne vouche. Mesure du 2026-09-02 sur
@@ -988,12 +1013,16 @@ def _plan_escape(pcbnew, args: dict[str, str]) -> None:
         dx, dy = _direction_d_echappement(pad, fp.GetPosition())
         if (dx * dx + dy * dy) ** 0.5 < 1.0:
             continue
-        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode())
+        # Meme regle que `_escape_pads` : la piste sur SA couche, le via sur toutes.
+        obstacles = _obstacles_d_un_autre_net(board, pad.GetNetCode(),
+                                              couches={pad.GetLayer()})
+        obstacles_via = _obstacles_d_un_autre_net(board, pad.GetNetCode())
         b = pad.GetBoundingBox()
         propre = (b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom())
         portee, pas = _portee_d_echappement(fp, via_d)
         sortie = _choisir_sortie(pos.x, pos.y, dx, dy, distance, obstacles,
-                                 marge, propre, marge_piste, portee, pas)
+                                 marge, propre, marge_piste, portee, pas,
+                                 obstacles_via=obstacles_via)
         if sortie is None:
             renonces += 1
             continue
