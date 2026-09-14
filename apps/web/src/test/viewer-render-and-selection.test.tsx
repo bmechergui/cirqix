@@ -15,7 +15,10 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
  *    Un écouteur jamais branché passerait un test qui ne fait qu'afficher.
  */
 
-vi.mock('@/widgets/viewer/lib/kicanvas-loader', () => ({ loadKiCanvas: () => Promise.resolve() }));
+vi.mock('@/widgets/viewer/lib/kicanvas-loader', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/widgets/viewer/lib/kicanvas-loader')>();
+  return { ...mod, loadKiCanvas: () => Promise.resolve() };
+});
 
 import { ViewModeSwitch } from '@/widgets/viewer/ui/ViewModeSwitch';
 import { RenderView, renderUrl } from '@/widgets/viewer/ui/RenderView';
@@ -125,6 +128,8 @@ describe('RenderView', () => {
 describe('KiCanvasViewer — sélection comme KiCad', () => {
   it('monte kicanvas-embed en controls="full" sans overlay, cadre la carte et nomme l’objet que le VIEWER sélectionne', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Le viewer lit le board pour le normaliser (table des nets KiCad 10) avant de le confier à KiCanvas.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('(kicad_pcb (version 20240108)\n\t(net 0 "")\n)', { status: 200 })));
     try {
       const { container } = render(<KiCanvasViewer src="https://x/pcb.kicad_pcb" />);
       const embed = await waitFor(() => {
