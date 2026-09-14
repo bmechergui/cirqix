@@ -177,6 +177,13 @@ class GlbRequest(BaseModel):
     include_tracks: bool = True
     include_pads: bool = True
     include_zones: bool = True
+    # ⚠️ Le VERNIS et la SERIGRAPHIE font le rendu du visualiseur 3D de KiCad
+    # (demande du 2026-09-14, captures a l appui). Mesure sur carte-01 : le
+    # masque sort en vert SEMI-TRANSPARENT (alpha 0,83, alphaMode BLEND) — on
+    # voit donc les pistes au travers, comme dans KiCad — et la serigraphie en
+    # blanc (alpha 0,9). Coût : +43 ko et zero seconde (1,35 s contre 1,46 s).
+    include_silkscreen: bool = True
+    include_soldermask: bool = True
     # ⚠️ L image n embarque AUCUN modèle 3D de composant (0 dans
     # /usr/share/kicad/3dmodels, mesuré le 2026-09-14) : le GLB porte la carte,
     # les pistes, les pastilles et les zones — la géométrie réelle du board.
@@ -232,6 +239,10 @@ def construire_commande_glb(cli: str, req: GlbRequest, entree: Path, sortie: Pat
         cmd.append("--include-pads")
     if req.include_zones:
         cmd.append("--include-zones")
+    if req.include_silkscreen:
+        cmd.append("--include-silkscreen")
+    if req.include_soldermask:
+        cmd.append("--include-soldermask")
     if not req.components:
         cmd.append("--no-components")
     cmd += ["-o", str(sortie), str(entree)]
