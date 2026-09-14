@@ -701,6 +701,41 @@ qu un nombre COMPTE avant d en tirer une decision.**
 
 ---
 
+## D-2026-09-14-a — le verdict « pro » du banc doit juger les broches, pas la moyenne des capas
+
+**Statut : validée** par l'utilisateur le 2026-09-14 (« Ok »).
+
+**Le fait.** `scripts/valider_placements.py` refuse un placement quand la
+moyenne des écarts capa → broche VDD dépasse 5 mm. carte-10 est refusée à
+CHAQUE tirage (5,4 · 5,5 · 5,6 · 5,7 · 5,8 mm sur cinq campagnes) alors que sa
+**couverture** — chaque broche VDD a une capa à ≤ 3,5 mm — est à 2,1 mm.
+
+**La cause, mesurée le 2026-09-14** (diagnostic capa par capa sur le
+placement livré) : carte-10 met **22 condensateurs de découplage sur le seul
+U1**, un LQFP à quatre broches VDD. Quatre capas peuvent être contre une
+broche ; les dix-huit autres sont, au mieux, en deuxième rang — 5 à 8 mm. La
+moyenne ne peut PAS descendre sous 5 mm sur cette carte, quel que soit le
+moteur. Rejouer le snap seul sur le board livré ne gagne que 0,7 mm (5,5 →
+4,8), ce qui mesure ce que l'Inspecteur et l'alignement sur grille défont
+après lui — un second sujet, mineur.
+
+Ce n'est donc pas un défaut de placement : c'est le critère qui juge des
+capas surnuméraires comme si chacune devait être contre une broche.
+
+**Proposition.** Le verdict du banc juge (1) la couverture — chaque broche
+d'alimentation de chaque CI a une capa à ≤ 3,5 mm d'écart libre — et (2) la
+moyenne des SEULES capas qui servent une broche (la plus proche par
+pastille). Les capas au-delà (réservoir, deuxième rang) sont journalisées,
+pas jugées. Aucun seuil ne change ; seule la population mesurée. Sur
+carte-10 : couverture 2,1 mm, moyenne des servantes ≈ 2 mm → VALIDE ; sur les
+dix autres cartes, verdict inchangé (une capa par broche, ou moins).
+
+**Ce que ça ne fait pas.** Ça ne touche ni au placement livré ni au snap.
+Le levier « `anchor_pin` jamais lu » annoncé le 2026-09-13 en prochaine
+étape était PÉRIMÉ : le snap vise la pastille VDD depuis le 2026-09-10
+(`_pastille_partagee`). Une prochaine étape se vérifie dans le code avant
+d'être annoncée.
+
 ## D-2026-09-13-c — occupation de la surface : la carte livrée a la moitié basse vide
 
 **Statut : validée** par l'utilisateur le 2026-09-13 (« C », les deux options) — **B ensuite RÉFUTÉE par la mesure le jour même, retirée ; A livrée.**
