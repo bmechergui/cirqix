@@ -28,7 +28,7 @@ export function Comparison() {
                   {COMPARISON_TOOLS.map((t) => (
                     <td key={t.name} className="py-3 px-4 text-center">
                       {t.values[i] ? (
-                        <Check size={16} className="text-[#22C55E] mx-auto" aria-hidden="true" />
+                        <Check size={16} className="text-white mx-auto" aria-hidden="true" />
                       ) : (
                         <X size={16} className="text-muted-foreground/40 mx-auto" aria-hidden="true" />
                       )}
