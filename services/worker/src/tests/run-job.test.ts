@@ -32,6 +32,15 @@ const agentsMock = vi.hoisted(() => ({
     }
     async close(): Promise<void> {}
   },
+  TranscriptSink: class {
+    constructor(public inner: { emit: (ev: unknown) => Promise<void> }) {}
+    async emit(ev: unknown): Promise<void> {
+      await this.inner.emit(ev);
+    }
+    transcript(): string {
+      return '';
+    }
+  },
 }));
 vi.mock('@cirqix/agents', () => agentsMock);
 vi.mock('@cirqix/logger', () => ({
@@ -61,6 +70,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // client Supabase par un objet qui accepte n importe quels arguments.
     readAgentMode: vi.fn().mockResolvedValue('orchestrator'),
     createEventWriter: vi.fn(() => ({ insert: vi.fn().mockResolvedValue(undefined) })),
+    chatMessages: { append: vi.fn().mockResolvedValue(false) },
     markRunning: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     finish,

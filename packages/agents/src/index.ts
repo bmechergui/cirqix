@@ -14,6 +14,15 @@ export type { RunEvent, RunSink } from './pipeline/run-sink';
 // Transport durable du journal de run (worker) et contrat de file.
 export { PgSink, TOKEN_FLUSH_MS } from './pipeline/pg-sink';
 export type { RunEventRow, RunEventWriter } from './pipeline/pg-sink';
+// Historique de discussion par projet (migration 026).
+export { TranscriptSink, createChatMessageWriter, CHAT_MESSAGE_MAX_CHARS } from './pipeline/transcript-sink';
+export type {
+  ChatMessageInput,
+  ChatMessageWriter,
+  ChatMessageTableClient,
+  ChatRole,
+  ProjectMessageInsert,
+} from './pipeline/transcript-sink';
 export {
   PIPELINE_QUEUE_NAME,
   PipelineJobPayload,

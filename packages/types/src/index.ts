@@ -49,6 +49,42 @@ export interface Message {
   timestamp: string;
 }
 
+/**
+ * Forme minimale d'un événement de run dont on tire le texte d'une bulle.
+ * Structurelle à dessein : `RunEvent` (agents) et `AgentSseEvent` (web) y
+ * sont assignables sans que ce paquet dépende de l'un ou de l'autre.
+ */
+export interface ChatEventLike {
+  type: string;
+  content?: unknown;
+  steps?: unknown;
+  message?: unknown;
+}
+
+export const REASONING_BLOCK_HEADER = '\n\n🤖 **Reasoner IA — déblocage du routage :**\n';
+
+/**
+ * Le texte qu'un événement ajoute à la bulle de l'agent — ou `null`.
+ *
+ * ⚠️ UNE seule définition, lue par la bulle en direct (`ChatRail`) ET par
+ * l'historique persisté (`TranscriptSink`). Deux formatages voisins finiraient
+ * par diverger, et la conversation rechargée ne serait plus celle qu'on a lue.
+ */
+export function chatTextOfEvent(event: ChatEventLike): string | null {
+  switch (event.type) {
+    case 'token':
+      return typeof event.content === 'string' ? event.content : null;
+    case 'reasoning':
+      return Array.isArray(event.steps)
+        ? REASONING_BLOCK_HEADER + event.steps.map((s) => `  ${String(s)}`).join('\n')
+        : null;
+    case 'error':
+      return typeof event.message === 'string' ? `\n\n_Error: ${event.message}_` : null;
+    default:
+      return null;
+  }
+}
+
 export interface Credits {
   balance: number;
   plan: Plan;

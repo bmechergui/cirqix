@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient, createRouteHandlerClient } from '@/shared/lib/supabase-server';
-import { setProjectPlan, clearProjectPlan } from '@cirqix/agents';
-import { encodeSse, sseHeaders, SseSink } from './lib/sse';
+import {
+  setProjectPlan,
+  clearProjectPlan,
+  createChatMessageWriter,
+  TranscriptSink,
+} from '@cirqix/agents';
+import { sseHeaders, SseSink } from './lib/sse';
 import { runSimulatorAgent } from './lib/simulator';
 import { runRealOrchestrator } from './lib/orchestrator-bridge';
 import { runLocalPipeline } from './lib/local-pipeline';
@@ -141,6 +146,17 @@ export async function POST(req: NextRequest) {
   // courant qui soit.
   setProjectPlan(projectId, creditRow?.plan ?? 'free');
 
+  // Historique de discussion (migration 026). Client admin : la propriété du
+  // projet vient d'être vérifiée par la lecture sous RLS ci-dessus. La demande
+  // n'est consignée qu'une fois le pipeline ACCEPTÉ ; une panne d'historique est
+  // journalisée, jamais propagée — elle ne doit coûter aucun run.
+  const chatLog = logger.child({ module: 'agent-route.chat-history' });
+  const chatHistory = createChatMessageWriter(pipelineClient, (err, msg) => {
+    chatLog.warn({ err, projectId, role: msg.role }, 'historique de discussion : écriture échouée');
+  });
+  const recordUserPrompt = (): Promise<boolean> =>
+    chatHistory.append({ projectId, userId: user.id, role: 'user', content: prompt });
+
   // ---------------------------------------------------------------------------
   // Chemin ASYNCHRONE — la route dépose et rend la main.
   // ---------------------------------------------------------------------------
@@ -180,6 +196,8 @@ export async function POST(req: NextRequest) {
         reservationId: null,
         iterationStart: project.iteration_count ?? 0,
       });
+      // Avant l'enfilage : la réponse du worker ne peut pas précéder la demande.
+      await recordUserPrompt();
       const queue = createPipelineQueue(process.env['REDIS_URL'] as string);
       try {
         await enqueuePipelineRun(queue, {
@@ -215,6 +233,8 @@ export async function POST(req: NextRequest) {
         reservationId,
         iterationStart: project.iteration_count ?? 0,
       });
+      // Avant l'enfilage : la réponse du worker ne peut pas précéder la demande.
+      await recordUserPrompt();
 
       const queue = createPipelineQueue(process.env['REDIS_URL'] as string);
       try {
@@ -262,7 +282,10 @@ export async function POST(req: NextRequest) {
       // C'est ce qui le rendra exécutable dans un worker, hors de cette
       // invocation plafonnée à `maxDuration`. Ici le transport reste le SSE
       // actuel — octets identiques, comportement inchangé.
-      const sink = new SseSink(controller, encoder);
+      await recordUserPrompt();
+      // `TranscriptSink` retient le texte de la bulle pendant qu'il transite :
+      // la réponse est consignée dans le `finally`, même si l'onglet est parti.
+      const sink = new TranscriptSink(new SseSink(controller, encoder));
       try {
         if (useOrchestrator) {
           try {
@@ -302,13 +325,21 @@ export async function POST(req: NextRequest) {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Agent error';
-        controller.enqueue(encoder.encode(encodeSse({ type: 'error', message })));
+        // Par le sink (mêmes octets qu'avant) : l'erreur rejoint aussi l'historique.
+        await sink.emit({ type: 'error', message });
       } finally {
         // Quoi qu'il soit arrivé au pipeline. `finalize_pipeline_success` a
         // déjà levé la retenue dans la transaction du débit ; cet appel est
         // alors sans effet (l'UPDATE est conditionné à `released_at IS NULL`).
         // Il couvre les runs qui n'ont jamais finalisé — erreur, abandon — et
         // évite d'attendre le TTL pour relancer.
+        // Ce que la bulle de l'agent affichait, erreur comprise. Ne lève jamais.
+        await chatHistory.append({
+          projectId,
+          userId: user.id,
+          role: 'assistant',
+          content: sink.transcript(),
+        });
         if (reservationId) {
           await releasePipelineReservation(pipelineClient, reservationId);
         }

@@ -14,6 +14,15 @@ const agentsMock = vi.hoisted(() => ({
     async emit(): Promise<void> {}
     async close(): Promise<void> {}
   },
+  TranscriptSink: class {
+    constructor(public inner: { emit: (ev: unknown) => Promise<void> }) {}
+    async emit(ev: unknown): Promise<void> {
+      await this.inner.emit(ev);
+    }
+    transcript(): string {
+      return '';
+    }
+  },
 }));
 vi.mock('@cirqix/agents', () => agentsMock);
 vi.mock('@cirqix/logger', () => ({
@@ -36,6 +45,7 @@ function ctxAvec(agentMode: string) {
     createStore: vi.fn(() => ({}) as never),
     readAgentMode: vi.fn().mockResolvedValue(agentMode),
     createEventWriter: vi.fn(() => ({ insert: vi.fn().mockResolvedValue(undefined) })),
+    chatMessages: { append: vi.fn().mockResolvedValue(false) },
     markRunning: vi.fn().mockResolvedValue(undefined),
     heartbeat: vi.fn().mockResolvedValue(undefined),
     finish: vi.fn().mockResolvedValue(undefined),

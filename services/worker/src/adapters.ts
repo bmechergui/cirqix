@@ -21,7 +21,7 @@ import type {
   StoredArtifact,
   RenderUploadOptions,
 } from '@cirqix/agents';
-import { cheminDuRendu, cheminDuModele } from '@cirqix/agents';
+import { cheminDuRendu, cheminDuModele, createChatMessageWriter } from '@cirqix/agents';
 import { logger } from '@cirqix/logger';
 
 import { extendReservationForRun, releaseReservationForRun } from './reservations.js';
@@ -199,6 +199,9 @@ export function createRunEventWriterFactory(supabase: SupabaseClient): RunJobCon
       return (data?.agent_mode as string | undefined) ?? null;
     },
     createEventWriter: (runId: string) => createEventWriter(supabase, runId),
+    chatMessages: createChatMessageWriter(supabase, (err, msg) => {
+      log.warn({ err, projectId: msg.projectId, role: msg.role }, 'historique de discussion : écriture échouée');
+    }),
 
     async markRunning(runId: string): Promise<void> {
       const { error } = await supabase
