@@ -69,29 +69,29 @@ const THEMES: Record<'cyberpunk' | 'retro', ThemeColors> = {
   cyberpunk: {
     name: 'Cyberpunk Neon',
     bg: '#050508',
-    gridColor: 'rgba(0, 243, 255, 0.05)',
+    gridColor: 'rgba(255, 255, 255, 0.05)',
     gridOpacity: 0.9,
     nodeBg: 'rgba(10, 10, 16, 0.92)',
     nodeBorder: '#1f202e',
-    icBorder: '#00c2ff',
-    passiveBorder: '#d4820a',
-    connBorder: '#22c55e',
-    headerIC: 'linear-gradient(180deg, rgba(0, 194, 255, 0.18) 0%, rgba(10, 10, 16, 0) 100%)',
-    headerPassive: 'linear-gradient(180deg, rgba(212, 130, 10, 0.12) 0%, rgba(10, 10, 16, 0) 100%)',
-    headerConnector: 'linear-gradient(180deg, rgba(34, 197, 94, 0.12) 0%, rgba(10, 10, 16, 0) 100%)',
+    icBorder: '#ffffff',
+    passiveBorder: '#a3a3a3',
+    connBorder: '#737373',
+    headerIC: 'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(10, 10, 16, 0) 100%)',
+    headerPassive: 'linear-gradient(180deg, rgba(163, 163, 163, 0.10) 0%, rgba(10, 10, 16, 0) 100%)',
+    headerConnector: 'linear-gradient(180deg, rgba(115, 115, 115, 0.10) 0%, rgba(10, 10, 16, 0) 100%)',
     textMuted: '#52526b',
     textPrimary: '#e4e4e7',
     textNet: '#8a8a9a',
-    textRefIC: '#00c2ff',
-    textRefPassive: '#f59e0b',
-    textRefConnector: '#4ade80',
+    textRefIC: '#ffffff',
+    textRefPassive: '#a3a3a3',
+    textRefConnector: '#d4d4d4',
     wireOpacity: 0.75,
-    wireGlow: '#00c2ff',
-    accent: '#00c2ff',
+    wireGlow: '#ffffff',
+    accent: '#ffffff',
     borderDim: '#1a1a26',
     controlBg: 'bg-[#0f0f16]/95',
     controlBorder: 'border-[#1f202e]',
-    controlText: 'text-[#8a8a9a] hover:text-[#00c2ff]',
+    controlText: 'text-[#8a8a9a] hover:text-white',
     controlHover: 'hover:bg-[#1a1a26]',
   },
   retro: {
@@ -485,15 +485,15 @@ export function SchematicGraph({ components, connections }: SchematicGraphProps)
 
             {/* Component header gradients */}
             <linearGradient id="ic-header-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={theme === 'retro' ? '#e2dfd5' : 'rgba(0, 194, 255, 0.16)'} />
-              <stop offset="100%" stopColor={theme === 'retro' ? '#ffffff' : 'rgba(0, 194, 255, 0)'} />
+              <stop offset="0%" stopColor={theme === 'retro' ? '#e2dfd5' : 'rgba(255, 255, 255, 0.10)'} />
+              <stop offset="100%" stopColor={theme === 'retro' ? '#ffffff' : 'rgba(255, 255, 255, 0)'} />
             </linearGradient>
             <linearGradient id="passive-header-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={theme === 'retro' ? '#f5ebd5' : 'rgba(212, 130, 10, 0.12)'} />
-              <stop offset="100%" stopColor={theme === 'retro' ? '#ffffff' : 'rgba(212, 130, 10, 0)'} />
+              <stop offset="0%" stopColor={theme === 'retro' ? '#f5ebd5' : 'rgba(163, 163, 163, 0.10)'} />
+              <stop offset="100%" stopColor={theme === 'retro' ? '#ffffff' : 'rgba(163, 163, 163, 0)'} />
             </linearGradient>
             <linearGradient id="connector-header-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={theme === 'retro' ? '#e0f0e6' : 'rgba(34, 197, 94, 0.12)'} />
+              <stop offset="0%" stopColor={theme === 'retro' ? '#e0f0e6' : 'rgba(115, 115, 115, 0.10)'} />
               <stop offset="100%" stopColor={theme === 'retro' ? '#ffffff' : 'rgba(34, 197, 94, 0)'} />
             </linearGradient>
           </defs>

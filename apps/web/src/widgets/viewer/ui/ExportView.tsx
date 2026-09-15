@@ -62,7 +62,7 @@ const OUTPUT_FILES: OutputFile[] = [
     label: 'Gerber files',
     desc: 'F.Cu / B.Cu / F.Mask / B.Mask / F.SilkS / Edge.Cuts + drill (.drl)',
     credit: 1,
-    color: '#00C2FF',
+    color: '#FFFFFF',
   },
   {
     id: 'bom',
@@ -70,7 +70,7 @@ const OUTPUT_FILES: OutputFile[] = [
     label: 'BOM LCSC',
     desc: 'Bill of materials with LCSC part numbers for JLCPCB PCBA.',
     credit: 0,
-    color: '#D4820A',
+    color: '#A3A3A3',
   },
   {
     id: 'cpl',
@@ -78,7 +78,7 @@ const OUTPUT_FILES: OutputFile[] = [
     label: 'Pick & Place',
     desc: 'Component placement file (CPL) for SMT assembly.',
     credit: 0,
-    color: '#D4820A',
+    color: '#A3A3A3',
   },
   {
     id: 'step',
@@ -332,10 +332,10 @@ export function ExportView({ state }: { state: PCBState }) {
         <section className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#141414] bg-[#0a0a0a]">
             <div className="flex items-center gap-2">
-              <Package size={12} className="text-[#00C2FF]" />
+              <Package size={12} className="text-[#FFFFFF]" />
               <span className="text-xs font-semibold text-foreground/90">JLCPCB estimate</span>
               {quoteFromExport && (
-                <span className="text-[9px] font-mono px-1.5 py-px rounded bg-[#00C2FF]/10 text-[#00C2FF] border border-[#00C2FF]/20">
+                <span className="text-[9px] font-mono px-1.5 py-px rounded bg-[#FFFFFF]/10 text-[#FFFFFF] border border-[#FFFFFF]/20">
                   export estimate
                 </span>
               )}

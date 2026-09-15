@@ -81,7 +81,7 @@ const SOLDER_MASKS: Record<SolderMaskTheme, {
     fillGradEnd: '#051121',
     stroke: '#164375',
     pourStroke: '#0a1d33',
-    bgDotColor: 'rgba(0, 194, 255, 0.04)',
+    bgDotColor: 'rgba(255, 255, 255, 0.04)',
     viaRing: '#b89c30',
   },
   purple: {
