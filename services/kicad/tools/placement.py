@@ -953,6 +953,10 @@ def _trop_pres_du_bord(
 # D-2026-09-15-a (validée) : la COURTYARD d'un composant non ancré reste à 2 mm
 # du bord — la place de sa référence de sérigraphie (texte de 1 mm).
 _MARGE_COURTYARD_BORD_MM: float = 2.0
+# La détection tolère l'arrondi des coordonnées écrites ; la réparation vise
+# un peu AU-DELÀ de la marge, pour ne jamais retomber pile sur la limite.
+_TOLERANCE_ARRONDI_MM: float = 0.001
+_GARDE_REPARATION_MM: float = 0.1
 
 
 def _courtyard_trop_pres_du_bord(
@@ -966,11 +970,14 @@ def _courtyard_trop_pres_du_bord(
     contrôle des pastilles le laissait passer, et sa référence n'avait aucune
     place : `silk_edge_clearance` sur 2 runs sur 5.
     """
+    # Tolérance d'arrondi : un composant reposé PILE à la marge (2,0 mm) était
+    # encore signalé à 1,9999 — mesuré sur carte-01 au banc du 2026-09-15.
+    limite = marge - _TOLERANCE_ARRONDI_MM
     min_x, max_x, min_y, max_y = bornes
     return [
         ref for ref, (x0, y0, x1, y1) in boites
-        if x0 < min_x + marge or x1 > max_x - marge
-        or y0 < min_y + marge or y1 > max_y - marge
+        if x0 < min_x + limite or x1 > max_x - limite
+        or y0 < min_y + limite or y1 > max_y - limite
     ]
 
 
@@ -1048,7 +1055,7 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
         # l'étendue retenue est la plus grande des deux, depuis le centre.
         bx0, by0, bx1, by1 = _boite_locale_fp(fp)
         etendue = max(_footprint_reach_mm(fp), abs(bx0), abs(bx1), abs(by0), abs(by1))
-        marge = etendue + max(_OFF_BOARD_MARGIN_MM, _MARGE_COURTYARD_BORD_MM)
+        marge = etendue + max(_OFF_BOARD_MARGIN_MM, _MARGE_COURTYARD_BORD_MM) + _GARDE_REPARATION_MM
         min_x, max_x = bornes[0] + marge, bornes[1] - marge
         min_y, max_y = bornes[2] + marge, bornes[3] - marge
         if min_x >= max_x or min_y >= max_y:

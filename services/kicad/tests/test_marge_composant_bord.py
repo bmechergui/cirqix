@@ -39,6 +39,11 @@ class TestDetectionParCourtyard:
     def test_courtyard_assez_loin(self, x0):
         assert P._courtyard_trop_pres_du_bord(BORNES, [("R2", (x0, 10.0, x0 + 3.0, 11.5))]) == []
 
+    def test_pile_a_la_marge_n_est_pas_signale(self):
+        # Banc du 2026-09-15, carte-01 : R1 reposé exactement à 2,0 mm restait
+        # signalé à cause de l'arrondi (1,9999).
+        assert P._courtyard_trop_pres_du_bord(BORNES, [("R1", (1.9999, 10.0, 4.9999, 11.5))]) == []
+
     def test_les_quatre_bords(self):
         boites = [
             ("HAUT", (3.0, 1.2, 6.0, 2.7)),       # le cas mesuré : R2 à 1,2 mm du bord haut
