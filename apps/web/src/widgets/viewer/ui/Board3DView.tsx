@@ -25,15 +25,17 @@ import { appliquerStyleKiCad, type GltfJson } from './kicad-3d-style';
 
 /**
  * Éclairage et fond du visualiseur 3D de KiCad. Choisis par captures
- * successives sur le GLB de `carte-05` (2026-09-15) : sans environnement, tout
- * ce qui est métal (pistes, pastilles, broches) sortait noir ; trop de lumière
- * d'ambiance délavait le vernis en vert pâle.
+ * successives du VRAI `Board3DView` sur le GLB de `carte-05` (2026-09-15) :
+ * sans environnement, tout ce qui est métal (pastilles, broches) sortait noir.
+ * Le canvas rend en espace d'affichage (`linear`, voir `kicad-3d-style.ts`) :
+ * le vert KiCad y est sombre tel qu'écrit, d'où une lumière plus forte
+ * (1,5 / 2,6) — à 1,2 / 2,2 la carte restait vert bouteille, pistes à peine lisibles.
  */
 export const SCENE_KICAD = {
   fondHaut: '#ccccE6',
   fondBas: '#666680',
-  hemisphere: 0.7,
-  principale: 1.3,
+  hemisphere: 1.5,
+  principale: 2.6,
   environnement: 0.15,
 } as const;
 
@@ -250,7 +252,7 @@ export function Board3DView({ projectId, version }: Board3DViewProps) {
         {etat.kind === 'ready' && (
           <FrontiereCanvas onError={signalerErreur}>
             {/* Canvas transparent sur le dégradé gris-bleu de KiCad ; `flat` : pas de tone mapping ACES, qui ternissait vernis et sérigraphie. */}
-            <Canvas key={resetKey} flat gl={{ alpha: true }} camera={{ position: [0.75, 0.85, 0.95], fov: 35, near: 0.01, far: 100 }} dpr={[1, 2]} data-testid="board-3d-canvas">
+            <Canvas key={resetKey} flat linear gl={{ alpha: true }} camera={{ position: [0.75, 0.85, 0.95], fov: 35, near: 0.01, far: 100 }} dpr={[1, 2]} data-testid="board-3d-canvas">
               <EnvironnementLocal />
               <hemisphereLight args={['#ffffff', '#6b6f80', SCENE_KICAD.hemisphere]} />
               <directionalLight position={[1.5, 3, 2]} intensity={SCENE_KICAD.principale} />

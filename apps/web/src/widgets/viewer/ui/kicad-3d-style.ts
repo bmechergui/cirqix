@@ -11,13 +11,22 @@ import type { Material, Mesh, MeshStandardMaterial, Object3D } from 'three';
  *     réalité les PASTILLES (`_pad` : gris 0,5, métal 1) et les peignait en
  *     beige mat ; le vrai corps FR4 est `_PCB`.
  *  2. KiCad écrit les couleurs de couches en valeurs d'AFFICHAGE (vernis
- *     0,08/0,2/0,14 = son préréglage « Green »), là où glTF attend du
- *     linéaire : Three.js les éclaircissait, le vernis sortait gris-vert délavé.
- *     Les corps STEP, eux, sont déjà linéarisés par l'export — on n'y touche pas.
- *  3. Les matériaux STEP ne déclarent aucun facteur métal/rugosité : le défaut
- *     glTF (métal 1, rugosité 1) faisait d'un connecteur blanc un métal terne.
+ *     0,08/0,2/0,14 à 83 %) et les MÉLANGE en espace d'affichage : le vert
+ *     sombre du vernis domine, et une piste dessous (cuivre 0,7/0,61/0) ressort
+ *     en vert plus clair. Mélangées en linéaire par Three.js, les mêmes valeurs
+ *     donnaient soit un vert-gris délavé (sans conversion), soit un vert kaki où
+ *     le FR4 olive l'emportait et les pistes disparaissaient (converties) —
+ *     mesuré à la capture sur la vraie vue. Le viewer rend donc en espace
+ *     d'affichage (`<Canvas linear>`) et prend les couleurs de couches TELLES
+ *     QU'ÉCRITES.
+ *  3. Les corps STEP, eux, sortent de l'export déjà LINÉARISÉS : dans cet
+ *     espace d'affichage ils seraient trop sombres, on les reconvertit en sRGB.
+ *     Leurs matériaux ne déclarent aucun facteur métal/rugosité : le défaut glTF
+ *     (métal 1, rugosité 1) faisait d'un connecteur blanc un métal terne.
  *  4. FR4 et sérigraphie opaques : trois couches translucides superposées se
- *     trient mal. Le vernis reste translucide — les pistes doivent se voir au travers.
+ *     trient mal. Le vernis reste translucide — les pistes doivent se voir au
+ *     travers — mais mat : à rugosité 0,6 il renvoyait un reflet blanc sur tout
+ *     un coin de la carte.
  *
  * Fonctions PURES sur le JSON glTF, testées sans WebGL.
  */
@@ -39,8 +48,8 @@ export interface GltfJson {
 }
 
 export interface StyleMatiere {
-  /** Reconvertir la couleur d'affichage écrite par KiCad en linéaire. */
-  readonly srgbVersLineaire: boolean;
+  /** Reconvertir en sRGB une couleur que l'export a linéarisée (corps STEP). */
+  readonly lineaireVersSrgb?: boolean;
   readonly metalness?: number;
   readonly roughness?: number;
   /** Rendre le matériau opaque (FR4, sérigraphie). */
@@ -71,24 +80,25 @@ export function styleKiCad(couche: CoucheKiCad | null, def: GltfMaterialDef): St
   switch (couche) {
     case 'copper':
     case 'via':
-      return { srgbVersLineaire: true, metalness: 1, roughness: 0.35 };
+      // Métal à moitié : un cuivre 100 % métal n'a que l'environnement à
+      // refléter et sort SOMBRE sous le vernis. Éclairé en diffus, il ressort
+      // plus clair au travers, comme dans KiCad.
+      return { metalness: 0.3, roughness: 0.5 };
     case 'pad':
       // Étamé/doré : du métal poli, jamais du FR4.
-      return { srgbVersLineaire: true, metalness: 1, roughness: 0.3 };
+      return { metalness: 1, roughness: 0.3 };
     case 'silkscreen':
-      return { srgbVersLineaire: true, opaque: true };
     case 'PCB':
-      return { srgbVersLineaire: true, opaque: true };
+      return { opaque: true };
     case 'soldermask':
-      // ⚠️ Le vernis N'EST PAS reconverti : essayé et mesuré à la capture, le
-      // vert linéarisé (0,007/0,033/0,017) est si sombre qu'à 83 % d'opacité le
-      // FR4 transparaît en kaki et les pistes disparaissent. Tel qu'écrit, il
-      // rend le vert KiCad, pistes plus claires au travers.
-      return { srgbVersLineaire: false, roughness: 0.6 };
+      return { roughness: 0.9 };
     case null: {
       const pbr = def.pbrMetallicRoughness;
       const sansFacteurs = pbr?.metallicFactor === undefined && pbr?.roughnessFactor === undefined;
-      return sansFacteurs ? { srgbVersLineaire: false, metalness: 0, roughness: 0.5 } : null;
+      // La reconversion tient à l'ESPACE de couleur, pas aux facteurs : un corps
+      // qui déclare les siens garde sa matière, mais sortirait trop sombre en
+      // espace d'affichage s'il restait linéaire.
+      return sansFacteurs ? { lineaireVersSrgb: true, metalness: 0, roughness: 0.5 } : { lineaireVersSrgb: true };
     }
   }
 }
@@ -118,7 +128,7 @@ export function appliquerStyleKiCad(
       if (index === undefined) continue;
       const style = styleKiCad(couches.get(index) ?? null, json.materials?.[index] ?? {});
       if (!style) continue;
-      if (style.srgbVersLineaire) std.color.convertSRGBToLinear();
+      if (style.lineaireVersSrgb) std.color.convertLinearToSRGB();
       if (style.metalness !== undefined) std.metalness = style.metalness;
       if (style.roughness !== undefined) std.roughness = style.roughness;
       if (style.opaque) {

@@ -102,14 +102,17 @@ describe('Board3DView', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
-  it('le visualiseur de KiCad : degrade gris-bleu derriere un canvas transparent, sans tone mapping', async () => {
+  it('le visualiseur de KiCad : degrade gris-bleu derriere un canvas transparent, sans tone mapping, en espace d affichage', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => reponseGlb()));
     render(<Board3DView projectId="p1" />);
     await waitFor(() => expect(screen.getByTestId('board-3d-canvas')).toBeInTheDocument());
     const fond = screen.getByTestId('board-3d-fond').getAttribute('style') ?? '';
     expect(fond).toContain('linear-gradient');
-    const props = temoins.canvas.mock.calls[0]?.[0] as { flat?: boolean; gl?: { alpha?: boolean } };
+    const props = temoins.canvas.mock.calls[0]?.[0] as { flat?: boolean; linear?: boolean; gl?: { alpha?: boolean } };
     expect(props.flat).toBe(true);
+    // KiCad mélange vernis et cuivre en espace d'affichage : en linéaire, le FR4
+    // olive l'emportait sous le vernis et les pistes disparaissaient (capture du 2026-09-15).
+    expect(props.linear).toBe(true);
     expect(props.gl?.alpha).toBe(true);
     expect(SCENE_KICAD.environnement).toBeGreaterThan(0); // sans environnement, les métaux sortent noirs
   });

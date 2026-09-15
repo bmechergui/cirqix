@@ -10,19 +10,24 @@ import {
 
 /**
  * Le style « visualiseur 3D de KiCad » du GLB — ce que ces tests discriminent,
- * chaque point MESURÉ sur le GLB de `carte-05` exporté par `kicad-cli pcb export glb` :
+ * chaque point MESURÉ sur le GLB de `carte-05` exporté par `kicad-cli pcb export glb`
+ * et vérifié à la capture dans le vrai `Board3DView` :
  *
  *  - les couches de la carte se reconnaissent au NOM DU MAILLAGE
  *    (`<board>_copper|pad|via|silkscreen|soldermask|PCB`) — jamais à la couleur :
  *    l'ancienne règle « gris métallique = FR4 » repeignait en beige les
  *    PASTILLES (`_pad`, gris 0,5 métallique), le vrai corps FR4 étant `_PCB` ;
- *  - KiCad écrit ses couleurs de couches en valeurs d'AFFICHAGE (sRGB) là où
- *    glTF attend du linéaire : sans conversion, le vernis vert sort délavé ;
- *  - les matériaux des corps STEP n'ont AUCUN facteur métal/rugosité, donc le
- *    défaut glTF (métal 1, rugosité 1) : un connecteur blanc sortait en métal
- *    terne. On leur rend une matière plastique ;
- *  - FR4 et sérigraphie deviennent opaques (le vernis reste translucide : on
- *    doit voir les pistes au travers).
+ *  - KiCad écrit ET mélange ses couleurs de couches en espace d'AFFICHAGE : le
+ *    viewer rend dans cet espace (`<Canvas linear>`), donc les couleurs de
+ *    couches restent TELLES QU'ÉCRITES. Converties en linéaire, le FR4 olive
+ *    l'emportait sous le vernis (kaki) et les pistes disparaissaient ;
+ *  - les corps STEP sortent de l'export LINÉARISÉS : on les reconvertit en sRGB,
+ *    et, sans facteur métal/rugosité déclaré (défaut glTF métal 1, rugosité 1),
+ *    ils reçoivent une matière plastique ;
+ *  - FR4 et sérigraphie opaques ; le vernis reste translucide (pistes au
+ *    travers) et MAT (à rugosité 0,6, reflet blanc sur un coin de la carte) ;
+ *  - le cuivre n'est pas un métal pur : sans reflet à renvoyer, il sortait
+ *    sombre sous le vernis et les pistes ne se voyaient pas.
  */
 
 const JSON_CARTE: GltfJson = {
@@ -45,6 +50,8 @@ const JSON_CARTE: GltfJson = {
     { pbrMetallicRoughness: { baseColorFactor: [0.42, 0.45, 0.29, 0.98], metallicFactor: 0, roughnessFactor: 0.8 }, alphaMode: 'BLEND' },
   ],
 };
+
+const COUCHES = ['copper', 'via', 'pad', 'silkscreen', 'soldermask', 'PCB'] as const;
 
 describe('coucheDuMaillage', () => {
   it('reconnait les six couches de la carte par le suffixe du maillage, quel que soit le nom du board', () => {
@@ -82,31 +89,35 @@ describe('couchesParMateriau', () => {
 describe('styleKiCad', () => {
   const mats = JSON_CARTE.materials ?? [];
   it('les PASTILLES restent metalliques — elles ne deviennent plus du FR4', () => {
-    const s = styleKiCad('pad', mats[3]!);
-    expect(s?.metalness).toBeGreaterThan(0.5);
-    expect(s?.srgbVersLineaire).toBe(true);
+    expect(styleKiCad('pad', mats[3]!)?.metalness).toBeGreaterThan(0.5);
   });
-  it('les couches de la carte sont converties de sRGB en lineaire — SAUF le vernis', () => {
-    for (const couche of ['copper', 'via', 'silkscreen', 'PCB'] as const) {
-      expect(styleKiCad(couche, mats[2]!)?.srgbVersLineaire).toBe(true);
+  it('les couleurs de couches restent TELLES QU ECRITES par KiCad (rendu en espace d affichage)', () => {
+    for (const couche of COUCHES) {
+      expect(styleKiCad(couche, mats[2]!)?.lineaireVersSrgb).toBeFalsy();
     }
-    // Linearise, le vert tombe si sombre que le FR4 transparait en kaki (capture du 2026-09-15).
-    expect(styleKiCad('soldermask', mats[5]!)?.srgbVersLineaire).toBe(false);
   });
-  it('FR4 et serigraphie opaques, vernis translucide', () => {
+  it('FR4 et serigraphie opaques, vernis translucide et mat', () => {
     expect(styleKiCad('PCB', mats[6]!)?.opaque).toBe(true);
     expect(styleKiCad('silkscreen', mats[4]!)?.opaque).toBe(true);
-    expect(styleKiCad('soldermask', mats[5]!)?.opaque).toBeFalsy();
+    const vernis = styleKiCad('soldermask', mats[5]!);
+    expect(vernis?.opaque).toBeFalsy();
+    expect(vernis?.roughness).toBeGreaterThanOrEqual(0.8);
   });
-  it('un corps STEP sans facteur PBR recoit une matiere plastique, sans reconversion de couleur', () => {
+  it('le cuivre n est pas un metal pur — sinon les pistes sortent sombres sous le vernis', () => {
+    expect(styleKiCad('copper', mats[2]!)?.metalness).toBeLessThan(1);
+  });
+  it('un corps STEP sans facteur PBR recoit une matiere plastique et est reconverti en sRGB', () => {
     const s = styleKiCad(null, mats[1]!);
     expect(s).not.toBeNull();
     expect(s?.metalness).toBe(0);
     expect(s?.roughness).toBeLessThan(1);
-    expect(s?.srgbVersLineaire).toBe(false);
+    expect(s?.lineaireVersSrgb).toBe(true);
   });
-  it('un materiau de composant qui declare ses facteurs est laisse tel quel', () => {
-    expect(styleKiCad(null, { pbrMetallicRoughness: { metallicFactor: 0.2, roughnessFactor: 0.3 } })).toBeNull();
+  it('un corps qui declare ses facteurs garde sa matiere mais est reconverti en sRGB (sinon trop sombre en espace d affichage)', () => {
+    const s = styleKiCad(null, { pbrMetallicRoughness: { metallicFactor: 0.2, roughnessFactor: 0.3 } });
+    expect(s?.lineaireVersSrgb).toBe(true);
+    expect(s?.metalness).toBeUndefined();
+    expect(s?.roughness).toBeUndefined();
   });
 });
 
@@ -128,19 +139,18 @@ describe('appliquerStyleKiCad', () => {
     const s = scene();
     const indexDe = (m: object) => indices(m as MeshStandardMaterial, s);
     appliquerStyleKiCad(s.racine, JSON_CARTE, indexDe);
-    const vert = s.masque.color.g;
-    expect(vert).toBeCloseTo(0.2, 5);
+    expect(s.masque.color.g).toBeCloseTo(0.2, 5);
     expect(s.masque.transparent).toBe(true);
-    const fr4 = s.pcb.color.r;
-    expect(fr4).toBeCloseTo(new Color(0.42, 0.45, 0.29).convertSRGBToLinear().r, 5);
+    expect(s.masque.opacity).toBeCloseTo(0.83, 5);
+    expect(s.pcb.color.r).toBeCloseTo(0.42, 5);
     expect(s.pcb.transparent).toBe(false);
     expect(s.pcb.opacity).toBe(1);
+    const brun = s.corps.color.r;
+    expect(brun).toBeCloseTo(new Color(0.119, 0.059, 0.038).convertLinearToSRGB().r, 5);
     expect(s.corps.metalness).toBe(0);
     expect(s.pastille.metalness).toBeGreaterThan(0.5);
-    expect(s.pastille.color.r).not.toBeCloseTo(0.5, 2);
 
     appliquerStyleKiCad(s.racine, JSON_CARTE, indexDe);
-    expect(s.masque.color.g).toBe(vert);
-    expect(s.pcb.color.r).toBe(fr4); // jamais reconverti deux fois
+    expect(s.corps.color.r).toBe(brun); // jamais reconverti deux fois
   });
 });
