@@ -208,9 +208,20 @@ _VARIABLES_MODELES = ("KICAD10_3DMODEL_DIR", "KICAD9_3DMODEL_DIR", "KICAD8_3DMOD
 def compter_modeles(pcb: bytes, model_dir: Optional[str]) -> tuple[int, int]:
     """(modeles declares dans le board, fichiers reellement presents).
 
-    `kicad-cli pcb export glb` charge le STEP d un modele meme quand le board
-    cite le `.wrl` : un `.step`/`.stp` voisin compte comme present. Sans
-    repertoire de modeles, rien n est present — et on le dit, plutot que de
+    Seul le fichier CITE compte. On creditait auparavant le `.step` de meme nom,
+    au motif que kicad-cli chargerait le STEP a la place du VRML cite : FAUX,
+    mesure du 2026-09-15 sur carte-05, meme board, chemins bascules en `.wrl`
+    (le volume de modeles ne contient AUCUN `.wrl` : 0 contre 3423 `.step`) :
+
+        cite .step | 26 fichiers cites presents | compteur 26/26 | 26 corps dans le GLB
+        cite .wrl  |  0 fichier  cite  present  | compteur 26/26 |  0 corps
+
+    La carte sortait donc NUE pendant que `X-Model-Components` annoncait 26 sur
+    26 — un echec qui rend la meme valeur que le cas normal. `--subst-models` n y
+    change rien : « Could not add 3D model for C15 — File not found:
+    …/C_0603_1608Metric.wrl », 0 corps avec comme sans l option.
+
+    Sans repertoire de modeles, rien n est present — et on le dit, plutot que de
     laisser croire que le GLB porte les composants.
     """
     chemins = _MODEL_RE.findall(pcb.decode("utf-8", "replace"))
@@ -223,9 +234,7 @@ def compter_modeles(pcb: bytes, model_dir: Optional[str]) -> tuple[int, int]:
             resolu = resolu.replace("${%s}" % var, model_dir or "")
         if not model_dir and resolu == chemin and chemin.startswith("${"):
             continue
-        base = Path(resolu)
-        candidats = [base] + [base.with_suffix(ext) for ext in (".step", ".stp", ".STEP")]
-        if any(c.is_file() for c in candidats):
+        if Path(resolu).is_file():
             trouves += 1
     return len(chemins), trouves
 

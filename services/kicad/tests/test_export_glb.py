@@ -98,7 +98,21 @@ def test_un_vrai_glb_est_rendu_tel_quel(monkeypatch):
     assert base64.b64decode(rep.glb_b64) == glb and rep.bytes == len(glb)
 
 
-def test_compter_modeles_dit_ce_qui_est_vraiment_present(tmp_path):
+def test_compter_modeles_ne_compte_que_le_fichier_CITE(tmp_path):
+    """Un .step voisin ne sauve PAS un .wrl absent — mesure du 2026-09-15.
+
+    Le compteur creditait le `.step` de meme nom, au motif que kicad-cli
+    chargerait le STEP a la place du VRML cite. Mesure sur carte-05, meme board,
+    chemins bascules en `.wrl` (le volume de modeles n'en contient AUCUN :
+    0 `.wrl`, 3423 `.step`) :
+
+        cite .step | 26 fichiers cites presents | compteur 26/26 | 26 corps dans le GLB
+        cite .wrl  |  0 fichier  cite  present  | compteur 26/26 |  0 corps
+
+    La carte sortait donc NUE pendant que le service annoncait 26 composants sur
+    26, et `--subst-models` n'y change rien : « Could not add 3D model for C15 —
+    File not found: …/C_0603_1608Metric.wrl », 0 corps avec comme sans l'option.
+    """
     from routers.render import compter_modeles
     (tmp_path / "Resistor_SMD.3dshapes").mkdir()
     (tmp_path / "Resistor_SMD.3dshapes" / "R_0603_1608Metric.step").write_bytes(b"step")
@@ -106,8 +120,11 @@ def test_compter_modeles_dit_ce_qui_est_vraiment_present(tmp_path):
         b'(footprint "R" (model "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"))'
         b'(footprint "C" (model "${KICAD10_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603.wrl"))'
     )
-    # Le .wrl cite par le board compte comme present si son .step voisin existe.
-    assert compter_modeles(board, str(tmp_path)) == (2, 1)
+    # Le .step voisin existe, mais c'est le .wrl qui est cite et il est absent.
+    assert compter_modeles(board, str(tmp_path)) == (2, 0)
+    # Ce que citent nos boards aujourd'hui : le .step lui-meme, present.
+    cite_le_step = b'(footprint "R" (model "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"))'
+    assert compter_modeles(cite_le_step, str(tmp_path)) == (1, 1)
     # Sans repertoire de modeles : declares, mais rien de present — et on le dit.
     assert compter_modeles(board, None) == (2, 0)
     assert compter_modeles(b"(kicad_pcb)", str(tmp_path)) == (0, 0)
