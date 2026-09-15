@@ -1044,6 +1044,13 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
         return []
 
     occupes = [fp.position for fp in pcb.footprints if fp.reference not in fautifs]
+    boites_occupees = []
+    for autre in pcb.footprints:
+        if autre.reference in fautifs:
+            continue
+        bx0, by0, bx1, by1 = _boite_locale_fp(autre)
+        ax, ay = autre.position
+        boites_occupees.append((ax + bx0, ay + by0, ax + bx1, ay + by1))
     deplaces: list[str] = []
 
     for fp in pcb.footprints:
@@ -1065,7 +1072,9 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
             continue
         x, y = fp.position
         cible = (min(max(x, min_x), max_x), min(max(y, min_y), max_y))
-        place = _nearest_free_cell(cible, occupes, (min_x, max_x, min_y, max_y))
+        place = _nearest_free_cell(cible, occupes, (min_x, max_x, min_y, max_y),
+                                   boite_locale=(bx0, by0, bx1, by1),
+                                   boites_occupees=boites_occupees)
         if place is None:
             logger.warning("réparation hors-carte: aucune case libre pour %s",
                            fp.reference)
@@ -1074,6 +1083,7 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
                        fp.reference, x, y, place[0], place[1])
         fp.position = place
         occupes.append(place)
+        boites_occupees.append((place[0] + bx0, place[1] + by0, place[0] + bx1, place[1] + by1))
         deplaces.append(fp.reference)
 
     if deplaces:
@@ -1140,9 +1150,21 @@ def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
     return min(xs), max(xs), min(ys), max(ys)
 
 
+# Recherche d'une case libre par COURTYARDS : pas fin, et marge entre boîtes.
+_PAS_RECHERCHE_FIN_MM: float = 0.5
+_MARGE_ENTRE_COURTYARDS_MM: float = 0.25
+
+
+def _boites_se_recouvrent(a: tuple, b: tuple, marge: float = 0.0) -> bool:
+    return not (a[2] + marge <= b[0] or b[2] + marge <= a[0]
+                or a[3] + marge <= b[1] or b[3] + marge <= a[1])
+
+
 def _nearest_free_cell(cible: tuple[float, float],
                        occupes: list[tuple[float, float]],
                        bornes: tuple[float, float, float, float],
+                       boite_locale: tuple[float, float, float, float] | None = None,
+                       boites_occupees: list[tuple[float, float, float, float]] | None = None,
                        ) -> tuple[float, float] | None:
     """Case libre la plus proche de ``cible``, dans ``bornes``.
 
@@ -1153,10 +1175,23 @@ def _nearest_free_cell(cible: tuple[float, float],
     Recherche en anneaux carrés bornée : jamais de boucle non terminante.
     """
     min_x, max_x, min_y, max_y = bornes
-    pas = _OFF_BOARD_SPACING_MM
+    # ⚠️ Avec des boîtes, une case est libre si la COURTYARD du composant n'y
+    # recouvre aucune autre courtyard. Mesure du 2026-09-15 (run 7980aee1) : la
+    # règle des centres (2,5 mm) posait R1 à 4,34 mm du centre de J1 et 0,94 mm
+    # DANS sa courtyard — un connecteur porte la sienne à 6 mm de son centre.
+    if boite_locale is not None and boites_occupees is not None:
+        pas = _PAS_RECHERCHE_FIN_MM
 
-    def libre(p: tuple[float, float]) -> bool:
-        return all(math.dist(p, q) >= pas for q in occupes)
+        def libre(p: tuple[float, float]) -> bool:
+            b = (p[0] + boite_locale[0], p[1] + boite_locale[1],
+                 p[0] + boite_locale[2], p[1] + boite_locale[3])
+            return not any(_boites_se_recouvrent(b, o, _MARGE_ENTRE_COURTYARDS_MM)
+                           for o in boites_occupees)
+    else:
+        pas = _OFF_BOARD_SPACING_MM
+
+        def libre(p: tuple[float, float]) -> bool:
+            return all(math.dist(p, q) >= pas for q in occupes)
 
     if libre(cible):
         return cible
