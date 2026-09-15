@@ -138,7 +138,7 @@ export function Hero() {
 
             <p className="text-base text-muted-foreground mb-10 leading-relaxed max-w-md">
               Describe your circuit in plain English. Cirqix generates a DRC-clean PCB,
-              exports Gerbers, and orders from JLCPCB — fully&nbsp;autonomously.
+              exports Gerbers, and prepares your JLCPCB order — you review and&nbsp;submit&nbsp;it.
             </p>
 
             {/* CTAs */}

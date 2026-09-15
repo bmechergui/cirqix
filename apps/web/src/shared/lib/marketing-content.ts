@@ -36,7 +36,7 @@ export const FEATURES: Feature[] = [
     icon: Package,
     label: 'JLCPCB_INT',
     title: 'JLCPCB Ready',
-    desc: 'BOM, CPL, Gerbers — perfectly formatted. One click to request a quote and order fabrication.',
+    desc: 'BOM, CPL, Gerbers — formatted for JLCPCB, with a price estimate. You submit the order yourself.',
     accent: 'copper',
   },
   {
@@ -80,7 +80,7 @@ export const HOW_IT_WORKS_STEPS: Step[] = [
   {
     num: '03',
     title: 'Order',
-    desc: 'Review your PCB in 2D or 3D, download Gerbers or order directly from JLCPCB with one click.',
+    desc: 'Review your PCB in 2D or 3D, download the Gerbers and a JLCPCB-ready order package, then submit it on JLCPCB.',
     label: 'EXPORT_GERBERS',
   },
 ];

@@ -8,7 +8,7 @@ const syne = Syne({ subsets: ['latin'], variable: '--font-syne', weight: ['700',
 
 export const metadata: Metadata = {
   title: { default: 'Cirqix.ai — AI PCB Design Agent', template: '%s | Cirqix' },
-  description: 'Describe your circuit in plain English. Cirqix generates a DRC-clean PCB, exports Gerbers, and orders from JLCPCB — fully autonomously.',
+  description: 'Describe your circuit in plain English. Cirqix generates a DRC-clean PCB, exports Gerbers, and prepares your JLCPCB order — you review and submit it.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
