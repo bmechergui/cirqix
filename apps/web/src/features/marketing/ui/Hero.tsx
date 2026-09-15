@@ -16,14 +16,14 @@ function PCBPreview() {
           <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
         </filter>
         <linearGradient id="traceGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#00C2FF" stopOpacity="0" />
-          <stop offset="40%" stopColor="#00C2FF" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#00C2FF" stopOpacity="0.3" />
+          <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0" />
+          <stop offset="40%" stopColor="#FFFFFF" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.3" />
         </linearGradient>
         <linearGradient id="traceGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#D4820A" stopOpacity="0.3" />
-          <stop offset="60%" stopColor="#D4820A" stopOpacity="0.7" />
-          <stop offset="100%" stopColor="#D4820A" stopOpacity="0" />
+          <stop offset="0%" stopColor="#737373" stopOpacity="0.3" />
+          <stop offset="60%" stopColor="#737373" stopOpacity="0.7" />
+          <stop offset="100%" stopColor="#737373" stopOpacity="0" />
         </linearGradient>
       </defs>
 
@@ -33,19 +33,19 @@ function PCBPreview() {
       {/* Grid dots */}
       {Array.from({ length: 8 }, (_, row) =>
         Array.from({ length: 14 }, (_, col) => (
-          <circle key={`${row}-${col}`} cx={30 + col * 30} cy={30 + row * 30} r="0.8" fill="rgba(0,194,255,0.15)" />
+          <circle key={`${row}-${col}`} cx={30 + col * 30} cy={30 + row * 30} r="0.8" fill="rgba(255,255,255,0.15)" />
         ))
       )}
 
       {/* F.Cu traces */}
       <path d="M60 80 L180 80 L180 140 L300 140" stroke="url(#traceGrad)" strokeWidth="2" fill="none" filter="url(#glow)" />
-      <path d="M300 140 L380 140 L380 200" stroke="#00C2FF" strokeWidth="2" fill="none" opacity="0.6" />
-      <path d="M60 200 L120 200 L120 140 L180 140" stroke="#00C2FF" strokeWidth="1.5" fill="none" opacity="0.5" />
-      <path d="M240 60 L240 140" stroke="#00C2FF" strokeWidth="1.5" fill="none" opacity="0.4" />
+      <path d="M300 140 L380 140 L380 200" stroke="#FFFFFF" strokeWidth="2" fill="none" opacity="0.6" />
+      <path d="M60 200 L120 200 L120 140 L180 140" stroke="#FFFFFF" strokeWidth="1.5" fill="none" opacity="0.5" />
+      <path d="M240 60 L240 140" stroke="#FFFFFF" strokeWidth="1.5" fill="none" opacity="0.4" />
 
       {/* B.Cu traces */}
       <path d="M100 100 L100 220 L320 220 L320 180" stroke="url(#traceGrad2)" strokeWidth="1.5" fill="none" />
-      <path d="M320 180 L420 180" stroke="#D4820A" strokeWidth="1.5" fill="none" opacity="0.5" />
+      <path d="M320 180 L420 180" stroke="#737373" strokeWidth="1.5" fill="none" opacity="0.5" />
 
       {/* Vias */}
       {([[ 180, 140], [300, 140], [120, 200], [240, 140]] as [number,number][]).map(([cx, cy], i) => (
@@ -65,13 +65,13 @@ function PCBPreview() {
         <rect key={`r${i}`} x="281" y={110 + i * 14} width="8" height="4" rx="1" fill="#555" />
       ))}
       <text x="240" y="143" textAnchor="middle" fill="#444" fontSize="9" fontFamily="monospace">MCU</text>
-      <circle cx="240" cy="130" r="1.5" fill="#00C2FF" opacity="0.6" />
+      <circle cx="240" cy="130" r="1.5" fill="#FFFFFF" opacity="0.6" />
 
       {/* Capacitors */}
       {([[60, 68], [60, 88]] as [number,number][]).map(([x, y], i) => (
         <g key={i}>
           <rect x={x} y={y} width="16" height="10" rx="1" fill="#1a1a1a" stroke="#444" strokeWidth="1" />
-          <line x1={x + 8} y1={y} x2={x + 8} y2={y - 6} stroke="#00C2FF" strokeWidth="1" opacity="0.5" />
+          <line x1={x + 8} y1={y} x2={x + 8} y2={y - 6} stroke="#FFFFFF" strokeWidth="1" opacity="0.5" />
         </g>
       ))}
 
@@ -95,8 +95,8 @@ function PCBPreview() {
 
       {/* Agent status */}
       <g>
-        <rect x="10" y="15" width="90" height="22" rx="3" fill="rgba(0,194,255,0.06)" stroke="rgba(0,194,255,0.2)" strokeWidth="1" />
-        <text x="18" y="30" fill="#00C2FF" fontSize="8" fontFamily="monospace" opacity="0.8">ROUTING…</text>
+        <rect x="10" y="15" width="90" height="22" rx="3" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.2)" strokeWidth="1" />
+        <text x="18" y="30" fill="#FFFFFF" fontSize="8" fontFamily="monospace" opacity="0.8">ROUTING…</text>
       </g>
 
       {/* Silkscreen labels */}
@@ -197,7 +197,7 @@ export function Hero() {
             </div>
 
             {/* Agent log below */}
-            <div className="mt-3 border border-[#1a2d0a] bg-[#080808] rounded-md px-3 py-2 animate-flicker">
+            <div className="mt-3 border border-[#1a2d0a] bg-[#000000] rounded-md px-3 py-2 animate-flicker">
               <p className="font-mono text-[11px] text-primary/70 leading-relaxed">
                 <span className="text-muted-foreground/40">{'>'} </span>
                 Agent routing trace 47/47 · DRC violations: <span className="text-success font-bold">0</span>

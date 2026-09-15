@@ -142,7 +142,7 @@ export function View3D({ state }: { state: PCBState }) {
   const camDist = Math.max(boardW, boardH) * 1.4;
 
   return (
-    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
+    <div className="flex flex-col h-full bg-[#000000] overflow-hidden">
       <StageHeader
         icon={<Box size={12} />}
         title="3D Preview"

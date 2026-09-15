@@ -25,7 +25,7 @@ export function Navbar() {
   return (
     <nav className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
       scrolled || menuOpen
-        ? 'bg-[#080808]/90 backdrop-blur-md border-b border-border'
+        ? 'bg-[#000000]/90 backdrop-blur-md border-b border-border'
         : 'bg-transparent'
     }`}>
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -82,7 +82,7 @@ export function Navbar() {
 
       {/* Mobile dropdown menu */}
       {menuOpen && (
-        <div id="mobile-menu" className="md:hidden border-t border-border bg-[#080808]/95 backdrop-blur-md px-6 py-4 flex flex-col gap-1">
+        <div id="mobile-menu" className="md:hidden border-t border-border bg-[#000000]/95 backdrop-blur-md px-6 py-4 flex flex-col gap-1">
           {NAV_LINKS.map(({ label, href }) => (
             <Link
               key={label}

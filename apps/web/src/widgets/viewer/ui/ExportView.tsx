@@ -246,7 +246,7 @@ export function ExportView({ state }: { state: PCBState }) {
     : <span className="text-warning">Pending DRC</span>;
 
   return (
-    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
+    <div className="flex flex-col h-full bg-[#000000] overflow-hidden">
       <StageHeader
         icon={<Download size={12} />}
         title="Export & Manufacture"

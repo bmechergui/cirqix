@@ -160,7 +160,7 @@ export default async function BillingPage() {
                 }`}
               >
                 {pack.popular && (
-                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest bg-primary text-[#080808] px-2 py-0.5 rounded-full">
+                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest bg-primary text-[#000000] px-2 py-0.5 rounded-full">
                     Popular
                   </span>
                 )}
@@ -172,7 +172,7 @@ export default async function BillingPage() {
                 {checkoutUrl ? (
                   <a
                     href={checkoutUrl}
-                    className="mt-auto block text-center text-sm font-medium bg-primary text-[#080808] hover:bg-primary/90 rounded-lg py-2 transition-colors"
+                    className="mt-auto block text-center text-sm font-medium bg-primary text-[#000000] hover:bg-primary/90 rounded-lg py-2 transition-colors"
                   >
                     Buy now
                   </a>
@@ -206,7 +206,7 @@ export default async function BillingPage() {
                 }`}
               >
                 {plan.popular && (
-                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest bg-primary text-[#080808] px-2 py-0.5 rounded-full">
+                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest bg-primary text-[#000000] px-2 py-0.5 rounded-full">
                     Popular
                   </span>
                 )}
@@ -235,7 +235,7 @@ export default async function BillingPage() {
                 ) : checkoutUrl ? (
                   <a
                     href={checkoutUrl}
-                    className="block text-center text-sm font-medium bg-primary text-[#080808] hover:bg-primary/90 rounded-lg py-2 transition-colors"
+                    className="block text-center text-sm font-medium bg-primary text-[#000000] hover:bg-primary/90 rounded-lg py-2 transition-colors"
                   >
                     Upgrade
                   </a>

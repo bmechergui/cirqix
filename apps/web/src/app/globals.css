@@ -4,25 +4,26 @@
 
 @layer base {
   :root {
-    --background: 0 0% 3%;
+    /* Noir et blanc (2026-09-15) — voir tailwind.config.ts */
+    --background: 0 0% 0%;
     --foreground: 0 0% 100%;
-    --card: 0 0% 7%;
+    --card: 0 0% 4%;
     --card-foreground: 0 0% 100%;
-    --popover: 0 0% 7%;
+    --popover: 0 0% 4%;
     --popover-foreground: 0 0% 100%;
-    --primary: 198 100% 50%;
-    --primary-foreground: 0 0% 3%;
-    --secondary: 0 0% 10%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 8%;
     --secondary-foreground: 0 0% 100%;
-    --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 44%;
-    --accent: 33 94% 44%;
-    --accent-foreground: 0 0% 100%;
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 54%;
+    --accent: 0 0% 64%;
+    --accent-foreground: 0 0% 0%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 198 100% 50%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 100%;
     --radius: 0.5rem;
   }
 
@@ -37,28 +38,28 @@
   /* ── PCB grid background ─────────────────────────────── */
   .pcb-grid {
     background-image:
-      linear-gradient(rgba(0,194,255,0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,194,255,0.04) 1px, transparent 1px);
+      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
     background-size: 40px 40px;
   }
 
   .pcb-grid-dense {
     background-image:
-      linear-gradient(rgba(0,194,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,194,255,0.03) 1px, transparent 1px);
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
     background-size: 20px 20px;
   }
 
   /* ── Typography ──────────────────────────────────────── */
   .text-gradient {
-    background: linear-gradient(135deg, #00C2FF 0%, #D4820A 100%);
+    background: linear-gradient(135deg, #ffffff 0%, #737373 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .text-gradient-cyan {
-    background: linear-gradient(135deg, #00C2FF 0%, #00e5ff 100%);
+    background: linear-gradient(135deg, #ffffff 0%, #a3a3a3 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -67,10 +68,10 @@
   .font-display { font-family: var(--font-syne), system-ui, sans-serif; }
 
   /* ── Glow effects ────────────────────────────────────── */
-  .glow-cyan       { box-shadow: 0 0 20px rgba(0,194,255,0.35); }
-  .glow-cyan-sm    { box-shadow: 0 0 10px rgba(0,194,255,0.2); }
-  .glow-cyan-lg    { box-shadow: 0 0 40px rgba(0,194,255,0.4), 0 0 80px rgba(0,194,255,0.15); }
-  .glow-copper-sm  { box-shadow: 0 0 10px rgba(212,130,10,0.25); }
+  .glow-cyan       { box-shadow: 0 0 20px rgba(255,255,255,0.12); }
+  .glow-cyan-sm    { box-shadow: 0 0 10px rgba(255,255,255,0.08); }
+  .glow-cyan-lg    { box-shadow: 0 0 40px rgba(255,255,255,0.14), 0 0 80px rgba(255,255,255,0.05); }
+  .glow-copper-sm  { box-shadow: 0 0 10px rgba(255,255,255,0.1); }
 
   /* ── Circuit corner brackets ─────────────────────────── */
   .circuit-corners {
@@ -82,7 +83,7 @@
     position: absolute;
     width: 16px;
     height: 16px;
-    border-color: rgba(0,194,255,0.5);
+    border-color: rgba(255,255,255,0.5);
     border-style: solid;
   }
   .circuit-corners::before {
@@ -105,7 +106,7 @@
     position: absolute;
     left: 0; right: 0; bottom: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(0,194,255,0.6), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
   }
 
   /* ── Scan line overlay ───────────────────────────────── */
@@ -118,7 +119,7 @@
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(0,194,255,0.15), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
     animation: scan 8s linear infinite;
     pointer-events: none;
   }
@@ -128,8 +129,8 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    border: 1px solid rgba(0,194,255,0.5);
-    background: rgba(0,194,255,0.1);
+    border: 1px solid rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.1);
     display: inline-block;
     flex-shrink: 0;
   }
@@ -152,6 +153,6 @@
     font-size: 10px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: rgba(0,194,255,0.5);
+    color: rgba(255,255,255,0.5);
   }
 }

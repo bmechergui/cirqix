@@ -21,31 +21,33 @@ a une raison d'être, comme chaque piste sur un PCB.
 
 ### Palette principale
 
+> ⚠️ **Noir et blanc depuis le 2026-09-15** (demande utilisateur : fond noir, logo
+> monochrome dans l'esprit de x.ai / Grok). Les tokens `cyan-*` et `copper-*`
+> gardent leur NOM dans `tailwind.config.ts` — ce sont des rôles (marque, accent
+> secondaire), plus des teintes. Les couleurs de DONNÉES du viewer (couches F.Cu /
+> B.Cu, nets du schéma) ne sont pas des couleurs de marque et restent inchangées.
+> Logo : `apps/web/public/logo.svg`, `icone.svg`, `src/app/icon.svg`, `docs/logo/`.
+
 ```
-Background  #080808   ← Noir PCB (fond de la carte)
-Surface-1   #111111   ← Cartes, modales, panels
-Surface-2   #1A1A1A   ← Hover states, inputs
-Surface-3   #242424   ← Séparateurs, borders subtils
-Border      #2E2E2E   ← Borders des composants
-Border-hi   #3D3D3D   ← Borders en focus/hover
+Background  #000000   ← Noir pur
+Surface-1   #0A0A0A   ← Cartes, modales, panels
+Surface-2   #141414   ← Hover states, inputs
+Surface-3   #1F1F1F   ← Séparateurs, borders subtils
+Border      #262626   ← Borders des composants
+Border-hi   #3A3A3A   ← Borders en focus/hover
 ```
 
-### Accent — Cyan électrique (IA + précision)
+### Marque — blanc (token `cyan-*`)
 ```
-Cyan-50     #E0FAFE
-Cyan-100    #B3F4FD
-Cyan-200    #66E8FB
-Cyan-300    #1AD9F8
-Cyan-400    #00C2FF   ← Primary brand color (CTA, links, actif)
-Cyan-500    #00A3D9   ← Hover
-Cyan-600    #0082AD   ← Active / pressed
+Cyan-400    #FFFFFF   ← Primary brand color (CTA, links, actif)
+Cyan-500    #D4D4D4   ← Hover
+Cyan-600    #A3A3A3   ← Active / pressed
 ```
 
-### Copper — Cuivre PCB (accent secondaire)
+### Accent secondaire — gris (token `copper-*`)
 ```
-Copper-300  #F0A855
-Copper-400  #D4820A   ← Badges, highlights, traces PCB
-Copper-500  #B06A08
+Copper-400  #A3A3A3   ← Badges, highlights
+Copper-500  #737373
 ```
 
 ### Semantic

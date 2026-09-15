@@ -25,7 +25,7 @@ export function MessageBubble({ msg, isStreaming }: MessageBubbleProps) {
         <div
           className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed min-w-0 ${
             isUser
-              ? 'bg-primary/90 text-[#080808] font-medium rounded-tr-sm whitespace-pre-wrap break-words'
+              ? 'bg-primary/90 text-[#000000] font-medium rounded-tr-sm whitespace-pre-wrap break-words'
               : 'bg-[#161616] text-foreground border border-border rounded-tl-sm break-words'
           }`}
         >

@@ -6,32 +6,35 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: '#080808',
+        // Noir et blanc (2026-09-15) — fond noir pur, marque monochrome, dans
+        // l'esprit de x.ai / Grok. Les noms `cyan` / `copper` restent pour ne pas
+        // toucher 47 fichiers : ce sont des RÔLES (marque, accent), plus des teintes.
+        background: '#000000',
         foreground: '#ffffff',
-        card: { DEFAULT: '#111111', foreground: '#ffffff' },
-        popover: { DEFAULT: '#111111', foreground: '#ffffff' },
-        primary: { DEFAULT: '#00C2FF', foreground: '#080808' },
-        secondary: { DEFAULT: '#1a1a1a', foreground: '#ffffff' },
-        muted: { DEFAULT: '#1a1a1a', foreground: '#71717a' },
-        accent: { DEFAULT: '#D4820A', foreground: '#080808' },
+        card: { DEFAULT: '#0a0a0a', foreground: '#ffffff' },
+        popover: { DEFAULT: '#0a0a0a', foreground: '#ffffff' },
+        primary: { DEFAULT: '#ffffff', foreground: '#000000' },
+        secondary: { DEFAULT: '#141414', foreground: '#ffffff' },
+        muted: { DEFAULT: '#141414', foreground: '#8a8a8a' },
+        accent: { DEFAULT: '#a3a3a3', foreground: '#000000' },
         destructive: { DEFAULT: '#ef4444', foreground: '#ffffff' },
-        border: '#2e2e2e',
-        input: '#2e2e2e',
-        ring: '#00C2FF',
+        border: '#262626',
+        input: '#262626',
+        ring: '#ffffff',
         // Cirqix custom
-        'bg-base': '#080808',
-        'bg-1': '#111111',
-        'bg-2': '#1a1a1a',
-        'bg-3': '#242424',
-        'border-hi': '#3d3d3d',
+        'bg-base': '#000000',
+        'bg-1': '#0a0a0a',
+        'bg-2': '#141414',
+        'bg-3': '#1f1f1f',
+        'border-hi': '#3a3a3a',
         cyan: {
-          400: '#00C2FF',
-          500: '#00A3D9',
-          600: '#0082AD',
+          400: '#ffffff',
+          500: '#d4d4d4',
+          600: '#a3a3a3',
         },
         copper: {
-          400: '#D4820A',
-          500: '#B06A08',
+          400: '#a3a3a3',
+          500: '#737373',
         },
         success: '#22C55E',
         warning: '#F59E0B',
@@ -47,8 +50,8 @@ const config: Config = {
         display: ['var(--font-syne)', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        'glow-cyan': '0 0 20px rgba(0,194,255,0.35)',
-        'glow-cyan-sm': '0 0 10px rgba(0,194,255,0.2)',
+        'glow-cyan': '0 0 20px rgba(255,255,255,0.18)',
+        'glow-cyan-sm': '0 0 10px rgba(255,255,255,0.1)',
       },
       keyframes: {
         blink: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0' } },
