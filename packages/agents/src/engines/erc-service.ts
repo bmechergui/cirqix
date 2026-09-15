@@ -16,7 +16,20 @@ const log = pino({
   level: process.env['LOG_LEVEL'] ?? 'info',
 });
 
-const ERC_TIMEOUT_MS = 10_000;
+/**
+ * Budget client de `/erc` — il doit couvrir le pire cas que le SERVICE s'accorde.
+ *
+ * ⚠️ Mesuré le 2026-09-15 (run NE555 `1b2c2ab4`) : à 10 s, le client raccrochait
+ * pendant que le service travaillait encore — validation journalisée, aucun
+ * `POST /erc` en retour. Le handler retombait sur l'ERC TypeScript et promouvait
+ * `ERC_CLEAN` sous la note « kicad-cli indisponible », alors que kicad-cli
+ * l'était parfaitement. Isolé, le même schéma passe en 3,6-4,1 s ; mais
+ * `routers/erc.py` s'accorde jusqu'à 3 passes kicad-cli de 30 s chacune
+ * (+ ~3 s de validation kicad-tools). 120 s couvre ces 93 s avec marge.
+ *
+ * Garde (lit les limites dans `routers/erc.py`) : tests/erc-budget.test.ts.
+ */
+export const ERC_TIMEOUT_MS = 120_000;
 
 export class ErcServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
