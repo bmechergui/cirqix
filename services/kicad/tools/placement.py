@@ -950,6 +950,30 @@ def _trop_pres_du_bord(
     ]
 
 
+# D-2026-09-15-a (validée) : la COURTYARD d'un composant non ancré reste à 2 mm
+# du bord — la place de sa référence de sérigraphie (texte de 1 mm).
+_MARGE_COURTYARD_BORD_MM: float = 2.0
+
+
+def _courtyard_trop_pres_du_bord(
+    bornes: tuple[float, float, float, float],
+    boites: list[tuple[str, tuple[float, float, float, float]]],
+    marge: float = _MARGE_COURTYARD_BORD_MM,
+) -> list[str]:
+    """Refs dont la courtyard (boîte absolue x0, y0, x1, y1) est à moins de `marge` d'un bord.
+
+    ⚠️ Mesure du 2026-09-15 : R2 à 1,2 mm du bord, pastilles dessous — le
+    contrôle des pastilles le laissait passer, et sa référence n'avait aucune
+    place : `silk_edge_clearance` sur 2 runs sur 5.
+    """
+    min_x, max_x, min_y, max_y = bornes
+    return [
+        ref for ref, (x0, y0, x1, y1) in boites
+        if x0 < min_x + marge or x1 > max_x - marge
+        or y0 < min_y + marge or y1 > max_y - marge
+    ]
+
+
 def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
     """`_trop_pres_du_bord` sur un board, dans le repère de `_repair_off_board`."""
     from kicad_tools.schema.pcb import PCB
@@ -962,10 +986,18 @@ def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
         return []
     if bornes is None:
         return []
-    return _trop_pres_du_bord(bornes, [
+    fps = [fp for fp in pcb.footprints if fp.reference]
+    pastilles = set(_trop_pres_du_bord(bornes, [
         (fp.reference, fp.position[0], fp.position[1], _footprint_reach_mm(fp))
-        for fp in pcb.footprints if fp.reference
-    ])
+        for fp in fps
+    ]))
+    boites = []
+    for fp in fps:
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        x, y = fp.position
+        boites.append((fp.reference, (x + bx0, y + by0, x + bx1, y + by1)))
+    courtyards = set(_courtyard_trop_pres_du_bord(bornes, boites))
+    return [fp.reference for fp in fps if fp.reference in pastilles | courtyards]
 
 
 def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
@@ -1012,7 +1044,11 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
             continue
         # Marge PROPRE au composant : ses pads doivent tenir dans le contour,
         # pas seulement son centre (cf. _footprint_reach_mm).
-        marge = _footprint_reach_mm(fp) + _OFF_BOARD_MARGIN_MM
+        # ... et sa COURTYARD à _MARGE_COURTYARD_BORD_MM du bord (D-2026-09-15-a) :
+        # l'étendue retenue est la plus grande des deux, depuis le centre.
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        etendue = max(_footprint_reach_mm(fp), abs(bx0), abs(bx1), abs(by0), abs(by1))
+        marge = etendue + max(_OFF_BOARD_MARGIN_MM, _MARGE_COURTYARD_BORD_MM)
         min_x, max_x = bornes[0] + marge, bornes[1] - marge
         min_y, max_y = bornes[2] + marge, bornes[3] - marge
         if min_x >= max_x or min_y >= max_y:

@@ -14,27 +14,6 @@
 
 ## En attente de validation
 
-### D-2026-09-15-a — Marge entre un composant et le bord, pour que sa référence y tienne
-- **Le fait mesuré :** 5 runs du prompt « diviseur de tension 5 V vers 3,3 V »
-  par la file (après #201) : 5 livrés, dont **2 avec `silk_edge_clearance`**
-  (« Silkscreen clipped by board edge »), même cause sur les deux — la
-  référence de R2 (texte y 92,22..93,92) coupée par le bord haut (y 92,45).
-- **Ce qui est déjà corrigé sans décision (#202) :** `degager_references`
-  refuse désormais toute place hors carte. Mais rejoué sur les boards des runs
-  3 et 4, **aucune place libre n'existe** : carte de 9,8 mm de large, R2 à
-  1,2 mm du bord, ses pastilles dessous. L'avertissement reste (1 → 1).
-- **Pourquoi c'est un seuil :** le contrôle de bord de #201 exige 0,75 mm
-  entre les PASTILLES et le bord (le dégagement cuivre du DRC, 0,5 mm, + 0,25
-  de marge de mesure). Rien ne réserve la place d'un texte de 1 mm.
-- **Options :**
-  - **A (recommandée)** — la COURTYARD de chaque composant non ancré à au moins
-    **2 mm** du bord, dans `_trop_pres_du_bord` (`tools/placement.py`). Coût
-    possible : cartes resserrées automatiquement un peu plus grandes.
-    À mesurer sur les 11 cartes du banc et 5 runs du prompt.
-  - **B** — accepter l'avertissement : cosmétique, non bloquant, sans effet
-    électrique ni de fabrication.
-- **Ce que l'utilisateur doit arbitrer :** A ou B. Rien n'est implémenté.
-
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 > ⚠️ **CETTE DÉCISION EST APPLIQUÉE EN PRODUCTION DEPUIS LE 2026-08-29**, alors
 > qu'elle figure ici « en attente ». Le snap tourne à chaque placement
@@ -116,6 +95,32 @@
 ---
 
 ## Validées par l'utilisateur
+
+### D-2026-09-15-a — Marge entre un composant et le bord, pour que sa référence y tienne
+**Statut : validée sous délégation** le 2026-09-15 — l'utilisateur a répondu
+« go », puis explicitement « c'est toi de choisir ». Option **A** retenue :
+elle supprime la cause (aucune place pour la référence) au lieu d'accepter
+l'avertissement, et son coût (carte parfois un peu plus grande) est mesurable
+avant livraison. Implémentation et mesure : voir la PR qui la livre.
+- **Le fait mesuré :** 5 runs du prompt « diviseur de tension 5 V vers 3,3 V »
+  par la file (après #201) : 5 livrés, dont **2 avec `silk_edge_clearance`**
+  (« Silkscreen clipped by board edge »), même cause sur les deux — la
+  référence de R2 (texte y 92,22..93,92) coupée par le bord haut (y 92,45).
+- **Ce qui est déjà corrigé sans décision (#202) :** `degager_references`
+  refuse désormais toute place hors carte. Mais rejoué sur les boards des runs
+  3 et 4, **aucune place libre n'existe** : carte de 9,8 mm de large, R2 à
+  1,2 mm du bord, ses pastilles dessous. L'avertissement reste (1 → 1).
+- **Pourquoi c'est un seuil :** le contrôle de bord de #201 exige 0,75 mm
+  entre les PASTILLES et le bord (le dégagement cuivre du DRC, 0,5 mm, + 0,25
+  de marge de mesure). Rien ne réserve la place d'un texte de 1 mm.
+- **Options :**
+  - **A (recommandée)** — la COURTYARD de chaque composant non ancré à au moins
+    **2 mm** du bord, dans `_trop_pres_du_bord` (`tools/placement.py`). Coût
+    possible : cartes resserrées automatiquement un peu plus grandes.
+    À mesurer sur les 11 cartes du banc et 5 runs du prompt.
+  - **B** — accepter l'avertissement : cosmétique, non bloquant, sans effet
+    électrique ni de fabrication.
+- **Ce que l'utilisateur doit arbitrer :** A ou B. Rien n'est implémenté.
 
 ### D-2026-09-05-a — La retenue de crédit suit le travail réel (fenêtre glissante)
 **Tranchée le 2026-09-05 : l'utilisateur a validé cette action précise** (« ok »
