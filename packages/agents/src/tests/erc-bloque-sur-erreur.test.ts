@@ -13,9 +13,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * la faute que ce dépôt traque partout.
  *
  * ⚠️ Les AVERTISSEMENTS ne bloquent pas, et c'est mesuré : sur ce même schéma,
- * 29 des 31 violations restantes sont `lib_symbol_issues` et
- * `footprint_link_issues` — le conteneur n'a pas de table de bibliothèques.
- * Bloquer dessus arrêterait toutes les cartes pour du bruit d'environnement.
+ * les 31 violations restantes étaient `lib_symbol_issues` et
+ * `footprint_link_issues` — le conteneur n'avait pas de table de bibliothèques
+ * (installées dans l'image le 2026-09-15 : 31 → 0). Bloquer dessus aurait
+ * arrêté toutes les cartes pour du bruit d'environnement.
  */
 
 const services = vi.hoisted(() => ({

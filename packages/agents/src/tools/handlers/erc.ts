@@ -24,9 +24,11 @@ interface ViolationErc { readonly severity?: unknown }
  * Les violations de sévérité ERREUR — les seules qui arrêtent le pipeline.
  *
  * ⚠️ Les AVERTISSEMENTS ne bloquent pas, et c'est mesuré. Sur le schéma NE555
- * du 2026-09-14, 29 des 31 violations restantes sont `lib_symbol_issues` et
- * `footprint_link_issues` : le conteneur n'a pas de table de bibliothèques.
- * Bloquer dessus arrêterait toutes les cartes pour du bruit d'environnement.
+ * du 2026-09-14, les 31 violations restantes étaient `lib_symbol_issues` et
+ * `footprint_link_issues` : le conteneur n'avait pas de table de bibliothèques.
+ * Bloquer dessus aurait arrêté toutes les cartes pour du bruit d'environnement.
+ * L'image installe ces tables depuis le 2026-09-15 (31 → 0) ; la règle reste :
+ * un avertissement signale, seule une erreur arrête.
  */
 function compterErreurs(violations: readonly ViolationErc[] | undefined): number {
   return (violations ?? []).filter((v) => String(v?.severity ?? '') === 'error').length;
