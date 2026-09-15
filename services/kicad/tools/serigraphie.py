@@ -63,6 +63,33 @@ _LARGEUR_PAR_CARACTERE = 1.05
 _RAYONS_MM = (0.0, 0.8, 1.6, 2.4, 3.2, 4.0)
 _ANGLES = (90, 270, 0, 180, 45, 135, 225, 315)
 
+# Marge entre une référence et le bord de la carte. `silk_edge_clearance`
+# (« Silkscreen clipped by board edge ») tombe dès que le texte touche le contour.
+_MARGE_BORD_MM = 0.25
+
+
+def _contour(pcb: Any) -> tuple[float, float, float, float] | None:
+    """Le contour Edge.Cuts dans le repère des positions, ou None s'il est illisible.
+
+    ⚠️ Mesure du 2026-09-15 : 2 runs sur 5 du prompt « diviseur de tension »
+    livraient la référence de R2 au-delà du bord haut (texte y 92,22 pour un
+    bord à 92,45). Le bord n'était pas un obstacle : une place hors carte était
+    « libre ». Sans contour lisible, on garde l'ancien comportement.
+    """
+    try:
+        from tools.contour_et_bords import _contour_repere_board
+        return _contour_repere_board(pcb)
+    except Exception:  # noqa: BLE001 — un faux board de test n'a pas de contour
+        return None
+
+
+def _deborde(boite: tuple, contour: tuple | None, marge: float = _MARGE_BORD_MM) -> bool:
+    if contour is None:
+        return False
+    x0, y0, x1, y1 = contour
+    return (boite[0] < x0 + marge or boite[1] < y0 + marge
+            or boite[2] > x1 - marge or boite[3] > y1 - marge)
+
 
 def _boite_texte(cx: float, cy: float, texte: str, hauteur: float,
                  rot_deg: float) -> tuple[float, float, float, float]:
@@ -243,6 +270,7 @@ def degager_references(pcb: Any) -> int:
     cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
     boites = boites_des_references(pcb)
     par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    contour = _contour(pcb)
     deplaces = 0
 
     for ref in sorted(boites):
@@ -252,7 +280,9 @@ def degager_references(pcb: Any) -> int:
             continue
         autres = [b for r, b in boites.items() if r != ref]
         genes = cuivre + autres
-        if not any(_chevauche(boites[ref], o) for o in genes):
+        # Une référence coupée par le bord est aussi mal placée qu'une référence
+        # posée sur du cuivre.
+        if not any(_chevauche(boites[ref], o) for o in genes) and not _deborde(boites[ref], contour):
             continue
 
         haut = _hauteur(t)
@@ -267,7 +297,7 @@ def degager_references(pcb: Any) -> int:
                 ndy = dy0 + rayon * math.sin(math.radians(ang))
                 cx, cy = _absolu(fp, ndx, ndy)
                 b = _boite_texte(cx, cy, ref, haut, rot)
-                if not any(_chevauche(b, o) for o in genes):
+                if not any(_chevauche(b, o) for o in genes) and not _deborde(b, contour):
                     trouve = (ndx, ndy, b)
                     break
             if trouve:
