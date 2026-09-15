@@ -26,7 +26,7 @@ const SEV = {
 
 function GroupHeader({ label, count, color }: { label: string; count: number; color: string }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-[#080808] border-b border-[#111]">
+    <div className="flex items-center gap-3 px-4 py-2 bg-[#000000] border-b border-[#111]">
       <span className="text-[9px] font-mono font-bold tracking-widest uppercase" style={{ color }}>
         {label}
       </span>
@@ -78,7 +78,7 @@ export function DrcView({ state }: { state: PCBState }) {
     : `${errors.length} error${errors.length !== 1 ? 's' : ''} · ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`;
 
   return (
-    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
+    <div className="flex flex-col h-full bg-[#000000] overflow-hidden">
       <StageHeader
         icon={<ShieldCheck size={12} />}
         title="DRC — Design Rules Check"

@@ -311,7 +311,7 @@ export function SchemaView({ state }: { state: PCBState }) {
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className="flex flex-col h-full bg-[#080808] overflow-hidden">
+    <div className="flex flex-col h-full bg-[#000000] overflow-hidden">
       <StageHeader
         icon={<FileText size={12} />}
         title="Schematic"
@@ -334,7 +334,7 @@ export function SchemaView({ state }: { state: PCBState }) {
       ) : (
         <>
           {/* Sub-tabs */}
-          <div className="flex items-center gap-1 px-3 py-2 border-b border-[#141414] bg-[#080808] shrink-0">
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-[#141414] bg-[#000000] shrink-0">
             <TabBtn
               active={tab === 'diagram'}
               onClick={() => setTab('diagram')}
@@ -359,7 +359,7 @@ export function SchemaView({ state }: { state: PCBState }) {
 
           <div className="flex-1 min-h-0 overflow-hidden">
             {tab === 'diagram' && (
-              <div className="h-full overflow-hidden p-3 bg-[#080808]">
+              <div className="h-full overflow-hidden p-3 bg-[#000000]">
                 <SchematicGraph components={components} connections={connections} />
               </div>
             )}
