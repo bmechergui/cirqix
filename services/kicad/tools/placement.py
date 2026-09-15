@@ -924,6 +924,49 @@ def _off_board_refs(pcb_path: Path) -> list[str]:
 _OFF_BOARD_MARGIN_MM: float = 2.0
 _OFF_BOARD_SPACING_MM: float = 2.5
 
+# Degagement cuivre-bord exige par le DRC (board setup : 0,5 mm), et la marge
+# de la mesure par portee — plus grossiere que la boite reelle d'une pastille.
+_DEGAGEMENT_BORD_MM: float = 0.5
+_MARGE_MESURE_BORD_MM: float = 0.25
+
+
+def _trop_pres_du_bord(
+    bornes: tuple[float, float, float, float],
+    empreintes: list[tuple[str, float, float, float]],
+    degagement: float = _DEGAGEMENT_BORD_MM + _MARGE_MESURE_BORD_MM,
+) -> list[str]:
+    """Refs dont les PASTILLES (centre ± portée) sont à moins de `degagement` d'un bord.
+
+    ⚠️ `PlacementAnalyzer` ne signale OFF_BOARD que si le CENTRE est dehors.
+    Mesuré le 2026-09-15 sur un 0603 (portée 1,225 mm) : centres x = 0,9 (pastilles
+    à -0,33 mm du bord), 1,33 (0,105) et 1,5 (0,275) — aucun signalé. Le DRC, lui,
+    refuse chacun en `copper_edge_clearance`.
+    """
+    min_x, max_x, min_y, max_y = bornes
+    return [
+        ref for ref, x, y, portee in empreintes
+        if x - portee < min_x + degagement or x + portee > max_x - degagement
+        or y - portee < min_y + degagement or y + portee > max_y - degagement
+    ]
+
+
+def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
+    """`_trop_pres_du_bord` sur un board, dans le repère de `_repair_off_board`."""
+    from kicad_tools.schema.pcb import PCB
+
+    try:
+        pcb = PCB.load(str(pcb_path))
+        bornes = _outline_bounds(pcb)
+    except Exception:
+        logger.exception("détection bord: board illisible")
+        return []
+    if bornes is None:
+        return []
+    return _trop_pres_du_bord(bornes, [
+        (fp.reference, fp.position[0], fp.position[1], _footprint_reach_mm(fp))
+        for fp in pcb.footprints if fp.reference
+    ])
+
 
 def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     """Ramène dans le contour les seuls footprints signalés hors carte.
@@ -947,7 +990,11 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     """
     from kicad_tools.schema.pcb import PCB
 
-    fautifs = set(_off_board_refs(pcb_path))
+    # L'analyseur fait foi pour un centre DEHORS, ancrages compris. La mesure
+    # géométrique ajoute les débords PARTIELS qu'il ne voit pas — sauf sur un
+    # ancrage : un connecteur posé au bord est un choix, pas une erreur.
+    fautifs = set(_off_board_refs(pcb_path)) | (
+        set(_refs_trop_pres_du_bord(pcb_path)) - set(anchored))
     if not fautifs:
         return []
 
@@ -989,6 +1036,25 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     if deplaces:
         pcb.save(str(pcb_path))
     return deplaces
+
+
+def _garder_dans_le_contour(pcb_path: Path, ancres_reparation: list[str],
+                            ancres_inspecteur: list[str]) -> list[str]:
+    """Filet hors-carte + Inspecteur qui N'ANNULE PAS la réparation.
+
+    ⚠️ À appeler APRÈS la dernière étape qui déplace. Mesuré le 2026-09-15 : le
+    filet passait avant la grille, dont l'Inspecteur n'ancre que les connecteurs
+    — il a repoussé R1 de 1,9 mm, pastille à -0,18 mm du bord, et le DRC a
+    refusé la carte. On ancre donc les refs réparées dans l'Inspecteur.
+    """
+    repares = _repair_off_board(pcb_path, ancres_reparation)
+    if repares:
+        logger.warning(
+            "auto_place: %d composant(s) hors carte ou contre le bord réparé(s) (%s)",
+            len(repares), ", ".join(repares))
+        _resolve_remaining_conflicts(pcb_path, list(ancres_inspecteur) + repares)
+        _rendre_lisible(pcb_path)
+    return repares
 
 
 def _footprint_reach_mm(fp) -> float:
@@ -2667,12 +2733,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # board (« placement invalid »). L'Inspecteur ne peut pas le résoudre —
         # PlacementFixer n'a aucun traitement de OFF_BOARD. On répare, puis on
         # le relance en ANCRANT les refs réparées, sinon il les ressort.
-        repares = _repair_off_board(out, conn)
-        if repares:
-            logger.warning(
-                "auto_place: %d composant(s) hors carte réparé(s) (%s)",
-                len(repares), ", ".join(repares))
-            _resolve_remaining_conflicts(out, fixes_snap + repares)
+        _garder_dans_le_contour(out, conn, fixes_snap)
 
         # ⚠️ Repasser l ecartement APRES le raffinement et l Inspecteur : le
         # CMA-ES ne connait pas nos ancrages dominants et peut y ramener des
@@ -2754,6 +2815,11 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                     logger.info("auto_place: alignement sur grille annule "
                                 "(%d -> %d erreurs)", err_avant_grille,
                                 _compter_conflits_erreur(out))
+
+        # ⚠️ LE FILET HORS-CARTE REPASSE ICI, apres la derniere etape qui
+        # deplace (2026-09-15) : l Inspecteur de la grille n ancre que les
+        # connecteurs et a ressorti R1 que le premier filet venait de rentrer.
+        _garder_dans_le_contour(out, conn, fixes_snap)
 
         # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
         # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les
