@@ -18,45 +18,28 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
  * remplacés par des témoins qui enregistrent ce qui est monté.
  */
 
-const temoins = vi.hoisted(() => ({ orbit: vi.fn(), glb: vi.fn() }));
+const temoins = vi.hoisted(() => ({ orbit: vi.fn(), glb: vi.fn(), canvas: vi.fn() }));
 
 vi.mock('@react-three/fiber', () => ({
-  Canvas: ({ children, ...props }: { children?: React.ReactNode; 'data-testid'?: string }) => (
-    <div data-testid={props['data-testid'] ?? 'canvas'}>{children}</div>
-  ),
+  Canvas: ({ children, ...props }: { children?: React.ReactNode; flat?: boolean; 'data-testid'?: string }) => {
+    temoins.canvas(props);
+    return <div data-testid={props['data-testid'] ?? 'canvas'}>{children}</div>;
+  },
+  // Pas de WebGL : l'environnement local ne s'installe pas, mais le composant se monte.
+  useThree: () => undefined,
 }));
 vi.mock('@react-three/drei', async () => {
   const { Object3D } = await import('three');
   return {
     OrbitControls: (props: Record<string, unknown>) => { temoins.orbit(props); return <div data-testid="orbit-controls" />; },
-    useGLTF: (url: string) => { temoins.glb(url); return { scene: new Object3D() }; },
+    useGLTF: (url: string) => { temoins.glb(url); return { scene: new Object3D(), parser: { json: {}, associations: new Map() } }; },
   };
 });
 vi.mock('@/widgets/viewer/ui/RenderView', () => ({
   RenderView: ({ family }: { family: string }) => <div data-testid="render-view">photo:{family}</div>,
 }));
 
-import { Board3DView, modelUrl, ajustementKiCad, FR4_KICAD } from '@/widgets/viewer/ui/Board3DView';
-
-describe('ajustementKiCad', () => {
-  it('le cœur FR4 — gris neutre annonce METALLIQUE par l export — retrouve sa matiere', () => {
-    // `kicad-cli pcb export glb` ecrit 0.5/0.5/0.5 avec metallicFactor 1.0.
-    expect(ajustementKiCad(0.5, 0.5, 0.5, 1)).toEqual({ color: FR4_KICAD, metalness: 0, roughness: 0.8 });
-  });
-  it('le vernis et la serigraphie de KiCad ne sont JAMAIS reteints', () => {
-    // Ils sortent deja justes du GLB, semi-transparents (alpha 0,83 et 0,9).
-    expect(ajustementKiCad(0.08, 0.2, 0.14, 0)).toBeNull();
-    expect(ajustementKiCad(1, 1, 1, 0)).toBeNull();
-  });
-  it('le cuivre et les composants ne sont jamais reteints', () => {
-    expect(ajustementKiCad(0.7, 0.61, 0.0, 1)).toBeNull();   // pastilles dorees
-    expect(ajustementKiCad(0.9, 0.1, 0.1, 0)).toBeNull();    // un corps rouge
-    expect(ajustementKiCad(0.05, 0.05, 0.05, 0)).toBeNull(); // un boitier noir
-  });
-  it('un gris NON metallique est laisse tel quel — c est un composant, pas la carte', () => {
-    expect(ajustementKiCad(0.5, 0.5, 0.5, 0)).toBeNull();
-  });
-});
+import { Board3DView, modelUrl, SCENE_KICAD } from '@/widgets/viewer/ui/Board3DView';
 
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 12, 0, 0, 0]);
 
@@ -117,6 +100,21 @@ describe('Board3DView', () => {
     const options = temoins.orbit.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(options['enableDamping']).toBe(true);
     expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('le visualiseur de KiCad : degrade gris-bleu derriere un canvas transparent, sans tone mapping, en espace d affichage', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => reponseGlb()));
+    render(<Board3DView projectId="p1" />);
+    await waitFor(() => expect(screen.getByTestId('board-3d-canvas')).toBeInTheDocument());
+    const fond = screen.getByTestId('board-3d-fond').getAttribute('style') ?? '';
+    expect(fond).toContain('linear-gradient');
+    const props = temoins.canvas.mock.calls[0]?.[0] as { flat?: boolean; linear?: boolean; gl?: { alpha?: boolean } };
+    expect(props.flat).toBe(true);
+    // KiCad mélange vernis et cuivre en espace d'affichage : en linéaire, le FR4
+    // olive l'emportait sous le vernis et les pistes disparaissaient (capture du 2026-09-15).
+    expect(props.linear).toBe(true);
+    expect(props.gl?.alpha).toBe(true);
+    expect(SCENE_KICAD.environnement).toBeGreaterThan(0); // sans environnement, les métaux sortent noirs
   });
 
   it('montre le message du serveur sur une erreur, sans canvas, et Retry re-demande', async () => {
