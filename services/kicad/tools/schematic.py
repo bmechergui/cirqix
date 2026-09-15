@@ -328,25 +328,60 @@ def _resolve_pin(comp_obj: object, pin_name: object, comp_ref: str, net: object)
         except Exception:
             pass
 
-    for avail in available:
-        segments = [s.upper().strip("~{}") for s in avail.split("/")]
-        if pin_str in segments:
-            try:
-                comp_obj[avail] += net  # type: ignore[index]
-                return True
-            except Exception:
-                pass
+    def _segments(avail: str) -> list[str]:
+        return [s.upper().strip("~{}") for s in avail.split("/")]
 
-    for avail in available:
-        if pin_str in avail.upper().strip("~{}"):
-            try:
-                comp_obj[avail] += net  # type: ignore[index]
+    def _brancher(avail: str) -> bool:
+        try:
+            comp_obj[avail] += net  # type: ignore[index]
+            return True
+        except Exception:
+            return False
+
+    # 1. Le nom exact, puis les noms que KiCad donne a la meme fonction.
+    for candidat in (pin_str, *_ALIAS_BROCHES.get(pin_str, ())):
+        for avail in available:
+            if candidat in _segments(avail) and _brancher(avail):
+                if candidat != pin_str:
+                    logger.info("Pin %s[%s] → %s (alias de datasheet)", comp_ref, pin_name, avail)
                 return True
-            except Exception:
-                pass
+
+    # 2. Un PREFIXE qui ne designe qu'une seule broche : « TR » -> TRIG.
+    #
+    # ⚠️ Jamais une sous-chaine quelconque (mesure du 2026-09-15, NE555) : « R »
+    # etait CONTENU dans « THRES », et VCC se branchait sur la broche seuil, en
+    # silence, pendant que RESET restait en l'air. Une connexion fausse est pire
+    # qu'une connexion absente. Garde : tests/test_broches_par_nom.py.
+    prefixes = [a for a in available if any(s.startswith(pin_str) for s in _segments(a))]
+    if pin_str and len(prefixes) == 1 and _brancher(prefixes[0]):
+        logger.info("Pin %s[%s] → %s (prefixe unique)", comp_ref, pin_name, prefixes[0])
+        return True
 
     logger.warning("Pin %s[%s] → no match among %s", comp_ref, pin_name, available[:8])
     return False
+
+
+# Abreviations de datasheet -> noms de la meme fonction dans les bibliotheques
+# KiCad. Mesure du 2026-09-15 : un NE555 nomme TR/Q/R/CV/THR/DIS par sa
+# datasheet ; KiCad le nomme TRIG/OUT/~{RST}/CONT/THRES/DISCH.
+_ALIAS_BROCHES: dict[str, tuple[str, ...]] = {
+    "Q": ("OUT", "OUTPUT"),
+    "OUTPUT": ("OUT",),
+    "CV": ("CONT", "CTRL", "CONTROL"),
+    "CTRL": ("CONT", "CONTROL"),
+    "CONTROL": ("CONT", "CTRL"),
+    "R": ("RST", "RESET"),
+    "RESET": ("RST",),
+    "RST": ("RESET",),
+    "TR": ("TRIG", "TRIGGER"),
+    "TRIGGER": ("TRIG",),
+    "TRIG": ("TRIGGER",),
+    "THR": ("THRES", "THRESH", "THRESHOLD"),
+    "THRESH": ("THRES", "THRESHOLD"),
+    "THRESHOLD": ("THRES", "THRESH"),
+    "DIS": ("DISCH", "DISCHARGE"),
+    "DISCHARGE": ("DISCH",),
+}
 
 
 def _generate_with_cs_lib(
