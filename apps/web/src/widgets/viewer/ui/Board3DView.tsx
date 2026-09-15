@@ -1,25 +1,65 @@
 'use client';
 
 import { Component, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
-import { Box3, Vector3, type Object3D, type Mesh, type MeshStandardMaterial } from 'three';
+import { Box3, PMREMGenerator, Vector3 } from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Loader2, ImageOff, RefreshCw, RotateCcw, Camera, Move3d, Box } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { RenderView } from './RenderView';
+import { appliquerStyleKiCad, type GltfJson } from './kicad-3d-style';
 
 /**
  * La 3D INTERACTIVE du board : le modèle GLB exporté par KiCad
- * (`kicad-cli pcb export glb` — carte, pistes, pastilles, zones), servi par
+ * (`kicad-cli pcb export glb` — carte, pistes, pastilles, zones, vernis,
+ * sérigraphie et corps STEP des composants), servi par
  * `GET /api/projects/[id]/model`, affiché dans Three.js avec des contrôles
  * d'orbite. Clic-glisser pour tourner, molette pour zoomer, clic droit pour
  * déplacer — demandé le 2026-09-14 : « je clique avec le curseur et je peux
  * tourner n'importe où ».
  *
- * ⚠️ L'image du service n'a AUCUN modèle 3D de composant (0 installé) : les
- * composants n'apparaissent que par leurs pastilles. Le rendu « photo »
- * (raytracé, `RenderView`) reste accessible par le bouton Photo.
+ * Le style « visualiseur 3D de KiCad » vit dans `kicad-3d-style.ts`. Le rendu
+ * « photo » (raytracé, `RenderView`) reste accessible par le bouton Photo.
  */
+
+/**
+ * Éclairage et fond du visualiseur 3D de KiCad. Choisis par captures
+ * successives sur le GLB de `carte-05` (2026-09-15) : sans environnement, tout
+ * ce qui est métal (pistes, pastilles, broches) sortait noir ; trop de lumière
+ * d'ambiance délavait le vernis en vert pâle.
+ */
+export const SCENE_KICAD = {
+  fondHaut: '#ccccE6',
+  fondBas: '#666680',
+  hemisphere: 0.7,
+  principale: 1.3,
+  environnement: 0.15,
+} as const;
+
+/**
+ * Un environnement LOCAL (la `RoomEnvironment` de Three.js, calculée sur
+ * place) : les métaux ont enfin quelque chose à refléter. Pas de
+ * `<Environment>` de drei — il irait chercher un HDR sur un CDN que la CSP bloque.
+ */
+function EnvironnementLocal() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    // Sans contexte WebGL (jsdom), rien à installer.
+    if (!gl || !scene) return undefined;
+    const pmrem = new PMREMGenerator(gl);
+    const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = texture;
+    scene.environmentIntensity = SCENE_KICAD.environnement;
+    return () => {
+      scene.environment = null;
+      texture.dispose();
+      pmrem.dispose();
+    };
+  }, [gl, scene]);
+  return null;
+}
 
 export interface Board3DViewProps {
   projectId: string;
@@ -46,57 +86,13 @@ export function modelUrl(projectId: string, version?: number | string, attempt =
  * zoom deviennent indépendantes de la taille de la carte — un 20 × 15 mm et
  * un 208 × 156 mm arrivent cadrés pareil.
  */
-/**
- * Le style du visualiseur 3D de KiCad, demandé le 2026-09-14 (captures à
- * l'appui). L'essentiel vient du GLB lui-même depuis qu'on exporte le VERNIS
- * et la SÉRIGRAPHIE (`--include-soldermask --include-silkscreen`) : masque
- * vert semi-transparent (alpha 0,83 — on voit les pistes au travers, comme
- * dans KiCad) et sérigraphie blanche. On ne reteint donc rien de tout cela.
- *
- * ⚠️ Reste UN défaut de l'export : le corps FR4 sort en gris 0,5 avec
- * `metallicFactor = 1` — de la fibre de verre annoncée métallique, d'où la
- * tranche sombre et terne. On lui rend sa matière. Fonction PURE, testée.
- */
-export const FR4_KICAD = '#b9b47a';
-
-export interface AjustementMatiere {
-  readonly color: string;
-  readonly metalness: number;
-  readonly roughness: number;
-}
-
-export function ajustementKiCad(r: number, g: number, b: number, metalness: number): AjustementMatiere | null {
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const neutre = Math.abs(r - g) < 0.03 && Math.abs(g - b) < 0.03;
-  // Le cœur de la carte : gris neutre à mi-luminance, annoncé métallique.
-  if (neutre && metalness > 0.5 && lum > 0.4 && lum < 0.6) {
-    return { color: FR4_KICAD, metalness: 0, roughness: 0.8 };
-  }
-  return null;
-}
-
-function appliquerStyleKiCad(scene: Object3D): void {
-  scene.traverse((o) => {
-    const mesh = o as Mesh;
-    if (!mesh.isMesh) return;
-    const materiaux = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of materiaux) {
-      const std = m as MeshStandardMaterial;
-      if (!std.color || (std.userData as { kicadStyle?: boolean }).kicadStyle) continue;
-      const ajust = ajustementKiCad(std.color.r, std.color.g, std.color.b, std.metalness ?? 0);
-      if (ajust) {
-        std.color.set(ajust.color);
-        std.metalness = ajust.metalness;
-        std.roughness = ajust.roughness;
-      }
-      (std.userData as { kicadStyle?: boolean }).kicadStyle = true;
-    }
-  });
-}
-
 function Board({ url }: { url: string }) {
-  const { scene } = useGLTF(url);
-  useMemo(() => appliquerStyleKiCad(scene), [scene]);
+  const { scene, parser } = useGLTF(url);
+  // Le style se lit dans le JSON glTF : nom des maillages, facteurs PBR déclarés.
+  useMemo(
+    () => appliquerStyleKiCad(scene, parser.json as GltfJson, (m) => parser.associations.get(m)?.materials),
+    [scene, parser],
+  );
   const { scale, position } = useMemo(() => {
     const box = new Box3().setFromObject(scene);
     const size = new Vector3();
@@ -246,17 +242,19 @@ export function Board3DView({ projectId, version }: Board3DViewProps) {
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-0">
+      <div
+        className="relative flex-1 min-h-0"
+        data-testid="board-3d-fond"
+        style={{ background: `linear-gradient(to bottom, ${SCENE_KICAD.fondHaut}, ${SCENE_KICAD.fondBas})` }}
+      >
         {etat.kind === 'ready' && (
           <FrontiereCanvas onError={signalerErreur}>
-            {/* Éclairage local seulement : un `Environment` de drei irait chercher un HDR sur un CDN, que la CSP bloque. */}
-            <Canvas key={resetKey} camera={{ position: [0.5, 1.0, 1.1], fov: 40, near: 0.01, far: 100 }} dpr={[1, 2]} data-testid="board-3d-canvas">
-              {/* Fond dégradé bleu-gris et éclairage doux : le visualiseur 3D de KiCad. */}
-              <color attach="background" args={['#8f93a8']} />
-              <fog attach="fog" args={['#8f93a8', 3, 9]} />
-              <hemisphereLight args={['#ffffff', '#5b6070', 1.1]} />
-              <directionalLight position={[2, 3, 4]} intensity={1.5} />
-              <directionalLight position={[-3, -2, 2]} intensity={0.5} />
+            {/* Canvas transparent sur le dégradé gris-bleu de KiCad ; `flat` : pas de tone mapping ACES, qui ternissait vernis et sérigraphie. */}
+            <Canvas key={resetKey} flat gl={{ alpha: true }} camera={{ position: [0.75, 0.85, 0.95], fov: 35, near: 0.01, far: 100 }} dpr={[1, 2]} data-testid="board-3d-canvas">
+              <EnvironnementLocal />
+              <hemisphereLight args={['#ffffff', '#6b6f80', SCENE_KICAD.hemisphere]} />
+              <directionalLight position={[1.5, 3, 2]} intensity={SCENE_KICAD.principale} />
+              <directionalLight position={[-2, 1.5, -1.5]} intensity={0.4} />
               <Suspense fallback={null}>
                 <Board url={url} />
               </Suspense>
