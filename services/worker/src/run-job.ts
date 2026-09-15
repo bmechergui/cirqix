@@ -13,8 +13,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   PgSink,
+  TranscriptSink,
   runOrchestratorPipeline,
   runDriver,
+  type ChatMessageWriter,
   type PipelineJobPayload,
   type PipelineStore,
   type RunEventWriter,
@@ -52,6 +54,12 @@ export interface RunJobContext {
   readAgentMode: (runId: string) => Promise<string | null>;
   /** Écrit les lignes du journal de ce run. */
   createEventWriter: (runId: string) => RunEventWriter;
+  /**
+   * Historique de discussion du projet (migration 026). La réponse de l'agent
+   * y est consignée en fin de run — côté worker, car l'utilisateur a pu fermer
+   * son onglet pendant les 20 minutes du routage.
+   */
+  chatMessages: ChatMessageWriter;
   markRunning: (runId: string) => Promise<void>;
   heartbeat: (runId: string) => Promise<void>;
   finish: (
@@ -77,6 +85,8 @@ export async function runJob(
 
   const writer = ctx.createEventWriter(runId);
   const sink = new PgSink(runId, writer);
+  // Retient le texte visible de la réponse, consigné dans l'historique en fin de run.
+  const transcript = new TranscriptSink(sink);
 
   await ctx.markRunning(runId);
 
@@ -113,7 +123,7 @@ export async function runJob(
     // `pcb_runs`, pose par la route, et le gate JLCPCB exige `orchestrator` :
     // un board du driver reste non commandable, quelle que soit sa qualite.
     const outcome = await runOrchestratorPipeline({
-      sink,
+      sink: transcript,
       store: ctx.createStore(userId, projectId, agentMode),
       projectId,
       prompt,
@@ -158,13 +168,21 @@ export async function runJob(
     const message = err instanceof Error ? err.message : 'pipeline failed';
     // Le journal doit porter la cause : c'est tout ce que l'utilisateur verra,
     // le flux SSE n'existant plus pour la transmettre.
-    await sink.emit({ type: 'error', message }).catch(() => undefined);
+    await transcript.emit({ type: 'error', message }).catch(() => undefined);
     await sink.close().catch(() => undefined);
     await ctx.finish(runId, 'failed', message);
     log.error({ err, runId, projectId }, 'run échoué');
     throw err;
   } finally {
     clearInterval(beat);
+    // Succès, échec ou annulation : ce que l'utilisateur aurait lu rejoint
+    // l'historique. `append` ne lève jamais et n'écrit rien d'un texte vide.
+    await ctx.chatMessages.append({
+      projectId,
+      userId,
+      role: 'assistant',
+      content: transcript.transcript(),
+    });
   }
 }
 

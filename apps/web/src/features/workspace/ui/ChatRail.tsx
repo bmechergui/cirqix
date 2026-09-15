@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { Sparkles } from 'lucide-react';
-import type { Message } from '@cirqix/types';
+import { chatTextOfEvent, type Message } from '@cirqix/types';
 import { useAppStore } from '@/shared/store/app-store';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
@@ -30,9 +30,15 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
   const setPcbState = useAppStore((s) => s.setPcbState);
   const setSelectedStage = useAppStore((s) => s.setSelectedStage);
   const fetchCredits = useAppStore((s) => s.fetchCredits);
+  const fetchMessages = useAppStore((s) => s.fetchMessages);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // La conversation du projet revient à sa réouverture (migration 026).
+  useEffect(() => {
+    void fetchMessages(projectId);
+  }, [projectId, fetchMessages]);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -65,10 +71,12 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
       prompt: text,
       signal: ac.signal,
       onEvent: (ev) => {
+        // Texte de la bulle (token, bloc du Reasoner IA, erreur) : même
+        // formatage que l'historique persisté, défini une seule fois.
+        const chunk = chatTextOfEvent(ev);
+        if (chunk !== null) patchLastAssistantMessage(projectId, chunk);
+
         switch (ev.type) {
-          case 'token':
-            patchLastAssistantMessage(projectId, ev.content);
-            break;
           case 'step':
             setAgentStep(ev.step);
             // La progression appartient a UNE etape : la garder afficherait
@@ -89,14 +97,6 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
               ...(ev.detail ? { detail: ev.detail } : {}),
             });
             break;
-          case 'reasoning': {
-            // Reasoner IA — affiche les actions de déblocage du routage en direct
-            const block =
-              '\n\n🤖 **Reasoner IA — déblocage du routage :**\n' +
-              ev.steps.map((s) => `  ${s}`).join('\n');
-            patchLastAssistantMessage(projectId, block);
-            break;
-          }
           case 'status': {
             const stageMap = {
               INITIAL: 'IDEA',
@@ -110,9 +110,6 @@ export function ChatRail({ projectId, projectDescription }: ChatRailProps) {
             setSelectedStage(projectId, stageMap[ev.status]);
             break;
           }
-          case 'error':
-            patchLastAssistantMessage(projectId, `\n\n_Error: ${ev.message}_`);
-            break;
           case 'done':
           default:
             break;

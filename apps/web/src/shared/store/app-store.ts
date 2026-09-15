@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import type { Credits, Project, Message, PCBState, AgentStep } from '@cirqix/types';
 import { createSupabaseBrowserClient } from '@/shared/lib/supabase-browser';
 import type { PcbStage } from '@/entities/project';
+import { toChatMessage, type ProjectMessageRow } from '@/shared/lib/chat-history';
+
+interface MessagesApiResponse {
+  success: boolean;
+  data?: { messages: ProjectMessageRow[] };
+  error?: string;
+}
 
 interface AuthUser {
   id: string;
@@ -44,6 +51,8 @@ interface AppState {
   projectsError: string | null;
 
   messagesByProject: Record<string, Message[]>;
+  /** Historique persisté déjà demandé pour ce projet — évite de le charger deux fois. */
+  historyLoadedByProject: Record<string, boolean>;
   pcbStateByProject: Record<string, PCBState | null>;
 
   agentStep: AgentStep;
@@ -71,6 +80,11 @@ interface AppState {
   appendMessage: (projectId: string, msg: Message) => void;
   patchLastAssistantMessage: (projectId: string, chunk: string) => void;
   setMessages: (projectId: string, msgs: Message[]) => void;
+  /**
+   * Charge l'historique persisté du projet (une fois par projet). Les messages
+   * déjà présents dans la session sont conservés, APRÈS l'historique.
+   */
+  fetchMessages: (projectId: string) => Promise<void>;
 
   setAgentStep: (step: AgentStep) => void;
   setStepProgress: (progress: StepProgress | null) => void;
@@ -87,6 +101,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   projectsError: null,
 
   messagesByProject: {},
+  historyLoadedByProject: {},
   pcbStateByProject: {},
 
   agentStep: null,
@@ -219,6 +234,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       messagesByProject: { ...s.messagesByProject, [projectId]: msgs },
     })),
+
+  fetchMessages: async (projectId) => {
+    // Posé AVANT l'appel : un double montage (StrictMode) ne doit pas charger
+    // — donc afficher — la conversation deux fois.
+    if (get().historyLoadedByProject[projectId]) return;
+    set((s) => ({
+      historyLoadedByProject: { ...s.historyLoadedByProject, [projectId]: true },
+    }));
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/messages`, { cache: 'no-store' });
+      const json = (await res.json()) as MessagesApiResponse;
+      if (!res.ok || !json.success || !json.data) {
+        throw new Error(json.error ?? 'Failed to load messages');
+      }
+      const history = json.data.messages
+        .map(toChatMessage)
+        .filter((m): m is Message => m !== null);
+      const historyIds = new Set(history.map((m) => m.id));
+
+      set((s) => {
+        // Un message envoyé pendant le chargement est plus récent que tout
+        // l'historique : il vient après.
+        const live = (s.messagesByProject[projectId] ?? []).filter((m) => !historyIds.has(m.id));
+        return {
+          messagesByProject: { ...s.messagesByProject, [projectId]: [...history, ...live] },
+        };
+      });
+    } catch (err) {
+      // Échec : on autorise un nouvel essai, sans rien effacer de la session.
+      set((s) => ({
+        historyLoadedByProject: { ...s.historyLoadedByProject, [projectId]: false },
+      }));
+      console.warn('Historique de discussion indisponible :', err);
+    }
+  },
 
   setAgentStep: (step) => set({ agentStep: step }),
   setStepProgress: (progress) => set({ stepProgress: progress }),
