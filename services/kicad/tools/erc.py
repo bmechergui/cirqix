@@ -83,6 +83,15 @@ def _collect_violations(report: dict[str, Any]) -> list[Any]:
     )
 
 
+# ⚠️ `kicad-cli sch erc --format json` annonce `coordinate_units: mm` mais rend
+# des positions CENT fois trop petites (mesuré le 2026-09-15, KiCad 10.0.6) :
+# U1.44 à (0.3048, 0.4826) pour une broche posée à (30.48, 48.26). Les
+# `(no_connect)` de l'auto-correction tombaient près de l'origine et 78 broches
+# libres du banc restaient en erreur ; le viewer affichait « LOC: (0.30, 0.36) ».
+# Garde : tests/test_erc_autocorrection.py.
+_ECHELLE_POSITIONS_ERC = 100.0
+
+
 def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli sch erc --format json`` report.
 
@@ -143,9 +152,9 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
                 if pin is not None:
                     entry["pin"] = pin
                 if isinstance(x_mm, (int, float)):
-                    entry["x_mm"] = float(x_mm)
+                    entry["x_mm"] = round(float(x_mm) * _ECHELLE_POSITIONS_ERC, 4)
                 if isinstance(y_mm, (int, float)):
-                    entry["y_mm"] = float(y_mm)
+                    entry["y_mm"] = round(float(y_mm) * _ECHELLE_POSITIONS_ERC, 4)
                 out.append(entry)
         else:
             # No items — still keep the violation with just metadata

@@ -129,6 +129,61 @@ def rails_sans_drapeau(sch_content: str) -> dict[str, tuple[float, float]]:
     return {r: p for r, p in rails.items() if r not in deja}
 
 
+def _fin_de_bloc(texte: str, debut: int) -> int:
+    """L'index de la parenthese qui ferme le bloc ouvert a `debut`, ou -1."""
+    prof = 0
+    for j in range(debut, len(texte)):
+        if texte[j] == "(":
+            prof += 1
+        elif texte[j] == ")":
+            prof -= 1
+            if prof == 0:
+                return j
+    return -1
+
+
+def avec_definition_pwr_flag(sch_content: str, racine_symboles: Optional[str] = None) -> Optional[str]:
+    """Le schema avec la definition de `PWR_FLAG` dans `lib_symbols`, ou None.
+
+    Rend le contenu tel quel si la definition y est deja ; None si elle est
+    introuvable ou si le schema n'a pas de `lib_symbols` lisible.
+    """
+    if f'(symbol "{_LIB_ID_PWR_FLAG}"' in sch_content:
+        return sch_content
+    definition = definition_pwr_flag(racine_symboles)
+    i = sch_content.find("(lib_symbols")
+    fin_lib = _fin_de_bloc(sch_content, i) if i != -1 else -1
+    if definition is None or fin_lib == -1:
+        return None
+    return sch_content[:fin_lib] + "\t\t" + definition + "\n\t" + sch_content[fin_lib:]
+
+
+def ajouter_pwr_flag(
+    sch_content: str, x: float, y: float, racine_symboles: Optional[str] = None
+) -> Optional[str]:
+    """Pose UN `PWR_FLAG` dont la broche tombe en (x, y), ou None si impossible."""
+    sortie = avec_definition_pwr_flag(sch_content, racine_symboles)
+    if sortie is None:
+        return None
+    fin = sortie.rstrip()
+    if not fin.endswith(")"):
+        return None
+    reference = f"#FLG{_prochaine_reference(sortie):02d}"
+    return fin[:-1] + _instance_pwr_flag(x, y, reference) + ")\n"
+
+
+def retirer_pwr_flag(sch_content: str, reference: str) -> tuple[str, bool]:
+    """Retire l'instance `PWR_FLAG` de reference donnee. Rend (contenu, retire ?)."""
+    debut = sch_content.find("(lib_symbols")
+    apres_lib = _fin_de_bloc(sch_content, debut) + 1 if debut != -1 else 0
+    for i, f in _blocs_symboles(sch_content, apres_lib):
+        bloc = sch_content[i:f]
+        if f'(lib_id "{_LIB_ID_PWR_FLAG}")' in bloc and f'(property "Reference" "{reference}"' in bloc:
+            avant = sch_content[:i].rstrip("\t ")
+            return avant + sch_content[f:].lstrip("\n"), True
+    return sch_content, False
+
+
 def _drapeaux_existants(sch_content: str) -> set[str]:
     """Les rails couverts par un `PWR_FLAG` deja pose (idempotence)."""
     couverts: set[str] = set()
@@ -203,27 +258,9 @@ def poser_pwr_flags(sch_content: str, racine_symboles: Optional[str] = None) -> 
         if not a_poser:
             return sch_content
 
-        sortie = sch_content
-        if f'(symbol "{_LIB_ID_PWR_FLAG}"' not in sortie:
-            definition = definition_pwr_flag(racine_symboles)
-            if definition is None:
-                return sch_content  # sans definition, on ne pose rien
-            i = sortie.find("(lib_symbols")
-            if i == -1:
-                return sch_content
-            prof = 0
-            fin_lib = -1
-            for j in range(i, len(sortie)):
-                if sortie[j] == "(":
-                    prof += 1
-                elif sortie[j] == ")":
-                    prof -= 1
-                    if prof == 0:
-                        fin_lib = j
-                        break
-            if fin_lib == -1:
-                return sch_content
-            sortie = sortie[:fin_lib] + "\t\t" + definition + "\n\t" + sortie[fin_lib:]
+        sortie = avec_definition_pwr_flag(sch_content, racine_symboles)
+        if sortie is None:
+            return sch_content  # sans definition, on ne pose rien
 
         n = _prochaine_reference(sortie)
         blocs = []

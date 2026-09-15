@@ -125,7 +125,8 @@ def _run_kicad_cli_erc(cli_path: str, sch_path: Path) -> str:
 
 @router.post("/erc", response_model=ERCResponse)
 def run_erc(req: ERCRequest) -> ERCResponse:
-    from tools.erc import apply_no_connect_fixes, parse_erc_report, run_kicad_tools_erc
+    from tools.erc import parse_erc_report, run_kicad_tools_erc
+    from tools.erc_autofix import corriger_erc
 
     try:
         sch_bytes = base64.b64decode(req.kicad_sch_b64)
@@ -213,11 +214,9 @@ def run_erc(req: ERCRequest) -> ERCResponse:
                 if not req.auto_fix:
                     break
 
-                fixable = [v for v in violations if v.get("type") == "pin_not_connected"]
-                if not fixable:
-                    break
-
-                new_content, fixed_this_iter = apply_no_connect_fixes(current_content, fixable)
+                # Croix sur les broches libres, drapeaux retirés ou posés sur les
+                # rails d'alimentation — seulement là où kicad-cli les désigne.
+                new_content, fixed_this_iter = corriger_erc(current_content, violations)
                 total_fixed += fixed_this_iter
                 if fixed_this_iter == 0:
                     break
