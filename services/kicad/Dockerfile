@@ -126,6 +126,18 @@ RUN groupadd --gid 10001 cirqix && \
     useradd --uid 10001 --gid cirqix --create-home --shell /usr/sbin/nologin cirqix && \
     chown -R cirqix:cirqix /tmp/kicad-jobs
 
+# Tables de bibliotheques de KiCad (2026-09-15). Sans elles, `kicad-cli sch erc`
+# rendait 31 avertissements d'ENVIRONNEMENT par run (« The current configuration
+# does not include the symbol library 'power' ») : le projet restait a
+# SCHEMA_DONE au lieu d'ERC_CLEAN. Mesure sur le schema NE555 : 31 -> 0, sans
+# variable d'environnement ; DRC inchange sur carte-05/08/10.
+# Dans l'IMAGE, pas au runtime : $HOME n'est pas un volume.
+# Garde : tests/test_tables_bibliotheques_kicad.py
+RUN mkdir -p /home/cirqix/.config/kicad/10.0 && \
+    cp /usr/share/kicad/template/sym-lib-table /usr/share/kicad/template/fp-lib-table \
+       /home/cirqix/.config/kicad/10.0/ && \
+    chown -R cirqix:cirqix /home/cirqix/.config
+
 EXPOSE 8766
 
 # start-period long : Xvfb, Freerouting and KiCad can take time to initialize.

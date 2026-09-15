@@ -356,6 +356,15 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         levait. Garde : tests/test_fail_closed_drc_erc.py.
      ③ skipped=true → TypeScript runErcFallback()
      POST /erc → kicad-cli sch erc, auto-fix loop
+     ⚠️ (2026-09-15) **31 avertissements par run venaient de l'ENVIRONNEMENT.**
+        `~/.config/kicad/10.0/` n'avait ni `sym-lib-table` ni `fp-lib-table` :
+        « The current configuration does not include the symbol library
+        'power' » (22 `lib_symbol_issues`, 9 `footprint_link_issues` sur le
+        NE555). Le projet restait à `SCHEMA_DONE`, jamais `ERC_CLEAN`. L'image
+        copie désormais les modèles de `/usr/share/kicad/template/` :
+        31 → **0**, témoin sans tables revenu à 31 ; DRC identique sur
+        carte-05/08/10. Dans l'IMAGE, car `$HOME` n'est pas un volume.
+        Garde : tests/test_tables_bibliotheques_kicad.py.
      ⚠️ (2026-07-27) `ERC_CLEAN` ne peut être accordé que par un contrôle
         réellement exécuté et réellement passé. Auparavant `skipped` figurait dans
         le OU qui promeut `ERC_CLEAN`, et l'absence de `.kicad_sch` en cache
