@@ -23,9 +23,10 @@ const BORDURE = '#1e1e1e';
 const TEXTE = '#e8e8e8';
 const TEXTE_DOUX = '#8a8a8a';
 const TEXTE_FAIBLE = '#3d3d3d';
-const PRIMAIRE = 'hsl(198 100% 50%)';
-const PRIMAIRE_FOND = 'hsl(198 100% 50% / 0.14)';
-const PRIMAIRE_BORD = 'hsl(198 100% 50% / 0.35)';
+// Noir et blanc (2026-09-15), comme le reste du produit : l'accent est le blanc.
+const PRIMAIRE = '#ffffff';
+const PRIMAIRE_FOND = 'rgb(255 255 255 / 0.10)';
+const PRIMAIRE_BORD = 'rgb(255 255 255 / 0.30)';
 
 export const MARQUE_SKIN = 'cirqix-skin-kicanvas';
 

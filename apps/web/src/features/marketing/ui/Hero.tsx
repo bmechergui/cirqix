@@ -28,7 +28,7 @@ function PCBPreview() {
       </defs>
 
       {/* Board */}
-      <rect x="10" y="10" width="460" height="260" rx="4" fill="#0d1a00" stroke="#22330a" strokeWidth="1.5" />
+      <rect x="10" y="10" width="460" height="260" rx="4" fill="#0a0a0a" stroke="#262626" strokeWidth="1.5" />
 
       {/* Grid dots */}
       {Array.from({ length: 8 }, (_, row) =>
@@ -50,7 +50,7 @@ function PCBPreview() {
       {/* Vias */}
       {([[ 180, 140], [300, 140], [120, 200], [240, 140]] as [number,number][]).map(([cx, cy], i) => (
         <g key={i}>
-          <circle cx={cx} cy={cy} r="5" fill="#0d1a00" stroke="#888" strokeWidth="1" />
+          <circle cx={cx} cy={cy} r="5" fill="#0a0a0a" stroke="#888" strokeWidth="1" />
           <circle cx={cx} cy={cy} r="2.5" fill="#555" />
         </g>
       ))}
@@ -83,14 +83,14 @@ function PCBPreview() {
       {/* Connector */}
       <rect x="40" y="120" width="12" height="48" rx="1" fill="#1a1a1a" stroke="#555" strokeWidth="1" />
       {[0,1,2,3,4].map(i => (
-        <circle key={i} cx={46} cy={130 + i * 9} r="2.5" fill="#0d1a00" stroke="#777" strokeWidth="0.8" />
+        <circle key={i} cx={46} cy={130 + i * 9} r="2.5" fill="#0a0a0a" stroke="#777" strokeWidth="0.8" />
       ))}
 
       {/* DRC-clean badge */}
       <g>
-        <rect x="350" y="15" width="100" height="22" rx="3" fill="rgba(34,197,94,0.1)" stroke="rgba(34,197,94,0.3)" strokeWidth="1" />
-        <circle cx="362" cy="26" r="3" fill="#22C55E" opacity="0.8" />
-        <text x="370" y="30" fill="#22C55E" fontSize="8" fontFamily="monospace" opacity="0.9">DRC CLEAN</text>
+        <rect x="350" y="15" width="100" height="22" rx="3" fill="rgba(255,255,255,0.1)" stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
+        <circle cx="362" cy="26" r="3" fill="#FFFFFF" opacity="0.8" />
+        <text x="370" y="30" fill="#FFFFFF" fontSize="8" fontFamily="monospace" opacity="0.9">DRC CLEAN</text>
       </g>
 
       {/* Agent status */}
@@ -180,27 +180,27 @@ export function Hero() {
             <div className="absolute top-0 right-0 flex items-center gap-3 pcb-label opacity-60">
               <span>X: 240.00mm</span>
               <span>Y: 140.00mm</span>
-              <span className="text-success">●</span>
+              <span className="text-white">●</span>
             </div>
 
-            <div className="rounded-lg border border-[#1a2d0a] bg-[#0a0f05] overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-[#1a2d0a] bg-[#080c04]">
+            <div className="rounded-lg border border-[#262626] bg-[#0a0a0a] overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-[#262626] bg-[#050505]">
                 <div className="flex gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#2a2a2a]" />
                   <span className="w-2.5 h-2.5 rounded-full bg-[#2a2a2a]" />
                   <span className="w-2.5 h-2.5 rounded-full bg-[#2a2a2a]" />
                 </div>
                 <span className="pcb-label ml-2">esp32-weather-station.kicad_pcb</span>
-                <span className="ml-auto pcb-label text-success">● F.Cu</span>
+                <span className="ml-auto pcb-label text-white">● F.Cu</span>
               </div>
               <PCBPreview />
             </div>
 
             {/* Agent log below */}
-            <div className="mt-3 border border-[#1a2d0a] bg-[#000000] rounded-md px-3 py-2 animate-flicker">
+            <div className="mt-3 border border-[#262626] bg-[#000000] rounded-md px-3 py-2 animate-flicker">
               <p className="font-mono text-[11px] text-primary/70 leading-relaxed">
                 <span className="text-muted-foreground/40">{'>'} </span>
-                Agent routing trace 47/47 · DRC violations: <span className="text-success font-bold">0</span>
+                Agent routing trace 47/47 · DRC violations: <span className="text-white font-bold">0</span>
                 <span className="animate-blink ml-1">_</span>
               </p>
             </div>
