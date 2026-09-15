@@ -423,7 +423,12 @@ def _generate_with_cs_lib(
     sch_files = list(output_dir.rglob("*.kicad_sch"))
     if not sch_files:
         return None
-    return globaliser_les_labels_hierarchiques(sch_files[0].read_text(encoding="utf-8"))
+    from tools.pwr_flag import poser_pwr_flags
+
+    contenu = globaliser_les_labels_hierarchiques(sch_files[0].read_text(encoding="utf-8"))
+    # Un PWR_FLAG par rail : sans lui, l ERC de KiCad rend `power_pin_not_driven`
+    # sur chaque symbole d alimentation (mesure du 2026-09-14, NE555).
+    return poser_pwr_flags(contenu)
 
 
 _LABEL_HIERARCHIQUE_RE = re.compile(r'\(hierarchical_label\s+"')
