@@ -950,6 +950,37 @@ def _trop_pres_du_bord(
     ]
 
 
+# D-2026-09-15-a (validée) : la COURTYARD d'un composant non ancré reste à 2 mm
+# du bord — la place de sa référence de sérigraphie (texte de 1 mm).
+_MARGE_COURTYARD_BORD_MM: float = 2.0
+# La détection tolère l'arrondi des coordonnées écrites ; la réparation vise
+# un peu AU-DELÀ de la marge, pour ne jamais retomber pile sur la limite.
+_TOLERANCE_ARRONDI_MM: float = 0.001
+_GARDE_REPARATION_MM: float = 0.1
+
+
+def _courtyard_trop_pres_du_bord(
+    bornes: tuple[float, float, float, float],
+    boites: list[tuple[str, tuple[float, float, float, float]]],
+    marge: float = _MARGE_COURTYARD_BORD_MM,
+) -> list[str]:
+    """Refs dont la courtyard (boîte absolue x0, y0, x1, y1) est à moins de `marge` d'un bord.
+
+    ⚠️ Mesure du 2026-09-15 : R2 à 1,2 mm du bord, pastilles dessous — le
+    contrôle des pastilles le laissait passer, et sa référence n'avait aucune
+    place : `silk_edge_clearance` sur 2 runs sur 5.
+    """
+    # Tolérance d'arrondi : un composant reposé PILE à la marge (2,0 mm) était
+    # encore signalé à 1,9999 — mesuré sur carte-01 au banc du 2026-09-15.
+    limite = marge - _TOLERANCE_ARRONDI_MM
+    min_x, max_x, min_y, max_y = bornes
+    return [
+        ref for ref, (x0, y0, x1, y1) in boites
+        if x0 < min_x + limite or x1 > max_x - limite
+        or y0 < min_y + limite or y1 > max_y - limite
+    ]
+
+
 def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
     """`_trop_pres_du_bord` sur un board, dans le repère de `_repair_off_board`."""
     from kicad_tools.schema.pcb import PCB
@@ -962,10 +993,18 @@ def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
         return []
     if bornes is None:
         return []
-    return _trop_pres_du_bord(bornes, [
+    fps = [fp for fp in pcb.footprints if fp.reference]
+    pastilles = set(_trop_pres_du_bord(bornes, [
         (fp.reference, fp.position[0], fp.position[1], _footprint_reach_mm(fp))
-        for fp in pcb.footprints if fp.reference
-    ])
+        for fp in fps
+    ]))
+    boites = []
+    for fp in fps:
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        x, y = fp.position
+        boites.append((fp.reference, (x + bx0, y + by0, x + bx1, y + by1)))
+    courtyards = set(_courtyard_trop_pres_du_bord(bornes, boites))
+    return [fp.reference for fp in fps if fp.reference in pastilles | courtyards]
 
 
 def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
@@ -1005,6 +1044,13 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
         return []
 
     occupes = [fp.position for fp in pcb.footprints if fp.reference not in fautifs]
+    boites_occupees = []
+    for autre in pcb.footprints:
+        if autre.reference in fautifs:
+            continue
+        bx0, by0, bx1, by1 = _boite_locale_fp(autre)
+        ax, ay = autre.position
+        boites_occupees.append((ax + bx0, ay + by0, ax + bx1, ay + by1))
     deplaces: list[str] = []
 
     for fp in pcb.footprints:
@@ -1012,7 +1058,11 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
             continue
         # Marge PROPRE au composant : ses pads doivent tenir dans le contour,
         # pas seulement son centre (cf. _footprint_reach_mm).
-        marge = _footprint_reach_mm(fp) + _OFF_BOARD_MARGIN_MM
+        # ... et sa COURTYARD à _MARGE_COURTYARD_BORD_MM du bord (D-2026-09-15-a) :
+        # l'étendue retenue est la plus grande des deux, depuis le centre.
+        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        etendue = max(_footprint_reach_mm(fp), abs(bx0), abs(bx1), abs(by0), abs(by1))
+        marge = etendue + max(_OFF_BOARD_MARGIN_MM, _MARGE_COURTYARD_BORD_MM) + _GARDE_REPARATION_MM
         min_x, max_x = bornes[0] + marge, bornes[1] - marge
         min_y, max_y = bornes[2] + marge, bornes[3] - marge
         if min_x >= max_x or min_y >= max_y:
@@ -1022,7 +1072,9 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
             continue
         x, y = fp.position
         cible = (min(max(x, min_x), max_x), min(max(y, min_y), max_y))
-        place = _nearest_free_cell(cible, occupes, (min_x, max_x, min_y, max_y))
+        place = _nearest_free_cell(cible, occupes, (min_x, max_x, min_y, max_y),
+                                   boite_locale=(bx0, by0, bx1, by1),
+                                   boites_occupees=boites_occupees)
         if place is None:
             logger.warning("réparation hors-carte: aucune case libre pour %s",
                            fp.reference)
@@ -1031,6 +1083,7 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
                        fp.reference, x, y, place[0], place[1])
         fp.position = place
         occupes.append(place)
+        boites_occupees.append((place[0] + bx0, place[1] + by0, place[0] + bx1, place[1] + by1))
         deplaces.append(fp.reference)
 
     if deplaces:
@@ -1097,9 +1150,21 @@ def _outline_bounds(pcb) -> tuple[float, float, float, float] | None:
     return min(xs), max(xs), min(ys), max(ys)
 
 
+# Recherche d'une case libre par COURTYARDS : pas fin, et marge entre boîtes.
+_PAS_RECHERCHE_FIN_MM: float = 0.5
+_MARGE_ENTRE_COURTYARDS_MM: float = 0.25
+
+
+def _boites_se_recouvrent(a: tuple, b: tuple, marge: float = 0.0) -> bool:
+    return not (a[2] + marge <= b[0] or b[2] + marge <= a[0]
+                or a[3] + marge <= b[1] or b[3] + marge <= a[1])
+
+
 def _nearest_free_cell(cible: tuple[float, float],
                        occupes: list[tuple[float, float]],
                        bornes: tuple[float, float, float, float],
+                       boite_locale: tuple[float, float, float, float] | None = None,
+                       boites_occupees: list[tuple[float, float, float, float]] | None = None,
                        ) -> tuple[float, float] | None:
     """Case libre la plus proche de ``cible``, dans ``bornes``.
 
@@ -1110,10 +1175,23 @@ def _nearest_free_cell(cible: tuple[float, float],
     Recherche en anneaux carrés bornée : jamais de boucle non terminante.
     """
     min_x, max_x, min_y, max_y = bornes
-    pas = _OFF_BOARD_SPACING_MM
+    # ⚠️ Avec des boîtes, une case est libre si la COURTYARD du composant n'y
+    # recouvre aucune autre courtyard. Mesure du 2026-09-15 (run 7980aee1) : la
+    # règle des centres (2,5 mm) posait R1 à 4,34 mm du centre de J1 et 0,94 mm
+    # DANS sa courtyard — un connecteur porte la sienne à 6 mm de son centre.
+    if boite_locale is not None and boites_occupees is not None:
+        pas = _PAS_RECHERCHE_FIN_MM
 
-    def libre(p: tuple[float, float]) -> bool:
-        return all(math.dist(p, q) >= pas for q in occupes)
+        def libre(p: tuple[float, float]) -> bool:
+            b = (p[0] + boite_locale[0], p[1] + boite_locale[1],
+                 p[0] + boite_locale[2], p[1] + boite_locale[3])
+            return not any(_boites_se_recouvrent(b, o, _MARGE_ENTRE_COURTYARDS_MM)
+                           for o in boites_occupees)
+    else:
+        pas = _OFF_BOARD_SPACING_MM
+
+        def libre(p: tuple[float, float]) -> bool:
+            return all(math.dist(p, q) >= pas for q in occupes)
 
     if libre(cible):
         return cible
