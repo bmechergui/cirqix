@@ -199,6 +199,11 @@ class GlbResponse(BaseModel):
     # sur N declares = la carte sort nue, et le viewer doit le dire.
     models_declared: int = 0
     models_found: int = 0
+    # …et POURQUOI, car 0 sur N a deux causes : "bibliotheque_absente" (ce
+    # service n a pas de repertoire de modeles) ou "fichiers_absents" (il en a
+    # un, et le board cite des fichiers qui n y sont pas). Vide quand il n y a
+    # rien a expliquer.
+    models_reason: str = ""
 
 
 _MODEL_RE = re.compile(r'\(model\s+"([^"]+)"')
@@ -237,6 +242,42 @@ def compter_modeles(pcb: bytes, model_dir: Optional[str]) -> tuple[int, int]:
         if Path(resolu).is_file():
             trouves += 1
     return len(chemins), trouves
+
+
+_EXTENSIONS_MODELES = ("*.step", "*.stp", "*.wrl")
+
+
+def _bibliotheque_peuplee(model_dir: str) -> bool:
+    """Un repertoire de modeles qui contient au moins UN modele.
+
+    L existence du dossier ne suffit pas : le volume `cirqix-3dmodels` est monte
+    vide puis rempli par `scripts/modeles_3d.sh`. Entre les deux — ou si le
+    script echoue — un volume vide ferait accuser le BOARD (« il cite des
+    fichiers absents ») alors que la bibliotheque n a jamais ete installee.
+    C est l inversion de diagnostic que cette fonction existe pour eviter.
+    Mesure du 2026-09-16 sur ce service : KICAD10_3DMODEL_DIR=
+    /usr/share/kicad/3dmodels, 30 entrees — bibliotheque bien peuplee.
+    """
+    racine = Path(model_dir)
+    if not racine.is_dir():
+        return False
+    return any(next(racine.rglob(motif), None) is not None for motif in _EXTENSIONS_MODELES)
+
+
+def raison_des_modeles(model_dir: Optional[str], declares: int, trouves: int) -> str:
+    """POURQUOI aucun modele n a ete trouve — "" quand il n y a rien a expliquer.
+
+    « 0 sur 26 » a DEUX causes, et le viewer n en disait qu une : « aucun modele
+    3D installe sur le service ». C est vrai quand ce service n a pas de
+    bibliotheque de modeles ; c est FAUX, et trompeur, quand il en a une bien
+    remplie et que le board cite des fichiers qui n y sont pas — le cas mesure le
+    2026-09-15, un board citant des `.wrl` face a 3423 `.step`. Un lecteur ira
+    chercher le defaut du mauvais cote, exactement comme la docstring de
+    `compter_modeles` y a envoye.
+    """
+    if declares == 0 or trouves > 0:
+        return ""
+    return "fichiers_absents" if model_dir and _bibliotheque_peuplee(model_dir) else "bibliotheque_absente"
 
 
 def construire_commande_glb(cli: str, req: GlbRequest, entree: Path, sortie: Path) -> list[str]:
@@ -307,10 +348,13 @@ def export_glb(req: GlbRequest) -> GlbResponse:
     except RuntimeError as exc:
         logger.error("export/glb: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    declares, trouves = compter_modeles(pcb, os.environ.get("KICAD10_3DMODEL_DIR")) if req.components else (0, 0)
-    logger.info("export/glb: %d octets en %d ms — modeles 3D %d/%d", len(glb), duree_ms, trouves, declares)
+    model_dir = os.environ.get("KICAD10_3DMODEL_DIR")
+    declares, trouves = compter_modeles(pcb, model_dir) if req.components else (0, 0)
+    raison = raison_des_modeles(model_dir, declares, trouves) if req.components else ""
+    logger.info("export/glb: %d octets en %d ms — modeles 3D %d/%d%s",
+                len(glb), duree_ms, trouves, declares, f" ({raison})" if raison else "")
     return GlbResponse(glb_b64=base64.b64encode(glb).decode("ascii"), bytes=len(glb), duration_ms=duree_ms,
-                       models_declared=declares, models_found=trouves)
+                       models_declared=declares, models_found=trouves, models_reason=raison)
 
 
 @router.post("/render/auto", response_model=RenderResponse)

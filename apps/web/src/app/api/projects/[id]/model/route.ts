@@ -41,7 +41,7 @@ function reponseGlb(
   etag: string,
   source: 'storage' | 'service',
   durationMs: number,
-  composants?: { found: number; declared: number },
+  composants?: { found: number; declared: number; raison?: string },
 ): NextResponse {
   return new NextResponse(new Uint8Array(glb), {
     status: 200,
@@ -55,6 +55,10 @@ function reponseGlb(
       // Honnêteté : combien de composants ont un modèle 3D réellement présent
       // sur le service. `0/9` = la carte sort nue, et le viewer le dit.
       ...(composants ? { 'X-Model-Components': `${composants.found}/${composants.declared}` } : {}),
+      // …et POURQUOI aucun n'a été trouvé : bibliothèque absente du service, ou
+      // fichiers cités par la carte introuvables. Relayé seulement si le service
+      // le dit — on n'invente pas une cause.
+      ...(composants?.raison ? { 'X-Model-Components-Reason': composants.raison } : {}),
     },
   });
 }
@@ -129,14 +133,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
 
   const corps = (await reponse.json()) as {
-    glb_b64?: unknown; duration_ms?: unknown; models_found?: unknown; models_declared?: unknown;
+    glb_b64?: unknown; duration_ms?: unknown; models_found?: unknown; models_declared?: unknown; models_reason?: unknown;
   };
   if (typeof corps.glb_b64 !== 'string' || corps.glb_b64.length === 0) {
     return NextResponse.json({ success: false, error: '3D export failed: service returned no model' }, { status: 502 });
   }
   const glb = Buffer.from(corps.glb_b64, 'base64');
+  const raison = typeof corps.models_reason === 'string' && corps.models_reason !== '' ? corps.models_reason : undefined;
   const comptes = typeof corps.models_found === 'number' && typeof corps.models_declared === 'number'
-    ? { found: corps.models_found, declared: corps.models_declared }
+    ? { found: corps.models_found, declared: corps.models_declared, ...(raison ? { raison } : {}) }
     : undefined;
 
   const { error: erreurDepot } = await supabase.storage

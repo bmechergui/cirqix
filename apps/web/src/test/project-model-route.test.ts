@@ -129,8 +129,21 @@ describe('export et cache', () => {
     serviceQuiRepond(200, { glb_b64: Buffer.from(GLB).toString('base64'), duration_ms: 1, models_found: 0, models_declared: 9 });
     const r = await GET(requete(), ctx);
     expect(r.headers.get('x-model-components')).toBe('0/9');
+    // Un service qui ne dit pas POURQUOI n'invente pas d'en-tête.
+    expect(r.headers.get('x-model-components-reason')).toBeNull();
     const appel = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as unknown as [string, { body: string }];
     expect(JSON.parse(appel[1].body).components).toBe(true);
+  });
+
+  it('relaie POURQUOI aucun modèle n’a été trouvé', async () => {
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient().client);
+    serviceQuiRepond(200, {
+      glb_b64: Buffer.from(GLB).toString('base64'), duration_ms: 1,
+      models_found: 0, models_declared: 26, models_reason: 'fichiers_absents',
+    });
+    const r = await GET(requete(), ctx);
+    expect(r.headers.get('x-model-components')).toBe('0/26');
+    expect(r.headers.get('x-model-components-reason')).toBe('fichiers_absents');
   });
 
   it('sert le modèle déjà déposé sans appeler le service', async () => {

@@ -130,9 +130,40 @@ def test_compter_modeles_ne_compte_que_le_fichier_CITE(tmp_path):
     assert compter_modeles(b"(kicad_pcb)", str(tmp_path)) == (0, 0)
 
 
+def test_raison_des_modeles_distingue_la_bibliotheque_absente_des_fichiers_absents(tmp_path):
+    """0 trouve sur N a DEUX causes, et le viewer n en disait qu une.
+
+    « aucun modele 3D installe sur le service » est vrai quand le volume de
+    modeles manque ; c est FAUX — et trompeur — quand le volume est plein et que
+    c est le board qui cite des fichiers absents (cas mesure le 2026-09-15 : un
+    board citant des `.wrl` face a 3423 `.step`). Un lecteur ira chercher le
+    defaut du mauvais cote.
+    """
+    from routers.render import raison_des_modeles
+    assert raison_des_modeles(None, 9, 0) == "bibliotheque_absente"
+    assert raison_des_modeles(str(tmp_path / "pas-de-volume"), 9, 0) == "bibliotheque_absente"
+    # Un volume MONTE mais VIDE : la bibliotheque n a jamais ete installee
+    # (`scripts/modeles_3d.sh` pas passe, ou echoue). Accuser le board serait
+    # l inversion de diagnostic que ce correctif est cense supprimer.
+    vide = tmp_path / "volume-vide"
+    vide.mkdir()
+    assert raison_des_modeles(str(vide), 9, 0) == "bibliotheque_absente"
+    # Bibliotheque peuplee : c est bien la carte qui cite des fichiers absents.
+    (tmp_path / "Resistor_SMD.3dshapes").mkdir(exist_ok=True)
+    (tmp_path / "Resistor_SMD.3dshapes" / "R_0603_1608Metric.step").write_bytes(b"step")
+    assert raison_des_modeles(str(tmp_path), 9, 0) == "fichiers_absents"
+    # Rien a expliquer : des modeles ont ete trouves, ou le board n en declare aucun.
+    assert raison_des_modeles(str(tmp_path), 9, 9) == ""
+    assert raison_des_modeles(str(tmp_path), 9, 4) == ""
+    assert raison_des_modeles(str(tmp_path), 0, 0) == ""
+
+
 def test_la_reponse_porte_le_compte_des_modeles(monkeypatch, tmp_path):
     monkeypatch.setattr(render_router, "_find_kicad_cli", lambda: "kicad-cli")
     monkeypatch.setenv("KICAD10_3DMODEL_DIR", str(tmp_path))
+    # Bibliotheque PEUPLEE — mais pas du fichier que le board cite.
+    (tmp_path / "Autre.3dshapes").mkdir()
+    (tmp_path / "Autre.3dshapes" / "Autre.step").write_bytes(b"step")
     glb = _glb()
 
     def run(cmd, **kw):
@@ -142,8 +173,12 @@ def test_la_reponse_porte_le_compte_des_modeles(monkeypatch, tmp_path):
     board = b'(kicad_pcb (footprint "R" (model "${KICAD10_3DMODEL_DIR}/X.3dshapes/Y.wrl")))'
     rep = export_glb(GlbRequest(kicad_pcb_b64=base64.b64encode(board).decode("ascii")))
     assert (rep.models_declared, rep.models_found) == (1, 0)
+    # La bibliotheque existe et porte des modeles : c est le fichier CITE qui
+    # manque — et c est ce qu on dit, sans accuser le service.
+    assert rep.models_reason == "fichiers_absents"
     sans = export_glb(GlbRequest(kicad_pcb_b64=base64.b64encode(board).decode("ascii"), components=False))
     assert (sans.models_declared, sans.models_found) == (0, 0)
+    assert sans.models_reason == ""
 
 
 def test_la_route_est_exposee():
