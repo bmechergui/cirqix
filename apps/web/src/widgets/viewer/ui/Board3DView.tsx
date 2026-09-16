@@ -115,15 +115,25 @@ function Board({ url }: { url: string }) {
   );
 }
 
-/** Ce que le serveur dit des modèles de composants : `X-Model-Components: trouvés/déclarés`. */
+/**
+ * Ce que le serveur dit des modèles de composants :
+ * `X-Model-Components: trouvés/déclarés`, et `X-Model-Components-Reason`
+ * quand aucun n'a été trouvé — car « 0 sur 26 » a DEUX causes, et les
+ * confondre envoie chercher le défaut du mauvais côté : ou le service n'a pas
+ * de bibliothèque de modèles, ou il en a une et la carte cite des fichiers
+ * qui n'y sont pas (mesuré le 2026-09-15 sur un board citant des `.wrl`).
+ */
 export interface ComposantsInfo {
   readonly found: number;
   readonly declared: number;
+  readonly raison?: string | undefined;
 }
 
-export function lireComposantsInfo(entete: string | null): ComposantsInfo | undefined {
+export function lireComposantsInfo(entete: string | null, raison?: string | null): ComposantsInfo | undefined {
   const m = /^(\d+)\/(\d+)$/.exec((entete ?? '').trim());
-  return m ? { found: Number(m[1]), declared: Number(m[2]) } : undefined;
+  if (!m) return undefined;
+  const cause = (raison ?? '').trim();
+  return { found: Number(m[1]), declared: Number(m[2]), raison: cause === '' ? undefined : cause };
 }
 
 type Etat =
@@ -174,7 +184,12 @@ function useModeleDisponible(url: string): [Etat, () => void, (message: string) 
         }
         // Le corps est lu pour que le cache HTTP le garde ; le chargeur glTF le relira de là.
         await r.arrayBuffer();
-        if (!cancelled) setEtat({ kind: 'ready', composants: lireComposantsInfo(r.headers.get('x-model-components')) });
+        if (!cancelled) {
+          setEtat({
+            kind: 'ready',
+            composants: lireComposantsInfo(r.headers.get('x-model-components'), r.headers.get('x-model-components-reason')),
+          });
+        }
       } catch (err) {
         if (cancelled || controller.signal.aborted) return;
         setEtat({ kind: 'error', message: err instanceof Error ? err.message : '3D model request failed' });
@@ -200,7 +215,11 @@ export function Board3DView({ projectId, version }: Board3DViewProps) {
       : infoComposants.declared === 0
         ? 'aucun composant à modéliser'
         : infoComposants.found === 0
-          ? `aucun modèle 3D installé sur le service (0/${infoComposants.declared})`
+          // Deux causes, deux phrases : le service sait laquelle, et la dire
+          // évite d'envoyer chercher le défaut du mauvais côté.
+          ? infoComposants.raison === 'fichiers_absents'
+            ? `modèles 3D cités par la carte introuvables sur le service (0/${infoComposants.declared})`
+            : `aucun modèle 3D installé sur le service (0/${infoComposants.declared})`
           : `composants ${infoComposants.found}/${infoComposants.declared}`;
 
   if (photo) {

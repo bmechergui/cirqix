@@ -83,6 +83,24 @@ describe('option composants', () => {
     await waitFor(() => expect(screen.getByTestId('board-3d-composants')).toHaveTextContent('carte nue'));
     expect(screen.getByLabelText('Toggle components').getAttribute('aria-pressed')).toBe('false');
   });
+
+  it('dit POURQUOI la carte sort sans corps : volume absent, ou fichiers cités introuvables', async () => {
+    // « aucun modèle installé » est faux quand le volume est plein et que le
+    // board cite des fichiers absents — le lecteur cherche alors du mauvais côté.
+    const entetes = (raison: string) => ({
+      'Content-Type': 'model/gltf-binary', 'X-Model-Components': '0/26', 'X-Model-Components-Reason': raison,
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(GLB, { status: 200, headers: entetes('fichiers_absents') })));
+    const { unmount } = render(<Board3DView projectId="p1" />);
+    await waitFor(() => expect(screen.getByTestId('board-3d-composants'))
+      .toHaveTextContent('modèles 3D cités par la carte introuvables sur le service (0/26)'));
+    unmount();
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(GLB, { status: 200, headers: entetes('bibliotheque_absente') })));
+    render(<Board3DView projectId="p2" />);
+    await waitFor(() => expect(screen.getByTestId('board-3d-composants'))
+      .toHaveTextContent('aucun modèle 3D installé sur le service (0/26)'));
+  });
 });
 
 describe('Board3DView', () => {
