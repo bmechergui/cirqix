@@ -1056,9 +1056,15 @@ pour l'indice principal. **NEVER** lire un message répété comme un diagnostic
 100 % du 2026-09-03 étaient vertes pendant que la voie HTTP mourait une fois
 sur deux. Seuls le worker et l'orchestrateur passent par HTTP.
 
-⚠️ Défaut voisin, corrigé : un `/tmp/.X99-lock` orphelin empêchait Xvfb de
-redémarrer après un `docker restart`, privant `pcbnew` d'affichage. Vérifier
-`pgrep Xvfb` après tout redémarrage du conteneur.
+⚠️ Défaut voisin : un `/tmp/.X99-lock` orphelin empêche Xvfb de redémarrer
+après un `docker restart`, privant `pcbnew` d'affichage. Cette ligne le disait
+« corrigé » depuis le 2026-09-05 — **faux** : l'entrypoint ne supprimait aucun
+verrou. Reproduit le 2026-09-19 (« Server is already active for display 99 »,
+verrou du 15 septembre), avec /health à 200 et la JVM vivante : rien ne le
+signalait. L'entrypoint supprime désormais verrou et socket avant `Xvfb :99`
+(`tests/test_xvfb_verrou_orphelin.py`) — **effectif seulement après
+reconstruction de l'image**, l'entrypoint n'étant pas monté à chaud.
+Toujours vérifier `pgrep Xvfb` après un redémarrage du conteneur.
 
 Dimensionnement : décision produit `D-2026-09-03-b`, **en attente**.
 

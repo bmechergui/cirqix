@@ -37,6 +37,20 @@ else
 fi
 
 # Xvfb (pcbnew headless) + Freerouting (1 JVM persistante, REST port 37864)
+# ⚠️ `docker restart` CONSERVE /tmp : le verrou de l execution precedente
+# restait la, et Xvfb s arretait aussitot (« Server is already active for
+# display 99 ») — /health a 200, JVM vivante, pcbnew sans affichage, et rien
+# pour le dire. Mesure du 2026-09-19. Au DEMARRAGE du conteneur, l entrypoint
+# est le premier processus : aucun serveur vivant ne peut encore tenir :99, le
+# verrou est donc orphelin. (Ne jamais relancer ce script par `docker exec`
+# dans un conteneur vivant : il supprimerait le verrou d un Xvfb en marche.)
+# ⚠️ `|| echo` OBLIGATOIRE, comme pour la JVM plus bas : sous `set -e`, un
+# verrou appartenant a un autre utilisateur (sticky bit de /tmp : « Operation
+# not permitted », vu le 2026-09-19 sur des fichiers deposes par root) tuerait
+# l entrypoint ENTIER — pire que le defaut corrige. On le DIT, sans l avaler.
+# Garde : tests/test_xvfb_verrou_orphelin.py.
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 \
+  || echo "xvfb: verrou orphelin non supprimable — Xvfb risque de ne pas demarrer" >&2
 Xvfb :99 -screen 0 1024x768x24 -ac &
 # ⚠️ PAS de `--api_server-endpoints=` : `ApiServerSettings.endpoints` est un
 # `String[]`, et la ligne de commande ne sait passer qu'une `String`. L'option
