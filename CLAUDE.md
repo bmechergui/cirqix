@@ -630,10 +630,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      jusqu'à ≤ 1 îlot » sur la même lecture. C'est la faute déjà inscrite plus
      haut : **NEVER** relayer le message d'une garde comme un diagnostic.
 
-     ⚠️ Défaut latent voisin, non corrigé : `_router_en_incluant_gnd` remplace
-     le board **sans jamais comparer**. C'est le seul mécanisme de la chaîne
-     dépourvu de garde « ne peut qu'améliorer » — un secours moins bon
-     écraserait un meilleur résultat. Il ne s'est encore jamais déclenché.
+     ~~Défaut latent voisin, non corrigé : `_router_en_incluant_gnd` remplace
+     le board sans jamais comparer.~~ **Corrigé le 2026-08-31** (comparaison par
+     `_secours_est_meilleur`), mais cette ligne est restée « non corrigé »
+     pendant dix-huit jours — et a envoyé le 2026-09-18 re-corriger un défaut
+     déjà fermé. En y allant, on a trouvé le VRAI trou restant : les replis GND
+     (ciblé et global) comparaient des couples bruts, que `_SANS_VERDICT` fait
+     valoir `(0, 0)` — un secours que kicad-cli n'avait pas su ouvrir battait
+     tout board mesuré. `_bilan_drc` rend désormais `None` sans verdict, et
+     `_secours_est_meilleur` refuse toute comparaison avec `None`. Garde :
+     `tests/test_repli_gnd_sans_verdict.py`.
 
      **ESCALADE DES COUCHES** — méthode demandée : tirages au palier courant,
      puis +2 couches, en gardant TOUJOURS le meilleur (jamais le dernier).
