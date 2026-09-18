@@ -4026,7 +4026,7 @@ def _repli_gnd_vaut_le_coup(manquantes: int) -> bool:
     return int(manquantes) <= seuil
 
 
-def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
+def _secours_est_meilleur(avant: Optional[tuple], apres: Optional[tuple]) -> bool:
     """Le board de secours vaut-il mieux que celui qu il remplacerait ?
 
     Les couples sont `(erreurs DRC, connexions manquantes)`. On classe sur
@@ -4066,7 +4066,15 @@ def _secours_est_meilleur(avant: tuple, apres: tuple) -> bool:
     NOMBRE TOTAL de defauts. Aucun seuil chiffre n est introduit : la regle se
     lit « un compromis ne doit pas empirer le total ». Elle laisse passer les
     quatre comportements deja documentes et arrete le seul cas pathologique.
+
+    ⚠️ ECHOUE FERME (2026-09-18). `None` = board que le DRC n a pas pu juger
+    (`_bilan_drc`). Sans cette clause, `_SANS_VERDICT` valait `(0, 0)` — le
+    meilleur score possible — et un secours NON JUGE battait n importe quel
+    board mesure. « Je ne peux pas juger » vaut « c est pire », comme dans
+    `_aggrave_le_board`.
     """
+    if avant is None or apres is None:
+        return False
     if sum(apres) > sum(avant):
         return False
     return apres < avant
@@ -4232,14 +4240,12 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
         avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
         if not _secours_est_meilleur(avant_c, apres_c):
             logger.warning(
-                "repli GND CIBLE tour %d refuse : (%d erreur, %d manquante) "
-                "ne fait pas mieux que (%d erreur, %d manquante)",
-                tour, apres_c[0], apres_c[1], avant_c[0], avant_c[1])
+                "repli GND CIBLE tour %d refuse : %s ne fait pas mieux que %s",
+                tour, _bilan_lisible(apres_c), _bilan_lisible(avant_c))
             break
         logger.info(
-            "repli GND CIBLE tour %d retenu : (%d erreur, %d manquante) -> "
-            "(%d erreur, %d manquante)",
-            tour, avant_c[0], avant_c[1], apres_c[0], apres_c[1])
+            "repli GND CIBLE tour %d retenu : %s -> %s",
+            tour, _bilan_lisible(avant_c), _bilan_lisible(apres_c))
         final = cible
         try:
             orphelines = _pads_isolees_du_plan(_rapport_drc(final), final)
@@ -4248,9 +4254,21 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
     return final, orphelines
 
 
-def _bilan_drc(pcb_bytes: bytes) -> tuple:
+def _bilan_drc(pcb_bytes: bytes) -> Optional[tuple]:
+    """`(erreurs, connexions manquantes)`, ou None si le DRC n a pas jugé.
+
+    ⚠️ None et pas `(0, 0)` : un board que kicad-cli n ouvre pas n est pas un
+    board parfait. `_secours_est_meilleur` refuse toute comparaison avec None.
+    """
     rap = _rapport_drc(pcb_bytes)
+    if _sans_verdict(rap):
+        return None
     return (_compte_erreurs(rap), len(rap.get("unconnected_items") or []))
+
+
+def _bilan_lisible(bilan: Optional[tuple]) -> str:
+    """Pour le journal : `(e erreur, m manquante)`, ou `sans verdict DRC`."""
+    return "sans verdict DRC" if bilan is None else "(%d erreur, %d manquante)" % bilan
 
 
 def _router_gnd_cible(pcb_bytes: bytes, req: "RouteAutoRequest", budget_s: float,
@@ -6104,8 +6122,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 # (qui coute 10-17 min). Repete tant qu il referme des broches.
                 final, orphelines = _repli_gnd_cible_iteratif(
                     etendu, req, restant, orphelines, final)
-                manquantes_avant = _bilan_drc(final)[1] if orphelines else 0
+                bilan_final = _bilan_drc(final) if orphelines else (0, 0)
                 secours = None
+                if orphelines and bilan_final is None:
+                    # ⚠️ Sans verdict sur le board routé, tout secours serait
+                    # REFUSE par la comparaison : on ne paie pas 10-17 min de
+                    # repli global pour un résultat qu on ne pourra pas retenir.
+                    logger.warning(
+                        "plan de masse : %d broche(s) GND non reliée(s) mais le "
+                        "board routé n a pas de verdict DRC — repli global non "
+                        "tenté", len(orphelines))
+                    orphelines = []
+                manquantes_avant = bilan_final[1] if bilan_final is not None else 0
                 if orphelines and not _repli_gnd_vaut_le_coup(manquantes_avant):
                     logger.info(
                         "plan de masse : %d broche(s) GND non reliée(s) mais %d "
@@ -6131,25 +6159,20 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     # ⚠️ COMPARER avant de remplacer. Ce mecanisme etait le
                     # seul de la chaine a ecraser le board sans verifier qu il
                     # l ameliore — ses quatre voisines ont toutes cette garde.
-                    rap_a = _rapport_drc(final)
-                    rap_b = _rapport_drc(secours)
-                    avant = (_compte_erreurs(rap_a),
-                             len(rap_a.get("unconnected_items") or []))
-                    apres = (_compte_erreurs(rap_b),
-                             len(rap_b.get("unconnected_items") or []))
+                    # ⚠️ Par `_bilan_drc`, qui rend None sans verdict : des
+                    # couples bruts faisaient valoir (0, 0) a un secours que
+                    # kicad-cli n avait pas su ouvrir (2026-09-18).
+                    avant, apres = _bilan_drc(final), _bilan_drc(secours)
                     if _secours_est_meilleur(avant, apres):
-                        logger.info(
-                            "repli GND retenu : (%d erreur, %d manquante) -> "
-                            "(%d erreur, %d manquante)",
-                            avant[0], avant[1], apres[0], apres[1])
+                        logger.info("repli GND retenu : %s -> %s",
+                                    _bilan_lisible(avant), _bilan_lisible(apres))
                         final = secours
                     else:
                         _noter_repli_echoue(orphelines, couches=couches_final)
                         logger.warning(
-                            "repli GND REFUSE : (%d erreur, %d manquante) ne "
-                            "fait pas mieux que (%d erreur, %d manquante) — "
+                            "repli GND REFUSE : %s ne fait pas mieux que %s — "
                             "board conserve",
-                            apres[0], apres[1], avant[0], avant[1])
+                            _bilan_lisible(apres), _bilan_lisible(avant))
 
             # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
             # se mesure sur le remplissage FINAL. Mesuree avant, elle
