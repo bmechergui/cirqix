@@ -158,14 +158,24 @@ lui-même, ce qui déclarait non fabricables des cartes qui le sont.
 et jusqu'à 280 quand la boucle de correction itère. La cause de l'écart n'est
 pas établie ; ce qui l'est, c'est lequel des deux juge le board qu'on livre.
 
-## Les dix cartes tiennent sur DEUX couches
+## Couches : sept cartes sur deux, trois au-delà
 
-Compte des couches cuivre dans les boards livrés : `F.Cu` et `B.Cu`, rien
-d'autre, y compris pour les 70 composants de la `carte-10`.
+⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
+vrai à l'écriture, et plus depuis que les boards ont été relivrés. Recompté le
+2026-09-19 sur le cuivre réellement posé dans `expected/final.kicad_pcb` :
 
-La `carte-09` est la seule à porter un plafond à quatre couches
-(`max_layers: 4` dans son schéma), et **elle ne s'en est pas servie** : elle a
-réussi au premier palier. C'est le comportement attendu — le plafond ne
+    carte-01 … carte-07   2 couches
+    carte-08              4 couches — pistes sur In1 (37) et In2 (29)
+    carte-09              6 déclarées, 5 utilisées — In4 vide
+    carte-10              4 déclarées ; In1 porte 2 segments, In2 aucun
+
+`carte-10` serait donc faisable en deux couches à deux segments près, et
+`carte-09` paie quatre couches internes pour environ 87 segments. Le compte se
+lit dans le board, jamais dans ce fichier : il a déjà menti une fois.
+
+Texte d'origine, conservé pour le raisonnement qui reste juste : la `carte-09`
+portait un plafond à quatre couches (`max_layers: 4` dans son schéma), et
+elle ne s'en était pas servie au premier banc. C'est le comportement attendu — le plafond ne
 PRESCRIT rien, le service part toujours de 2 et n'escalade que sur preuve
 d'échec, en gardant toujours le meilleur tirage et jamais le dernier.
 

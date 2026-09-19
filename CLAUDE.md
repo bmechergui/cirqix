@@ -1725,7 +1725,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 - `led-blinker-full-pipeline/` — pipeline **complet** ①→⑧ description → Gerbers (`run_pipeline.py`) ; board simple NE555+LED (8 composants, **6 nets** dans `input/schema.json`, 60×45 mm) ; `expected/led_blinker_final.kicad_pcb` = 100 % routé / DRC-clean (2026-07-27). **Terrain d'apprentissage RL routing** documenté dans `docs/rl/routing/` — ne plus écrire que la fixture « n'existe pas »
 
 - `carte-01-diviseur/` … `carte-10-maximale/` — **le banc du driver LLM**, de 5 à
-  70 composants, toutes 100 % routées et 0 erreur sur deux couches. Leur schéma
+  70 composants, toutes 100 % routées et 0 erreur. ⚠️ « sur deux couches »,
+  écrit ici jusqu'au 2026-09-19, était FAUX pour trois d'entre elles : compte
+  du cuivre posé, carte-08 route sur 4 couches, carte-09 en utilise 5 sur 6,
+  carte-10 en déclare 4 (In1 : 2 segments). Détail : `BANC_DRIVER_LLM.md`. Leur schéma
   est ÉCRIT PAR LE DRIVER (Claude Code joue l'Ingénieur Schéma) : c'est le seul
   chemin qui n'appelle aucun modèle, et il couvre l'angle mort du banc
   historique, dont les huit cartes partent d'un `circuit.json` FIGÉ. Voir
