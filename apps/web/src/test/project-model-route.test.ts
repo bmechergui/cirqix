@@ -146,14 +146,51 @@ describe('export et cache', () => {
     expect(r.headers.get('x-model-components-reason')).toBe('fichiers_absents');
   });
 
-  it('sert le modèle déjà déposé sans appeler le service', async () => {
+  it('sert le modèle déjà déposé sans relancer d’export', async () => {
     const enCache = Uint8Array.from([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]);
     supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient({ enCache }).client);
-    const fetchMock = serviceQuiRepond(200, {});
+    const fetchMock = serviceQuiRepond(200, { models_declared: 4, models_found: 4, models_reason: '' });
     const r = await GET(requete(), ctx);
     expect(r.status).toBe(200);
     expect(r.headers.get('x-model-source')).toBe('storage');
     expect(new Uint8Array(await r.arrayBuffer())).toEqual(enCache);
+    const urls = fetchMock.mock.calls.map((c) => String((c as unknown[])[0]));
+    expect(urls.some((u) => u.endsWith('/export/glb'))).toBe(false);
+  });
+
+  it('depuis le cache, redemande le seul COMPTE des composants et le relaie', async () => {
+    // Parcours local du 2026-09-19 : le cache — le cas le plus fréquent — perdait
+    // « composants n/m » et la cause d'une carte nue.
+    const enCache = Uint8Array.from([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]);
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient({ enCache }).client);
+    const fetchMock = serviceQuiRepond(200, { models_declared: 26, models_found: 0, models_reason: 'fichiers_absents' });
+    const r = await GET(requete(), ctx);
+    expect(r.headers.get('x-model-source')).toBe('storage');
+    expect(r.headers.get('x-model-components')).toBe('0/26');
+    expect(r.headers.get('x-model-components-reason')).toBe('fichiers_absents');
+    const appel = fetchMock.mock.calls[0] as unknown as [string, { body: string; headers: Record<string, string> }];
+    expect(appel[0]).toBe('http://kicad:8766/export/glb/composants');
+    expect(appel[1].headers['Authorization']).toMatch(/^Bearer .{32,}/);
+    expect(Buffer.from(JSON.parse(appel[1].body).kicad_pcb_b64, 'base64')).toEqual(Buffer.from(BOARD));
+  });
+
+  it('depuis le cache, un service muet ne bloque pas le modèle — sans inventer de compte', async () => {
+    const enCache = Uint8Array.from([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]);
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient({ enCache }).client);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+    const r = await GET(requete(), ctx);
+    expect(r.status).toBe(200);
+    expect(new Uint8Array(await r.arrayBuffer())).toEqual(enCache);
+    expect(r.headers.get('x-model-components')).toBeNull();
+  });
+
+  it('carte nue depuis le cache : pas de compte à demander', async () => {
+    const enCache = Uint8Array.from([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]);
+    supabaseMock.createRouteHandlerClient.mockResolvedValue(makeClient({ enCache }).client);
+    const fetchMock = serviceQuiRepond(200, { models_declared: 4, models_found: 4 });
+    const req = { nextUrl: new URL('http://localhost/api/projects/p1/model?components=0'), headers: new Headers() } as unknown as Parameters<typeof GET>[0];
+    const r = await GET(req, ctx);
+    expect(r.status).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

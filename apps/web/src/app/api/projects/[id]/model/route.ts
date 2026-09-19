@@ -36,12 +36,46 @@ function lireOptionComposants(valeur: string | null): boolean {
   return !['0', 'false', 'no', 'non'].includes((valeur ?? '1').trim().toLowerCase());
 }
 
+type Comptes = { found: number; declared: number; raison?: string };
+const COMPTAGE_TIMEOUT_MS = 15_000;
+
+/** Les comptes du service, s'il les donne. Un champ absent ou mal typé : pas de compte. */
+function lireComptes(corps: { models_found?: unknown; models_declared?: unknown; models_reason?: unknown }): Comptes | undefined {
+  if (typeof corps.models_found !== 'number' || typeof corps.models_declared !== 'number') return undefined;
+  const raison = typeof corps.models_reason === 'string' && corps.models_reason !== '' ? corps.models_reason : undefined;
+  return { found: corps.models_found, declared: corps.models_declared, ...(raison ? { raison } : {}) };
+}
+
+/**
+ * Le compte des modèles 3D, sans réexporter le GLB (`POST /export/glb/composants`).
+ * Best-effort : un service muet ne doit pas priver l'utilisateur d'un modèle déjà
+ * en cache — on sert alors le GLB SANS compte, jamais avec un compte inventé.
+ */
+async function compterSansExporter(
+  service: { url: string; headers: Record<string, string> },
+  board: Uint8Array,
+): Promise<Comptes | undefined> {
+  try {
+    const reponse = await fetch(`${service.url}/export/glb/composants`, {
+      method: 'POST',
+      headers: service.headers,
+      body: JSON.stringify({ kicad_pcb_b64: Buffer.from(board).toString('base64') }),
+      signal: AbortSignal.timeout(COMPTAGE_TIMEOUT_MS),
+    });
+    if (!reponse.ok) throw new Error(`service responded ${reponse.status}`);
+    return lireComptes((await reponse.json()) as Record<string, unknown>);
+  } catch (err) {
+    logger.child({ module: 'model-route' }).warn({ err }, 'compte des composants 3D indisponible — GLB servi sans compte');
+    return undefined;
+  }
+}
+
 function reponseGlb(
   glb: Buffer,
   etag: string,
   source: 'storage' | 'service',
   durationMs: number,
-  composants?: { found: number; declared: number; raison?: string },
+  composants?: Comptes,
 ): NextResponse {
   return new NextResponse(new Uint8Array(glb), {
     status: 200,
@@ -105,7 +139,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { data: enCache } = await supabase.storage.from(BUCKET).download(cheminCache);
   if (enCache) {
     const glb = Buffer.from(await enCache.arrayBuffer());
-    if (glb.byteLength > 0) return reponseGlb(glb, etag, 'storage', 0);
+    if (glb.byteLength > 0) {
+      // Le cache ne garde que le GLB : le compte des composants se redemande,
+      // seul, au service (secondes, pas d'export). Carte nue : rien à compter.
+      const comptes = composants ? await compterSansExporter(service, board) : undefined;
+      return reponseGlb(glb, etag, 'storage', 0, comptes);
+    }
   }
 
   let reponse: Response;
@@ -139,10 +178,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     return NextResponse.json({ success: false, error: '3D export failed: service returned no model' }, { status: 502 });
   }
   const glb = Buffer.from(corps.glb_b64, 'base64');
-  const raison = typeof corps.models_reason === 'string' && corps.models_reason !== '' ? corps.models_reason : undefined;
-  const comptes = typeof corps.models_found === 'number' && typeof corps.models_declared === 'number'
-    ? { found: corps.models_found, declared: corps.models_declared, ...(raison ? { raison } : {}) }
-    : undefined;
+  const comptes = lireComptes(corps);
 
   const { error: erreurDepot } = await supabase.storage
     .from(BUCKET)

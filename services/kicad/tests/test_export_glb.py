@@ -181,6 +181,27 @@ def test_la_reponse_porte_le_compte_des_modeles(monkeypatch, tmp_path):
     assert sans.models_reason == ""
 
 
+def test_le_compte_des_modeles_se_demande_sans_exporter(monkeypatch, tmp_path):
+    """Parcours local du 2026-09-19 : le GLB servi depuis le CACHE — le cas le
+    plus frequent, le pipeline le depose a chaque livraison — perdait son compte
+    de composants, faute de service interroge. La route redemande donc le seul
+    compte, sans relancer l export (1-6 s)."""
+    from routers.render import compter_modeles_glb, ComptageRequest
+    monkeypatch.setenv("KICAD10_3DMODEL_DIR", str(tmp_path))
+    (tmp_path / "Autre.3dshapes").mkdir()
+    (tmp_path / "Autre.3dshapes" / "Autre.step").write_bytes(b"step")
+    monkeypatch.setattr(render_router.subprocess, "run",
+                        lambda *a, **k: pytest.fail("le comptage ne doit JAMAIS exporter"))
+    board = b'(kicad_pcb (footprint "R" (model "${KICAD10_3DMODEL_DIR}/X.3dshapes/Y.step")))'
+    rep = compter_modeles_glb(ComptageRequest(kicad_pcb_b64=base64.b64encode(board).decode("ascii")))
+    assert (rep.models_declared, rep.models_found, rep.models_reason) == (1, 0, "fichiers_absents")
+
+
+def test_la_route_de_comptage_est_exposee():
+    chemins = {getattr(r, "path", None): getattr(r, "methods", set()) for r in render_router.router.routes}
+    assert "POST" in chemins["/export/glb/composants"]
+
+
 def test_la_route_est_exposee():
     chemins = {getattr(r, "path", None): getattr(r, "methods", set()) for r in render_router.router.routes}
     assert "POST" in chemins["/export/glb"]

@@ -53,6 +53,12 @@ interface OutputFile {
   desc: string;
   credit: number;
   color: string;
+  /**
+   * Ce que dit la carte quand le fichier n'a pas de téléchargement propre.
+   * `pret` = l'export a tourné. Sans cette note, la carte invitait à relancer un
+   * export déjà fait (CPL) ou jamais implémenté (STEP) — parcours du 2026-09-19.
+   */
+  note?: (pret: boolean) => string | undefined;
 }
 
 const OUTPUT_FILES: OutputFile[] = [
@@ -67,8 +73,10 @@ const OUTPUT_FILES: OutputFile[] = [
   {
     id: 'bom',
     ext: '.csv',
-    label: 'BOM LCSC',
-    desc: 'Bill of materials with LCSC part numbers for JLCPCB PCBA.',
+    label: 'BOM',
+    // ⚠️ La colonne `lcsc` est VIDE sur tous les boards livrés (mesuré le
+    // 2026-09-19) : ne pas promettre des références qu'on n'attribue pas encore.
+    desc: 'Bill of materials (reference, value). LCSC part numbers are not assigned yet.',
     credit: 0,
     color: '#A3A3A3',
   },
@@ -79,6 +87,8 @@ const OUTPUT_FILES: OutputFile[] = [
     desc: 'Component placement file (CPL) for SMT assembly.',
     credit: 0,
     color: '#A3A3A3',
+    // Produit par l'export, rangé dans le ZIP des Gerbers (`pos.csv`).
+    note: (pret) => (pret ? 'Included in the Gerber ZIP (pos.csv)' : undefined),
   },
   {
     id: 'step',
@@ -87,6 +97,8 @@ const OUTPUT_FILES: OutputFile[] = [
     desc: 'Mechanical 3D model for enclosure design and fit checks.',
     credit: 1,
     color: '#22C55E',
+    // Pas encore implémenté : le dire, quel que soit l'état de l'export.
+    note: () => 'Not available yet',
   },
 ];
 
@@ -111,6 +123,7 @@ interface FileCardProps {
 
 function FileCard({ file, ready, onDownload }: FileCardProps) {
   const canDownload = ready && !!onDownload;
+  const note = canDownload ? undefined : file.note?.(ready);
   return (
     <div className="rounded-xl border border-[#1a1a1a] bg-[#0d0d0d] p-4 flex flex-col gap-3 hover:border-[#2a2a2a] transition-colors">
       <div className="flex items-start gap-3">
@@ -144,7 +157,7 @@ function FileCard({ file, ready, onDownload }: FileCardProps) {
         <Download size={11} />
         {canDownload
           ? `Download${file.credit ? ` · ${file.credit} credit` : ' · free'}`
-          : ready ? 'Run export to generate' : 'Not yet available'}
+          : note ?? (ready ? 'Run export to generate' : 'Not yet available')}
       </Button>
     </div>
   );
