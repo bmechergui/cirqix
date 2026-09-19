@@ -1191,8 +1191,25 @@ Bogatin, Phil's Lab, Feranec, Peterson, IPC-2221/7351/4761) et a délégué :
 et les choix commerciaux (plafond de couches vendu, coût) restent siens.
 
 **Validé au titre de cette délégation :**
-- GND routé en pistes + plan coulé sur Bottom (2 couches) — déjà appliqué,
-  confirmé par « grille de masse / ground pour ».
+- ~~GND routé en pistes + plan coulé sur Bottom (2 couches) — déjà appliqué,
+  confirmé par « grille de masse / ground pour ».~~ **Retiré le jour même**
+  par D-2026-09-10-c (plus haut) : A/B sur carte-05 à 2 couches, GND en
+  pistes 92 % contre GND au plan 100 %. Disponible par réglage `gnd_route`.
+  Cette ligne disait encore « déjà appliqué » le 2026-09-18.
+
+⚠️ **Portée réelle de la stratégie GND actuelle (relevé le 2026-09-19, à la
+remarque de l'utilisateur : « notre solution doit marcher même sur 12 couches,
+pas que deux couches »).** GND au plan, sur les faces extérieures seulement, a
+été mesuré à **2 couches uniquement** (carte-05). Le code l'applique pourtant à
+TOUS les paliers : à 4, 6, 8 couches et au-delà, les couches internes ne
+portent que des signaux et aucun plan — ce qu'aucun empilage professionnel ne
+fait. La seule mesure multicouche (D-2026-09-12-b, carte-08, conçue pour
+2 couches) ne tranche rien pour une carte qui a réellement BESOIN de 6 ou
+8 couches. « GND en pistes » contre « GND au plan » n'a jamais été mesuré
+au-dessus de 2 couches. Le code accepte 10, 12, 16 couches (`_layer_ladder`
+n'a pas de maximum), mais les plans plafonnent à 8, Enterprise compris
+(`PLAN_ENTITLEMENTS`). Stratégie d'empilage au-delà de 2 couches : **à mesurer,
+décision produit en attente.**
 
 **À faire, validé d'avance :**
 - Routage orthogonal H/V par couche (préférence de direction Freerouting).
