@@ -304,6 +304,7 @@ def _tuer_la_jvm(attente_s: float = 60.0) -> bool:
     Le verrou de routage garantit qu aucun autre appel n a de job en cours.
     Reglage `tuer_jvm_sur_abandon` (defaut : vrai) pour l A/B.
     """
+    global _JOBS_DEPUIS_RECYCLAGE
     try:
         from tools.reglages_banc import reglage
         if not bool(reglage("tuer_jvm_sur_abandon", True)):
@@ -327,10 +328,72 @@ def _tuer_la_jvm(attente_s: float = 60.0) -> bool:
     while time.time() < limite:
         if _find_freerouting_api():
             logger.info("freerouting : JVM tuee et relancee — les jobs abandonnes sont morts avec elle")
+            # JVM neuve : sa file est vide, rien a recycler tant qu aucun job n y part.
+            _JOBS_DEPUIS_RECYCLAGE = 0
             return True
         time.sleep(2.0)
     logger.warning("freerouting : JVM tuee mais pas revenue en %.0f s", attente_s)
     return False
+
+
+# Jobs envoyes a la JVM Freerouting depuis qu elle a ete (re)lancee. Non nul =
+# sa file n est plus vide, donc son ordonnanceur tourne a vide (voir ci-dessous).
+_JOBS_DEPUIS_RECYCLAGE: int = 0
+
+
+def _noter_job_envoye() -> None:
+    global _JOBS_DEPUIS_RECYCLAGE
+    _JOBS_DEPUIS_RECYCLAGE += 1
+
+
+def _recycler_la_jvm() -> None:
+    """Relance la JVM Freerouting apres un routage : sa file doit repartir VIDE.
+
+    ⚠️ Mesure du 2026-09-19 : au repos, aucun routage en cours, la JVM brulait
+    104-113 % d un coeur et 2,5 Go. Un seul thread, `RoutingJobScheduler`
+    (Freerouting v2.1.0, l. 58), `RUNNABLE` depuis le 2e run d une serie :
+    8 677 s de CPU cumule. Sa boucle ne dort QUE si la file est vide :
+
+        while (true) {
+          while (jobs.stream().count() > 0) { ... }   // aucune pause ici
+          Thread.sleep(250);
+        }
+
+    Or un job termine n est JAMAIS retire de la file : seul `clearJobs` le fait,
+    et aucune route de l API v1 ne l appelle (`cancel` repond 501, pas de
+    suppression de session). Des le premier routage, la JVM tournait donc a vide
+    pour toujours, en gardant chaque board en memoire. Meme boucle en v2.2.4.
+
+    Une JVM neuve a une file vide. `_tuer_la_jvm` vise la seule JVM de l API
+    (la boucle de l entrypoint la relance) et attend qu elle reponde. Un echec
+    du recyclage ne change JAMAIS le resultat du routage deja calcule.
+
+    ⚠️ ON NE RECYCLE QUE SI UN JOB EST PARTI DEPUIS LE DERNIER RECYCLAGE (revue du
+    2026-09-19). Un routage qui a deja tue la JVM (job abandonne) PUIS continue
+    avec d autres tirages a rempli la nouvelle file : il faut recycler encore.
+    S il l a tuee apres son dernier job, ou n a jamais utilise l API (repli CLI),
+    recycler couterait ~9 s sous le verrou pour rien. Le compteur vit dans le
+    processus qui route — les routages sont serialises par le verrou.
+    Reglage `recycler_jvm_apres_routage` (defaut : vrai) pour l A/B.
+    Garde : `tests/test_jvm_recyclee_apres_routage.py`.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        if not bool(reglage("recycler_jvm_apres_routage", True)):
+            logger.info("freerouting : recyclage apres routage coupe par reglage")
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    if _JOBS_DEPUIS_RECYCLAGE == 0:
+        logger.info("freerouting : aucun job envoye depuis le dernier recyclage — "
+                    "file deja vide, pas de recyclage")
+        return
+    try:
+        if not _tuer_la_jvm():
+            logger.warning("freerouting : recyclage apres routage non confirme "
+                           "— la JVM peut encore tourner a vide")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("freerouting : recyclage apres routage impossible (%s)", exc)
 
 
 def _find_freerouting_api() -> Optional[str]:
@@ -895,6 +958,8 @@ def _route_with_freerouting_api(
             charge["router_settings"] = _REGLAGES_FREEROUTING
         job = _appel("POST", f"{pre}/jobs/enqueue", charge)
         job_id = job["id"]
+        # La file de la JVM n est plus vide : elle devra etre recyclee.
+        _noter_job_envoye()
 
         _appel(
             "POST",
@@ -5633,7 +5698,12 @@ def _un_seul_routage_a_la_fois(fonction):
         # verrait son routage tronque par la faute d un autre.
         try:
             with verrou_de_routage():
-                return fonction(req)
+                try:
+                    return fonction(req)
+                finally:
+                    # ENCORE SOUS le verrou : aucun autre routage ne demarre
+                    # pendant que la JVM redemarre. Meme si le routage a leve.
+                    _recycler_la_jvm()
         except RoutageOccupe as exc:
             # 503 et non 500 : le service va bien, il est occupe. Et jamais un
             # faux succes — un `skipped` ou un `routed_percent: 0` se lirait
