@@ -970,8 +970,21 @@ kicad-tools   → ✅ thread-safe  (objets Autorouter indépendants)
 pcbnew        → ❌ PAS thread-safe (état global C++ — nécessite process séparé)
 kicad-cli     → ✅ thread-safe  (subprocess isolé)
 circuit_synth → ✅ thread-safe  (objets Circuit indépendants)
-Freerouting   → ✅ API server   (1 JVM persistante port 37864, RAM 400MB fixe)
+Freerouting   → ✅ API server   (1 JVM port 37864, RECYCLÉE après chaque routage)
 ```
+
+⚠️ **La JVM Freerouting tournait à vide pour toujours (mesuré le 2026-09-19).**
+« RAM 400 MB fixe » était faux : au repos, sans aucun routage, elle brûlait
+**104-113 % d'un cœur et 2,5 Go**. Relevé de threads (`kill -3` sur `pgrep -x
+java` — `pgrep -f freerouting.jar` depuis `bash -c` se vise lui-même) : un seul
+thread, `RoutingJobScheduler` l. 58, `RUNNABLE` depuis le 2e run d'une série.
+Dans Freerouting v2.1.0 (et v2.2.4), cette boucle ne dort QUE si la file de jobs
+est vide, et un job terminé n'est jamais retiré (aucune route de l'API v1 ne le
+fait). Dès le premier routage, la JVM ne dormait donc plus jamais.
+`_un_seul_routage_a_la_fois` la recycle désormais à la fin de chaque routage,
+sous le verrou : 0 % et ~200 Mo après un run, pour ~9 s par routage. Garde :
+`tests/test_jvm_recyclee_apres_routage.py`. **NEVER** lire `ps -o pcpu` comme
+une mesure instantanée : c'est une moyenne sur la vie du processus.
 
 ⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
 Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un
