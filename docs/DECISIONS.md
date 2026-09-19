@@ -96,6 +96,27 @@
 
 ## Validées par l'utilisateur
 
+### D-2026-09-19-a — À 4, 6 et 8 couches, la masse reste sur les faces extérieures
+**Statut : validée** par l'utilisateur le 2026-09-19, par choix explicite
+(« Garder l'actuel (A) »), parmi trois options : A garder l'actuel, mesurer
+A/B/C d'abord (recommandée), B plan de masse sur une couche interne.
+- **La règle :** à tout palier (4, 6, 8 couches), le plan GND est coulé sur
+  les deux faces extérieures seulement ; les couches internes ne portent que
+  des signaux. GND reste confié au plan (`_NETS_CONFIES_AU_PLAN = ("GND",)`),
+  jamais routé en pistes. Aucun changement de code : c'est le comportement
+  en place.
+- **Décidée en connaissance de cause :** elle n'est MESURÉE qu'à 2 couches
+  (D-2026-09-10-c, carte-05). Au-dessus, la seule mesure est carte-08
+  (D-2026-09-12-b : faces seules 100 % à 4 couches, faces + In1 88-96 %), une
+  carte conçue pour 2 couches. Aucune carte du dépôt n'exige 8 couches ou plus.
+- **Ce qui la remettrait en cause :** une carte qui a réellement BESOIN de
+  6-8 couches et plafonne sous 100 % avec des broches GND orphelines. Les
+  leviers pour un A/B restent en place, en réglages de banc :
+  `plan_gnd_interne` (plan sur In1) et `gnd_route` (GND en pistes).
+- **Hors de son périmètre :** 10 couches et plus. Le code les accepte
+  (`_layer_ladder` sans maximum), les plans plafonnent à 8 (`PLAN_ENTITLEMENTS`,
+  Enterprise compris) ; relever ce plafond est une décision commerciale distincte.
+
 ### D-2026-09-15-a — Marge entre un composant et le bord, pour que sa référence y tienne
 **Statut : validée sous délégation** le 2026-09-15 — l'utilisateur a répondu
 « go », puis explicitement « c'est toi de choisir ». Option **A** retenue :
@@ -1208,8 +1229,9 @@ fait. La seule mesure multicouche (D-2026-09-12-b, carte-08, conçue pour
 8 couches. « GND en pistes » contre « GND au plan » n'a jamais été mesuré
 au-dessus de 2 couches. Le code accepte 10, 12, 16 couches (`_layer_ladder`
 n'a pas de maximum), mais les plans plafonnent à 8, Enterprise compris
-(`PLAN_ENTITLEMENTS`). Stratégie d'empilage au-delà de 2 couches : **à mesurer,
-décision produit en attente.**
+(`PLAN_ENTITLEMENTS`). Stratégie d'empilage au-delà de 2 couches : **tranchée
+le 2026-09-19 par D-2026-09-19-a** (l'utilisateur garde l'actuel, masse sur les
+faces extérieures à tout palier), en connaissance de cette portée.
 
 **À faire, validé d'avance :**
 - Routage orthogonal H/V par couche (préférence de direction Freerouting).
