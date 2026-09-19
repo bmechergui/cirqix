@@ -1421,6 +1421,12 @@ def _retirer_ilots_flottants(pcbnew, args: dict[str, str]) -> None:
                 dedans = [v for v in vias if poly.Contains(v.GetPosition(), i)]
                 pastilles = sum(1 for p in pads
                                 if poly.Contains(p.GetPosition(), i))
+                # ⚠️ « Relie » garde ici son sens LARGE (un via qui touche du
+                # cuivre du net en face), a la difference de la couture. Essaye
+                # le 2026-09-19 sur carte-09 avec le critere « composante du
+                # plan » : les paires F/B isolees portaient une PASTILLE GND
+                # cote F ; le retrait ote le jumeau B et garde l ilot a
+                # pastille, isole — 2 -> 3 connexions manquantes. Retire.
                 reliants = 0
                 for v in dedans:
                     if _touche_le_net_en_face(board, zones, autre.get(nom),
@@ -1529,6 +1535,89 @@ def _touche_le_net_en_face(board, zones, couche_opposee, position) -> bool:
     return False
 
 
+def _ilots_relies_au_principal(aires: dict, traversants, contient) -> set:
+    """Ilots de la MEME composante que le plus grand, reliee par traversants.
+
+    `aires` : {ilot: aire} pour tous les ilots du net, toutes couches ;
+    `traversants` : points ou le cuivre passe d une couche a l autre (vias,
+    pastilles traversantes) ; `contient(ilot, point)`.
+
+    ⚠️ Mesure du 2026-09-19, relecture a l oeil du banc : chaque carte portait
+    une rangee de 9 a 20 vias GND le long du bord haut, 116 au total. La
+    couture reposait un via dans chaque ilot a CHAQUE passe, sans regarder
+    s il etait deja relie ; la regle anti-doublon decalait le suivant de
+    1,8 mm. Un ilot deja relie au plan n appelle aucun via de plus.
+
+    ⚠️ « Relie » veut dire relie au PLAN, pas « un via qui atteint du cuivre
+    en face ». Ce premier critere, essaye le jour meme, a laisse carte-09 a
+    deux ruptures GND : deux PAIRES de petits ilots (4,8 et 5,6 mm2 ; 3,1 et
+    1,7 mm2) cousues entre elles, chacun se croyant relie, aucune n atteignant
+    le plan. D ou les composantes, et le plus grand ilot comme reference.
+
+    Un predicat qui leve vaut « pas dedans » : au doute, l ilot reste a coudre.
+    """
+    if not aires:
+        return set()
+    parent = {k: k for k in aires}
+
+    def racine(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for p in traversants:
+        dedans = []
+        for k in aires:
+            try:
+                if contient(k, p):
+                    dedans.append(k)
+            except Exception:  # noqa: BLE001 — au doute, on coud
+                continue
+        for a, b in zip(dedans, dedans[1:]):
+            parent[racine(a)] = racine(b)
+    principal = racine(max(aires, key=aires.get))
+    return {k for k in aires if racine(k) == principal}
+
+
+def _ilots_relies_au_principal_du_net(pcbnew, board, netcode) -> set:
+    """`_ilots_relies_au_principal` lu sur le board : cles (n de zone, couche, i).
+
+    Tous les ilots du net sur TOUTES ses zones — notre generateur ecrit une
+    zone par face — et tous ses traversants : vias et pastilles traversantes.
+    Le n de zone est son rang dans `board.Zones()`, stable dans un chargement.
+    """
+    aires, polys = {}, {}
+    for nz, z in enumerate(board.Zones()):
+        try:
+            if z.GetNetCode() != netcode:
+                continue
+            for c in z.GetLayerSet().Seq():
+                poly = z.GetFilledPolysList(c)
+                for i in range(poly.OutlineCount()):
+                    aires[(nz, c, i)] = abs(float(poly.Outline(i).Area()))
+                    polys[(nz, c, i)] = poly
+        except Exception:  # noqa: BLE001 — zone illisible : rien de relie par elle
+            continue
+    traversants = []
+    for t in board.GetTracks():
+        try:
+            if t.GetClass() == "PCB_VIA" and t.GetNetCode() == netcode:
+                traversants.append(t.GetPosition())
+        except Exception:  # noqa: BLE001
+            continue
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            try:
+                if (p.GetNetCode() == netcode
+                        and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH):
+                    traversants.append(p.GetPosition())
+            except Exception:  # noqa: BLE001
+                continue
+    return _ilots_relies_au_principal(
+        aires, traversants, lambda k, pos: polys[k].Contains(pos, k[2]))
+
+
 def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     """Pose un via dans chaque ilot d un plan, pour les relier par l autre face.
 
@@ -1554,7 +1643,7 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     trous = _trous_perces(board)
 
     poses = 0
-    for zone in board.Zones():
+    for nz, zone in enumerate(board.Zones()):
         try:
             nom = str(zone.GetNetname())
         except Exception:
@@ -1593,9 +1682,17 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
             couches_du_net = max(couches_du_net, 1 + (1 if en_face else 0))
             if not _faut_coudre(total, couches_du_net):
                 continue  # une seule face, d un seul tenant : rien a relier
+            # Releve a chaque couche : les vias poses sur une couche precedente
+            # de cette passe relient deja leurs ilots.
+            relies = _ilots_relies_au_principal_du_net(
+                pcbnew, board, zone.GetNetCode())
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False
+                # ⚠️ Un ilot deja relie au PLAN n appelle aucun via : voir
+                # `_ilots_relies_au_principal` (116 vias en rangee sur le banc).
+                if (nz, couche, i) in relies:
+                    continue
                 # ⚠️ PREFERER les points qui relient VRAIMENT — sans jamais
                 # les exiger. Mesure du 2026-09-02, `nucleo-f401` : deux ilots
                 # (238 et 128 mm2) recoivent un via qui traverse vers du VIDE,

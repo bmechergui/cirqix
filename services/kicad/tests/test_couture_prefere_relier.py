@@ -110,8 +110,13 @@ class TestCablage:
                 if not l.strip().startswith("#")]
         # `_relie` ne doit apparaître QUE comme argument de la préférence,
         # jamais dans une condition qui écarte un candidat.
+        # ⚠️ Mot ENTIER : `_ilot_deja_relie(` (2026-09-19) contient la
+        # sous-chaine `_relie(` sans etre le predicat de candidat vise ici —
+        # il ecarte un ILOT deja cousu, pas un point candidat.
+        import re
         fautifs = [l for l in code
-                   if "_relie(" in l and "_candidats_par_preference" not in l
+                   if re.search(r"(?<![\w])_relie\(", l)
+                   and "_candidats_par_preference" not in l
                    and not l.startswith("def _relie")]
         assert not fautifs, (
             "la préférence sert à écarter, pas seulement à ordonner : %s"
