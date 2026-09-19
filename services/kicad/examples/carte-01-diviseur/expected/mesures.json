@@ -16,7 +16,7 @@
   "abouti": true,
   "board": {
     "segments": 12,
-    "vias": 10,
+    "vias": 2,
     "zones": 2,
     "empreintes": 5
   },
@@ -36,5 +36,17 @@
       25,
       20
     ]
+  },
+  "couture_corrigee": {
+    "date": "2026-09-19",
+    "pr": 217,
+    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
+    "vias_avant": 12,
+    "couches": {
+      "declarees": 2,
+      "pistes_par_couche": {
+        "F.Cu": 12
+      }
+    }
   }
 }

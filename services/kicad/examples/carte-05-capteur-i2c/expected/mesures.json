@@ -15,20 +15,33 @@
   "types_violations": "silk_over_copper:26,silk_overlap:12",
   "abouti": true,
   "board": {
-    "segments": 290,
-    "vias": 29,
-    "zones": 0,
+    "segments": 177,
+    "vias": 26,
+    "zones": 3,
     "empreintes": 26
   },
   "drc_du_board": {
-    "violations": 1,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "track_dangling:1",
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
   "livre_par": "livrer_campagne.py",
   "tirage": "carte-05-capteur-i2c-t1",
-  "serigraphie_degagee": "2026-09-12"
+  "serigraphie_degagee": "2026-09-12",
+  "couture_corrigee": {
+    "date": "2026-09-19",
+    "pr": 217,
+    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
+    "vias_avant": 37,
+    "couches": {
+      "declarees": 2,
+      "pistes_par_couche": {
+        "F.Cu": 152,
+        "B.Cu": 25
+      }
+    }
+  }
 }

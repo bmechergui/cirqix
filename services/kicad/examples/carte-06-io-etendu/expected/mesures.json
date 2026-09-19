@@ -15,15 +15,15 @@
   "types_violations": "silk_over_copper:58,silk_overlap:22,track_dangling:1",
   "abouti": true,
   "board": {
-    "segments": 221,
-    "vias": 71,
+    "segments": 213,
+    "vias": 45,
     "zones": 3,
-    "empreintes": 36
+    "empreintes": 35
   },
   "drc_du_board": {
     "violations": 0,
     "non_connectes": 0,
-    "types": "track_dangling:1,via_dangling:1",
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -36,5 +36,18 @@
       80,
       60
     ]
+  },
+  "couture_corrigee": {
+    "date": "2026-09-19",
+    "pr": 217,
+    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
+    "vias_avant": 77,
+    "couches": {
+      "declarees": 2,
+      "pistes_par_couche": {
+        "F.Cu": 173,
+        "B.Cu": 40
+      }
+    }
   }
 }
