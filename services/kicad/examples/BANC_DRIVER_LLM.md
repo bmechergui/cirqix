@@ -158,20 +158,26 @@ lui-même, ce qui déclarait non fabricables des cartes qui le sont.
 et jusqu'à 280 quand la boucle de correction itère. La cause de l'écart n'est
 pas établie ; ce qui l'est, c'est lequel des deux juge le board qu'on livre.
 
-## Couches : sept cartes sur deux, trois au-delà
+## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
-vrai à l'écriture, et plus depuis que les boards ont été relivrés. Recompté le
-2026-09-19 sur le cuivre réellement posé dans `expected/final.kicad_pcb` :
+vrai à l'écriture, faux ensuite : recompté le 2026-09-19, carte-08 routait sur
+4 couches, carte-09 sur 5 (6 déclarées) et carte-10 en déclarait 4 pour
+2 segments internes.
+
+Les dix boards ont été relivrés le même jour avec la couture corrigée (PR #217 :
+elle recousait sans fin des îlots déjà reliés — 678 → 443 vias, rangée de
+vias inutiles disparue, 0 erreur et 0 connexion manquante sur les dix). Compte
+du cuivre posé dans les boards relivrés :
 
     carte-01 … carte-07   2 couches
-    carte-08              4 couches — pistes sur In1 (37) et In2 (29)
-    carte-09              6 déclarées, 5 utilisées — In4 vide
-    carte-10              4 déclarées ; In1 porte 2 segments, In2 aucun
+    carte-08              4 couches — mais In2 ne porte que 5 segments, In1 aucun
+    carte-09              2 couches (6 avant la relivraison)
+    carte-10              4 couches — In1 38 segments, In2 33
 
-`carte-10` serait donc faisable en deux couches à deux segments près, et
-`carte-09` paie quatre couches internes pour environ 87 segments. Le compte se
-lit dans le board, jamais dans ce fichier : il a déjà menti une fois.
+Le routage est stochastique : ces couches sont celles d'UN tirage, pas une
+propriété de la carte. Le compte se lit dans le board (`mesures.json`,
+clé `couture_corrigee.couches`), jamais dans ce fichier : il a déjà menti une fois.
 
 Texte d'origine, conservé pour le raisonnement qui reste juste : la `carte-09`
 portait un plafond à quatre couches (`max_layers: 4` dans son schéma), et

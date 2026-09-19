@@ -16,7 +16,7 @@
   "abouti": true,
   "board": {
     "segments": 50,
-    "vias": 12,
+    "vias": 9,
     "zones": 2,
     "empreintes": 12
   },
@@ -28,5 +28,17 @@
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "serigraphie_degagee": "2026-09-12"
+  "serigraphie_degagee": "2026-09-12",
+  "couture_corrigee": {
+    "date": "2026-09-19",
+    "pr": 217,
+    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
+    "vias_avant": 10,
+    "couches": {
+      "declarees": 2,
+      "pistes_par_couche": {
+        "F.Cu": 50
+      }
+    }
+  }
 }

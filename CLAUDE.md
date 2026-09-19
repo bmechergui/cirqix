@@ -1726,9 +1726,10 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 
 - `carte-01-diviseur/` … `carte-10-maximale/` — **le banc du driver LLM**, de 5 à
   70 composants, toutes 100 % routées et 0 erreur. ⚠️ « sur deux couches »,
-  écrit ici jusqu'au 2026-09-19, était FAUX pour trois d'entre elles : compte
-  du cuivre posé, carte-08 route sur 4 couches, carte-09 en utilise 5 sur 6,
-  carte-10 en déclare 4 (In1 : 2 segments). Détail : `BANC_DRIVER_LLM.md`. Leur schéma
+  écrit ici jusqu'au 2026-09-19, était FAUX. Relivrées ce jour-là avec la
+  couture corrigée (#217, 678 → 443 vias) : huit sur 2 couches, carte-08 et
+  carte-10 sur 4 — un tirage, pas une propriété. Détail et compte par couche :
+  `BANC_DRIVER_LLM.md`, `mesures.json`. Leur schéma
   est ÉCRIT PAR LE DRIVER (Claude Code joue l'Ingénieur Schéma) : c'est le seul
   chemin qui n'appelle aucun modèle, et il couvre l'angle mort du banc
   historique, dont les huit cartes partent d'un `circuit.json` FIGÉ. Voir

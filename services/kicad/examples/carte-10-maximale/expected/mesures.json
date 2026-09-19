@@ -13,23 +13,38 @@
   "fichiers_exportes": 20,
   "abouti": true,
   "board": {
-    "segments": 553,
-    "vias": 172,
+    "segments": 378,
+    "vias": 95,
     "zones": 3,
-    "empreintes": 71
+    "empreintes": 70
   },
   "drc_du_board": {
-    "violations": 6,
+    "violations": 0,
     "non_connectes": 0,
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true,
-    "types": "track_dangling:5,via_dangling:1"
+    "fabricable": true
   },
   "livre_par": "banc_exemples.py + livrer_boards.py",
   "tirage": 2,
   "couches": 4,
   "date": "2026-09-12",
   "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
-  "serigraphie_degagee": "2026-09-12"
+  "serigraphie_degagee": "2026-09-12",
+  "couture_corrigee": {
+    "date": "2026-09-19",
+    "pr": 217,
+    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
+    "vias_avant": 172,
+    "couches": {
+      "declarees": 4,
+      "pistes_par_couche": {
+        "F.Cu": 268,
+        "B.Cu": 39,
+        "In1.Cu": 38,
+        "In2.Cu": 33
+      }
+    }
+  }
 }
