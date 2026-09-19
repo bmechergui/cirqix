@@ -357,6 +357,34 @@ def export_glb(req: GlbRequest) -> GlbResponse:
                        models_declared=declares, models_found=trouves, models_reason=raison)
 
 
+class ComptageRequest(BaseModel):
+    kicad_pcb_b64: str = Field(..., description=".kicad_pcb encodé en base64")
+
+
+class ComptageResponse(BaseModel):
+    models_declared: int
+    models_found: int
+    models_reason: str = ""
+
+
+@router.post("/export/glb/composants", response_model=ComptageResponse)
+def compter_modeles_glb(req: ComptageRequest) -> ComptageResponse:
+    """Le seul COMPTE des modèles 3D du board — sans exporter.
+
+    ⚠️ Parcours local du 2026-09-19 : le GLB servi depuis le CACHE (le cas le plus
+    fréquent : le pipeline le dépose à chaque livraison) perdait son compte de
+    composants, et le viewer ne disait plus « composants n/m » ni pourquoi une
+    carte sort nue. Le compte dépend du board ET du volume de modèles de CE
+    service : il ne se met pas en cache, il se redemande — sans relancer
+    l'export de 1-6 s. Garde : `tests/test_export_glb.py`.
+    """
+    pcb = _decoder_board(req.kicad_pcb_b64)
+    model_dir = os.environ.get("KICAD10_3DMODEL_DIR")
+    declares, trouves = compter_modeles(pcb, model_dir)
+    return ComptageResponse(models_declared=declares, models_found=trouves,
+                            models_reason=raison_des_modeles(model_dir, declares, trouves))
+
+
 @router.post("/render/auto", response_model=RenderResponse)
 def render_auto(req: RenderRequest) -> RenderResponse:
     pcb = _decoder_board(req.kicad_pcb_b64)

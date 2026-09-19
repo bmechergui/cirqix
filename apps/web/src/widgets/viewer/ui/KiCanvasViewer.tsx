@@ -609,7 +609,13 @@ export function KiCanvasViewer({ src, zoom = 'objects' }: KiCanvasViewerProps) {
         </div>
       )}
 
-      {/* Native KiCanvas viewer */}
+      {/* Native KiCanvas viewer.
+          ⚠️ Un GET 404 vers `/dashboard/projects/$$:0:$$:0` accompagne son
+          montage (parcours du 2026-09-19). Il vient de KiCanvas, pas de nous :
+          son gabarit HTML pose `template.innerHTML`, importe le nœud, PUIS
+          remplace les marqueurs `$$:i:$$` — le navigateur a déjà lu l'attribut
+          et tente de charger le marqueur comme une URL relative. Sans effet sur
+          le rendu ; non corrigeable sans héberger une version modifiée. */}
       {status === 'ready' && pret && (
         <>
           <kicanvas-embed
