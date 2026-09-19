@@ -945,9 +945,11 @@ re-tirages · file BullMQ · pipeline découplé de Supabase · worker · route 
 4. ~~**Validation réelle** : un routage > 300 s de bout en bout.~~ Mesuré
    (run `4290007c`, 19 min, tous les appels en 200).
 
-**Point ouvert :** comment `KICAD_SERVICE_URL` est-il joignable depuis Vercel en
-production ? `docker-compose.yml` ne publie que sur `127.0.0.1:8766` et aucun
-proxy n'apparaît dans le dépôt.
+~~**Point ouvert :** comment `KICAD_SERVICE_URL` est-il joignable depuis Vercel en
+production ?~~ **Tranché le 2026-09-19 (D-2026-09-19-b) : option 2** — Vercel +
+Cloudflare Tunnel + Access vers un serveur sans port entrant, file sur un Redis managé
+(l'app web enfile elle-même dans Redis). **Déploiement différé : validation locale
+d'abord.** Détail : `docs/architecture/deploiement-production.md`.
 
 ---
 
