@@ -1,8 +1,9 @@
-# Déploiement de production — proposition (en attente de décision)
+# Déploiement de production — proposition
 
-> Statut : **proposition**, rien n'est appliqué. Décision `D-2026-09-19-b` dans
-> `docs/DECISIONS.md`, **en attente**. Les coûts sont des ORDRES DE GRANDEUR à
-> vérifier chez chaque fournisseur, jamais des mesures. Rédigé le 2026-09-19.
+> **Décision prise le 2026-09-19 (`D-2026-09-19-b`, validée) : option 2**, Vercel +
+> Cloudflare Tunnel + Access + Redis managé. **Déploiement différé** : on valide d'abord
+> en local que toute la chaîne fonctionne. Rien n'est appliqué. Les coûts ci-dessous sont
+> des ORDRES DE GRANDEUR à vérifier chez chaque fournisseur, jamais des mesures.
 
 ## Contraintes mesurées (2026-09-19)
 

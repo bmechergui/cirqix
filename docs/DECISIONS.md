@@ -14,22 +14,6 @@
 
 ## En attente de validation
 
-### D-2026-09-19-b — Topologie de production : comment l'app web joint le service KiCad et Redis
-**Statut : en attente.** Proposition complète : `docs/architecture/deploiement-production.md`.
-- **Le fait :** tout tourne aujourd'hui sur la machine de développement. En production,
-  l'app web appelle le service KiCad DIRECTEMENT (`/api/projects/[id]/render`, `/model`,
-  `/api/agent`) et enfile elle-même les jobs dans Redis (`route.ts` l. 201 et 239). Le
-  service n'est publié que sur `127.0.0.1:8766`, Redis n'a pas de mot de passe, Vercel
-  n'est pas lié.
-- **Options :** 1 — VPS exposé derrière un reverse proxy, Vercel en façade (Redis à
-  exposer ou à externaliser) ; 2 — Cloudflare Tunnel + Access, Redis managé obligatoire ;
-  3 — tout sur un VPS, Next.js compris, service et Redis jamais exposés.
-- **Recommandée :** option 3 pour le lancement (aucune surface Internet pour le service ni
-  pour Redis, plus de plafond `maxDuration`, coût le plus bas), option 2 plus tard si un CDN
-  devient utile. Dimensionnement estimé : 16 Go de RAM minimum.
-- **À trancher :** hébergement du web (Vercel ou VPS), mode d'exposition si Vercel,
-  fournisseur et taille du VPS. Coûts = ordres de grandeur à vérifier.
-
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 > ⚠️ **CETTE DÉCISION EST APPLIQUÉE EN PRODUCTION DEPUIS LE 2026-08-29**, alors
 > qu'elle figure ici « en attente ». Le snap tourne à chaque placement
@@ -111,6 +95,30 @@
 ---
 
 ## Validées par l'utilisateur
+
+### D-2026-09-19-b — Production : option 2 (Vercel + Cloudflare Tunnel), déploiement différé
+**Statut : validée** par l'utilisateur le 2026-09-19 : « normalement option 2, mais pour le
+moment on valide en local que tout fonctionne ». Proposition complète :
+`docs/architecture/deploiement-production.md`.
+- **Cible retenue — option 2 :** l'app web sur Vercel ; le service KiCad et le worker sur un
+  serveur SANS port entrant, joint par Cloudflare Tunnel + Access (jeton de service
+  Cloudflare, en plus du Bearer `KICAD_SERVICE_TOKEN`) ; la file sur un **Redis managé à prix
+  fixe** (TLS + mot de passe), joint par Vercel ET le worker. Écartées : option 1 (service
+  public, jeton seul) et option 3 (tout sur le serveur, recommandée par l'assistant).
+- **Pour l'instant — rien n'est déployé :** la priorité est de valider en LOCAL que la chaîne
+  complète fonctionne. Aucun code de déploiement n'est écrit avant cette validation.
+- **Ce que l'option 2 impose, à ne pas oublier au moment du déploiement :**
+  - `/api/agent` enfile lui-même dans Redis (`route.ts` l. 201 et 239) : Redis managé
+    obligatoire, un tunnel HTTP ne transporte pas le protocole Redis ;
+  - délai maximal du proxy Cloudflare (~100 s, à vérifier) : garder
+    `CIRQIX_ASYNC_PIPELINE=1`, le SSE synchrone y serait fragile ;
+  - limite de taille des corps côté Cloudflare, face aux boards en base64 (à vérifier) ;
+  - en-têtes Access dans chaque client qui appelle le service (routes `render`, `model`,
+    `/api/agent`, clients de `packages/agents`) ;
+  - Vercel Pro (Hobby interdit l'usage commercial) ; le schéma vient de l'API Anthropic,
+    `CIRQIX_SCHEMA_PROVIDER=claude-code` n'existant que sur l'hôte de dev.
+- **Restent à trancher au déploiement :** fournisseur et taille du serveur (16 Go minimum
+  estimés), fournisseur du Redis managé.
 
 ### D-2026-09-19-a — À 4, 6 et 8 couches, la masse reste sur les faces extérieures
 **Statut : validée** par l'utilisateur le 2026-09-19, par choix explicite
