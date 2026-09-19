@@ -14,6 +14,22 @@
 
 ## En attente de validation
 
+### D-2026-09-19-b — Topologie de production : comment l'app web joint le service KiCad et Redis
+**Statut : en attente.** Proposition complète : `docs/architecture/deploiement-production.md`.
+- **Le fait :** tout tourne aujourd'hui sur la machine de développement. En production,
+  l'app web appelle le service KiCad DIRECTEMENT (`/api/projects/[id]/render`, `/model`,
+  `/api/agent`) et enfile elle-même les jobs dans Redis (`route.ts` l. 201 et 239). Le
+  service n'est publié que sur `127.0.0.1:8766`, Redis n'a pas de mot de passe, Vercel
+  n'est pas lié.
+- **Options :** 1 — VPS exposé derrière un reverse proxy, Vercel en façade (Redis à
+  exposer ou à externaliser) ; 2 — Cloudflare Tunnel + Access, Redis managé obligatoire ;
+  3 — tout sur un VPS, Next.js compris, service et Redis jamais exposés.
+- **Recommandée :** option 3 pour le lancement (aucune surface Internet pour le service ni
+  pour Redis, plus de plafond `maxDuration`, coût le plus bas), option 2 plus tard si un CDN
+  devient utile. Dimensionnement estimé : 16 Go de RAM minimum.
+- **À trancher :** hébergement du web (Vercel ou VPS), mode d'exposition si Vercel,
+  fournisseur et taille du VPS. Coûts = ordres de grandeur à vérifier.
+
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 > ⚠️ **CETTE DÉCISION EST APPLIQUÉE EN PRODUCTION DEPUIS LE 2026-08-29**, alors
 > qu'elle figure ici « en attente ». Le snap tourne à chaque placement
