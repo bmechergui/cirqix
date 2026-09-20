@@ -14,11 +14,14 @@ export async function handleReason(projectId: string): Promise<Record<string, un
     // `projects.status`. Un projet pouvait donc porter ROUTING_DONE sans
     // qu aucun board n ait ete produit.
     //
-    // La branche est aujourd hui INATTEIGNABLE : `shouldRescueRouting` exige
-    // un `routed_percent` numerique, donc un routage reussi, qui a lui-meme
-    // ecrit le cache. On la ferme quand meme — elle est a un changement de
-    // declencheur pres de s ouvrir, et « inatteignable aujourd hui » n est pas
-    // une garantie, c est une coincidence.
+    // ⚠️ La coincidence a failli lacher le 2026-09-20 : le verdict
+    // « tirages figes » rend un ECHEC de routage AVEC un `routed_percent`
+    // mesure, et le cache tient alors le board PLACE, non route — cette
+    // branche ne l aurait pas vu (cache non vide) et le reasoner aurait ecrase
+    // le cache avec un board sans piste. `shouldRescueRouting` refuse donc
+    // tout `status:'error'` : un echec se re-tire, il ne se sauve pas.
+    // « Inatteignable aujourd hui » n est pas une garantie, c est une
+    // coincidence — la preuve.
     //
     // La fusion (`mergeRescueIntoRouting`) n en souffre pas : sans
     // `kicad_pcb_content` elle conserve deja le routage d origine, et le

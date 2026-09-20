@@ -2277,6 +2277,33 @@ l'a réfutée : la garde ne gèle rien — sur les mêmes boards elle déplace d
 à 36 composants. `D-2026-09-08-c` retirée. Une mesure étaye une proposition ;
 elle peut aussi la tuer, et c'est son travail.
 
+### Leçons inscrites le 2026-09-20 — la mesure qui rendait « pas de mesure »
+
+**NEVER laisser une mesure rendre la même valeur qu'une mesure impossible
+sans l'avoir lue sur un vrai board.** `_longueur_de_fil_mm` — le « second
+critère » qui départage deux placements propres depuis le 2026-08-29 — rendait
+`None` à CHAQUE appel : `PCB` n'était pas importé dans `tools/placement.py`,
+et le `NameError` était avalé par un `except Exception: return None`. Pendant
+trois semaines, on a gardé « le premier tirage arrivé » en croyant choisir le
+plus court. Trouvé le 2026-09-20 en ajoutant le critère des CROISEMENTS
+(`crossing_count`, natif), qui échouait de la même manière — et seulement
+parce que je l'ai mesuré sur carte-10 avant de livrer. Garde : les deux
+mesures sont lues sur un vrai board du banc
+(`tests/test_placement_classe_par_croisements.py`).
+
+**Ce que le classement des placements compare, désormais :** conflits, puis
+croisements du chevelu (relatif entre tirages d'une même carte, jamais un
+seuil — demande de l'utilisateur : « une solution qui marche sur tout type
+de carte »), puis fil. Mesuré : 0,15 s sur stm32-100.
+
+**« Tous les tirages ont figé » est un VERDICT sur le placement, pas une
+panne.** Il sortait `skipped` comme un service éteint, et l'orchestrateur
+abandonnait au lieu de re-tirer le placement — le seul remède. La réponse
+porte `verdict="tirages_figes"` et le pourcentage MESURÉ (jamais un board) ;
+`shouldRetryPlacement` s'arme, `shouldRescueRouting` refuse tout échec (le
+reasoner aurait écrasé le cache avec le board placé). Gardes :
+`tests/test_tirages_figes_verdict.py`, `routing-tirages-figes-verdict.test.ts`.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via

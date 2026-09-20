@@ -1989,10 +1989,20 @@ def _longueur_de_fil_mm(pcb_path) -> Optional[float]:
     pour choisir entre placements DEJA legaux, jamais pour juger une carte.
 
     Rend ``None`` si la mesure echoue : un fil inconnu ne doit pas gagner.
+
+    ⚠️ `PCB` n etait PAS importe dans ce module : `PCB.load` levait
+    `NameError`, avale par le `except` — la mesure rendait None a CHAQUE
+    appel, et le « second critere » n a jamais departage un seul tirage
+    depuis le 2026-08-29. Trouve le 2026-09-20 en mesurant les croisements,
+    qui echouaient de la meme maniere. Un echec qui rend la meme valeur que
+    « mesure impossible » est invisible : d ou la garde sur un VRAI board
+    (tests/test_placement_classe_par_croisements.py).
     """
     try:
+        from kicad_tools.schema.pcb import PCB
         pcb = PCB.load(str(pcb_path))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fil non mesure (%s)", exc)
         return None
     par_net: dict = {}
     for fp in pcb.footprints:
@@ -2011,15 +2021,58 @@ def _longueur_de_fil_mm(pcb_path) -> Optional[float]:
     return total
 
 
+def _charger_features(pcb_path):
+    """Instantane natif des pastilles et nets du board (kicad-tools)."""
+    from kicad_tools.optim.fom_features import extract_features
+    from kicad_tools.schema.pcb import PCB
+    return extract_features(PCB.load(str(pcb_path)))
+
+
+def _crossing_count(features) -> float:
+    from kicad_tools.optim.fom_geometry import crossing_count
+    return float(crossing_count(features))
+
+
+def _croisements_du_placement(pcb_path) -> Optional[float]:
+    """Croisements inter-nets du chevelu, nets de plan exclus — critere NATIF.
+
+    ⚠️ Demande de l utilisateur le 2026-09-20 : « une solution qui marche sur
+    tout type de carte ». Ce compte ne se compare qu ENTRE tirages d une meme
+    carte, jamais a un seuil : pas de calibration sur le banc.
+
+    Mesure qui l a impose (rejeu du 2026-09-20) : carte-03, 07, 09 et 10
+    re-placees rendaient des boards que Freerouting ne routait pas (figes a
+    ~0 %) alors que leurs placements du 14/09 routaient a 100 % — et
+    `fil_mm` ne voyait rien : un placement court peut etre non planaire.
+    `crossing_count` (kicad_tools.optim.fom_geometry) compte les croisements
+    d une projection en etoile, 0 = planaire au placement.
+
+    Les nets confies au plan sont RETIRES avant le compte : ils ne se routent
+    pas, leurs croisements ne genent personne. Rend None si la mesure echoue :
+    un compte inconnu ne gagne jamais.
+    """
+    try:
+        feats = _charger_features(pcb_path)
+        feats.nets_to_pads = {
+            net: pads for net, pads in feats.nets_to_pads.items()
+            if str(feats.net_names.get(net, "") or "") not in _NETS_DE_PLAN}
+        return _crossing_count(feats)
+    except Exception as exc:  # noqa: BLE001 — sans mesure, on ne prefere pas
+        logger.info("croisements non mesures (%s)", exc)
+        return None
+
+
 def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
-    """`candidat` bat-il `reference` ? Conflits d abord, longueur de fil ensuite.
+    """`candidat` bat-il `reference` ? Conflits, puis croisements, puis fil.
 
     ⚠️ Le seul compte de conflits NE DEPARTAGE RIEN quand tous les tirages
     sont propres — c est le cas mesure le 2026-08-29, huit placements a
     0 ERROR dont un a 565 mm de fil contre 372 pour son voisin. Sans second
     critere, on garde le premier arrive.
 
-    Un fil inconnu ne gagne jamais par defaut : sans mesure, on ne prefere pas.
+    ⚠️ Les CROISEMENTS passent avant le fil (2026-09-20) : c est ce qui
+    predit le routage, le fil ne dit que la longueur. Deux tirages sans la
+    mesure retombent sur le fil. Une mesure inconnue ne gagne jamais.
     """
     if reference is None:
         return True
@@ -2027,6 +2080,13 @@ def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
     r_conf = reference.get("conflits_restants", 10 ** 6)
     if c_conf != r_conf:
         return c_conf < r_conf
+    c_x, r_x = candidat.get("croisements"), reference.get("croisements")
+    if c_x is None and r_x is not None:
+        return False
+    if c_x is not None and r_x is None:
+        return True
+    if c_x is not None and r_x is not None and c_x != r_x:
+        return c_x < r_x
     c_fil = candidat.get("fil_mm")
     r_fil = reference.get("fil_mm")
     if c_fil is None:
@@ -2931,6 +2991,9 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             # placements a 0 conflit ne se departagent pas et on garde le
             # premier arrive, fut-il a 565 mm de fil contre 372.
             "fil_mm": _longueur_de_fil_mm(out),
+            # Critere de ROUTABILITE, relatif entre tirages : voir
+            # `_croisements_du_placement` (2026-09-20).
+            "croisements": _croisements_du_placement(out),
             # Clés `x_mm`/`y_mm` — contrat documenté par AutoPlacementResponse et
             # attendu par le client TS (`placement-service.ts::isValidPosition`).
             # Le code émettait `x`/`y`, contredisant son propre modèle : le client

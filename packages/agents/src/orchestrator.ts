@@ -62,6 +62,11 @@ export function shouldRescueRouting(
   control: RunControl = {},
 ): boolean {
   if (control.cancelled) return false;
+  // ⚠️ Jamais sur un ÉCHEC (2026-09-20) : le verdict « tirages figés » porte un
+  // pourcentage mesuré mais AUCUN board routé — le cache tient le board PLACÉ.
+  // Le reasoner y aurait travaillé sur un board sans piste et écrasé le cache
+  // avec. Un échec se re-tire (shouldRetryPlacement), il ne se sauve pas.
+  if (result['status'] === 'error') return false;
   const pct = result['routed_percent'];
   return typeof pct === 'number' && pct < 100;
 }

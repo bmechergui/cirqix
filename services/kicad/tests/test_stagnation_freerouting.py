@@ -466,5 +466,7 @@ def test_tous_les_tirages_figes_donnent_un_echec_lisible():
     assert "_recuperer_jobs_abandonnes(" in bloc, (
         "on rend un echec sans avoir tente de recuperer le cuivre existant")
     assert "skipped=True" in bloc
-    assert "routed_percent=0" in bloc
+    # 2026-09-20 : le pourcentage vaut `fige_max` quand un tirage a fige
+    # (verdict sur le placement) et 0 sinon — une panne rend toujours 0.
+    assert "routed_percent=(fige_max if meilleur_fige is not None else 0)" in bloc
     assert "warning=" in bloc, "un echec muet ne se diagnostique pas"
