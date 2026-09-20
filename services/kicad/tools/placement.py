@@ -1379,18 +1379,40 @@ def restore_pad_angles(src_text: str, out_text: str) -> tuple[str, int]:
 
 
 def _pad_angles(text: str) -> dict[tuple[str, str], float | None]:
-    """``{(ref_boitier, num_pad): angle}`` — ``None`` quand le pad n'en a pas."""
+    """``{(ref_boitier, num_pad): angle RELATIF au boitier}`` — ``None`` quand
+    ni le pad ni le boitier ne declarent d angle.
+
+    ⚠️ RELATIF, pas declare. L angle d un pad dans `.kicad_pcb` est ABSOLU :
+    rotation du boitier + angle propre du pad. `restore_pad_angles` recompose
+    `rotation du boitier de SORTIE + relatif` ; lui donner l absolu de la
+    source comptait la rotation DEUX FOIS des que la source etait un board
+    deja place. Mesure du 2026-09-20 sur le banc, board place sans piste :
+
+        boitier source a 90/270°  -> 205 erreurs (168 items sur U1)   05, 07, 09, 10
+        boitier source a 0/180°   -> 0                                04, 06, 08
+
+    Et ce n est pas un artefact de banc : le RE-TIRAGE de l orchestrateur
+    renvoie au placement le board du cache, deja place. Garde :
+    tests/test_pad_angles_source_deja_pivotee.py.
+    """
     angles: dict[tuple[str, str], float | None] = {}
     for bloc in re.split(r"\(footprint ", text)[1:]:
         ref = re.search(r'\(property "Reference" "([^"]+)"', bloc) or             re.search(r'reference "([^"]+)"', bloc)
         if not ref:
             continue
+        # L en-tete du boitier est le PREMIER `(at …)` du bloc, avant tout pad.
+        tete = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)",
+                         bloc.split("(pad ", 1)[0])
+        rot_src = float(tete.group(3)) if (tete and tete.group(3)) else 0.0
         for chunk in re.split(r"\(pad ", bloc)[1:]:
             num = re.match(r'"([^"]+)"', chunk)
             at = re.search(r"\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)", chunk)
             if num and at:
-                angles[(ref.group(1), num.group(1))] = (
-                    float(at.group(3)) if at.group(3) else None)
+                if not at.group(3) and not rot_src:
+                    angles[(ref.group(1), num.group(1))] = None
+                else:
+                    declare = float(at.group(3)) if at.group(3) else 0.0
+                    angles[(ref.group(1), num.group(1))] = (declare - rot_src) % 360.0
     return angles
 
 

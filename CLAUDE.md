@@ -2304,6 +2304,21 @@ porte `verdict="tirages_figes"` et le pourcentage MESURÉ (jamais un board) ;
 reasoner aurait écrasé le cache avec le board placé). Gardes :
 `tests/test_tirages_figes_verdict.py`, `routing-tirages-figes-verdict.test.ts`.
 
+**NEVER re-placer un board DÉJÀ placé sans avoir DRC-é le board placé, sans
+piste.** `restore_pad_angles` recompose `rotation du boîtier + angle RELATIF
+de la source`, mais `_pad_angles` rendait l'angle DÉCLARÉ — absolu dans un
+`.kicad_pcb`. Source sortie de gen_pcb (boîtier à 0°) : aucun écart. Source
+déjà placée, boîtier à 90/270° : rotation comptée DEUX FOIS, pads du LQFP
+couchés sur leurs voisins — **205 erreurs sur un board sans une piste**, dont
+168 items sur U1. Motif mesuré le 2026-09-20 : 05, 07, 09, 10 (90/270°)
+échouent, 04, 06, 08 (0/180°) passent. Et le RE-TIRAGE de l'orchestrateur
+renvoie justement au placement le board du cache, déjà placé : la boucle de
+sauvetage empoisonnait une carte sur deux. Le symptôme, « ~120 conflits de
+placement non résolus », m'a fait chercher dans le génétique pendant deux
+jours — le compte vient du DRC kicad-cli, `PlacementAnalyzer` n'en voyait
+que 2. Corrigé : relatif = (déclaré − rotation du boîtier source) mod 360 ;
+205 → 1. Garde : `tests/test_pad_angles_source_deja_pivotee.py`.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
