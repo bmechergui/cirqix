@@ -52,6 +52,12 @@ export interface RealRoutingResult {
   warning?: string;
   /** Quel niveau du service a réellement produit le board. */
   engine?: string;
+  /**
+   * `'tirages_figes'` : le routeur a tourné et TOUS ses tirages ont figé —
+   * un verdict sur le placement, pas une panne. `routedPercent` est alors
+   * la mesure du routeur sur le meilleur tirage figé (2026-09-20).
+   */
+  verdict?: string;
 }
 
 interface ServiceResponseBody {
@@ -63,6 +69,7 @@ interface ServiceResponseBody {
   skipped?: unknown;
   warning?: unknown;
   engine?: unknown;
+  verdict?: unknown;
 }
 
 /**
@@ -156,5 +163,6 @@ export async function runRealRouting(
   const engine = readRoutingEngine(parsed);
   if (engine) result.engine = engine;
   if (typeof parsed.warning === 'string') result.warning = parsed.warning;
+  if (typeof parsed.verdict === 'string' && parsed.verdict.length > 0) result.verdict = parsed.verdict;
   return result;
 }

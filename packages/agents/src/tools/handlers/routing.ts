@@ -93,6 +93,22 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     });
 
     if (service.skipped) {
+      // ⚠️ « Tous les tirages ont figé » n'est PAS une panne (2026-09-20) : le
+      // routeur a tourné et mesuré. On rend l'échec (aucun board, cache intact)
+      // MAIS avec le pourcentage mesuré, pour que `shouldRetryPlacement` re-tire
+      // le placement — le seul remède. Un `skipped` sans verdict reste une panne
+      // d'infrastructure, sans pourcentage : rien n'arme un retry pour rien.
+      if (service.verdict === 'tirages_figes') {
+        log.warn({ projectId, pct: service.routedPercent }, 'routing froze on every tirage — placement verdict');
+        return {
+          ...routingFailure(
+            service.warning ?? 'tous les tirages ont figé',
+            'Ce placement ne se route pas : un nouveau tirage de placement est re-tiré automatiquement.',
+          ),
+          routed_percent: service.routedPercent,
+          verdict: service.verdict,
+        };
+      }
       log.error({ projectId, warning: service.warning }, 'routing skipped — no traces laid');
       return routingFailure(service.warning ?? 'routing service skipped');
     }

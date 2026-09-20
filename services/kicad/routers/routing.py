@@ -173,6 +173,13 @@ class RouteAutoResponse(BaseModel):
     # `None` quand aucun board n'est livre : une reponse vide ne s'attribue pas
     # un moteur.
     engine: Optional[str] = None
+    # ⚠️ « Tous les tirages ont fige » n est PAS une panne (2026-09-20) : le
+    # routeur a tourne et a MESURE ~0 %. `verdict="tirages_figes"` le dit au
+    # client, avec `routed_percent` = meilleur pourcentage lu dans le journal
+    # des tirages figes, pour que la boucle de re-tirage du placement se
+    # declenche — au lieu de lire `skipped` comme un service eteint.
+    # `skipped` reste vrai et aucun board n est rendu : on n invente rien.
+    verdict: Optional[str] = None
 
 
 # ----------------------------------------------------------------------------
@@ -6534,9 +6541,17 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 track_length_mm=_track_length_mm(recupere),
                 warning="tous les tirages ont stagne — board recupere d un job "
                         "abandonne, incomplet mais reel")
+        # ⚠️ VERDICT, pas panne, quand au moins un tirage a fige : le client
+        # doit pouvoir re-tirer le PLACEMENT. Le pourcentage est celui MESURE
+        # par le journal du routeur (`fige_max`), jamais fabrique ; sans
+        # tirage fige (aucun moteur), il reste 0 et `verdict` None.
         return RouteAutoResponse(
-            routed_percent=0, layers=req.layers, skipped=True,
-            warning="tous les tirages ont stagne ou echoue — aucun routage")
+            routed_percent=(fige_max if meilleur_fige is not None else 0),
+            layers=req.layers, skipped=True,
+            verdict="tirages_figes" if meilleur_fige is not None else None,
+            warning=("tous les tirages ont fige — ce placement ne se route pas, "
+                     "en re-tirer un autre" if meilleur_fige is not None
+                     else "tous les tirages ont stagne ou echoue — aucun routage"))
     return meilleur
 
 
