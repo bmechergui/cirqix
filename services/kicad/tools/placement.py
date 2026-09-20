@@ -2113,6 +2113,14 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     # « petit circuit + connecteur au coin ». `tools/contour_et_bords.py`
     # garde la fonction, testee, pour un usage cible ; on ne l applique pas
     # a toutes les cartes. Voir docs/DECISIONS.md.
+    if auto_size_board:
+        # Carte de DEPART compacte — reglage de banc, desarme par defaut.
+        # Voir `tools/carte_compacte.py` (5 % d occupation sur carte-09).
+        from tools.carte_compacte import compacter_la_carte_de_depart, occupation_cible
+        cible = occupation_cible()
+        if cible > 0:
+            kicad_pcb_b64, board_width_mm, board_height_mm = compacter_la_carte_de_depart(
+                kicad_pcb_b64, board_width_mm, board_height_mm, cible)
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
