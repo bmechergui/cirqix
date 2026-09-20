@@ -177,6 +177,30 @@ routage ni d'en lire un partiel (voir CLAUDE.md). Le placement re-tiré de
 ces cartes est en cause, pas la taille : le témoin grand format de l'A/B
 échouait pareil.
 
+## Rejeu du 2026-09-20 au soir — après le correctif des angles de pastilles
+
+Le matin, 03/07/09/10 sortaient mauvaises ou sans board, et 05 a rechuté au
+rejeu suivant. Cause commune : re-placer un board DÉJÀ placé comptait deux
+fois la rotation du boîtier dans l'angle des pastilles (#224) — 205 erreurs
+sur le board placé de carte-05, sans une piste. Même chaîne, même entrée,
+après correctif :
+
+    carte-01  20 × 13,5     0 erreur · 0 manquante
+    carte-02  34,6 × 25,3   0 · 0
+    carte-03  27,8 × 19,8   0 · 0     (12 erreurs · 9 manquantes le matin)  RELIVRÉE
+    carte-04  38,8 × 30     0 · 0
+    carte-05  45,5 × 32,5   1 · 0     (205 · 31 le matin)
+    carte-06  48,4 × 36,3   0 · 0                                          RELIVRÉE
+    carte-07  53,1 × 38,7   0 · 10    (204 · 54 le matin)
+    carte-08  57,8 × 44     0 · 10
+    carte-09  58,7 × 45,1   1 · 0     6 couches (aucun board le matin)
+    carte-10  60,9 × 45,7   0 · 18    6 couches (aucun board le matin)
+
+L'erreur unique de 05 et de 09 est la même : `courtyards_overlap` entre le
+régulateur U2 et un passif voisin — un conflit que le placement avait signalé
+lui-même. 07, 08 et 10 routent désormais mais gardent 10 à 18 connexions
+manquantes sur ces cartes compactes : non relivrées, leur board du 19/09 reste.
+
 ## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
