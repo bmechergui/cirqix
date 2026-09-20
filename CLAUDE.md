@@ -994,12 +994,15 @@ global (`feature_flags.snapshots` n'écrit rien non plus). Le code notait le job
 figé « pour récupérer son cuivre plus tard », puis tuait la JVM à la ligne
 suivante : `_recuperer_jobs_abandonnes` n'a donc JAMAIS rien récupéré, et
 quand tous les tirages figeaient la carte sortait SANS board (A/B du
-2026-09-19 : quatre cartes sur dix, dans les deux bras). Le CLI, lui, honore
-`-mp` : `_board_partiel_par_cli` rejoue le DSN du meilleur tirage figé à sa
-passe, sous un budget PROPRE (le restant est épuisé par construction), et
-rend `freerouting-cli-partiel` — jugeable, pas fabricable, mais c'est ce qui
-permet à l'orchestrateur de re-tirer le placement. Garde :
-`tests/test_tirage_fige_rend_un_partiel.py`.
+2026-09-19 : quatre cartes sur dix, dans les deux bras). **Le CLI n'honore
+pas `-mp` non plus** (mesuré le même jour : 186 passes avec `-mp 3`, et aucun
+`.ses` s'il est tué ; le jar 1.9.0 exige AWT et ne démarre pas sur le JRE
+headless). `_board_partiel_par_cli` rejoue donc le DSN du meilleur tirage
+figé sous un budget STRICT de 600 s et ne rend `freerouting-cli-partiel` que
+si le CLI converge seul (carte-07 : oui, en 17 min, 204 erreurs — jugeable,
+pas fabricable ; carte-09 : non). **Avec Freerouting 2.1.0, un routage ne se
+borne pas et un partiel ne se lit pas** : c'est une limite du routeur, pas
+un réglage à trouver. Garde : `tests/test_tirage_fige_rend_un_partiel.py`.
 
 ⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
 Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un

@@ -1131,9 +1131,18 @@ def _board_partiel_par_cli(pcb_bytes: bytes, passes: int,
 
     L API 2.1.0 ne rend RIEN d un job en cours (mesure du 2026-09-20 :
     `/output` 400, `/output/stream` 500, `cancel` 501, `max_passes` et
-    `job_timeout` ignores par job comme en global, `snapshots` inerte). Le CLI,
-    lui, honore `-mp` et ecrit toujours son .ses : `passes` passes coutent
-    ~1-2 min sur les cartes du banc, et rendent un board mesurable.
+    `job_timeout` ignores par job comme en global, `snapshots` inerte).
+
+    ⚠️ LE CLI N HONORE PAS `-mp` NON PLUS — mesure du 2026-09-20 sur le board
+    de carte-09 : 172 passes sans limite, 186 avec `-mp 3`, 157 avec
+    `--router.max_passes=3`, en 180 s chacun, et AUCUN .ses quand on le tue.
+    (`-mp` n est meme pas dans les options que `GlobalSettings` analyse ;
+    le jar 1.9.0, qui l honorait, exige AWT et ne demarre pas sur le JRE
+    headless de l image.) `max_passes` est donc transmis pour le jour ou une
+    version l honorera ; aujourd hui le partiel n existe que si le CLI
+    CONVERGE de lui-meme dans `_BUDGET_PARTIEL_S` — carte-07 l a fait en
+    17 min (204 erreurs, 54 manquantes : jugeable, pas fabricable),
+    carte-09 non.
 
     Un board partiel n est pas fabricable ; il est JUGEABLE. Sans lui,
     l orchestrateur ne peut pas re-tirer le placement — il n a aucun
@@ -1272,9 +1281,10 @@ def _run_freerouting(
 ) -> None:
     """Invoke Freerouting CLI. Raises on non-zero exit or timeout.
 
-    `-mp` est HONORE par le CLI — contrairement a l API, ou `max_passes` est
-    accepte puis ignore (mesure du 2026-09-20 : un job a 3 passes en a fait
-    130). C est ce qui permet de rejouer un tirage fige a sa passe.
+    ⚠️ `-mp` n est PAS honore par le CLI 2.1.0 (mesure du 2026-09-20 : 186
+    passes avec `-mp 3`), pas plus que `max_passes` par l API. Le parametre
+    est transmis tel quel, pour une version qui l honorerait ; ne pas lui
+    preter d effet aujourd hui.
     """
     java, jar = paths
     cmd = [
@@ -6488,14 +6498,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # recoit ses plans pour etre juge comme un vrai tirage, pas plus.
         if meilleur_fige is not None:
             pct_fige, board_fige, passes_fige = meilleur_fige
-            # ⚠️ AU MOINS `_BUDGET_PARTIEL_S`, davantage s il reste du temps :
-            # quand tous les tirages ont fige, le restant est justement epuise
-            # — un filet qui exige les ressources que la situation vient de
-            # consommer ne sert a rien (c est ce qui a rendu inerte la
-            # « derniere chance » du 2026-08-31).
+            # ⚠️ Budget STRICT de `_BUDGET_PARTIEL_S`, jamais le restant.
+            # Mesure du 2026-09-20 : le CLI 2.1.0 IGNORE `-mp` (172-186 passes
+            # en 180 s, limite ou pas) et n ecrit rien s il est tue. Avec
+            # `max(restant, 600)`, carte-09 a paye 25 min de CLI pour rien.
+            # Le partiel n existe donc que si le CLI CONVERGE seul dans ce
+            # budget ; au-dela on rend la main, on ne brule pas la requete.
             partiel = _board_partiel_par_cli(
-                board_fige, passes_fige,
-                max(_remaining_budget_s(deadline), _BUDGET_PARTIEL_S))
+                board_fige, passes_fige, _BUDGET_PARTIEL_S)
             if partiel is not None:
                 try:
                     partiel = _fill_zones(_add_ground_planes(partiel))
