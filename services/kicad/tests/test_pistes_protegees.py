@@ -114,12 +114,14 @@ class TestCablage:
     def test_le_meilleur_board_est_PROTEGE_a_l_escalade(self):
         # ⚠️ Une regle jamais appelee est indistinguable d une regle absente.
         assert "_PISTES_A_PROTEGER" in self.SOURCE
+        # Fenetre elargie le 2026-09-20 : la memorisation du meilleur tirage
+        # fige (`meilleur_fige`) s intercale avant la protection.
         i = self.SOURCE.index("essais = _paliers_avec_tirages(")
-        assert "_PISTES_A_PROTEGER" in self.SOURCE[i:i + 6000]
+        assert "_PISTES_A_PROTEGER" in self.SOURCE[i:i + 9000]
 
     def test_on_ne_protege_QUE_si_un_meilleur_existe(self):
         i = self.SOURCE.index("essais = _paliers_avec_tirages(")
-        corps = self.SOURCE[i:i + 6000]
+        corps = self.SOURCE[i:i + 9000]
         j = corps.index("_PISTES_A_PROTEGER =")
         assert "meilleur" in corps[max(0, j - 300):j + 60]
 

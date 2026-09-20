@@ -40,14 +40,24 @@ logger = logging.getLogger(__name__)
 _HORS_CARTE_MM = -1000.0
 
 
+# D-2026-09-20-a, VALIDÉE par l'utilisateur : 25 % d'occupation par défaut.
+# A/B du 2026-09-19 sur le banc, témoin contre 0,25 : surface −18 à −63 % sur
+# les cinq cartes comparables, 0 erreur et 0 connexion manquante dans les
+# deux bras ; carte-08 entièrement connectée là où le témoin en manquait 10.
+# Aucune mesure au-delà de 0,25 : on ne serre pas plus sans mesure.
+OCCUPATION_DEFAUT: float = 0.25
+
+
 def occupation_cible() -> float:
-    """Taux visé (0 = règle désarmée, le défaut). Relu à chaque appel."""
+    """Taux visé (0 = règle désarmée). Relu à chaque appel — un banc peut
+    poser `occupation_cible` pour mesurer un autre taux, ou 0 pour le témoin."""
     from tools.reglages_banc import reglage
     try:
-        return float(reglage("occupation_cible", 0.0))
+        return float(reglage("occupation_cible", OCCUPATION_DEFAUT))
     except (TypeError, ValueError):
-        logger.error("carte compacte : occupation_cible illisible — regle desarmee")
-        return 0.0
+        logger.error("carte compacte : occupation_cible illisible — defaut %.2f",
+                     OCCUPATION_DEFAUT)
+        return OCCUPATION_DEFAUT
 
 
 def taille_compacte(surface_mm2: float, largeur: float, hauteur: float,

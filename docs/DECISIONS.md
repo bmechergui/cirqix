@@ -96,6 +96,26 @@
 
 ## Validées par l'utilisateur
 
+### D-2026-09-20-a — Carte de départ dimensionnée sur les composants : 25 % d'occupation
+**Statut : validée** par l'utilisateur le 2026-09-20 (« Oj »), après proposition chiffrée.
+- **Constat (relecture du banc, 2026-09-19) :** les courtyards couvrent 5 % de carte-09
+  (130 × 100 mm pour 62 composants), 4,7 % de carte-10. Le placement étale sur la surface
+  reçue ; le resserrage final (D-2026-09-13-c A) ne rattrape rien — la surface de DÉPART est
+  trop grande. Les connecteurs restent toujours en bordure (règle posée par l'utilisateur).
+- **Règle :** quand la taille n'est pas imposée, la carte de départ vaut
+  `somme des courtyards / 0,25`, aux proportions demandées ; les mobiles sont rapatriés par
+  `place_unplaced`, les connecteurs ancrés sont ramenés dans le contour par le clamp.
+  `tools/carte_compacte.py`, `OCCUPATION_DEFAUT = 0.25`, débrayable par le réglage de banc
+  `occupation_cible`.
+- **Mesure A/B (2026-09-19, dix cartes, témoin contre 0,25) :** surface −18 à −63 % sur les
+  cinq cartes comparables, 0 erreur et 0 connexion manquante dans les deux bras ; carte-08
+  entièrement connectée (58 × 44 mm, 4 couches, 1 erreur) là où le témoin laissait
+  10 manquantes ; 03/07/09/10 sans board **dans les deux bras** (tirages figés, jetés —
+  corrigé par le rejeu CLI `_board_partiel_par_cli`).
+- **Pourquoi 25 % et pas plus :** aucune mesure au-delà. Ce dépôt a mesuré que la surface
+  aide le routage (carte-08, 216 → 0 manquantes en l'agrandissant, 2026-09-07) ; on ne serre
+  pas plus sans mesure.
+
 ### D-2026-09-19-b — Production : option 2 (Vercel + Cloudflare Tunnel), déploiement différé
 **Statut : validée** par l'utilisateur le 2026-09-19 : « normalement option 2, mais pour le
 moment on valide en local que tout fonctionne ». Proposition complète :

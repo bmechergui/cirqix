@@ -37,10 +37,18 @@ class TestTaille:
 
 
 class TestReglage:
-    def test_desarmee_par_defaut(self, monkeypatch, tmp_path):
+    def test_vingt_cinq_pour_cent_par_defaut(self, monkeypatch, tmp_path):
+        # D-2026-09-20-a, validee : la regle est ARMEE.
         import tools.reglages_banc as RB
         monkeypatch.setattr(RB, "_CHEMIN", tmp_path / "absent.json")
         monkeypatch.delenv("CIRQIX_OCCUPATION_CIBLE", raising=False)
+        assert CC.occupation_cible() == 0.25
+
+    def test_un_banc_peut_la_desarmer(self, monkeypatch, tmp_path):
+        import tools.reglages_banc as RB
+        f = tmp_path / "r.json"
+        f.write_text('{"occupation_cible": 0}')
+        monkeypatch.setattr(RB, "_CHEMIN", f)
         assert CC.occupation_cible() == 0.0
 
 

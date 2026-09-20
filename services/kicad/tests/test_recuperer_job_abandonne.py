@@ -87,7 +87,10 @@ class TestCablage:
     def test_la_recuperation_n_a_lieu_QUE_sans_resultat(self):
         corps = self.SOURCE[self.SOURCE.index("def route_auto("):]
         i = corps.index("_recuperer_jobs_abandonnes(")
-        assert "meilleur is None" in corps[max(0, i - 900):i], (
+        # Fenetre elargie le 2026-09-20 : le rejeu CLI du meilleur tirage fige
+        # (`_board_partiel_par_cli`) precede la recuperation, sous le meme
+        # `if meilleur is None:` — voir test_tirage_fige_rend_un_partiel.py.
+        assert "meilleur is None" in corps[max(0, i - 3500):i], (
             "un board recupere ne doit jamais primer sur un routage abouti")
 
     def test_il_n_y_a_QU_UNE_implementation(self):

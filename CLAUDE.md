@@ -986,6 +986,21 @@ sous le verrou : 0 % et ~200 Mo après un run, pour ~9 s par routage. Garde :
 `tests/test_jvm_recyclee_apres_routage.py`. **NEVER** lire `ps -o pcpu` comme
 une mesure instantanée : c'est une moyenne sur la vie du processus.
 
+⚠️ **Un job Freerouting FIGÉ ne se lit pas, ne s'arrête pas, et meurt avec la
+JVM (mesuré le 2026-09-20).** L'API 2.1.0 répond `/output` 400 et
+`/output/stream` 500 tant que le job tourne, `cancel` est 501, et
+`max_passes` / `job_timeout` sont acceptés puis IGNORÉS — par job comme en
+global (`feature_flags.snapshots` n'écrit rien non plus). Le code notait le job
+figé « pour récupérer son cuivre plus tard », puis tuait la JVM à la ligne
+suivante : `_recuperer_jobs_abandonnes` n'a donc JAMAIS rien récupéré, et
+quand tous les tirages figeaient la carte sortait SANS board (A/B du
+2026-09-19 : quatre cartes sur dix, dans les deux bras). Le CLI, lui, honore
+`-mp` : `_board_partiel_par_cli` rejoue le DSN du meilleur tirage figé à sa
+passe, sous un budget PROPRE (le restant est épuisé par construction), et
+rend `freerouting-cli-partiel` — jugeable, pas fabricable, mais c'est ce qui
+permet à l'orchestrateur de re-tirer le placement. Garde :
+`tests/test_tirage_fige_rend_un_partiel.py`.
+
 ⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
 Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un
 worker : les onze routes du service sont déclarées `def` et non `async def`, donc
