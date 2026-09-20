@@ -158,6 +158,25 @@ lui-même, ce qui déclarait non fabricables des cartes qui le sont.
 et jusqu'à 280 quand la boucle de correction itère. La cause de l'écart n'est
 pas établie ; ce qui l'est, c'est lequel des deux juge le board qu'on livre.
 
+## Relivraison compacte du 2026-09-20 (D-2026-09-20-a, 25 % d'occupation)
+
+Chaîne complète place → route rejouée par HTTP sur les dix cartes avec la
+carte de départ dimensionnée sur les composants. **Quatre** relivrées —
+placement et board ensemble, `mesures.json` sous `carte_compacte` :
+
+    carte-01   24,8 × 17  ->  20 × 14      0 erreur · 0 manquante
+    carte-02   55 × 40    ->  35 × 25      0 erreur · 0 manquante
+    carte-04   45 × 44,8  ->  39 × 30      0 erreur · 0 manquante
+    carte-05   70 × 50    ->  46 × 33      0 erreur · 0 manquante
+
+Les six autres gardent leur board du 2026-09-19 : 06 (48 × 36) et 08
+(58 × 44, 6 couches) sortent à **1** connexion manquante ; 03 et 07 rendent
+un board mauvais (12 et 204 erreurs) ; 09 et 10 ne rendent **aucun** board —
+tous leurs tirages figent, et Freerouting 2.1.0 ne permet ni de borner un
+routage ni d'en lire un partiel (voir CLAUDE.md). Le placement re-tiré de
+ces cartes est en cause, pas la taille : le témoin grand format de l'A/B
+échouait pareil.
+
 ## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était

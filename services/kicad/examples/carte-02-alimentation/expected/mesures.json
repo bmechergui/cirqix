@@ -3,8 +3,8 @@
   "composants": 12,
   "nets": 5,
   "board_mm": [
-    55,
-    40
+    34.8,
+    25.3
   ],
   "duree_s": 99,
   "git": "6fb7359",
@@ -15,15 +15,15 @@
   "types_violations": "silk_overlap:4",
   "abouti": true,
   "board": {
-    "segments": 50,
+    "segments": 41,
     "vias": 9,
     "zones": 2,
     "empreintes": 12
   },
   "drc_du_board": {
-    "violations": 0,
+    "violations": 1,
     "non_connectes": 0,
-    "types": "",
+    "types": "silk_edge_clearance:1",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -39,6 +39,23 @@
       "pistes_par_couche": {
         "F.Cu": 50
       }
+    }
+  },
+  "carte_compacte": {
+    "date": "2026-09-20",
+    "decision": "D-2026-09-20-a",
+    "pr": 220,
+    "note": "chaine place -> route rejouee par HTTP avec 25 % d occupation ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
+    "taille_avant_mm": [
+      55.0,
+      40.0
+    ],
+    "vias_avant": 9,
+    "place_s": 123,
+    "route_s": 84,
+    "moteur": "freerouting-cli",
+    "pistes_par_couche": {
+      "F.Cu": 41
     }
   }
 }
