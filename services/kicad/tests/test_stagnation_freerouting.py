@@ -458,8 +458,11 @@ def test_tous_les_tirages_figes_donnent_un_echec_lisible():
     # seuls ; on va chercher leur cuivre avant de rendre les mains vides.
     # L echec franc reste le dernier mot quand il n y a rien a recuperer — la
     # fenetre de 700 caracteres ne l atteignait plus.
+    # ⚠️ Fenetre elargie une seconde fois le 2026-09-20 : le rejeu CLI du
+    # meilleur tirage fige (`_board_partiel_par_cli`) precede desormais la
+    # recuperation des jobs — voir test_tirage_fige_rend_un_partiel.py.
     i = src.index("if meilleur is None:")
-    bloc = src[i:i + 2000]
+    bloc = src[i:i + 4000]
     assert "_recuperer_jobs_abandonnes(" in bloc, (
         "on rend un echec sans avoir tente de recuperer le cuivre existant")
     assert "skipped=True" in bloc

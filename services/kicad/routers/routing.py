@@ -717,9 +717,13 @@ class RoutageFige(RuntimeError):
     PREUVE d echec du palier que la regle utilisateur exige avant d escalader.
     """
 
-    def __init__(self, unrouted: int, nets: int):
+    def __init__(self, unrouted: int, nets: int, passes: int = 0):
         self.unrouted = unrouted
         self.nets = nets
+        # Passe atteinte quand on a lache : c est ce que le CLI `-mp` rejoue
+        # pour obtenir un board PARTIEL, le seul moyen (API : /output 400,
+        # /output/stream 500, cancel 501, max_passes ignore — 2026-09-20).
+        self.passes = passes
         self.routed_percent = (
             max(0, round(100 * (nets - unrouted) / nets)) if nets > 0 else 0)
         super().__init__(
@@ -1093,7 +1097,8 @@ def _route_with_freerouting_api(
                     # la passe 999 et ralentit tous les tirages suivants.
                     _tuer_la_jvm()
                     raise RoutageFige(unrouted=unrouted,
-                                      nets=nets_routables)
+                                      nets=nets_routables,
+                                      passes=derniere_passe)
             time.sleep(2)
         else:
             raise RuntimeError("Freerouting API timeout")
@@ -1108,6 +1113,68 @@ def _route_with_freerouting_api(
         ses_path.write_bytes(base64.b64decode(ses_b64))
 
         return _specctra_roundtrip(_sans_pistes(pcb_bytes), ses_path)
+
+
+# Budget accorde au rejeu CLI d un tirage fige, HORS du budget de la requete.
+# Mesure : 30-40 passes a 1-2,5 s sur les cartes du banc, soit 1-2 min.
+_BUDGET_PARTIEL_S: float = 600.0
+
+
+def _board_partiel_par_cli(pcb_bytes: bytes, passes: int,
+                           budget_s: float) -> Optional[bytes]:
+    """Board PARTIEL d un tirage fige : le meme DSN, rejoue en CLI `-mp passes`.
+
+    ⚠️ A/B du 2026-09-19 : quatre cartes sur dix sorties SANS board, dans les
+    deux bras. Chaque tirage figeait, l attente etait abandonnee, la JVM tuee
+    — et le job avec elle. Le « dernier recours » `_recuperer_jobs_abandonnes`
+    comptait « 7 irrecuperable(s) » : il allait chercher un job mort.
+
+    L API 2.1.0 ne rend RIEN d un job en cours (mesure du 2026-09-20 :
+    `/output` 400, `/output/stream` 500, `cancel` 501, `max_passes` et
+    `job_timeout` ignores par job comme en global, `snapshots` inerte). Le CLI,
+    lui, honore `-mp` et ecrit toujours son .ses : `passes` passes coutent
+    ~1-2 min sur les cartes du banc, et rendent un board mesurable.
+
+    Un board partiel n est pas fabricable ; il est JUGEABLE. Sans lui,
+    l orchestrateur ne peut pas re-tirer le placement — il n a aucun
+    pourcentage a juger — et la carte sort vide.
+
+    Rend None, et le DIT, si le CLI est absent, si aucune passe n a ete vue,
+    si le budget manque, ou si le CLI echoue. Jamais une exception.
+    """
+    if passes <= 0:
+        logger.warning("partiel : aucune passe vue sur le tirage fige — rien a rejouer")
+        return None
+    paths = _find_freerouting()
+    if paths is None:
+        logger.warning("partiel : CLI Freerouting introuvable — pas de board partiel")
+        return None
+    if not _budget_suffisant(budget_s):
+        logger.warning("partiel : budget insuffisant (%.0f s) — pas de board partiel", budget_s)
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            dsn = Path(tmp) / "board.dsn"
+            ses = Path(tmp) / "board.ses"
+            _export_specctra(pcb_bytes, dsn)
+            _confier_au_plan(dsn)
+            if _VIAS_RESERVES or _PISTES_A_PROTEGER:
+                dsn.write_text(_injecter_wiring(
+                    dsn.read_text(encoding="utf-8", errors="replace"),
+                    _VIAS_RESERVES,
+                    (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
+                    pistes=_PISTES_A_PROTEGER,
+                ), encoding="utf-8")
+            _run_freerouting(paths, dsn, ses, int(budget_s), max_passes=passes)
+            board = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
+        if not board:
+            logger.warning("partiel : le CLI n a rendu aucun board")
+            return None
+        logger.warning("partiel : board obtenu en CLI a la passe %d du tirage fige", passes)
+        return board
+    except Exception as exc:  # noqa: BLE001 — un partiel manque ne doit rien casser
+        logger.warning("partiel : CLI echoue (%s) — pas de board partiel", exc)
+        return None
 
 
 # Jobs de routage abandonnes par la detection de stagnation. Ils CONTINUENT de
@@ -1200,15 +1267,21 @@ def _find_freerouting() -> Optional[tuple[str, str]]:
 
 
 def _run_freerouting(
-    paths: tuple[str, str], dsn: Path, ses: Path, timeout_s: int
+    paths: tuple[str, str], dsn: Path, ses: Path, timeout_s: int,
+    max_passes: int = 100,
 ) -> None:
-    """Invoke Freerouting CLI. Raises on non-zero exit or timeout."""
+    """Invoke Freerouting CLI. Raises on non-zero exit or timeout.
+
+    `-mp` est HONORE par le CLI — contrairement a l API, ou `max_passes` est
+    accepte puis ignore (mesure du 2026-09-20 : un job a 3 passes en a fait
+    130). C est ce qui permet de rejouer un tirage fige a sa passe.
+    """
     java, jar = paths
     cmd = [
         java, "-jar", jar,
         "-de", str(dsn),
         "-do", str(ses),
-        "-mp", "100",
+        "-mp", str(max(1, int(max_passes))),
     ]
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout_s, check=False,
@@ -5830,6 +5903,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     i_essai = 0
     derniere_chance_donnee = False
     fige_max = 0  # meilleur pourcentage vu sur un tirage FIGE
+    # (pourcentage, board d entree, passe atteinte) du meilleur tirage fige.
+    meilleur_fige: Optional[tuple[int, bytes, int]] = None
     while True:
         if i_essai >= len(essais):
             # ⚠️ DERNIERE CHANCE. Tous les tirages ont fige et il ne reste
@@ -6104,6 +6179,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 "route_auto: tirage fige a ~%d%% au palier %d couches — "
                 "on passe au tirage suivant", fige.routed_percent, palier)
             fige_max = max(fige_max, int(fige.routed_percent or 0))
+            # ⚠️ MEMORISER le meilleur tirage fige — board d entree et passe
+            # atteinte — pour le rejouer en CLI si AUCUN tirage n aboutit.
+            # Le job de la JVM, lui, est mort avec elle (voir
+            # `_board_partiel_par_cli`).
+            if meilleur_fige is None or int(fige.routed_percent or 0) > meilleur_fige[0]:
+                meilleur_fige = (int(fige.routed_percent or 0), etendu, int(fige.passes or 0))
             sans_gain += 1
             continue
 
@@ -6402,6 +6483,35 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         #
         # La « derniere chance » ne joue pas ici : elle exige du budget, et il
         # est justement epuise quand tous les tirages ont fige.
+        # ⚠️ D ABORD le partiel par CLI : les jobs de la JVM sont morts avec
+        # elle (A/B du 2026-09-19, quatre cartes sans board). Le board partiel
+        # recoit ses plans pour etre juge comme un vrai tirage, pas plus.
+        if meilleur_fige is not None:
+            pct_fige, board_fige, passes_fige = meilleur_fige
+            # ⚠️ AU MOINS `_BUDGET_PARTIEL_S`, davantage s il reste du temps :
+            # quand tous les tirages ont fige, le restant est justement epuise
+            # — un filet qui exige les ressources que la situation vient de
+            # consommer ne sert a rien (c est ce qui a rendu inerte la
+            # « derniere chance » du 2026-08-31).
+            partiel = _board_partiel_par_cli(
+                board_fige, passes_fige,
+                max(_remaining_budget_s(deadline), _BUDGET_PARTIEL_S))
+            if partiel is not None:
+                try:
+                    partiel = _fill_zones(_add_ground_planes(partiel))
+                except Exception as exc:  # noqa: BLE001 — sans plans, le partiel reste jugeable
+                    logger.warning("partiel : plans non coules (%s)", exc)
+                pct = _measured_routed_percent(partiel, nets_routables)
+                return RouteAutoResponse(
+                    kicad_pcb_b64=base64.b64encode(partiel).decode("ascii"),
+                    routed_percent=_percent_verifie(partiel, pct, nets_routables),
+                    layers=_count_copper_layers(partiel),
+                    engine="freerouting-cli-partiel",
+                    via_count=_count_vias(partiel),
+                    track_length_mm=_track_length_mm(partiel),
+                    warning="tous les tirages ont stagne — board PARTIEL rejoue en "
+                            "CLI a la passe %d (tirage fige a ~%d%%), incomplet mais "
+                            "reel" % (passes_fige, pct_fige))
         recupere = _recuperer_jobs_abandonnes(pcb_bytes)
         if recupere is not None:
             pct = _measured_routed_percent(recupere, nets_routables)
