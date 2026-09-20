@@ -3,8 +3,8 @@
   "composants": 5,
   "nets": 4,
   "board_mm": [
-    24.8,
-    17.0
+    20.0,
+    14.0
   ],
   "duree_s": 48,
   "git": "02f7b26",
@@ -47,6 +47,23 @@
       "pistes_par_couche": {
         "F.Cu": 12
       }
+    }
+  },
+  "carte_compacte": {
+    "date": "2026-09-20",
+    "decision": "D-2026-09-20-a",
+    "pr": 220,
+    "note": "chaine place -> route rejouee par HTTP avec 25 % d occupation ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
+    "taille_avant_mm": [
+      24.8,
+      17.0
+    ],
+    "vias_avant": 2,
+    "place_s": 95,
+    "route_s": 124,
+    "moteur": "freerouting-cli",
+    "pistes_par_couche": {
+      "F.Cu": 12
     }
   }
 }
