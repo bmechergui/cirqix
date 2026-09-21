@@ -273,6 +273,33 @@ il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
 sur ces deux cartes compactes ; la piste suivante est la densité du placement
 (406 et 483 croisements du chevelu), pas le routeur.
 
+### Combien de pastilles de masse finissent ENFERMÉES (mesure du 2026-09-21)
+
+Seize boards routés mesurés (les dix du banc + les tirages de 07, 09, 10),
+union-find des îlots GND reliés par les perçages :
+
+    14 boards sur 16   un seul amas GND, AUCUNE pastille enfermée
+    carte-07/tirage_3  2 amas — D16.1 enfermée
+    carte-10/tirage_3  2 amas — C33.2 et C69.2 enfermées
+    TOTAL              3 pastilles sur 16 boards
+
+Toutes sont des passifs : la masse d'une LED et celle de deux condensateurs.
+
+⚠️ **Le via d'échappement EST posé sur les trois** — à 0,9, 1,2 et 1,2 mm de la
+pastille, avec son tronçon de masse. Ce n'est donc PAS un oubli de l'étape ②
+(dogbone), hypothèse écartée par la mesure. Ce via descend vers la face
+opposée, mais **à cet endroit la face opposée est elle aussi un îlot isolé** :
+les deux faces sont coupées au même endroit, et le via ne relie que les deux
+moitiés. C'est la paire de jumeaux du 2026-09-21, vue depuis sa cause.
+
+Conséquence pour la suite : le remède n'est ni dans la couture (mesuré : aucun
+site, aucun contournement), ni dans le dogbone (déjà posé). Il est dans le
+ROUTAGE, qui encercle la même petite région sur les deux faces — piste non
+encore mesurée : réserver un dégagement autour de chaque via d'échappement de
+masse pour que les signaux ne le cernent pas. ⚠️ Voisine de l'« amorce sur la
+face opposée », ESSAYÉE et RÉFUTÉE le 2026-09-02 (routeur trois fois plus lent,
+aucun gain) : à mesurer avant toute proposition.
+
 ### Le placement se CALCULE — banc du 2026-09-21 au soir (graine en ÉTOILE)
 
 Réglage de banc `graine_etoile`, DÉSARMÉ par défaut (D-2026-09-21-a, **en
