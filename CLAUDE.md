@@ -2341,6 +2341,17 @@ Restent non convertis, à boîte non tournée : `_clamp_fixed_refs_to_outline`,
 `_position_libre_pour_ancrage`, `_ecarter_des_dominants`, `contour_et_bords`,
 `carte_compacte` (aires seulement). Sans effet tant que les ancrages sont à 0°.
 
+**Un ancrage n'était collé au bord QUE s'il débordait.**
+`_clamp_fixed_refs_to_outline` ramène ce qui sort du contour ; un connecteur
+que le générateur pose DANS la carte y restait pour toujours (carte-09
+compacte : J2 à 15,7 mm de tout bord, les six autres à 2-3 mm). Règle de
+l'utilisateur — « toujours les connecteurs à l'extrémité » —
+`_coller_les_ancrages_au_bord`, juste après le clamp : glissement vers le bord
+LE PLUS PROCHE du corps, puis le long de ce bord s'il est occupé ; dominants
+exempts. ⚠️ Ce n'est PAS D-2026-09-13-c (B), réfutée : on ne centre rien.
+Mesuré : 08 et 09 compactes, 7 connecteurs sur 7 à 2,0 mm, 0 erreur DRC.
+Garde : `tests/test_ancrages_colles_au_bord.py`.
+
 **NEVER mesurer « connecteur au bord » depuis l'ORIGINE.** L'origine d'un
 en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
 son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,

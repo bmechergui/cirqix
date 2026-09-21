@@ -96,6 +96,20 @@
 
 ## Validées par l'utilisateur
 
+### D-2026-09-21-a — Un connecteur ancré est toujours collé contre un bord
+
+**Statut : validée** — règle énoncée par l'utilisateur le 2026-09-19
+(« toujours les connecteurs à l'extrémité »), en refusant de désancrer les
+connecteurs.
+
+`_coller_les_ancrages_au_bord` (`tools/placement.py`), juste après le clamp :
+glissement vers le bord le plus proche du corps, puis le long de ce bord s'il
+est occupé par un autre ancrage ; boîtiers dominants exempts. Aucun seuil.
+Distincte de D-2026-09-13-c (B), réfutée : rien n'est centré sur le bord.
+
+Mesure (2026-09-21, `/place/auto`) : carte-09 compacte, J2 15,7 mm → 2,0 mm ;
+carte-08 et carte-09, 7 connecteurs sur 7 à 2,0 mm, 0 erreur DRC.
+
 ### D-2026-09-20-a — Carte de départ dimensionnée sur les composants : 25 % d'occupation
 **Statut : validée** par l'utilisateur le 2026-09-20 (« Oj »), après proposition chiffrée.
 - **Constat (relecture du banc, 2026-09-19) :** les courtyards couvrent 5 % de carte-09
