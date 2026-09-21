@@ -273,6 +273,32 @@ il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
 sur ces deux cartes compactes ; la piste suivante est la densité du placement
 (406 et 483 croisements du chevelu), pas le routeur.
 
+### D'où viennent les croisements — et trois pistes de placement RÉFUTÉES le 2026-09-21
+
+Mesuré sur les dix placements valides de la phase A :
+
+- **72 à 100 % des croisements du chevelu impliquent un net de connecteur** ;
+- après routage, les connexions réellement manquantes sont des SIGNAUX
+  (`EXT*` des connecteurs, `IO_L*`, `NRST`, `SWDIO`) — jamais le rail +3V3,
+  dont le poids dans le compte de croisements est un artefact de la projection
+  en étoile.
+
+| piste | mesure | verdict |
+|---|---|---|
+| `place_hierarchical_from_pcb` (natif, blocs rangés en étagères) | carte-08 406 → 710 croisements, carte-10 564 → 904, jusqu'à 14 composants hors carte | réfutée |
+| permuter les connecteurs identiques après placement | 0 à −17 % | trop faible |
+| connecteurs recollés face à leurs broches, PUIS placement rejoué autour (seconde passe gardée seulement si elle bat la première) | 8 secondes passes : 2 retenues (19 → 13, 620 → 373), 6 écartées (21 → 25, 126 → 105 avec un conflit en plus, 127 → 234, 211 → 219, 426 → 491, 491 → 544) | réfutée |
+
+⚠️ L'estimation « connecteurs seuls déplacés, le reste figé » annonçait −11 à
+−42 % : elle ne tient pas dès qu'on re-place vraiment le reste. ⚠️ La
+DISPERSION de l'optimiseur brouille tout : la première passe de carte-10 vaut
+564 croisements le matin et 620 l'après-midi, sans qu'une ligne change. Une
+seconde passe est d'abord UN AUTRE TIRAGE. Code non conservé.
+
+Taux d'occupation (réglage de banc, un tirage) : à 20 % au lieu de 25 %,
+carte-08 passe de 8 à 6 connexions manquantes et carte-09 de 11 à 4, toutes
+deux sur 4 couches. Le point à 15 % n'a pas été mesuré (machine en veille).
+
 ## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
