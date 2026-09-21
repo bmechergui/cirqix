@@ -404,6 +404,124 @@ def _refs_en_conflit(rapport: dict) -> set:
     return refs
 
 
+def _paires_de_courtyards(rapport: dict) -> list[tuple[str, str]]:
+    """Paires de references que le DRC declare en `courtyards_overlap` ERREUR."""
+    paires: list[tuple[str, str]] = []
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("type") != "courtyards_overlap" or v.get("severity") != "error":
+            continue
+        refs = []
+        for item in v.get("items") or []:
+            m = _RE_REF_DRC.search(str(item.get("description") or ""))
+            if m:
+                refs.append(m.group(1))
+        if len(refs) >= 2 and refs[0] != refs[1]:
+            paires.append((refs[0], refs[1]))
+    return paires
+
+
+def _choisir_le_mobile(a: str, b: str, aires: dict, ancres: set) -> Optional[str]:
+    """Lequel des deux s ecarte : le non ancre au plus petit courtyard.
+
+    Un regulateur ne bouge pas pour laisser passer son condensateur. Rend None
+    si les deux sont ancres : on ne deplace pas ce que l utilisateur ou la
+    chaine a fige.
+    """
+    libres = [r for r in (a, b) if r not in ancres]
+    if not libres:
+        return None
+    return min(libres, key=lambda r: aires.get(r, float("inf")))
+
+
+def _reparer_chevauchements_du_drc(pcb_path: Path, ancres) -> int:
+    """Ecarte les courtyards que SEUL le DRC voit se chevaucher. Rend le nombre
+    de composants deplaces (0 si rien a faire ou si rien n a ete garde).
+
+    ⚠️ Rejeu du 2026-09-20 : carte-05 et carte-09 sortaient a UNE erreur, la
+    meme — `courtyards_overlap` entre le regulateur U2 (SOT-223) et un passif
+    voisin. `PlacementAnalyzer` approxime un courtyard par « pastilles +
+    0,5 mm » ; kicad-cli lit la vraie geometrie `F.CrtYd`. Sur un SOT-223 le
+    corps et sa languette debordent des pastilles : l Inspecteur repondait
+    « 0 ERROR » et la carte etait livree « en l etat » avec son erreur.
+
+    Ici on REPARE avec l instrument qui JUGE : les paires viennent du DRC, les
+    boites de `_boite_orientee_fp` (la vraie courtyard, TOURNEE), la case libre de
+    `_nearest_free_cell`. Aucune carte ni aucun boitier n est nomme.
+
+    ⚠️ NE PEUT QU AMELIORER : si le compte d erreurs ne baisse pas, le board
+    recu est restaure.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    # UN seul DRC pour les paires ET la ligne de base : le meme rapport, donc
+    # une base forcement MESUREE (jamais la sentinelle « non mesurable »).
+    rapport = _rapport_drc_sans_lever(pcb_path)
+    paires = _paires_de_courtyards(rapport)
+    if not paires:
+        return 0
+    avant_octets = pcb_path.read_bytes()
+    erreurs_avant = _conflits_du_rapport(rapport)
+    try:
+        pcb = PCB.load(str(pcb_path))
+        bornes = _outline_bounds(pcb)
+        if bornes is None:
+            return 0
+        par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+        aires = {}
+        for ref, fp in par_ref.items():
+            x0, y0, x1, y1 = _boite_orientee_fp(fp)
+            aires[ref] = (x1 - x0) * (y1 - y0)
+        figes = set(ancres or ())
+        deplaces: list[str] = []
+        for a, b in paires:
+            mobile = _choisir_le_mobile(a, b, aires, figes)
+            if mobile is None or mobile not in par_ref or mobile in deplaces:
+                continue
+            fp = par_ref[mobile]
+            bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
+            etendue = max(abs(bx0), abs(bx1), abs(by0), abs(by1))
+            marge = etendue + _MARGE_COURTYARD_BORD_MM + _GARDE_REPARATION_MM
+            zone = (bornes[0] + marge, bornes[1] - marge, bornes[2] + marge, bornes[3] - marge)
+            if zone[0] >= zone[1] or zone[2] >= zone[3]:
+                continue
+            occupees = []
+            for autre in pcb.footprints:
+                if autre.reference == mobile:
+                    continue
+                ox0, oy0, ox1, oy1 = _boite_orientee_fp(autre)
+                ax, ay = autre.position
+                occupees.append((ax + ox0, ay + oy0, ax + ox1, ay + oy1))
+            x, y = fp.position
+            cible = (min(max(x, zone[0]), zone[1]), min(max(y, zone[2]), zone[3]))
+            place = _nearest_free_cell(cible, [], zone, boite_locale=(bx0, by0, bx1, by1),
+                                       boites_occupees=occupees)
+            if place is None:
+                logger.warning("chevauchement DRC : aucune case libre pour %s", mobile)
+                continue
+            logger.info("chevauchement DRC : %s (%.2f,%.2f) -> (%.2f,%.2f) — sorti du "
+                        "courtyard de %s", mobile, x, y, place[0], place[1],
+                        b if mobile == a else a)
+            fp.position = place
+            deplaces.append(mobile)
+        if not deplaces:
+            return 0
+        pcb.save(str(pcb_path))
+        _rendre_lisible(pcb_path)
+        erreurs_apres = _compter_conflits_erreur(pcb_path)
+        if erreurs_apres >= _CONFLITS_INDETERMINES or erreurs_apres >= erreurs_avant:
+            pcb_path.write_bytes(avant_octets)
+            logger.warning("chevauchement DRC : reparation ANNULEE (%d -> %d erreurs)",
+                           erreurs_avant, erreurs_apres)
+            return 0
+        logger.info("chevauchement DRC : %d composant(s) ecarte(s), %d -> %d erreur(s)",
+                    len(deplaces), erreurs_avant, erreurs_apres)
+        return len(deplaces)
+    except Exception as exc:  # noqa: BLE001 — un filet en panne ne casse pas le placement
+        pcb_path.write_bytes(avant_octets)
+        logger.warning("chevauchement DRC : reparation impossible (%s) — board conserve", exc)
+        return 0
+
+
 def _a_remettre(fautifs: set, deplaces: set) -> set:
     """Ceux qu on remet a leur place d avant : fautifs ET deplaces par le snap.
 
@@ -446,11 +564,17 @@ def _compter_conflits_erreur(pcb_path: Path) -> int:
             "auto_place: rapport DRC illisible (%s) — tirage tenu pour invalide",
             exc)
         return _CONFLITS_INDETERMINES
+    return _conflits_du_rapport(rapport)
+
+
+def _conflits_du_rapport(rapport: dict) -> int:
+    """Le compte de `_compter_conflits_erreur`, sur un rapport DEJA obtenu."""
     return sum(
         1 for v in (rapport.get("violations") or [])
         if isinstance(v, dict) and v.get("severity") == "error"
         and v.get("type") in _TYPES_CONFLIT
     )
+
 
 def _resolve_remaining_conflicts(pcb_path: Path, anchored: list[str]) -> tuple[int, int]:
     """Réparation native — équivalent ``kct placement fix`` (PlacementFixer.iterative_fix).
@@ -1000,7 +1124,7 @@ def _refs_trop_pres_du_bord(pcb_path: Path) -> list[str]:
     ]))
     boites = []
     for fp in fps:
-        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
         x, y = fp.position
         boites.append((fp.reference, (x + bx0, y + by0, x + bx1, y + by1)))
     courtyards = set(_courtyard_trop_pres_du_bord(bornes, boites))
@@ -1048,7 +1172,7 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
     for autre in pcb.footprints:
         if autre.reference in fautifs:
             continue
-        bx0, by0, bx1, by1 = _boite_locale_fp(autre)
+        bx0, by0, bx1, by1 = _boite_orientee_fp(autre)
         ax, ay = autre.position
         boites_occupees.append((ax + bx0, ay + by0, ax + bx1, ay + by1))
     deplaces: list[str] = []
@@ -1060,7 +1184,7 @@ def _repair_off_board(pcb_path: Path, anchored: list[str]) -> list[str]:
         # pas seulement son centre (cf. _footprint_reach_mm).
         # ... et sa COURTYARD à _MARGE_COURTYARD_BORD_MM du bord (D-2026-09-15-a) :
         # l'étendue retenue est la plus grande des deux, depuis le centre.
-        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
         etendue = max(_footprint_reach_mm(fp), abs(bx0), abs(bx1), abs(by0), abs(by1))
         marge = etendue + max(_OFF_BOARD_MARGIN_MM, _MARGE_COURTYARD_BORD_MM) + _GARDE_REPARATION_MM
         min_x, max_x = bornes[0] + marge, bornes[1] - marge
@@ -1526,6 +1650,31 @@ def _boite_locale_fp(fp) -> tuple:
     if not xs:
         return 0.0, 0.0, 0.0, 0.0
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _boite_orientee_fp(fp) -> tuple:
+    """Boite du footprint TOURNEE avec lui, relative a sa position.
+
+    ⚠️ `_boite_locale_fp` rend le courtyard dans le repere du footprint. Les
+    reparations l ajoutaient telle quelle a `fp.position` : un SOT-223 pose a
+    90 degres (8,8 x 7,2) etait teste COUCHE, la case « libre » tombait dans
+    son vrai courtyard, et carte-05 comme carte-09 sortaient a une erreur
+    `courtyards_overlap` (2026-09-21).
+
+    SENS DE KICAD, lu dans pcbnew et non suppose : l axe y descend, un point
+    local (x, y) devient (x cos a + y sin a, -x sin a + y cos a). Connecteur de
+    boite locale (-1,77 -1,77 1,77 9,39) : a 90 degres KiCad rend
+    (-1,81 -1,81 9,44 1,81) ; le sens oppose enverrait le corps a l inverse.
+    """
+    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    a = math.radians(float(getattr(fp, "rotation", 0.0) or 0.0))
+    if abs(math.sin(a)) < 1e-9 and math.cos(a) > 0:
+        return x0, y0, x1, y1
+    ca, sa = math.cos(a), math.sin(a)
+    coins = [(x * ca + y * sa, -x * sa + y * ca)
+             for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
+    return (min(c[0] for c in coins), min(c[1] for c in coins),
+            max(c[0] for c in coins), max(c[1] for c in coins))
 
 
 def _boitiers_dominants(pcb) -> list:
@@ -2988,6 +3137,12 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # deplace (2026-09-15) : l Inspecteur de la grille n ancre que les
         # connecteurs et a ressorti R1 que le premier filet venait de rentrer.
         _garder_dans_le_contour(out, conn, fixes_snap)
+
+        # ⚠️ PUIS LES CHEVAUCHEMENTS QUE SEUL LE DRC VOIT (2026-09-20), apres
+        # la derniere etape qui deplace : l Inspecteur approxime les
+        # courtyards, kicad-cli lit la vraie `F.CrtYd` — carte-05 et carte-09
+        # sortaient a une erreur U2 <-> passif, « livrees en l etat ».
+        _reparer_chevauchements_du_drc(out, conn)
 
         # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
         # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les

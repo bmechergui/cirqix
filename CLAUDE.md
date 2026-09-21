@@ -2319,6 +2319,33 @@ jours — le compte vient du DRC kicad-cli, `PlacementAnalyzer` n'en voyait
 que 2. Corrigé : relatif = (déclaré − rotation du boîtier source) mod 360 ;
 205 → 1. Garde : `tests/test_pad_angles_source_deja_pivotee.py`.
 
+### Leçons inscrites le 2026-09-21 — la boîte qui ne tournait pas
+
+**NEVER ajouter `_boite_locale_fp` à `fp.position` sans la TOURNER.** Elle rend
+le courtyard dans le repère du footprint. `_repair_off_board` la posait telle
+quelle : un SOT-223 à 90° (8,8 × 7,2) était testé COUCHÉ, la case « libre »
+tombait dans son vrai courtyard, et carte-05 comme carte-09 sortaient à UNE
+erreur `courtyards_overlap` (U2 ↔ passif). `PlacementAnalyzer`, qui approxime
+les courtyards par « pastilles + 0,5 mm », répondait « 0 ERROR ». La règle vit
+à UN endroit, `placement._boite_orientee_fp`, et un filet
+(`_reparer_chevauchements_du_drc`) répare avec l'instrument qui JUGE —
+kicad-cli — sans jamais garder un résultat qui n'améliore pas.
+
+**NEVER supposer le SENS de rotation de KiCad : le lire dans pcbnew.** L'axe y
+descend : (x, y) → (x cos a + y sin a, −x sin a + y cos a). Le sens opposé est
+INVISIBLE sur un boîtier centré et faux dès que la boîte est décentrée.
+`_pastille_partagee` le portait : sur le banc, 312 pastilles de boîtiers
+tournés étaient calculées à **7,1 mm** en moyenne de leur vraie place
+(0,08 mm dans le bon sens) — la capa de découplage visait une broche absente.
+Restent non convertis, à boîte non tournée : `_clamp_fixed_refs_to_outline`,
+`_position_libre_pour_ancrage`, `_ecarter_des_dominants`, `contour_et_bords`,
+`carte_compacte` (aires seulement). Sans effet tant que les ancrages sont à 0°.
+
+**NEVER mesurer « connecteur au bord » depuis l'ORIGINE.** L'origine d'un
+en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
+son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
+`tests/test_chevauchements_vus_par_le_drc.py`.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
