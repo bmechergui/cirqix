@@ -3943,8 +3943,16 @@ def _coudre_jusqu_au_bout(pcb_bytes: bytes) -> bytes:
     Garde : tests/test_couture_repetee.py.
     """
     for _ in range(_PASSES_COUTURE):
-        recousu = _recoudre_les_zones(pcb_bytes)
+        perdus: list = []
+        recousu = _recoudre_les_zones(pcb_bytes, perdus)
         if recousu == pcb_bytes:
+            if perdus:
+                # ⚠️ « Insister serait vain » reste vrai — mais ce n est PAS
+                # « le travail est fini ». Le DRC signalera ces ruptures ; le
+                # journal doit les avoir annoncees.
+                logger.warning(
+                    "couture : %d ilot(s) restent NON COUSU(S) apres la derniere "
+                    "passe — le plan sortira coupe", len(perdus))
             return pcb_bytes
         pcb_bytes = recousu
     return pcb_bytes
@@ -3964,6 +3972,64 @@ def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
     for bloc in vias[-combien:]:
         txt = txt.replace(bloc, "", 1)
     return txt.encode("utf-8")
+
+
+def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
+    """Raccorde par une courte piste les amas de plan orphelins PORTANT une pastille.
+
+    ⚠️ AVANT `_retirer_ilots_flottants`, et c est tout l interet : un amas
+    qu on peut relier ne doit pas etre retire, et un amas a pastille ne peut
+    PAS l etre (mesure du 2026-09-19 : 2 -> 3 connexions manquantes).
+
+    Le defaut vise, mesure sur carte-07 le 2026-09-21 : l amas orphelin est une
+    PAIRE F.Cu + B.Cu cousue par un via qui ne relie que ses deux moities. Les
+    deux remedes existants s annulent dessus — la couture compte le via comme
+    un succes, le retrait voit ce via « toucher du cuivre en face ».
+
+    Ne peut qu AMELIORER : le board est conserve si le bilan DRC s aggrave.
+    """
+    if not _NETS_CONFIES_AU_PLAN:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "relier_amas",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "nets": json.dumps(list(_NETS_CONFIES_AU_PLAN)),
+                "largeur_mm": str(_TRONCON_LARGEUR_MM),
+            })
+        except Exception as exc:
+            logger.warning("raccord des amas orphelins impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        bilan = json.loads(resultat.read_text(encoding="utf-8"))
+        recousu = sortie.read_bytes()
+    examines, relies = bilan.get("amas_orphelins", 0), bilan.get("relies", 0)
+    if not examines:
+        return pcb_bytes
+    if not relies:
+        # ⚠️ On le DIT : des amas orphelins existent et AUCUN n a pu etre
+        # raccorde. « Rien a faire » et « rien n a marche » ne doivent pas
+        # rendre la meme trace.
+        logger.warning("raccord des amas orphelins : %d amas vu(s), AUCUN raccorde — %s",
+                       examines,
+                       " ".join("%s=%d" % (k, v)
+                                for k, v in sorted((bilan.get("echecs") or {}).items())
+                                if v) or "raison inconnue")
+        return pcb_bytes
+    if _aggrave_le_board(pcb_bytes, recousu):
+        logger.warning("raccord des amas orphelins : erreurs ajoutees — board conserve")
+        return pcb_bytes
+    logger.info("raccord des amas orphelins : %d piste(s) posee(s) sur %d amas",
+                relies, examines)
+    return recousu
 
 
 def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
@@ -4023,7 +4089,7 @@ def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
     return allege
 
 
-def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
+def _recoudre_les_zones(pcb_bytes: bytes, perdus_vus: Optional[list] = None) -> bytes:
     """Relie par un via les ilots d un meme plan, decoupes par les pistes.
 
     ⚠️ Distinct de `_recoudre_les_ilots`, qui traite des PASTILLES isolees.
@@ -4055,8 +4121,33 @@ def _recoudre_les_zones(pcb_bytes: bytes) -> bytes:
             return pcb_bytes
         if not sortie.is_file():
             return pcb_bytes
-        n = json.loads(resultat.read_text(encoding="utf-8")).get("stitched", 0)
+        rapport = json.loads(resultat.read_text(encoding="utf-8"))
+        n = rapport.get("stitched", 0)
+        perdus = rapport.get("perdus") or []
         recousu = sortie.read_bytes()
+    # ⚠️ AVOUER AVANT DE RENDRE. Un ilot visite sans site libre rend « 0 via
+    # pose », exactement comme un plan deja d un seul tenant — et la boucle
+    # s arrete en croyant avoir fini. On ne sait pas encore les coudre ; on
+    # refuse qu ils disparaissent en silence (mesure du 2026-09-21).
+    if perdus_vus is not None:
+        # ⚠️ PAR LA PILE, jamais par un etat de module : `route_auto` est un
+        # `def` sync, donc FastAPI l execute dans son pool de threads — deux
+        # routages du meme worker melangeraient leurs diagnostics, et un plan
+        # coupe passerait pour propre (revue du 2026-09-21).
+        perdus_vus.clear()
+        perdus_vus.extend(perdus)
+    if perdus:
+        logger.warning(
+            "couture : %d ilot(s) de plan NON COUSU(S) — aucun site libre "
+            "(obstacle, ecart entre trous ou ilot trop etroit) : %s",
+            len(perdus),
+            ", ".join("%s@%s %.2f mm2 (%d candidats, refus %s)"
+                      % (p.get("net"), p.get("couche"), p.get("mm2", 0.0),
+                         p.get("candidats", 0),
+                         " ".join("%s=%d" % (k, v)
+                                  for k, v in sorted((p.get("refus") or {}).items())
+                                  if v) or "aucun")
+                      for p in perdus[:6]))
     if not n:
         return pcb_bytes
     logger.info("couture : %d via(s) poses dans les ilots de plan", n)
@@ -6359,6 +6450,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # (2026-08-27) et le snap contre le Geometre (2026-08-29) : deux
             # correctifs justes qui s annulent. L ordre fait partie du
             # correctif, pas de son emballage.
+            # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
+            final = _relier_les_amas_orphelins(final)
             final = _retirer_ilots_flottants(final)
             # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du
             # 2026-09-12 (carte-08/10, stm32-100, tirages a 96-98 %) : le

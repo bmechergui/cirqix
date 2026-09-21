@@ -39,7 +39,10 @@ class TestBoucle:
         etats = [b"a", b"b", b"c", b"c"]
         vus = []
 
-        def faux(pcb):
+        # ⚠️ Le faux porte la MEME signature que le vrai, `perdus_vus`
+        # compris (ajoute le 2026-09-21) : un faux plus pauvre que le vrai
+        # ne revele pas un contrat rompu, il le CACHE.
+        def faux(pcb, perdus_vus=None):
             vus.append(pcb)
             return etats[len(vus)] if len(vus) < len(etats) else pcb
 
@@ -51,7 +54,7 @@ class TestBoucle:
     def test_elle_s_arrete_quand_plus_rien_ne_bouge(self, monkeypatch):
         appels = []
 
-        def inerte(pcb):
+        def inerte(pcb, perdus_vus=None):
             appels.append(pcb)
             return pcb
 
@@ -62,7 +65,7 @@ class TestBoucle:
     def test_le_nombre_de_passages_est_borne(self, monkeypatch):
         compteur = {"n": 0}
 
-        def toujours_different(pcb):
+        def toujours_different(pcb, perdus_vus=None):
             compteur["n"] += 1
             return pcb + b"."
 

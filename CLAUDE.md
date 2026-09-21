@@ -2357,6 +2357,50 @@ en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
 son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
 `tests/test_chevauchements_vus_par_le_drc.py`.
 
+### Leçons inscrites le 2026-09-21 (soir) — les jumeaux qui se portent garants
+
+**NEVER laisser DEUX remèdes se valider l'un l'autre sur le même objet.** Un
+amas orphelin du plan GND (un îlot par face, cousus entre eux par un via) était
+invisible aux deux filets à la fois : `_stitch_zones` comptait ce via comme un
+succès — un site avait été trouvé — et `_retirer_ilots_flottants` voyait ce
+MÊME via « toucher du cuivre du net en face », donc ne retirait rien. Les
+jumeaux se portaient garants l'un de l'autre, et carte-07 sortait à une
+connexion manquante GND, une fois sur huit. Diagnostic convergent de Codex, GLM
+et OpenCode le même jour, sur un brief qui listait les pistes déjà réfutées.
+La couture ORDONNE désormais ses candidats vers le cuivre du PLAN PRINCIPAL
+(`_cuivre_principal_en_face`) — on ordonne, on ne filtre pas, « exiger » ayant
+été réfuté le 2026-09-01.
+
+**NEVER relayer le message d'un DRC comme une description de la géométrie.**
+« Zone [GND] on B.Cu <-> Zone [GND] on F.Cu » se lit « les deux faces ne sont
+pas reliées » ; le board portait pourtant 23 vias reliant les deux plans. Le
+DRC nomme la ZONE, pas l'îlot. J'ai bâti là-dessus une explication fausse, que
+l'utilisateur a relevée en une phrase : « tu comptes faux ? ».
+
+**NEVER raccorder un îlot de plan par une LIGNE DROITE.** Un îlot est isolé PAR
+une piste qui le coupe : toute droite vers le plan la retraverse. Mesuré —
+« 5 amas vus, AUCUN raccordé ». Et **NEVER partir du BORD de l'îlot** : ce bord
+est exactement à la distance de dégagement de la piste fautive, donc il n'y a
+jamais la place d'y poser une piste. On part de la PASTILLE (avis de GLM : le
+sujet est la connectivité du pad, pas le cuivre de l'îlot), et on contourne
+avec `_chemin_de_contournement` (A* borné en distance ET en nombre de nœuds).
+
+**NEVER borner une recherche par la seule géométrie.** Une portée en
+millimètres ne borne pas le TRAVAIL : chaque nœud interroge tous les obstacles
+du board. `_NOEUDS_MAX_CONTOURNEMENT` plafonne les nœuds visités — sans lui,
+`(portée/pas)² × obstacles` fait geler `route_auto`.
+
+**NEVER porter un diagnostic dans un état de MODULE.** `_ILOTS_PERDUS` était
+global ; `route_auto` étant un `def` sync, FastAPI l'exécute dans son pool de
+threads et deux routages du même worker auraient mélangé leurs diagnostics.
+Le constat voyage par la pile.
+
+⚠️ **Ce qui reste OUVERT** : sur carte-07, les îlots orphelins sont
+PHYSIQUEMENT ENCERCLÉS — aucun via ne les rejoint, aucun chemin ne les
+contourne, et un budget quatre fois plus large ne change rien. Le remède
+général est écrit ; ce cas-là ne se referme pas après coup. La suite est en
+amont : ne pas laisser le routage enfermer une pastille de masse.
+
 ### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
 
 **NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
