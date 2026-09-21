@@ -276,7 +276,15 @@ def test_auto_place_clamps_connector_outside_outline(tmp_path):
 
 
 def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
-    """J2 déjà bien placé (30,20) reste à sa position : ancré (fixed_refs natif)."""
+    """J2 pose DANS la carte glisse contre le bord le plus proche, puis ne bouge plus.
+
+    ⚠️ Contrat revise le 2026-09-21. Ce test exigeait que J2 (30,20) reste a
+    (30,20) : « ancre » voulait dire « ou que le generateur l ait pose ». Rejeu
+    de carte-09 : J2 restait a 15,7 mm de tout bord, en plein milieu, contre la
+    regle de l utilisateur (« toujours les connecteurs a l extremite »). Ce qui
+    reste garanti : l optimiseur ne le deplace PAS — il ne glisse que sur UN
+    axe, vers le bord, et l autre coordonnee est intacte.
+    """
     pcb_bytes = _board_with_connectors(
         tmp_path, j1_board_xy=(30.0, 135.0), j2_board_xy=(30.0, 20.0),
     )
@@ -285,8 +293,11 @@ def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
+    # Bord le plus proche du corps sur 60 x 40 : le bas. La position COLLEE est
+    # deterministe (35,46 = 40 - marge 2 - debord du corps) ; ni le GA ni le
+    # Geometre ne la deplacent ensuite.
+    assert j2["x_mm"] == pytest.approx(30.0, abs=1.0)
+    assert j2["y_mm"] == pytest.approx(35.46, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -543,8 +554,11 @@ def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    assert j2["x_mm"] == pytest.approx(30.0, abs=0.5)
-    assert j2["y_mm"] == pytest.approx(20.0, abs=0.5)
+    # Bord le plus proche du corps sur 60 x 40 : le bas. La position COLLEE est
+    # deterministe (35,46 = 40 - marge 2 - debord du corps) ; ni le GA ni le
+    # Geometre ne la deplacent ensuite.
+    assert j2["x_mm"] == pytest.approx(30.0, abs=1.0)
+    assert j2["y_mm"] == pytest.approx(35.46, abs=0.5)
 
 
 def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monkeypatch):

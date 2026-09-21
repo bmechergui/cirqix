@@ -870,6 +870,97 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
+def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list) -> tuple:
+    """Position d un ancrage glisse contre le bord LE PLUS PROCHE de son corps.
+
+    ``boite`` est la boite ORIENTEE relative a la position, ``bornes`` le
+    contour deja diminue de la marge ``(min_x, max_x, min_y, max_y)``,
+    ``autres`` les boites absolues des ancrages deja poses. Essaie les quatre
+    bords du plus proche au plus lointain ; sur un bord occupe, glisse LE LONG
+    de ce bord. Rend ``pos`` inchangee si la piece ne tient pas ou si aucun
+    bord n est libre — on ne degrade jamais un ancrage pour l y forcer.
+    """
+    x, y = pos
+    bx0, by0, bx1, by1 = boite
+    min_x, max_x, min_y, max_y = bornes
+    if bx1 - bx0 > max_x - min_x or by1 - by0 > max_y - min_y:
+        return pos
+
+    def libre(px: float, py: float) -> bool:
+        b = (px + bx0, py + by0, px + bx1, py + by1)
+        return not any(_boites_se_recouvrent(b, o, _MARGE_ENTRE_COURTYARDS_MM) for o in autres)
+
+    cx = _clamp_axe(x, bx0, bx1, min_x, max_x)
+    cy = _clamp_axe(y, by0, by1, min_y, max_y)
+    # (deplacement, position contre le bord, axe LIBRE le long de ce bord)
+    bords = sorted([
+        (abs((min_x - bx0) - x), (min_x - bx0, cy), "y"),
+        (abs((max_x - bx1) - x), (max_x - bx1, cy), "y"),
+        (abs((min_y - by0) - y), (cx, min_y - by0), "x"),
+        (abs((max_y - by1) - y), (cx, max_y - by1), "x"),
+    ], key=lambda b: b[0])
+    pas = _PAS_RECHERCHE_FIN_MM
+    for _, (px, py), axe in bords:
+        if libre(px, py):
+            return px, py
+        lo, hi = (min_y - by0, max_y - by1) if axe == "y" else (min_x - bx0, max_x - bx1)
+        for i in range(1, int((hi - lo) / pas) + 2):
+            for d in (i * pas, -i * pas):
+                qx, qy = (px, py + d) if axe == "y" else (px + d, py)
+                if lo <= (qy if axe == "y" else qx) <= hi and libre(qx, qy):
+                    return qx, qy
+    return pos
+
+
+def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
+                                 exempts: list = None) -> list:
+    """Glisse chaque connecteur ancre contre le bord le plus proche. Rend les refs deplacees.
+
+    ⚠️ Rejeu du 2026-09-21, carte-09 compacte : six connecteurs a 2-3 mm d un
+    bord, J2 a 15,7 mm. Le generateur l avait pose DANS la carte ; le clamp ne
+    ramene que ce qui DEBORDE, et un ancrage n est plus jamais deplace ensuite.
+    Regle de l utilisateur : « toujours les connecteurs a l extremite ».
+
+    AVANT l optimisation, comme le clamp : les mobiles se rangent autour. Seuls
+    les AUTRES ANCRAGES comptent comme obstacles (lecon du 2026-09-13 : la
+    grille initiale va de toute facon bouger). Les boitiers dominants, centres
+    expres, sont exempts. ⚠️ Ce n est PAS D-2026-09-13-c (B), refutee : on ne
+    centre rien sur le bord, on y GLISSE par le plus court chemin.
+    """
+    bornes_contour = _outline_bounds(pcb)
+    if bornes_contour is None:
+        return []
+    bornes = (bornes_contour[0] + margin_mm, bornes_contour[1] - margin_mm,
+              bornes_contour[2] + margin_mm, bornes_contour[3] - margin_mm)
+    ignores = set(exempts or ())
+    ancres = [fp for fp in pcb.footprints if fp.reference in set(fixed_refs)]
+    poses = {}
+    for fp in ancres:
+        if fp.reference in ignores:
+            b = _boite_orientee_fp(fp)
+            poses[fp.reference] = (fp.position[0] + b[0], fp.position[1] + b[1],
+                                   fp.position[0] + b[2], fp.position[1] + b[3])
+    deplaces = []
+    for fp in ancres:
+        if fp.reference in ignores:
+            continue
+        b = _boite_orientee_fp(fp)
+        x, y = fp.position
+        # Les ancrages pas encore traites comptent a leur place ACTUELLE.
+        autres = [v for r, v in poses.items()] + [
+            (o.position[0] + ob[0], o.position[1] + ob[1], o.position[0] + ob[2], o.position[1] + ob[3])
+            for o in ancres if o.reference not in poses and o is not fp
+            for ob in (_boite_orientee_fp(o),)]
+        nx, ny = _position_au_bord((x, y), b, bornes, autres)
+        if abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6:
+            logger.warning("ancrage %s (%.2f,%.2f) -> colle au bord (%.2f,%.2f)",
+                           fp.reference, x, y, nx, ny)
+            fp.position = (nx, ny)
+            deplaces.append(fp.reference)
+        poses[fp.reference] = (nx + b[0], ny + b[1], nx + b[2], ny + b[3])
+    return deplaces
+
+
 def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
     """Boite absolue (courtyard + marge) des footprints `refs`, par reference."""
     out = {}
@@ -2690,6 +2781,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
         _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
+        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
