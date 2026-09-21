@@ -273,6 +273,55 @@ il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
 sur ces deux cartes compactes ; la piste suivante est la densité du placement
 (406 et 483 croisements du chevelu), pas le routeur.
 
+### Le placement se CALCULE — banc du 2026-09-21 au soir (graine en ÉTOILE)
+
+Réglage de banc `graine_etoile`, DÉSARMÉ par défaut (D-2026-09-21-a, **en
+attente**). Chaîne complète, un tirage par carte, code de `tools/graine_etoile.py`.
+
+| carte | tirage `hybrid` (le matin) | graine en étoile (le soir) |
+|---|---|---|
+| 01 | 0 err · 0 manq | 0 · 0 |
+| 02 | 0 · 0 | 0 · 0 |
+| 03 | 0 · 0 | 0 · 0 |
+| 04 | 0 · 0 | 0 · 0 |
+| 05 | 0 · 0 | 0 · 0 (deux centres : U1 + U3) |
+| 06 | 0 · **1** | 0 · 0 |
+| 07 | 0 · **2** (GND) | 0 · **1** (GND) |
+| 08 | 0 · **8** · 1921 s | 0 · 0 · 2 couches · 91 s |
+| 09 | 0 · **11** · 2574 s | **1 err** (`starved_thermal` GND) · 0 manq |
+| 10 | 0 · 0 · **6 couches** · 849 s | 0 · **1** (GND) · **2 couches** |
+
+**Plus AUCUN signal manquant sur les dix cartes** — lignes de connecteur
+(`EXT*`), `IO_L*`, `NRST`, `SWDIO` : toutes routées. Les trois défauts restants
+sont tous du PLAN DE MASSE (îlot non cousu, pastille affamée), et ils
+PRÉEXISTAIENT : le 07 du matin portait déjà ses 2 manquantes sur GND. Le
+journal les explique : « couture : 1 via(s) posés » quand le plan compte
+« GND@F.Cu en 17 îlots ».
+
+Croisements du chevelu : 406 → 68 (carte-08), 483 → 112 (09), 564 → 130 (10).
+Placement 20-45 s au lieu de 60-640 s — le résultat est le même à chaque appel,
+donc un seul tirage suffit.
+
+⚠️ **Deux cartes coûtent MOINS cher** : carte-08 sort sur 2 couches au lieu
+de 4, carte-10 sur 2 au lieu de 6.
+
+⚠️ **Les finitions défaisaient l'étoile**, et rien ne les surveillait : le
+raffinement CMA-ES remontait carte-07 de 101 à 238 croisements. `_proteger_l_etoile`
+annule désormais raffinement et halo s'ils remontent les croisements ; la grille
+en est exempte (elle déplace de 0,25 mm au plus). Avec cette garde, carte-07 est
+passée de 1 manquante à 0 et carte-08 de 3 à 0.
+
+⚠️ **Le routeur reste stochastique** : carte-07 rend 0 puis 1 manquante avec le
+MÊME code. Un tirage ne prouve rien, dans un sens comme dans l'autre.
+
+⚠️ **Ce banc ne prouve pas une loi** (avis convergents de Codex et de GLM,
+consultés le 2026-09-21) : les dix cartes ont toutes la même topologie, un
+centre et ses périphériques. La graine ne porte AUCUNE règle pour un bus
+parallèle, le partage de la carte entre plusieurs gros boîtiers, l'analogique,
+la puissance, la RF ou le choix de face. Suite proposée par les deux agents :
+découper en blocs fonctionnels, placer les blocs par un calcul global, l'étoile
+devenant un patron parmi d'autres.
+
 ### D'où viennent les croisements — et trois pistes de placement RÉFUTÉES le 2026-09-21
 
 Mesuré sur les dix placements valides de la phase A :

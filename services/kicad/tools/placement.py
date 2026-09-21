@@ -2324,6 +2324,28 @@ def _croisements_du_placement(pcb_path) -> Optional[float]:
         return None
 
 
+def _proteger_l_etoile(out: Path, avant: bytes, croisements_avant: Optional[float],
+                       etape: str) -> Optional[float]:
+    """Annule une finition de CONFORT qui remonte les croisements d une etoile.
+    Rend le compte de croisements en vigueur apres la decision.
+
+    ⚠️ Avis convergents de Codex et de GLM, confirmes par la mesure du
+    2026-09-21 : la graine rend la meme etoile a chaque appel, mais les
+    finitions decidaient du resultat sans que rien ne surveille les croisements
+    (carte-08 : 158 puis 223 apres la chaine, et 0 puis 3 connexions manquantes).
+    Sans mesure, on ne defait rien : un compte inconnu n accuse personne.
+    """
+    apres = _croisements_du_placement(out)
+    if croisements_avant is None or apres is None:
+        return croisements_avant if apres is None else apres
+    if apres > croisements_avant:
+        out.write_bytes(avant)
+        logger.warning("auto_place: %s ANNULE — il remontait les croisements de l etoile "
+                       "(%.0f -> %.0f)", etape, croisements_avant, apres)
+        return croisements_avant
+    return apres
+
+
 def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
     """`candidat` bat-il `reference` ? Conflits, puis croisements, puis fil.
 
@@ -2446,11 +2468,21 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
     meilleur = None
     tirages = max(_TIRAGES_MINIMUM,
                   _tirages_utiles(_dominants_du_b64(kicad_pcb_b64)))
+    # Un placement CALCULE (graine en etoile) rend le meme resultat a chaque
+    # appel : propre, un seul tirage suffit ; en conflit, le rejouer a
+    # l identique ne repare rien — les tirages suivants repassent par le hasard.
+    graine_encore_utile = True
     for essai in range(tirages):
-        r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm)
+        r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm,
+                                 graine=graine_encore_utile)
         n_conflits = r.get("conflits_restants", 0)
         if _placement_meilleur(r, meilleur):
             meilleur = r
+        if r.get("centres_etoile"):
+            graine_encore_utile = False
+            if n_conflits == 0:
+                logger.info("auto_place: placement calcule et propre — un seul tirage")
+                break
         # ⚠️ ON NE S ARRETE PLUS AU PREMIER PLACEMENT PROPRE. Le budget du GA
         # a ete divise par ~3 le 2026-08-29 ; son prix est la DISPERSION, pas
         # la moyenne — un tirage sur quatre rend un placement absurde (565 mm
@@ -2693,7 +2725,7 @@ def _journaliser_qualite(out: Path, etape: str) -> None:
 
 
 def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
-                         board_height_mm: float) -> dict:
+                         board_height_mm: float, graine: bool = True) -> dict:
     """Auto-placement via la commande native kicad-tools (agent placement ⑤).
 
     Équivalent de ``kct placement optimize --strategy hybrid --cluster
@@ -2873,16 +2905,29 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 logger.error("auto_place: graine hierarchique INDISPONIBLE (%s) "
                              "— la mesure de ce tirage ne vaut rien", e)
 
-        result = workflow.run()
-        # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
-        # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
-        # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
-        updated = workflow.write_to_pcb()
-        # Correctif B — normalisation du repère APRÈS write_to_pcb().
-        # Sans lui, l'Architecte livre 15-16 composants sur 17 hors carte
-        # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
-        # CMA-ES, halo — travaille sur un board déjà faux.
-        n_norm = _normalize_origin_after_write(pcb, skip=conn)
+        # ⚠️ GRAINE EN ETOILE — reglage de banc `graine_etoile`, DESARME. Un
+        # placement CALCULE (chaque peripherique du cote de SA broche) a la
+        # place du tirage au hasard : mesure du 2026-09-21, croisements divises
+        # par 4 a 5 sur les cartes denses, et 07/08/09/10 routees a 100 % la ou
+        # le tirage laissait 2 a 11 connexions. Voir `tools/graine_etoile.py`.
+        # Sans boitier central la graine ne pose rien : le tirage habituel joue.
+        from tools import graine_etoile
+        # Les DOMINANTS sont ranges dans `conn` plus haut : les y laisser priverait
+        # l etoile de son meilleur centre (avis de Codex, 2026-09-21).
+        centres_etoile = (graine_etoile.poser_sur(pcb, [r for r in conn if r not in dominants])
+                          if graine and graine_etoile.armee() else [])
+        result, updated, n_norm = None, 0, 0
+        if not centres_etoile:
+            result = workflow.run()
+            # run() calcule l'optimisation mais N'ÉCRIT PAS les positions dans le PCB.
+            # write_to_pcb() applique les positions optimisées dans `pcb` — sans cet
+            # appel, pcb.save() sauve le board NON MODIFIÉ (placement = no-op).
+            updated = workflow.write_to_pcb()
+            # Correctif B — normalisation du repère APRÈS write_to_pcb().
+            # Sans lui, l'Architecte livre 15-16 composants sur 17 hors carte
+            # (mesuré 3 tirages sur 3, 2026-07-31), et tout ce qui suit — Inspecteur,
+            # CMA-ES, halo — travaille sur un board déjà faux.
+            n_norm = _normalize_origin_after_write(pcb, skip=conn)
 
         # ⚠️ Ecarter les MOBILES poses sur un boitier ancre. L optimiseur les
         # y depose, et `PlacementFixer` ne les en sort pas : sa reparation
@@ -2896,6 +2941,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                     "auto_place: %d composant(s) ecarte(s) de l emprise des "
                     "boitiers dominants", n_ecartes)
 
+        if centres_etoile:
+            # Ne PAS laisser lire « 0 composant ecrit » comme une panne de l Architecte.
+            logger.info("auto_place: placement CALCULE par la graine en etoile (centres : %s) — "
+                        "optimiseur tire au hasard saute", ", ".join(centres_etoile))
         logger.info(
             "auto_place natif (hybrid+cluster): %d composants écrits, wirelength=%.1fmm, %d connecteurs ancrés%s",
             updated,
@@ -2920,6 +2969,7 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # mais garanti propre que livrer un court-circuit potentiel.
         _resolve_remaining_conflicts(out, conn)
         pre_cmaes_bytes = out.read_bytes()
+        x_etoile = _croisements_du_placement(out) if centres_etoile else None
         pre_cmaes_positions = {fp.reference: fp.position for fp in PCB.load(str(out)).footprints}
 
         # ── Géomètre : kct optimize-placement --strategy cmaes --seed-method current ──
@@ -2989,7 +3039,19 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # denses (fine-pitch) en écartant leurs voisins mobiles. No-op sur une
         # carte sans composant dense. Dernière étape placement : ni le GA ni le
         # CMA-ES ne peuvent re-tasser les voisins ensuite.
+        # Finitions de CONFORT sous garde des croisements quand l etoile est posee.
+        if centres_etoile:
+            x_etoile = _proteger_l_etoile(out, pre_cmaes_bytes, x_etoile, "raffinement CMA-ES")
+        avant_halo = out.read_bytes()
         n_halo = _reserve_escape_halos(out, conn)
+        if centres_etoile and n_halo:
+            x_etoile = _proteger_l_etoile(out, avant_halo, x_etoile, "halo d escape")
+            if out.read_bytes() == avant_halo:
+                # ⚠️ ANNULE : ne pas annoncer des voisins ecartes deux lignes plus
+                # bas. « ANNULE » suivi de « N voisin(s) ecarte(s) » pour la MEME
+                # etape se relit comme un halo applique — le journal doit dire ce
+                # que le fichier porte, jamais ce qu une etape a tente.
+                n_halo = 0
         if n_halo:
             logger.info(
                 "auto_place: halo d'escape — %d voisin(s) écarté(s) du périmètre "
@@ -3186,13 +3248,19 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # rangee le long du bord le plus libre. APRES le snap (qui les serre)
         # et AVANT la grille (qui aligne tout au pas) — meme garde-fou que la
         # grille : annule si l Inspecteur ne ramene pas le compte d erreurs.
+        # ⚠️ PAS SUR UNE ETOILE (2026-09-21, carte-03) : ranger les couples R + LED
+        # le long d un bord DEFAIT le rayon sur lequel la graine vient de les
+        # poser, et laissait un conflit contre le centre. Deux mises en forme
+        # qui se combattent — comme le clamp et le centrage le 2026-08-27.
         try:
-            from tools.placement_contraintes import paires_du_board as _paires_du_board
-            from tools.placement_rangees import ranger_les_paires
-            _rendre_lisible(out)
-            pcb_rang = PCB.load(str(out))
-            n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
-                                       board_width_mm, board_height_mm)
+            n_rang = 0
+            if not centres_etoile:
+                from tools.placement_contraintes import paires_du_board as _paires_du_board
+                from tools.placement_rangees import ranger_les_paires
+                _rendre_lisible(out)
+                pcb_rang = PCB.load(str(out))
+                n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
+                                           board_width_mm, board_height_mm)
             if n_rang:
                 avant_rangees = out.read_bytes()
                 err_avant_rangees = _compter_conflits_erreur(out)
@@ -3256,6 +3324,8 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
             "conflits_restants": conflits_restants,
+            # Non vide : ce placement est CALCULE (graine en etoile), pas tire.
+            "centres_etoile": centres_etoile,
             # Second critere de choix entre tirages LEGAUX — sans lui, deux
             # placements a 0 conflit ne se departagent pas et on garde le
             # premier arrive, fut-il a 565 mm de fil contre 372.

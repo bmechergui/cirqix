@@ -14,6 +14,48 @@
 
 ## En attente de validation
 
+### D-2026-09-21-a — Graine en ÉTOILE : armer un placement CALCULÉ à la place du tirage au hasard
+
+- **Statut : EN ATTENTE.** Le code est livré **DÉSARMÉ** (réglage de banc
+  `graine_etoile`, faux par défaut) : la chaîne livrée reste le tirage
+  `hybrid`. Rien n'est appliqué en production tant que l'utilisateur n'a pas
+  tranché. Contrairement à D-2026-08-29-a, l'implémentation n'a PAS précédé la
+  décision : elle attend derrière un interrupteur.
+- **Ce qui est proposé :** `tools/graine_etoile.py` calcule le placement au lieu
+  de le tirer — tout boîtier d'au moins 8 pastilles est un centre (le plus gros
+  au milieu), chaque connecteur contre le bord que vise le rayon de ses broches,
+  chaque périphérique sur le rayon de SA broche, le suivant derrière celui qu'il
+  prolonge, couloir de sortie déduit des règles de tracé. L'optimiseur tiré au
+  hasard est SAUTÉ ; les finitions restent, sous garde des croisements.
+- **Pourquoi :** le tirage rend, sur le MÊME circuit, 351 à 681 croisements
+  (carte-10, cinq placements) ; 72 à 100 % des croisements impliquent un net de
+  connecteur, et les connexions manquantes après routage sont des SIGNAUX.
+  Quatre remèdes de routage ont été mesurés et réfutés le même jour.
+- **Mesure (2026-09-21, chaîne complète, un tirage par carte) :**
+
+  | carte | tirage `hybrid` | graine en étoile |
+  |---|---|---|
+  | 07 | 2 manquantes · 550 s | 0 erreur · 0 manquante · 2 couches · 194 s |
+  | 08 | 8 manquantes · 1921 s | 0 · 0 · 2 couches · 236 s |
+  | 10 | 0 manquante · **6 couches** · 849 s | 0 · 0 · **4 couches** · 293 s |
+
+  Croisements : 406 → 68 (08), 483 → 112 (09), 564 → 130 (10). Placement
+  20-45 s au lieu de 60-640 s (plus de re-tirage : le résultat est le même à
+  chaque appel).
+- **Ce qui reste OUVERT, et que la décision doit peser** (avis convergents de
+  Codex et de GLM, consultés le 2026-09-21) : la graine suppose une topologie
+  « un centre et ses périphériques ». Elle ne porte aucune règle pour un bus
+  parallèle (ordre des bits), le partage de la carte entre plusieurs gros
+  boîtiers, l'analogique, la puissance, la RF, ni le choix de face. Le banc n'a
+  AUCUNE carte de ces familles : dix cartes qui se ressemblent ne prouvent pas
+  une loi. Les deux agents proposent la même suite — découper en blocs
+  fonctionnels, placer les blocs par un calcul global, l'étoile devenant un
+  patron parmi d'autres.
+- **Arbitrage demandé :** armer `graine_etoile` par défaut sur les cartes à
+  centre, en gardant le tirage `hybrid` partout ailleurs ; ou attendre le
+  placement par blocs.
+
+
 ### D-2026-08-29-a — Snap bypass : levée de la limite « adjacence 13-28 mm »
 > ⚠️ **CETTE DÉCISION EST APPLIQUÉE EN PRODUCTION DEPUIS LE 2026-08-29**, alors
 > qu'elle figure ici « en attente ». Le snap tourne à chaque placement
