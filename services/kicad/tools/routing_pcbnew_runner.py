@@ -465,6 +465,114 @@ def _distance_a_obstacle(px: float, py: float, obstacle) -> float:
     return _dist_point_boite(px, py, obstacle)
 
 
+def _couloir_libre(depart, arrivee, obstacles, demi_largeur: float,
+                   degagement: float) -> bool:
+    """Le segment `depart -> arrivee` laisse-t-il passer une piste ?
+
+    `obstacles` : au choix des cercles `(x, y, rayon)` — la forme utile pour
+    un test — ou les boites et segments de `_obstacles_d_un_autre_net`. Toutes
+    les valeurs dans la MEME unite (mm pour les tests, nanometres en service).
+
+    La distance est exacte, jamais echantillonnee : un obstacle a 0,30 mm de
+    l axe doit refuser une piste de 0,25 mm a 0,2 mm de degagement (0,325), et
+    accepter a 0,35. Un echantillonnage a ce point rendrait le verdict
+    dependant du pas.
+    """
+    marge = float(demi_largeur) + float(degagement)
+    for o in obstacles:
+        if len(o) == 3 and not (o and o[0] == "segment"):
+            x, y, rayon = o
+            d = _dist_point_segment(float(x), float(y), depart[0], depart[1],
+                                    arrivee[0], arrivee[1]) - float(rayon)
+        else:
+            # Boite ou segment : on echantillonne le TRAJET, la distance au
+            # cuivre etant deja exacte dans `_distance_a_obstacle`.
+            pas = max(marge, 1e-9)
+            longueur = math.hypot(arrivee[0] - depart[0], arrivee[1] - depart[1])
+            n = max(2, int(longueur / pas) + 2)
+            d = min(_distance_a_obstacle(
+                depart[0] + (arrivee[0] - depart[0]) * k / (n - 1),
+                depart[1] + (arrivee[1] - depart[1]) * k / (n - 1), o)
+                for k in range(n))
+        if d < marge:
+            return False
+    return True
+
+
+# Plafond de noeuds visites par l A* de raccord. ⚠️ Une portee geometrique ne
+# borne PAS le travail : chaque noeud interroge tous les obstacles du board
+# (des milliers). `(portee / pas)^2` x obstacles se compte en milliards sur une
+# grande carte — un blocage de plusieurs minutes DANS `route_auto` (revue du
+# 2026-09-21). Ce depot a deja paye deux fois ce genre de famine.
+_NOEUDS_MAX_CONTOURNEMENT: int = 20000
+
+
+def _chemin_de_contournement(depart, buts, libre, pas: float,
+                             portee: float, noeuds_max: int = _NOEUDS_MAX_CONTOURNEMENT):
+    """A* sur grille : le plus court chemin de `depart` a l un des `buts`.
+
+    ⚠️ LA LIGNE DROITE EST REFUTEE (mesure du 2026-09-21 : « 5 amas vus, AUCUN
+    raccorde »). Un ilot de plan est isole PAR une piste qui le coupe : toute
+    droite vers le plan la retraverse. Avis convergents de Codex, GLM et
+    OpenCode — « une piste n est un mur que d un cote », il faut contourner son
+    BOUT.
+
+    `libre(x, y)` decide de chaque case ; `pas` est la resolution ; `portee`
+    borne la recherche (rayon autour du depart). Rend la liste des points, ou
+    None — et un None se lit « pas de chemin dans ce budget », jamais « pas
+    besoin » : l appelant doit le DIRE.
+
+    Fonction PURE : ni pcbnew, ni geometrie KiCad. 8 directions, cout
+    euclidien, heuristique = distance au but le plus proche.
+    """
+    import heapq
+
+    if not buts:
+        return None
+    cases = [(round(bx / pas), round(by / pas)) for bx, by in buts]
+    arrivees = set(cases)
+    depart_case = (round(depart[0] / pas), round(depart[1] / pas))
+    if not libre(depart_case[0] * pas, depart_case[1] * pas):
+        return None
+    limite = max(1, int(portee / pas))
+
+    def h(c):
+        return min(math.hypot(c[0] - a[0], c[1] - a[1]) for a in cases) * pas
+
+    ouverts = [(h(depart_case), 0.0, depart_case)]
+    venu, cout = {depart_case: None}, {depart_case: 0.0}
+    visites = 0
+    while ouverts:
+        if visites >= noeuds_max:
+            return None          # budget de TRAVAIL epuise — on le DIT au retour
+        visites += 1
+        _f, g, c = heapq.heappop(ouverts)
+        if c in arrivees:
+            chemin, k = [], c
+            while k is not None:
+                chemin.append((k[0] * pas, k[1] * pas))
+                k = venu[k]
+            return list(reversed(chemin))
+        if g > cout.get(c, float("inf")):
+            continue
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                v = (c[0] + dx, c[1] + dy)
+                if (abs(v[0] - depart_case[0]) > limite
+                        or abs(v[1] - depart_case[1]) > limite):
+                    continue
+                g2 = g + math.hypot(dx, dy) * pas
+                if g2 > portee or g2 >= cout.get(v, float("inf")):
+                    continue
+                if v not in arrivees and not libre(v[0] * pas, v[1] * pas):
+                    continue
+                cout[v], venu[v] = g2, c
+                heapq.heappush(ouverts, (g2 + h(v), g2, v))
+    return None
+
+
 def _via_gene_par(px: float, py: float, diametre: float,
                   clearance: float, obstacles) -> bool:
     """Le cuivre de ce via approche-t-il un obstacle de trop pres ?
@@ -1248,7 +1356,7 @@ def _ilot_a_relier_par_sa_pastille(vias_reliants: int,
 
 
 def _pas_d_echantillonnage(largeur: float, hauteur: float,
-                           via_d: float) -> float:
+                           via_d: float, fin: bool = False) -> float:
     """Pas de la grille de candidats, DEDUIT de la taille de l ilot.
 
     ⚠️ Mesure du 2026-09-02 : les petits ilots ne recevaient AUCUN via.
@@ -1267,7 +1375,27 @@ def _pas_d_echantillonnage(largeur: float, hauteur: float,
       - jamais plus fin que le via lui-meme — deux points distants de moins
         d un diametre donnent le meme verdict, on paierait des essais sans gain.
     """
+    # ⚠️ SECONDE PASSE, sur un ilot qu on s apprete a ABANDONNER (2026-09-21).
+    # Le plancher d une passe normale vaut `max(via_d, 1.0)` — juste, puisque
+    # deux points a moins d un diametre rendent le meme verdict. Il ne l est
+    # plus quand l ilot part a la poubelle : mesure sur le banc, un ilot de
+    # 25 mm2 ne recevait que 13 points, dont 8 hors du cuivre (la grille est
+    # celle du RECTANGLE ENGLOBANT, et une languette coudee y tient peu de
+    # place). On ne renonce pas sans avoir cherche a la resolution du via.
     petite = min(abs(largeur), abs(hauteur))
+    if fin:
+        # ⚠️ Le PLAFOND doit descendre lui aussi. Premiere version : seul le
+        # plancher bougeait, et `petite / 3` le dominait — un ilot de 5 x 5 mm
+        # gardait un pas de 1,67 mm, « seconde passe » sans une seule position
+        # nouvelle. C est un test qui l a attrape, pas la relecture.
+        # ⚠️ Plancher DEDUIT du via, jamais une constante : `0.05` etait lu en
+        # millimetres alors que la production passe des nanometres — il ne
+        # bornait donc RIEN. Meme famille que « calibrer sur une source voisine
+        # de celle que le code lit » (revue du 2026-09-21).
+        plancher = max(via_d / 10.0, 1e-9)
+        if petite <= 0:
+            return max(via_d / 2.0, plancher)
+        return max(min(petite / 3.0, via_d / 2.0), plancher)
     plafond = max(via_d, 0.0) * 3.0
     if petite <= 0:
         return max(via_d, 1.0)
@@ -1344,6 +1472,46 @@ def _cuivre_du_net_sur(board, couche_exclue, netcode):
             if poly.OutlineCount() > 0:
                 autres.append(poly)
     return autres
+
+
+def _cuivre_principal_en_face(board, couche_exclue, netcode, relies) -> list:
+    """`(poly, index)` du cuivre du PLAN PRINCIPAL sur les AUTRES couches.
+
+    ⚠️ `_cuivre_du_net_sur` rend TOUT le cuivre du net, jumeau d une paire
+    orpheline compris : un via pose « au mieux » peut donc ne rejoindre que ce
+    jumeau, les deux moities se porter garantes, et l amas rester coupe du
+    plan. Mesure du 2026-09-21, carte-07 : l amas orphelin est une paire
+    F.Cu 6,48 mm2 + B.Cu 14,97, et il porte la masse de D16. Diagnostic
+    convergent de Codex, GLM et OpenCode le meme jour.
+
+    `relies` : les `(nz, couche, index)` du composant principal, tels que
+    `_ilots_relies_au_principal_du_net` les rend. Sert a ORDONNER les
+    candidats, jamais a les filtrer — exiger du cuivre en face a ete mesure et
+    REFUTE le 2026-09-01 (1 -> 4 connexions manquantes).
+    """
+    out = []
+    try:
+        zones = list(board.Zones())
+    except Exception:  # noqa: BLE001 — sans zones lisibles, aucune preference
+        return out
+    for nz, z in enumerate(zones):
+        try:
+            if z.GetNetCode() != netcode:
+                continue
+            couches = list(z.GetLayerSet().Seq())
+        except Exception:
+            continue
+        for c in couches:
+            if c == couche_exclue:
+                continue
+            try:
+                poly = z.GetFilledPolysList(c)
+            except Exception:
+                continue
+            for i in range(poly.OutlineCount()):
+                if (nz, c, i) in relies:
+                    out.append((poly, i))
+    return out
 
 
 def _faut_coudre(ilots_sur_la_couche: int, couches_du_net: int) -> bool:
@@ -1643,6 +1811,12 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
     trous = _trous_perces(board)
 
     poses = 0
+    # ⚠️ Les ilots VISITES qu aucun site n a pu coudre. Sans ce compte, « 0 via
+    # pose » a deux causes indistinguables — tout est relie, ou rien n a de
+    # place — et `_coudre_jusqu_au_bout` s arrete en croyant avoir fini
+    # (mesure du 2026-09-21 : carte-07, 10 a une manquante GND, carte-09 une
+    # erreur, pendant que le journal annoncait « 1 via pose » sur 17 ilots).
+    perdus: list = []
     for nz, zone in enumerate(board.Zones()):
         try:
             nom = str(zone.GetNetname())
@@ -1675,6 +1849,16 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
             # `except` de l appelant, elle rendait « couture impossible » et
             # ne cousait rien du tout. Mesure du 2026-09-01 : trois tirages de
             # `nucleo-f401`, trois plantages, zero via pose.
+            # ⚠️ `relies` d ABORD : il sert a viser le PLAN PRINCIPAL en face.
+            relies = _ilots_relies_au_principal_du_net(
+                pcbnew, board, zone.GetNetCode())
+            # ⚠️ On prefere le cuivre du PLAN PRINCIPAL, pas n importe quel
+            # cuivre du net : sinon le jumeau d une paire orpheline suffit a
+            # faire croire au via qu il relie (mesure du 2026-09-21, carte-07).
+            # Le cuivre du net entier reste le repli — on ORDONNE, on ne filtre
+            # pas (« exiger » a ete mesure et refute le 2026-09-01).
+            principal_en_face = _cuivre_principal_en_face(
+                board, couche, zone.GetNetCode(), relies)
             en_face = _cuivre_du_net_sur(board, couche, zone.GetNetCode())
             # Le net vit sur autant de couches que de ZONES qui le portent :
             # une par face chez nous. Compter sur la zone courante seule
@@ -1682,10 +1866,8 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
             couches_du_net = max(couches_du_net, 1 + (1 if en_face else 0))
             if not _faut_coudre(total, couches_du_net):
                 continue  # une seule face, d un seul tenant : rien a relier
-            # Releve a chaque couche : les vias poses sur une couche precedente
-            # de cette passe relient deja leurs ilots.
-            relies = _ilots_relies_au_principal_du_net(
-                pcbnew, board, zone.GetNetCode())
+            # (`relies` est releve plus haut : les vias poses sur une couche
+            # precedente de cette passe relient deja leurs ilots.)
             for i in range(total):
                 b = poly.Outline(i).BBox()
                 pose = False
@@ -1702,70 +1884,90 @@ def _stitch_zones(pcbnew, args: dict[str, str]) -> None:
                 # chercher d autres. On ORDONNE, on ne filtre pas.
                 def _relie(p, _poly=poly, _i=i):
                     q = pcbnew.VECTOR2I(int(p[0]), int(p[1]))
-                    return _via_relie_vraiment(
-                        _poly.Contains(q, _i),
-                        any(pf.Contains(q, k) for pf in en_face
-                            for k in range(pf.OutlineCount())))
+                    cible = (principal_en_face
+                             and any(pf.Contains(q, k) for pf, k in principal_en_face))
+                    if not cible and not principal_en_face:
+                        # Aucun principal identifie (net d un seul tenant) :
+                        # on retombe sur le cuivre du net, comme avant.
+                        cible = any(pf.Contains(q, k) for pf in en_face
+                                    for k in range(pf.OutlineCount()))
+                    return _via_relie_vraiment(_poly.Contains(q, _i), bool(cible))
 
                 # ⚠️ Le pas se DEDUIT de l ilot. Fixe a 1,8 mm, il sautait
                 # entierement les languettes de quelques mm2 — elles n etaient
                 # pas refusees, elles n etaient jamais visitees.
-                pas_ech = _pas_d_echantillonnage(
-                    b.GetRight() - b.GetLeft(), b.GetBottom() - b.GetTop(),
-                    via_d)
-                candidats = _candidats_par_preference(
-                    list(_points_dans_boite(b.GetLeft(), b.GetTop(),
-                                            b.GetRight(), b.GetBottom(),
-                                            pas_ech)),
-                    _relie)
-                for x, y in candidats:
-                    pt = pcbnew.VECTOR2I(int(x), int(y))
-                    try:
-                        if not poly.Contains(pt, i):
+                def _essayer(fin=False, _b=b, _relie=_relie):
+                    pas_ech = _pas_d_echantillonnage(
+                        _b.GetRight() - _b.GetLeft(),
+                        _b.GetBottom() - _b.GetTop(), via_d, fin=fin)
+                    return _candidats_par_preference(
+                        list(_points_dans_boite(_b.GetLeft(), _b.GetTop(),
+                                                _b.GetRight(), _b.GetBottom(),
+                                                pas_ech)),
+                        _relie)
+
+                candidats = _essayer()
+                # Pourquoi chaque candidat a ete refuse : sans la raison, le
+                # remede se devine — et ce depot a deja paye deux fois le fait
+                # de deviner sur cette couture.
+                refus = {"hors_polygone": 0, "obstacle": 0, "trou_trop_pres": 0}
+
+                def _tenter(cands, _poly=poly, _i=i, _refus=refus):
+                    """Pose un via au premier site valable. UNE seule copie de
+                    la regle : la passe normale et la passe fine la partagent —
+                    dupliquee, elle a deja exige une edition synchrone."""
+                    for x, y in cands:
+                        pt = pcbnew.VECTOR2I(int(x), int(y))
+                        try:
+                            if not _poly.Contains(pt, _i):
+                                _refus["hors_polygone"] += 1
+                                continue
+                        except Exception:
+                            _refus["hors_polygone"] += 1
                             continue
-                    except Exception:
-                        continue
-                    if any(_distance_a_obstacle(x, y, o) < via_d / 2 + clearance
-                           for o in obstacles):
-                        continue
-                    # ⚠️ Le CUIVRE du meme net ne gene pas ; le TROU, si. Sans
-                    # ce refus, chaque passe retrouvait le meme ilot, le meme
-                    # meilleur point, et repercait au meme endroit — x5 vias
-                    # empiles, 116 `holes_co_located` sur `nucleo-f401`.
-                    if not _trou_libre(x, y, perc_d / 2, trous, ecart_trous):
-                        continue
-                    # ⚠️ CONDITION RETIREE LE 2026-09-01, PAR LA MESURE. J avais
-                    # ajoute « ne percer que si la face opposee porte du cuivre
-                    # a cet endroit » — logiquement seduisant, un via vers du
-                    # vide ne reliant rien. Empiriquement MAUVAIS :
-                    #
-                    #   couture d origine (sans la condition)  1 manquante
-                    #   avec la condition                      4 manquantes
-                    #
-                    # Elle refuse des sites que la couture d origine acceptait,
-                    # et le board livre est moins bon. Un via traversant relie
-                    # AUSSI les couches internes ; juger sa valeur sur la seule
-                    # face opposee etait une vue de l esprit.
-                    #
-                    # `_via_relie_vraiment` et `_cuivre_du_net_sur` restent
-                    # disponibles et testes : c est la CONDITION qui est
-                    # refutee, pas le moyen de la reposer un jour avec une
-                    # mesure a l appui.
-                    via = pcbnew.PCB_VIA(board)
-                    via.SetPosition(pt)
-                    via.SetWidth(via_d)
-                    via.SetDrill(perc_d)
-                    via.SetNetCode(zone.GetNetCode())
-                    board.Add(via)
-                    trous.append((float(x), float(y), perc_d / 2))
-                    poses += 1
-                    pose = True
-                    break
+                        if any(_distance_a_obstacle(x, y, o) < via_d / 2 + clearance
+                               for o in obstacles):
+                            _refus["obstacle"] += 1
+                            continue
+                        if not _trou_libre(x, y, perc_d / 2, trous, ecart_trous):
+                            _refus["trou_trop_pres"] += 1
+                            continue
+                        v = pcbnew.PCB_VIA(board)
+                        v.SetPosition(pt)
+                        v.SetWidth(via_d)
+                        v.SetDrill(perc_d)
+                        v.SetNetCode(zone.GetNetCode())
+                        board.Add(v)
+                        trous.append((float(x), float(y), perc_d / 2))
+                        return True
+                    return False
+
+                pose = _tenter(candidats)
                 if not pose:
+                    # SECONDE PASSE a la resolution du via avant d abandonner.
+                    pose = _tenter(_essayer(fin=True))
+                if pose:
+                    poses += 1
+                if not pose:
+                    # Aucun site, meme a la resolution du via : obstacle d un
+                    # autre net, ecart entre trous, ou ilot trop etroit.
+                    perdus.append({
+                        "net": nom,
+                        "couche": int(couche),
+                        "ilot": i,
+                        "mm2": round(abs(float(b.GetWidth()) * float(b.GetHeight()))
+                                     / 1e12, 3),
+                        # ⚠️ Les points reellement EXAMINES, deux passes
+                        # comprises — annoncer ceux de la premiere seule se
+                        # lisait « 10 candidats, 180 refus ».
+                        "candidats": sum(refus.values()),
+                        "refus": refus,
+                    })
                     continue
 
     pcbnew.SaveBoard(args["output"], board)
-    Path(args["result"]).write_text(json.dumps({"stitched": poses}), encoding="utf-8")
+    Path(args["result"]).write_text(
+        json.dumps({"stitched": poses, "perdus": perdus}), encoding="utf-8")
 
 def _measure_connectivity(pcbnew, args: dict[str, str]) -> None:
     board = _charger_board(pcbnew, args["pcb"])
@@ -1829,6 +2031,188 @@ def _hors_du_plus_grand_amas(amas: list) -> list:
             continue
         orphelines.extend(sorted(a))
     return orphelines
+
+
+def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
+    """Raccorde par une COURTE PISTE tout amas de plan orphelin PORTANT une pastille.
+
+    ⚠️ LES JUMEAUX SE PORTENT GARANTS L UN DE L AUTRE — diagnostic convergent de
+    Codex, GLM et OpenCode le 2026-09-21, verifie sur carte-07 : l amas orphelin
+    est une PAIRE (F.Cu 6,48 mm2 + B.Cu 14,97), cousue par un via qui ne relie
+    que les deux moities. `_stitch_zones` compte ce via comme un succes (un site
+    a ete trouve) et `_retirer_ilots_flottants` voit ce meme via « toucher du
+    cuivre du net en face » — donc ni couture supplementaire, ni retrait.
+
+    ⚠️ RETIRER EST INTERDIT quand l amas porte une pastille, et c est DEJA
+    MESURE : le 2026-09-19, juger par composante a fait passer carte-09 de 2 a
+    3 connexions manquantes. Ici l amas porte la masse de D16 ; l oter
+    deconnecterait la LED. On RELIE.
+
+    ⚠️ Ce n est PAS l « amorce sur la face opposee » refutee le 2026-09-02 :
+    celle-ci se posait AVANT le routage et etait protegee dans le DSN, ce qui
+    bouchait le routeur (2798 s contre 901). On repare ici un board FINI, et
+    rien n est protege.
+
+    La piste part du sommet de l ilot orphelin le plus proche du plan principal,
+    sur la MEME couche, et n est posee que si le couloir est libre du cuivre des
+    autres nets (`_couloir_libre`, degagement exact). Aucun retrait, aucun via.
+    """
+    board = _charger_board(pcbnew, args["pcb"])
+    nets = set(json.loads(args.get("nets", "[]")))
+    largeur = int(float(args.get("largeur_mm", "0.25")) * 1_000_000)
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+    relies, examines = 0, 0
+    # Pourquoi un amas n est pas raccorde : « aucun raccorde » ne doit pas
+    # avoir trois causes indistinguables.
+    echecs = {"sans_pastille": 0, "sans_depart": 0, "sans_cible": 0,
+              "sans_chemin": 0}
+
+    for zone in board.Zones():
+        try:
+            netcode, nom = zone.GetNetCode(), str(zone.GetNetname())
+        except Exception:
+            continue
+        if nets and nom not in nets:
+            continue
+        couches = [c for c in list(zone.GetLayerSet().Seq())]
+        ilots = []                       # (couche, poly, index)
+        for c in couches:
+            try:
+                poly = zone.GetFilledPolysList(c)
+            except Exception:
+                continue
+            ilots.extend((c, poly, i) for i in range(poly.OutlineCount()))
+        if len(ilots) < 2:
+            continue
+        aires, contient = {}, {}
+        for k, (c, poly, i) in enumerate(ilots):
+            b = poly.Outline(i).BBox()
+            aires[k] = abs(float(b.GetWidth())) * abs(float(b.GetHeight()))
+            contient[k] = (poly, i)
+        traversants = [t.GetPosition() for t in board.GetTracks()
+                       if t.GetClass() == "PCB_VIA" and t.GetNetCode() == netcode]
+        pads = [p for fp in board.GetFootprints() for p in fp.Pads()
+                if p.GetNetCode() == netcode]
+        traversants += [p.GetPosition() for p in pads
+                        if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH]
+
+        def _dedans(k, pt):
+            poly, i = contient[k]
+            try:
+                return poly.Contains(pt, i)
+            except Exception:
+                return False
+
+        relies_au_principal = _ilots_relies_au_principal(aires, traversants, _dedans)
+        orphelins = [k for k in aires if k not in relies_au_principal]
+        if not orphelins:
+            continue
+        # Les orphelins se regroupent par amas : un seul raccord par amas suffit.
+        parent = {k: k for k in orphelins}
+
+        def _racine(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for pt in traversants:
+            touches = [k for k in orphelins if _dedans(k, pt)]
+            for k in touches[1:]:
+                parent[_racine(k)] = _racine(touches[0])
+        amas = {}
+        for k in orphelins:
+            amas.setdefault(_racine(k), []).append(k)
+
+        for membres in amas.values():
+            examines += 1
+            if not any(_dedans(k, p.GetPosition()) for k in membres for p in pads):
+                echecs["sans_pastille"] += 1
+                continue          # sans pastille : ce n est pas a nous de trancher
+            obstacles = _obstacles_d_un_autre_net(board, netcode)
+            marge = largeur / 2.0 + clearance
+            pas = max(largeur / 2.0, 1.0)
+
+            def _libre(x, y, _obs=obstacles, _m=marge):
+                return all(_distance_a_obstacle(x, y, o) >= _m for o in _obs)
+
+            # ⚠️ ON PART DE LA PASTILLE, PAS DU BORD DE L ILOT. Mesure du
+            # 2026-09-21 : un bord d ilot est EXACTEMENT a la distance de
+            # degagement de la piste qui l a coupe — il n y a donc jamais la
+            # place d y poser une piste, et l A* renoncait a son premier point
+            # (« 5 amas vus, AUCUN raccorde »). Avis de GLM, le plus juste des
+            # trois : le sujet est la CONNECTIVITE DE LA PASTILLE, pas le
+            # cuivre de l ilot.
+            meilleur = None       # (distance, couche, depart, arrivee)
+            n_ancres = n_cibles = 0
+            for k in membres:
+                couche, poly, i = ilots[k]
+                ancres = [(float(p.GetPosition().x), float(p.GetPosition().y))
+                          for p in pads if _dedans(k, p.GetPosition())]
+                b = poly.Outline(i).BBox()
+                if not ancres:
+                    ancres = [(x, y) for x, y in _points_dans_boite(
+                        b.GetLeft(), b.GetTop(), b.GetRight(), b.GetBottom(), pas)
+                        if poly.Contains(pcbnew.VECTOR2I(int(x), int(y)), i)
+                        and _libre(x, y)]
+                n_ancres += len(ancres)
+                for j in relies_au_principal:
+                    c2, poly2, i2 = ilots[j]
+                    if c2 != couche:
+                        continue
+                    b2 = poly2.Outline(i2).BBox()
+                    cibles = [(x, y) for x, y in _points_dans_boite(
+                        b2.GetLeft(), b2.GetTop(), b2.GetRight(), b2.GetBottom(), pas * 4)
+                        if poly2.Contains(pcbnew.VECTOR2I(int(x), int(y)), i2)
+                        and _libre(x, y)]
+                    n_cibles += len(cibles)
+                    for a in ancres:
+                        for c in cibles:
+                            d = math.hypot(a[0] - c[0], a[1] - c[1])
+                            if meilleur is None or d < meilleur[0]:
+                                meilleur = (d, couche, a, c)
+            if meilleur is None:
+                echecs["sans_depart" if not n_ancres else "sans_cible"] += 1
+                continue
+            _d, couche, depart, arrivee = meilleur
+
+            # ⚠️ PAS DE LIGNE DROITE — mesuree et REFUTEE le 2026-09-21 : un
+            # ilot est isole PAR une piste, toute droite la retraverse
+            # (« 5 amas vus, AUCUN raccorde »). On contourne son BOUT.
+            # Portee bornee : trois fois la distance directe, jamais la carte
+            # entiere — un raccord qui traverse le board n en est pas un.
+            # Budget DEDUIT : quatre fois la distance directe, avec un
+            # plancher de vingt largeurs de piste. Mesure du 2026-09-21 : un
+            # budget quatre fois plus large ne change RIEN sur carte-07 — ses
+            # ilots sont encercles, pas mal cherches. On ne paie donc pas une
+            # recherche qui ne rapporte rien.
+            # ⚠️ Plafond ABSOLU en plus du proportionnel : `_d` n est borne
+            # par rien, et un amas lointain ferait exploser la recherche.
+            portee = min(max(_d * 4.0, largeur * 20.0), largeur * 120.0)
+            chemin = _chemin_de_contournement(depart, [arrivee], _libre, pas, portee)
+            if not chemin or len(chemin) < 2:
+                echecs["sans_chemin"] += 1
+                continue
+            if not all(_couloir_libre(a, b, obstacles, largeur / 2.0, clearance)
+                       for a, b in zip(chemin, chemin[1:])):
+                # L A* juge des POINTS de grille ; le segment entre deux points
+                # peut fraiser un obstacle. Verification exacte avant la pose.
+                echecs["sans_chemin"] += 1
+                continue
+            for a, b in zip(chemin, chemin[1:]):
+                piste = pcbnew.PCB_TRACK(board)
+                piste.SetStart(pcbnew.VECTOR2I(int(a[0]), int(a[1])))
+                piste.SetEnd(pcbnew.VECTOR2I(int(b[0]), int(b[1])))
+                piste.SetWidth(largeur)
+                piste.SetLayer(couche)
+                piste.SetNetCode(netcode)
+                board.Add(piste)
+            relies += 1
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(
+        json.dumps({"relies": relies, "amas_orphelins": examines,
+                    "echecs": echecs}), encoding="utf-8")
 
 
 def _pads_hors_cluster_principal(pcbnew, args: dict[str, str]) -> None:
@@ -1902,6 +2286,8 @@ def main(argv: list[str]) -> int:
         _stitch_islands(pcbnew, args)
     elif operation == "retirer_ilots_flottants":
         _retirer_ilots_flottants(pcbnew, args)
+    elif operation == "relier_amas":
+        _relier_les_amas_orphelins(pcbnew, args)
     elif operation == "plan_escape":
         _plan_escape(pcbnew, args)
     elif operation == "fill_zones":
