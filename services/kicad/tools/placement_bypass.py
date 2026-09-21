@@ -274,20 +274,16 @@ def _boite_absolue(fp) -> tuple[float, float, float, float]:
     (carte-09, board trace juste apres le snap) : deux capas declarees libres
     par la recherche se chevauchaient (`courtyards_overlap` C35/C65 et
     C36/C37, pastilles a 0,13 mm), le DRC les refusait, et le retrait cible
-    les renvoyait a 17-50 mm de leur broche. Meme convention de rotation que
-    `_pastille_partagee`.
-    """
-    from tools.placement import _boite_locale_fp
+    les renvoyait a 17-50 mm de leur broche.
 
-    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    ⚠️ 2026-09-21 : la rotation vivait ICI, dans le sens oppose a celui de
+    KiCad — invisible sur un boitier centre, faux sur un connecteur. Elle vit
+    desormais a UN endroit, `placement._boite_orientee_fp`, mesuree sur pcbnew.
+    """
+    from tools.placement import _boite_orientee_fp
+
+    x0, y0, x1, y1 = _boite_orientee_fp(fp)
     px, py = fp.position
-    a = math.radians(float(getattr(fp, "rotation", 0.0) or 0.0))
-    if abs(a) > 1e-9:
-        ca, sa = math.cos(a), math.sin(a)
-        coins = [(x * ca - y * sa, x * sa + y * ca)
-                 for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
-        x0, x1 = min(c[0] for c in coins), max(c[0] for c in coins)
-        y0, y1 = min(c[1] for c in coins), max(c[1] for c in coins)
     return px + x0, py + y0, px + x1, py + y1
 
 
@@ -726,8 +722,10 @@ def _pastille_partagee(ancre_fp, membre_fp, exclure=()) -> tuple[float, float] |
     candidates = []
     for pad in nets_ancre[net]:
         px, py = pad.position
-        ax = ox + px * math.cos(a) - py * math.sin(a)
-        ay = oy + px * math.sin(a) + py * math.cos(a)
+        # Sens de KiCad (y descend), mesure sur pcbnew le 2026-09-21 : le sens
+        # oppose posait 312 pastilles du banc a 7,1 mm de leur vraie place.
+        ax = ox + px * math.cos(a) + py * math.sin(a)
+        ay = oy - px * math.sin(a) + py * math.cos(a)
         candidates.append((math.hypot(ax - mx, ay - my), (ax, ay)))
     if not candidates:
         return None
