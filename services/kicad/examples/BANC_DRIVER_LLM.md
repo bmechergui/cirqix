@@ -254,6 +254,25 @@ Un tirage figé ne se lit pas (limite de Freerouting 2.1.0, cf. CLAUDE.md) : la
 chaîne garde donc le seul board qu'elle a, le moins bon. ⚠️ Un seul tirage par
 carte : ces chiffres désignent une piste, ils ne prouvent pas une loi.
 
+### Piste mesurée et RÉFUTÉE le 2026-09-21 — rejouer en CLI un tirage figé qui dépassait le board gardé
+
+Idée : déclencher `_board_partiel_par_cli` (600 s stricts) non seulement quand
+AUCUN board n'existe, mais aussi quand un tirage figé à 4 couches dépassait le
+board gardé. Mesuré sur les placements GELÉS de la phase A, préparés à
+4 couches exactement comme le palier (empilage, plan coulé, GND raccordé) :
+
+| carte | board gardé (2 couches) | rejeu CLI à 4 couches |
+|---|---|---|
+| 08 | 0 erreur · 8 manquantes | 1 erreur · 7 manquantes — fini seul en 71 s |
+| 09 | 0 erreur · 11 manquantes | 5 erreurs · 26 manquantes — fini seul en 101 s |
+
+Pire sur 09, indifférent sur 08 : la règle n'est PAS étendue. ⚠️ Boards bruts,
+sans les étapes d'après-routage, et un seul tirage. Fait nouveau : le CLI FINIT
+seul en 1-2 min à 4 couches (il ne finissait pas sur carte-09 le 2026-09-20) —
+il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
+sur ces deux cartes compactes ; la piste suivante est la densité du placement
+(406 et 483 croisements du chevelu), pas le routeur.
+
 ## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
