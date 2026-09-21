@@ -190,7 +190,11 @@ def test_auto_place_ne_touche_pas_aux_connecteurs_et_resserre_seulement_sur_dema
     b64 = base64.b64encode(board.read_bytes()).decode()
     recus: list[str] = []
 
-    def tirage(kicad_pcb_b64: str, w: float, h: float) -> dict:
+    # ⚠️ Le faux porte la MEME signature que le vrai, `graine` compris (ajoute le
+    # 2026-09-21 pour la graine en etoile) : un faux plus pauvre que le vrai ne
+    # revele pas un contrat rompu, il le CACHE — lecon deja payee par le faux
+    # `pcbnew` sans `GetFootprints()` et le faux client Supabase.
+    def tirage(kicad_pcb_b64: str, w: float, h: float, graine: bool = True) -> dict:
         recus.append(kicad_pcb_b64)
         return _faux_tirage(kicad_pcb_b64, w, h)
 
