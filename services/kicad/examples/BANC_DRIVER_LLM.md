@@ -201,6 +201,59 @@ régulateur U2 et un passif voisin — un conflit que le placement avait signal�
 lui-même. 07, 08 et 10 routent désormais mais gardent 10 à 18 connexions
 manquantes sur ces cartes compactes : non relivrées, leur board du 19/09 reste.
 
+## Banc en DEUX PHASES du 2026-09-21 — placement validé, puis routage gelé
+
+Consigne de l'utilisateur : « placement d'abord ; s'il est valide on passe au
+routage ; pas d'aller-retour ». Code de #226 (boîte orientée, filet DRC) et #227
+(connecteurs collés au bord). Un seul tirage par carte, par HTTP.
+
+**Phase A — le placement jugé SEUL.** Dix sur dix valides : 0 erreur DRC sur le
+board placé, et le connecteur le plus loin d'un bord est à 2,0 mm (corps mesuré,
+pas l'origine).
+
+| carte | taille (mm) | croisements du chevelu |
+|---|---|---|
+| 01 | 20,0 × 14,0 | 1 |
+| 02 | 34,8 × 25,3 | 9 |
+| 03 | 25,2 × 20,0 | 21 |
+| 04 | 38,8 × 30,0 | 24 |
+| 05 | 45,5 × 32,5 | 74 |
+| 06 | 48,4 × 36,3 | 157 |
+| 07 | 53,1 × 38,7 | 209 |
+| 08 | 57,8 × 44,0 | 406 |
+| 09 | 58,7 × 45,1 | 483 |
+| 10 | 60,9 × 45,7 | 564 |
+
+**Phase B — routage des placements GELÉS, jamais re-placés.**
+
+| carte | erreurs | manquantes | couches du board livré | durée |
+|---|---|---|---|---|
+| 01 | 0 | 0 | 2 | 80 s |
+| 02 | 0 | 0 | 2 | 58 s |
+| 03 | 0 | 0 | 2 | 68 s |
+| 04 | 0 | 0 | 2 | 75 s |
+| 05 | 0 | 0 | 2 | 76 s |
+| 06 | 0 | 1 | 2 | 410 s |
+| 07 | 0 | 2 | 2 | 550 s |
+| 08 | 0 | 8 | 2 | 1921 s |
+| 09 | 0 | 11 | 2 | 2574 s |
+| 10 | 0 | **0** | 6 | 849 s |
+
+Zéro erreur DRC sur les dix : les défauts de placement (chevauchement du
+régulateur, angles de pastilles) ne reviennent pas. **carte-10 est relivrée**
+(60,9 × 45,7 au lieu de 140 × 105, 6 couches). 06 à 09 ne le sont pas.
+
+⚠️ **Ce que le journal dit de 08 et 09 — et ce n'est pas le placement.** Leur
+board livré est celui du palier 2 couches (83 % et 80 %). Les paliers suivants
+allaient PLUS LOIN, puis figeaient sans rendre de board :
+
+    carte-08   4 couches : ~96 %, ~96 %, ~82 %   6 couches : ~92 %, puis budget épuisé
+    carte-09   4 couches : ~41 %, ~51 %, ~82 %   6 couches : ~86 %, ~84 %
+
+Un tirage figé ne se lit pas (limite de Freerouting 2.1.0, cf. CLAUDE.md) : la
+chaîne garde donc le seul board qu'elle a, le moins bon. ⚠️ Un seul tirage par
+carte : ces chiffres désignent une piste, ils ne prouvent pas une loi.
+
 ## Couches : huit cartes sur deux, deux sur quatre
 
 ⚠️ **Ce titre disait « Les dix cartes tiennent sur DEUX couches ».** C'était
