@@ -16,7 +16,11 @@
 
 ### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
 
-- **Statut : PARTIELLEMENT LIVRÉ sur demande explicite de l'utilisateur**
+- **Statut : LIVRÉ sur demande explicite de l'utilisateur, et le défaut est
+  REFERMÉ.** Mesuré sur le board fautif de `carte-10` : 1 connexion manquante
+  → **0**, à violations et erreurs inchangées (33 / 0). Le signal arraché
+  change de face par deux vias, et les zones sont recoulées avant le jugement.
+- **Statut historique : partiellement livré**
   (2026-09-22, « pourquoi tu ne le résous pas alors que c'est notre
   objectif »). L'arrachage borné est implémenté et actif dans
   `_relier_les_amas_orphelins` ; il est tout-ou-rien et ne garde jamais un

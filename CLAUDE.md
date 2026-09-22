@@ -2421,12 +2421,23 @@ si un seul reroutage échoue. La preuve qu'il ne casse rien n'est pas « aucune
 erreur nouvelle » : c'est le board rendu **strictement identique** au board reçu
 — 33 violations, 0 erreur, 1 manquante, avant comme après.
 
-**Une impossibilité peut se CALCULER, et alors on arrête de chercher.** Le
+**Une impossibilité peut se CALCULER, et elle DÉSIGNE alors le remède.** Le
 couloir de `carte-10` fait 0,862 mm ; le raccord de masse le barre sur toute sa
 largeur (0,25 de cuivre + 0,2 de dégagement de chaque côté = 0,65). Un signal de
 0,25 mm en réclame 0,65 à son tour : il faudrait 1,30 mm. Aucune finesse ne
-rattrape 0,44 mm manquants. Sur la même face, c'est fermé — et le dire vaut
-mieux que d'élargir encore une recherche qui ne peut pas aboutir.
+rattrape 0,44 mm manquants — donc la recherche sur la même face est vaine, et
+la seule issue est de CHANGER DE FACE. Le calcul n'a pas dit « abandonne », il a
+dit où chercher. Livré (`_detour_par_l_autre_face`) : **1 connexion manquante →
+0**, à violations et erreurs inchangées.
+
+**NEVER juger un board qui vient de recevoir du cuivre SANS avoir recoulé ses
+plans.** Le détour par l'autre face traverse le plan coulé : le board
+intermédiaire porte **51 erreurs** de dégagement, parfaitement réelles, que la
+coulée efface en découpant le cuivre autour de la piste neuve. Juger avant de
+recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
+0 erreur, 0 connexion manquante. C'est la famille que ce dépôt traque, prise
+dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
+instrument qui condamne un board sain.
 
 ### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
 

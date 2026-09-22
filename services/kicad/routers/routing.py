@@ -4028,6 +4028,7 @@ def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
         bilan = json.loads(resultat.read_text(encoding="utf-8"))
         recousu = sortie.read_bytes()
     examines, relies = bilan.get("amas_orphelins", 0), bilan.get("relies", 0)
+    degages = bilan.get("degages", 0)
     if not examines:
         return pcb_bytes
     if not relies:
@@ -4040,11 +4041,21 @@ def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
                                 for k, v in sorted((bilan.get("echecs") or {}).items())
                                 if v) or "raison inconnue")
         return pcb_bytes
+    # ⚠️ RECOULER AVANT DE JUGER. Un raccord obtenu en DEGAGEANT le couloir
+    # fait passer le signal arrache par l AUTRE FACE, donc a travers le plan
+    # coule : le board intermediaire porte alors de vraies violations de
+    # degagement — 51 erreurs mesurees sur carte-10 le 2026-09-22 — que la
+    # coulee efface en decoupant le cuivre autour de la piste neuve. Juger
+    # sans recouler ferait rejeter un board qui, recoule, est PARFAIT :
+    # 33 violations, 0 erreur, 0 connexion manquante, contre 1 manquante avant.
+    if degages:
+        recousu = _fill_zones(recousu)
     if _aggrave_le_board(pcb_bytes, recousu):
         logger.warning("raccord des amas orphelins : erreurs ajoutees — board conserve")
         return pcb_bytes
-    logger.info("raccord des amas orphelins : %d piste(s) posee(s) sur %d amas",
-                relies, examines)
+    logger.info("raccord des amas orphelins : %d piste(s) posee(s) sur %d amas"
+                "%s", relies, examines,
+                " (dont %d par DEGAGEMENT du couloir)" % degages if degages else "")
     return recousu
 
 

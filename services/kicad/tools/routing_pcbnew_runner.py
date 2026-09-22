@@ -2193,6 +2193,10 @@ def _rerouter_un_segment(pcbnew, board, releve,
     portee = min(max(directe * 4.0, float(larg) * 20.0), float(larg) * 120.0)
     chemin = _chemin_de_contournement((x1, y1), [(x2, y2)], _libre, pas, portee)
     if not chemin or len(chemin) < 2:
+        # Meme face impossible : on CHANGE DE FACE plutot que de renoncer.
+        detour = _detour_par_l_autre_face(pcbnew, board, releve, clearance)
+        if detour:
+            return "ok", detour
         return "sans_chemin", []
     # Les bonds qui TOUCHENT une extremite heritent de sa legalite : le cuivre
     # y etait deja. On verifie exactement tous les autres.
@@ -2202,6 +2206,9 @@ def _rerouter_un_segment(pcbnew, board, releve,
         if touche_un_bout:
             continue
         if not _couloir_libre(a, b, obstacles, float(larg) / 2.0, clearance):
+            detour = _detour_par_l_autre_face(pcbnew, board, releve, clearance)
+            if detour:
+                return "ok", detour
             return "couloir_refuse", []
     # ⚠️ ON REND LES OBJETS POSES, on ne les rededuit pas. Une premiere
     # version les retrouvait par la DIFFERENCE de longueur de
@@ -2213,6 +2220,143 @@ def _rerouter_un_segment(pcbnew, board, releve,
     posees = [_poser_piste(pcbnew, board, a, b, larg, couche, net)
               for a, b in zip(chemin, chemin[1:])]
     return "ok", posees
+
+
+def _site_de_via(board, autour, netcode: int, via_d: float, perc_d: float,
+                 clearance: float, trous, pas: float, rayon: float):
+    """Le point legal le PLUS PROCHE de `autour` ou un via de ce net tient.
+
+    ⚠️ Le via TRAVERSE : ses obstacles se prennent sur TOUTES les couches, pas
+    sur celle de la piste. C est la faute inscrite le 2026-09-03 (« une dispense
+    ne vaut pas au-dela de ce qu elle a mesure »), prise a l envers.
+
+    Recherche par ANNEAUX croissants, donc bornee et interrompue au premier
+    site : un balayage plein coute `(rayon/pas)^2` fois le nombre d obstacles,
+    et ce depot a deja paye deux famines de ce genre.
+
+    Rend `None` — jamais un point de repli — quand aucun site ne tient.
+    """
+    obstacles = _obstacles_d_un_autre_net(board, int(netcode))
+    besoin = float(via_d) / 2.0 + clearance
+    anneaux = max(1, int(rayon / pas))
+    for k in range(anneaux + 1):
+        r = k * pas
+        n = max(1, int(2 * math.pi * r / pas)) if k else 1
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            x = autour[0] + r * math.cos(a)
+            y = autour[1] + r * math.sin(a)
+            if not all(_distance_a_obstacle(x, y, o) >= besoin
+                       for o in obstacles):
+                continue
+            if not _trou_libre(x, y, float(perc_d) / 2.0, trous,
+                               float(perc_d)):
+                continue
+            return (x, y)
+    return None
+
+
+def _poser_via(pcbnew, board, point, via_d: float, perc_d: float,
+               netcode: int):
+    via = pcbnew.PCB_VIA(board)
+    via.SetPosition(pcbnew.VECTOR2I(int(point[0]), int(point[1])))
+    via.SetWidth(int(via_d))
+    via.SetDrill(int(perc_d))
+    via.SetNetCode(int(netcode))
+    board.Add(via)
+    return via
+
+
+def _chemin_sur_couche(board, depart, arrivee, netcode: int, couche,
+                       larg: float, clearance: float, exempts):
+    """Le trajet de `depart` a `arrivee` sur UNE couche, ou None.
+
+    `exempts` : les cases de grille dont la legalite est HERITEE du board (les
+    extremites d un segment arrache, le point d un via qu on vient de juger).
+    Sans elles, l arrondi de grille de l A* fait renoncer des le premier point.
+    """
+    obstacles = _obstacles_d_un_autre_net(board, int(netcode), couches=[couche])
+    marge = float(larg) / 2.0 + clearance
+    pas = max(float(larg) / 2.0, 1.0)
+    cases = {(round(x / pas), round(y / pas)) for x, y in exempts}
+
+    def _libre(x, y, _o=obstacles, _m=marge, _c=cases, _p=pas):
+        if (round(x / _p), round(y / _p)) in _c:
+            return True
+        return all(_distance_a_obstacle(x, y, o) >= _m for o in _o)
+
+    directe = math.hypot(arrivee[0] - depart[0], arrivee[1] - depart[1])
+    portee = min(max(directe * 4.0, float(larg) * 20.0), float(larg) * 120.0)
+    chemin = _chemin_de_contournement(depart, [arrivee], _libre, pas, portee)
+    if not chemin or len(chemin) < 2:
+        return None
+    for a, b in zip(chemin, chemin[1:]):
+        if (round(a[0] / pas), round(a[1] / pas)) in cases:
+            continue
+        if (round(b[0] / pas), round(b[1] / pas)) in cases:
+            continue
+        if not _couloir_libre(a, b, obstacles, float(larg) / 2.0, clearance):
+            return None
+    return chemin
+
+
+def _detour_par_l_autre_face(pcbnew, board, releve, clearance: float):
+    """Repose un segment arrache en PASSANT PAR L AUTRE FACE, deux vias.
+
+    ⚠️ C est le seul recours quand le raccord de masse barre le couloir sur
+    TOUTE sa largeur, et c est arithmetique : mesure du 2026-09-22 sur
+    `carte-10`, le couloir fait 0,862 mm, le raccord en occupe 0,65 (cuivre
+    plus degagement des deux cotes) et un signal en reclame 0,65 a son tour.
+    Il faudrait 1,30 mm. Aucune finesse ne rattrape les 0,44 manquants : sur la
+    meme face, il n y a pas de solution, quelle que soit la recherche.
+
+    ⚠️ Le trajet de l autre face traverse le PLAN coule. Les zones sont
+    recoulees apres la reparation, et la coulee decoupe le cuivre autour de la
+    piste neuve — mais cela peut creer un ilot a son tour : l appelant ne garde
+    le board que s il ne l aggrave pas.
+
+    Rend la liste des objets poses, ou None sans rien laisser derriere.
+    """
+    x1, y1, x2, y2, larg, couche, net = releve
+    ds = board.GetDesignSettings()
+    try:
+        via_d = float(ds.GetCurrentViaSize())
+        perc_d = float(ds.GetCurrentViaDrill())
+    except Exception:
+        return None
+    if via_d <= 0 or perc_d <= 0:
+        return None
+    trous = _trous_perces(board)
+    pas = max(float(larg) / 2.0, 1.0)
+    directe = math.hypot(x2 - x1, y2 - y1)
+    rayon = min(max(directe, float(larg) * 20.0), float(larg) * 60.0)
+
+    autres = sorted({t.GetLayer() for t in board.GetTracks()
+                     if t.GetClass() != "PCB_VIA"} - {couche})
+    for couche2 in autres:
+        p1 = _site_de_via(board, (x1, y1), net, via_d, perc_d, clearance,
+                          trous, pas, rayon)
+        p2 = _site_de_via(board, (x2, y2), net, via_d, perc_d, clearance,
+                          trous, pas, rayon)
+        if p1 is None or p2 is None:
+            continue
+        if math.hypot(p1[0] - p2[0], p1[1] - p2[1]) < float(perc_d) * 2.0:
+            continue          # deux vias trop proches : trou contre trou
+        amont = _chemin_sur_couche(board, (x1, y1), p1, net, couche, larg,
+                                   clearance, [(x1, y1), p1])
+        aval = _chemin_sur_couche(board, p2, (x2, y2), net, couche, larg,
+                                  clearance, [p2, (x2, y2)])
+        travers = _chemin_sur_couche(board, p1, p2, net, couche2, larg,
+                                     clearance, [p1, p2])
+        if amont is None or aval is None or travers is None:
+            continue
+        posees = [_poser_via(pcbnew, board, p1, via_d, perc_d, net),
+                  _poser_via(pcbnew, board, p2, via_d, perc_d, net)]
+        for chemin, c in ((amont, couche), (travers, couche2), (aval, couche)):
+            for a, b in zip(chemin, chemin[1:]):
+                posees.append(_poser_piste(pcbnew, board, a, b, larg, c, net))
+        return posees
+    return None
 
 
 def _degager_le_couloir(pcbnew, board, depart, arrivee, couche, netcode: int,

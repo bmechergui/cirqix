@@ -179,3 +179,67 @@ class TestLeCablage:
         code = _code_seul(SOURCE)
         assert "sans_degagement" in code
         assert "reroutage_impossible" in code
+
+
+class TestLeDetourParLAutreFace:
+    """Quand le raccord de masse barre le couloir sur TOUTE sa largeur, le
+    signal arraché ne peut pas revenir sur la même face — c'est arithmétique.
+    Il passe par l'autre face, deux vias.
+
+    ⚠️ Mesure du 2026-09-22, `carte-10` : couloir 0,862 mm, raccord 0,65 mm
+    (cuivre + dégagement des deux côtés), signal 0,65 mm à son tour. Total
+    exigé 1,30 mm. Il manque 0,44 mm et aucune finesse ne les rattrape.
+
+    Résultat du détour, mesuré sur ce board, zones recoulées :
+    **33 violations, 0 erreur, 0 connexion manquante** — contre 1 manquante
+    avant. Le défaut est refermé.
+    """
+
+    def test_le_reroutage_tente_l_autre_face(self):
+        code = _code_seul(SOURCE)
+        debut = code.index("def _rerouter_un_segment")
+        fin = code.index("def _site_de_via")
+        assert "_detour_par_l_autre_face" in code[debut:fin], (
+            "un segment que la même face ne peut plus accueillir doit "
+            "changer de face, pas être abandonné")
+
+    def test_le_via_voit_TOUTES_les_couches(self):
+        # Un via TRAVERSE : prendre ses obstacles sur la seule couche de la
+        # piste le ferait percer à l'aveugle dans le cuivre d'en face.
+        code = _code_seul(SOURCE)
+        debut = code.index("def _site_de_via")
+        fin = code.index("def _chemin_sur_couche")
+        corps = code[debut:fin]
+        assert "_obstacles_d_un_autre_net(board, int(netcode))" in corps
+        assert "couches=" not in corps
+        assert "_trou_libre" in corps
+
+    def test_aucun_site_rend_None_jamais_un_repli(self):
+        # « pas de place » et « voilà une place » ne doivent pas se ressembler.
+        code = _code_seul(SOURCE)
+        debut = code.index("def _site_de_via")
+        fin = code.index("def _chemin_sur_couche")
+        # La fonction s'arrête à la def suivante, pas à une fonction voisine.
+        suite = code.index(chr(10) + "def ", debut + 1)
+        corps = code[debut:suite].rstrip()
+        # Sa dernière instruction est un `return None` nu : aucun point de
+        # repli ne peut sortir par le bas.
+        assert corps.splitlines()[-1].strip() == "return None"
+
+
+class TestLaRecouleeApresDegagement:
+    """Le détour traverse le plan coulé : sans recoulée, le board porte de
+    vraies violations (51 erreurs mesurées) que la coulée efface en découpant
+    le cuivre autour de la piste neuve. Juger sans recouler ferait REJETER un
+    board qui, recoulé, est parfait."""
+
+    def test_le_router_recoule_quand_il_a_degage(self):
+        source = (RACINE / "routers" / "routing.py").read_text(encoding="utf-8")
+        code = _code_seul(source)
+        debut = code.index("def _relier_les_amas_orphelins")
+        fin = code.index("def _retirer_ilots_flottants")
+        corps = code[debut:fin]
+        assert "degages" in corps
+        assert "_fill_zones(recousu)" in corps
+        # La recoulée vient AVANT le jugement, sinon elle ne sert à rien.
+        assert corps.index("_fill_zones(recousu)") < corps.index("_aggrave_le_board")

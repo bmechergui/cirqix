@@ -412,8 +412,14 @@ reroutage échoue.
    dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
    laisse passer. Pas ramené à un huitième de marge.
 
-**Et le cas de `carte-10` ne se referme pas pour autant, pour une raison qui se
-calcule :** le couloir fait 0,862 mm, et le raccord de masse le barre sur toute
+### ⚠️ LE DÉFAUT EST REFERMÉ — mesuré le 2026-09-22
+
+    board du banc          33 violations · 0 erreur · **1** connexion manquante
+    après réparation       33 violations · 0 erreur · **0** connexion manquante
+
+Même compte de violations, zéro erreur, et la rupture de plan a disparu.
+
+**Et il a fallu passer par l'autre face, pour une raison qui se calcule :** le couloir fait 0,862 mm, et le raccord de masse le barre sur toute
 sa largeur — 0,25 mm de cuivre plus 0,2 mm de dégagement de chaque côté, soit
 0,65 mm, entre un îlot et un plan distants de 0,862 mm. Il ne reste pas la place
 d'un second conducteur, quelle que soit sa finesse : un signal de 0,25 mm en
@@ -422,14 +428,27 @@ c'est arithmétiquement impossible.** Le reroutage échoue donc, tout est remis 
 place, et le board ressort à l'identique — 33 violations, 0 erreur, 1 connexion
 manquante, exactement comme avant.
 
-Deux voies restent, et aucune n'est un réglage :
-- **faire changer de FACE au signal arraché** (deux vias, trajet sur l'autre
-  face). Il traverserait le plan de masse d'en face, qu'il faudrait recouler —
-  et une nouvelle coulée peut recréer un îlot. Risque circulaire, à mesurer ;
-- **empêcher en AMONT que le routeur enferme la pastille**, en réservant autour
-  de chaque via de masse non pas son seul dégagement mais la largeur d'un
-  couloir. ⚠️ Cousin de l'« amorce protégée », RÉFUTÉE le 2026-09-02 (routeur
-  trois fois plus lent). À mesurer avant d'y croire.
+**Le remède : le signal arraché CHANGE DE FACE.** Deux vias, un trajet sur
+l'autre face, et les deux tronçons qui rejoignent les extrémités d'origine
+(`_detour_par_l_autre_face`). Le site de chaque via est cherché par anneaux
+croissants autour de l'extrémité, donc borné et interrompu au premier point
+légal ; ses obstacles se prennent sur TOUTES les couches, puisqu'un via
+traverse.
+
+⚠️ **IL FAUT RECOULER AVANT DE JUGER, et c'est la mesure qui le dit.** Le
+trajet de l'autre face passe à travers le plan coulé : le board intermédiaire
+porte **51 erreurs** de dégagement, bien réelles. La coulée les efface en
+découpant le cuivre autour de la piste neuve. Juger sans recouler ferait
+rejeter un board qui, recoulé, est parfait — c'est exactement la famille de
+fautes que ce dépôt traque, un instrument qui condamne un résultat sain.
+
+    sans recoulée    84 violations · 51 erreurs · 0 manquante
+    recoulé          33 violations ·  0 erreur  · 0 manquante
+
+Une piste reste ouverte, non mesurée : **empêcher en AMONT que le routeur
+enferme la pastille**, en réservant autour de chaque via de masse la largeur
+d'un couloir plutôt que son seul dégagement. ⚠️ Cousine de l'« amorce
+protégée », RÉFUTÉE le 2026-09-02 (routeur trois fois plus lent).
 
 **Cinq constats de revue, tous traités avant livraison** — aucun n'était
 visible en test unitaire, et trois auraient mordu sur un vrai board :
