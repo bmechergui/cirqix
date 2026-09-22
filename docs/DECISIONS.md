@@ -14,6 +14,41 @@
 
 ## En attente de validation
 
+### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
+
+- **Statut : EN ATTENTE.** Rien n'est implémenté. Aucun interrupteur, aucun
+  code : seulement une mesure et une proposition.
+- **Ce qui est proposé :** quand un îlot de plan porte une pastille et ne
+  rejoint pas la masse principale, arracher le petit nombre de segments
+  d'autres nets qui coupent son couloir, poser le raccord de masse, puis
+  rerouter localement les segments retirés. Tout en essai à blanc d'abord ;
+  on ne garde le résultat que si le DRC ne se dégrade pas
+  (`_aggrave_le_board`). La masse se coule EN DERNIER, le rerouteur étant
+  aveugle aux zones.
+- **Pourquoi :** c'est la seule voie que la mesure laisse debout sur le dernier
+  défaut du banc (`carte-10`, board du 2026-09-22). Mesuré sur ce board :
+  l'amas orphelin est une PAIRE de 1,30 et 0,99 mm² ; aucun de ses points n'a
+  le plan principal en vis-à-vis ; la couture refuse ses 23 et 18 sites
+  (« obstacle », « trou trop près ») car un via ne tient pas dans un
+  millimètre carré ; le raccord par piste rend `sans_chemin` 19 fois. En
+  revanche le plan principal n'est qu'à 0,862 mm sur F.Cu et 0,781 mm sur
+  B.Cu, et **un seul segment coupe le couloir de chaque face** (`EXT2_1`,
+  `EXT4_1`). L'ensemble à arracher est donc d'UN segment, pas d'un faisceau.
+- **Ce que cela coûte :** un reroutage raté échange une masse manquante contre
+  une alimentation manquante — strictement pire. D'où l'essai à blanc et
+  l'arbitrage par le DRC, sans lesquels la proposition ne tient pas.
+- **Pistes écartées par la mesure, à ne pas rouvrir :** le via changeant de
+  face (aucun vis-à-vis avec le plan principal) ; la ligne droite et le départ
+  depuis le bord de l'îlot (réfutés le 2026-09-21) ; le contournement A* même
+  à budget quadruplé ; la réservation de masse avant routage (réfutée le
+  2026-09-02, routeur trois fois plus lent).
+- **Origine :** proposition de Codex, avertissements de GLM, mesures faites
+  ensuite sur le board réellement fautif. Détail complet dans
+  `services/kicad/examples/BANC_DRIVER_LLM.md`.
+- **Alternative si refus :** déclarer qu'une carte portant une rupture de plan
+  n'est pas livrable et re-tirer le routage. Codex comme GLM jugent qu'elle
+  n'est pas livrable en l'état ; c'est une décision produit, pas technique.
+
 ### D-2026-09-21-a — Graine en ÉTOILE : armer un placement CALCULÉ à la place du tirage au hasard
 
 - **Statut : EN ATTENTE.** Le code est livré **DÉSARMÉ** (réglage de banc

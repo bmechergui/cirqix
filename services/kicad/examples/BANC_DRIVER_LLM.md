@@ -308,6 +308,84 @@ le service en pleine exécution (dix « Connection refused » d'affilée), et un
 qui tient : un processus Windows caché (`Start-Process wsl.exe`) qui exécute le
 banc de façon SYNCHRONE, plus un second qui maintient la VM en vie.
 
+### La DERNIÈRE rupture de plan, mesurée jusqu'au bout (2026-09-22)
+
+Diagnostic complet de l'unique défaut restant, sur le board qui le porte
+VRAIMENT. Consultation de Codex et de GLM, puis mesure — et la mesure a
+tranché contre l'une des deux propositions.
+
+⚠️ **J'AI D'ABORD MESURÉ LE MAUVAIS BOARD, et il donnait un résultat
+encourageant.** `carte-10-maximale/expected/final.kicad_pcb` date du
+2026-09-21 et son propre `mesures.json` annonce `non_connectes: 0` ; mon DRC
+l'a confirmé. Le défaut du banc du 22 vit dans
+`/tmp/livr/carte-10-maximale/route.kicad_pcb`, **resté dans le conteneur** —
+la faute que ce dépôt s'interdit pourtant en toutes lettres. Sur le board
+versionné j'ai trouvé un îlot orphelin dont 92 points sur 93 faisaient face au
+plan principal, et un via y tenait avec 0,29 mm de marge : j'ai failli
+annoncer une solution pour un board qui n'a jamais eu le défaut.
+**NEVER mesurer un défaut sans avoir vérifié que l'artefact le PORTE** — un
+board propre se prête à toutes les démonstrations.
+
+Sur le vrai board (33 violations, 0 erreur, **1 connexion manquante**) :
+
+| | mesure |
+|---|---|
+| îlots du net GND, deux faces | 23 |
+| orphelins | **2**, et ce sont des JUMEAUX |
+| îlot F.Cu | 1,30 mm², porte la pastille `C35.2` |
+| îlot B.Cu | 0,99 mm², aucune pastille |
+
+**La piste « changer de face par un via » est RÉFUTÉE par la mesure.** GLM
+l'avait proposée en relevant, à juste titre, que `routing_pcbnew_runner.py`
+refuse toute cible sur l'autre face (`if c2 != couche: continue`) et que son
+A* est à deux dimensions. Mais sur ce board, **aucun** point des deux îlots
+n'a le plan principal en vis-à-vis : ils se font face L'UN L'AUTRE (9 points
+sur 25 et sur 12), ce qui est exactement le motif des jumeaux qui se portent
+garants, déjà inscrit le 2026-09-21.
+
+**Et aucun via ne tient de toute façon.** La couture de production, rejouée
+sur ce board, visite les deux îlots et refuse la TOTALITÉ de leurs sites :
+
+    ilot F.Cu 1,297 mm2   23 candidats   obstacle 16 · hors_polygone 6 · trou_trop_pres 1
+    ilot B.Cu 0,993 mm2   18 candidats   obstacle 10 · hors_polygone 7 · trou_trop_pres 1
+
+Un îlot d'un millimètre carré n'a pas la place d'un via — et le raccord par
+courte piste rend `relies: 0`, `sans_chemin: 19`.
+
+**Ce qui enferme l'amas n'est PAS un faisceau : c'est UN segment par face.**
+
+| face | distance au plan principal | ce qui coupe le couloir |
+|---|---|---|
+| F.Cu | 0,862 mm | **1 segment**, net `EXT2_1` |
+| B.Cu | 0,781 mm | **1 segment**, net `EXT4_1` |
+
+⚠️ La description « cerné par un faisceau, jusqu'à 18 segments `+3V3` »
+appartient à `carte-07`, pas à ce cas-ci. Reprise sans être re-mesurée, elle
+faisait paraître le défaut bien plus coûteux à refermer qu'il ne l'est.
+
+**Conséquence.** Le plan proposé par Codex — ne pas chercher un passage de
+masse À TRAVERS l'obstacle, mais DÉPLACER l'obstacle — a ici un ensemble à
+arracher de **un seul segment par face**, pas une recherche ouverte. C'est la
+seule voie que la mesure laisse debout.
+
+Levier natif VÉRIFIÉ, et jamais appelé : `kicad-tools/src/kicad_tools/drc/
+local_rerouter.py::LocalRerouter.reroute_segment()` — A* sur grille locale,
+arrache un segment et le recontourne, avec `extra_obstacles` et `dry_run`.
+Il est appelé par `drc/repair_clearance.py` en amont et par **AUCUN** code
+Cirqix. C'est le septième levier natif que ce projet trouve inutilisé.
+⚠️ Il travaille sur le document S-expression de kicad-tools, quand notre code
+travaille sur les objets `pcbnew` — et nous avons déjà notre A*
+(`_chemin_de_contournement`) et notre dégagement exact (`_couloir_libre`).
+Le choix entre « importer le levier » et « étendre le nôtre » reste ouvert.
+
+Avertissements de GLM sur ce plan, à honorer quand il sera décidé : le
+rerouteur est AVEUGLE aux zones, donc la masse se coule EN DERNIER ; et un
+reroutage raté échange une masse manquante contre une ALIMENTATION manquante,
+donc tout en `dry_run`, arbitrage final par le DRC et `_aggrave_le_board`.
+
+Rien n'est implémenté : c'est une décision de stratégie de routage, donc
+`D-2026-09-22-a`, **en attente**.
+
 ### ⚠️ La CHARGE DE LA MACHINE fausse le routage (mesure du 2026-09-22)
 
 Même placement gelé de `carte-10`, même code, deux séries :

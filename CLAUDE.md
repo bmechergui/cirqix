@@ -2357,6 +2357,45 @@ en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
 son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
 `tests/test_chevauchements_vus_par_le_drc.py`.
 
+### Leçons inscrites le 2026-09-22 (soir) — le board propre qui se prêtait à tout
+
+**NEVER mesurer un défaut sans avoir vérifié que l'artefact le PORTE.** J'ai
+diagnostiqué la dernière rupture de plan de `carte-10` sur
+`expected/final.kicad_pcb`, board VERSIONNÉ du 2026-09-21 dont le propre
+`mesures.json` annonce `non_connectes: 0` — et mon DRC le confirmait. Le
+défaut du banc du 22 vivait dans `/tmp/livr/…/route.kicad_pcb`, **resté dans
+le conteneur**, faute que ce fichier s'interdit pourtant depuis le 2026-09-03.
+Sur le board propre, tout marchait : 92 points sur 93 de l'îlot orphelin
+faisaient face au plan principal, un via y tenait avec 0,29 mm de marge, et la
+couture de production le posait en annonçant `stitched: 1`. J'ai failli
+annoncer une solution pour un board qui n'a jamais eu le problème. Sur le VRAI
+board, la même sonde rend **zéro** vis-à-vis avec le plan principal.
+Un board sain se prête à toutes les démonstrations : vérifier d'abord que
+l'instrument voit le défaut.
+
+**NEVER laisser une sonde raisonner ZONE PAR ZONE sur un plan.** Ma première
+sonde ne regardait que les îlots d'UNE zone : or `carte-10` porte **deux zones
+GND**, une par face, et le vis-à-vis d'un îlot F.Cu vit dans l'AUTRE zone.
+Elle rendait donc « aucun cuivre en face » pour la totalité des points, sur une
+carte qui porte un plan arrière de 2656 mm². Détectée par l'invraisemblance du
+résultat, jamais par le code — c'est la quatrième sonde de ce projet sauvée de
+cette façon.
+
+**NEVER reprendre une mesure faite sur une AUTRE carte comme si elle décrivait
+le cas courant.** Le brief décrivait l'amas « cerné par un faisceau, jusqu'à
+18 segments `+3V3` » : c'était `carte-07`. Sur `carte-10`, la mesure donne
+**un seul segment par face** (`EXT2_1` à 0,862 mm sur F.Cu, `EXT4_1` à
+0,781 mm sur B.Cu). Le défaut paraissait coûteux à refermer ; il ne l'est pas.
+
+**Consulter les agents coûte de la MÉMOIRE, et cette charge fausse les
+mesures.** Codex lit ce fichier, y trouve « Use Graphify by default before
+source browsing », et lance `graphify query` — **1,04 Go par requête**. Deux en
+parallèle ont fait tomber la mémoire libre à 2,8 Go et tuer mes propres tâches
+de fond ; c'est la même charge qui avait faussé un banc entier la veille.
+Tout prompt d'agent externe commence désormais par l'interdiction explicite
+d'exécuter graphify, et `codex exec` reçoit `< /dev/null` (sans quoi il attend
+une saisie au clavier et ne rend jamais la main).
+
 ### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
 
 **NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**
