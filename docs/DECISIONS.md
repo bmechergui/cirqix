@@ -16,8 +16,20 @@
 
 ### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
 
-- **Statut : EN ATTENTE.** Rien n'est implémenté. Aucun interrupteur, aucun
-  code : seulement une mesure et une proposition.
+- **Statut : PARTIELLEMENT LIVRÉ sur demande explicite de l'utilisateur**
+  (2026-09-22, « pourquoi tu ne le résous pas alors que c'est notre
+  objectif »). L'arrachage borné est implémenté et actif dans
+  `_relier_les_amas_orphelins` ; il est tout-ou-rien et ne garde jamais un
+  board dégradé. **Ce qui reste EN ATTENTE** est la suite décrite plus bas :
+  faire changer de face au signal arraché, ou réserver un couloir de masse en
+  amont du routage. Aucune de ces deux-là n'est écrite.
+- **Mesuré après livraison :** sur `carte-10`, les amas orphelins vus passent de
+  **21 à 1** (le jugement était fait zone par zone alors que la carte porte une
+  zone par face) et les erreurs de dégagement introduites de **426 à 0** (le
+  contrôle de couloir échantillonnait au pas de la marge). Le défaut de
+  `carte-10` reste ouvert : le couloir fait 0,862 mm et le raccord de masse le
+  barre entièrement (0,65 mm), il ne reste pas la place d'un signal qui en
+  réclame 0,65. Impossible sur la même face, arithmétiquement.
 - **Ce qui est proposé :** quand un îlot de plan porte une pastille et ne
   rejoint pas la masse principale, arracher le petit nombre de segments
   d'autres nets qui coupent son couloir, poser le raccord de masse, puis

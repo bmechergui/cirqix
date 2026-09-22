@@ -383,8 +383,79 @@ rerouteur est AVEUGLE aux zones, donc la masse se coule EN DERNIER ; et un
 reroutage raté échange une masse manquante contre une ALIMENTATION manquante,
 donc tout en `dry_run`, arbitrage final par le DRC et `_aggrave_le_board`.
 
-Rien n'est implémenté : c'est une décision de stratégie de routage, donc
-`D-2026-09-22-a`, **en attente**.
+### Le dégagement est IMPLÉMENTÉ, et il bute sur une raison géométrique
+
+Livré le 2026-09-22 sur demande explicite de l'utilisateur. Le raccord des amas
+orphelins, quand son contournement échoue, arrache désormais le petit nombre de
+segments qui ferment le couloir (`_couloir_degageable`, plafond
+`_SEGMENTS_ARRACHABLES = 3`), pose le raccord de masse, puis repose ailleurs ce
+qu'il a retiré — **tout ou rien**, avec remise en état intégrale si un seul
+reroutage échoue.
+
+**Deux défauts RÉELS trouvés en le mesurant, et c'est là qu'est le gain :**
+
+| | avant | après |
+|---|---|---|
+| amas orphelins vus sur `carte-10` | **21** | **1** |
+| erreurs de dégagement introduites | **426** | **0** |
+
+1. **Le raccord jugeait ZONE PAR ZONE.** Notre générateur écrit UNE ZONE PAR
+   FACE : juger une zone seule fait passer pour orphelin tout îlot de F.Cu qui
+   rejoint le plan par B.Cu. Vingt amas sur vingt et un étaient donc parfaitement
+   reliés, et recevaient du cuivre pour rien. `_stitch_zones` jugeait déjà sur le
+   net entier — les deux jumelles ne disaient pas la même chose, et c'est la plus
+   permissive qui posait le cuivre.
+2. **`_couloir_libre` échantillonnait le trajet AU PAS DE LA MARGE.** Un bond
+   plus court que la marge n'était donc jugé que par ses deux bouts. Or la
+   distance à un cuivre est convexe le long d'un segment : son minimum tombe à
+   l'INTÉRIEUR. Mesuré : 426 violations à 0,1993 mm pour 0,2000 exigés — sept
+   dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
+   laisse passer. Pas ramené à un huitième de marge.
+
+**Et le cas de `carte-10` ne se referme pas pour autant, pour une raison qui se
+calcule :** le couloir fait 0,862 mm, et le raccord de masse le barre sur toute
+sa largeur — 0,25 mm de cuivre plus 0,2 mm de dégagement de chaque côté, soit
+0,65 mm, entre un îlot et un plan distants de 0,862 mm. Il ne reste pas la place
+d'un second conducteur, quelle que soit sa finesse : un signal de 0,25 mm en
+réclame 0,65 à lui seul, et le total exigé est de 1,30 mm. **Sur la même face,
+c'est arithmétiquement impossible.** Le reroutage échoue donc, tout est remis en
+place, et le board ressort à l'identique — 33 violations, 0 erreur, 1 connexion
+manquante, exactement comme avant.
+
+Deux voies restent, et aucune n'est un réglage :
+- **faire changer de FACE au signal arraché** (deux vias, trajet sur l'autre
+  face). Il traverserait le plan de masse d'en face, qu'il faudrait recouler —
+  et une nouvelle coulée peut recréer un îlot. Risque circulaire, à mesurer ;
+- **empêcher en AMONT que le routeur enferme la pastille**, en réservant autour
+  de chaque via de masse non pas son seul dégagement mais la largeur d'un
+  couloir. ⚠️ Cousin de l'« amorce protégée », RÉFUTÉE le 2026-09-02 (routeur
+  trois fois plus lent). À mesurer avant d'y croire.
+
+**Cinq constats de revue, tous traités avant livraison** — aucun n'était
+visible en test unitaire, et trois auraient mordu sur un vrai board :
+
+- l'A* recevait des milliers de buts non dédoublonnés, et son heuristique prend
+  le minimum sur TOUS les buts À CHAQUE NŒUD : `_NOEUDS_MAX_CONTOURNEMENT`
+  borne le nombre de nœuds, jamais le coût de chacun. La famine revenait par la
+  porte de derrière. Bornés à `_BUTS_MAX = 64`, dédoublonnés, les plus proches ;
+- un amas relié par arrachage était compté À LA FOIS dans `relies` et dans
+  `sans_chemin` : le rapport se contredisait. L'échec n'est plus compté qu'après
+  l'échec du dégagement ;
+- la remise en état retrouvait les pistes posées par la DIFFÉRENCE de longueur
+  de `board.GetTracks()`, c'est-à-dire en supposant que pcbnew ajoute toujours
+  en fin de liste. Le « tout ou rien » serait devenu silencieusement partiel.
+  `_rerouter_un_segment` REND désormais les objets qu'il a posés ;
+- la règle d'arrondi de grille n'était écrite que dans le reroutage, pas dans le
+  chemin amas → plan qui en a le même besoin. Écrite aux deux endroits ;
+- `_couloir_libre` devient plus stricte pour son appelant préexistant. C'est
+  voulu — elle refuse ce qui violait le dégagement — et mesuré sur le board
+  fautif : verdict et board inchangés.
+
+Gardes : `tests/test_couloir_degage_par_arrachage.py` (13 tests — les fonctions
+pures, la borne, ET le câblage) ; 732 tests de routage au vert.
+
+Rien de plus n'est implémenté : la suite est une décision de stratégie de
+routage, donc `D-2026-09-22-a`, **en attente**.
 
 ### ⚠️ La CHARGE DE LA MACHINE fausse le routage (mesure du 2026-09-22)
 

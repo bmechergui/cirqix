@@ -2396,6 +2396,38 @@ Tout prompt d'agent externe commence désormais par l'interdiction explicite
 d'exécuter graphify, et `codex exec` reçoit `< /dev/null` (sans quoi il attend
 une saisie au clavier et ne rend jamais la main).
 
+### Leçons inscrites le 2026-09-22 (nuit) — l'arrachage borné, et ses deux sœurs
+
+**NEVER juger un plan ZONE PAR ZONE.** Notre générateur écrit UNE ZONE PAR
+FACE. `_relier_les_amas_orphelins` calculait ses orphelins sur la zone
+courante : tout îlot de F.Cu qui rejoint le plan par B.Cu passait pour orphelin.
+Mesuré sur `carte-10` : **21 amas orphelins annoncés, UN seul en vérité** — et
+les vingt autres recevaient du cuivre pour rien. `_stitch_zones` jugeait déjà
+sur le net entier (`_ilots_relies_au_principal_du_net`) : deux jumelles, deux
+réponses, et c'est la plus permissive qui posait le cuivre. Ma propre sonde
+d'analyse avait fait exactement la même faute une heure plus tôt.
+
+**NEVER échantillonner un trajet au pas de sa propre marge.** `_couloir_libre`
+prenait `pas = marge` : un bond plus court que la marge n'était jugé que par ses
+DEUX BOUTS. Or la distance à un cuivre est convexe le long d'un segment — son
+minimum tombe à l'INTÉRIEUR, jamais aux extrémités. Mesuré : **426 violations de
+dégagement**, toutes à 0,1993 mm pour 0,2000 exigés. Sept dixièmes de
+micromètre, c'est-à-dire précisément ce qu'un échantillonnage à deux points
+laisse passer. Pas ramené à `marge / 8`.
+
+**Un remède tout-ou-rien se PROUVE par l'égalité, pas par l'absence de
+plainte.** `_degager_le_couloir` arrache, pose, reroute, et remet tout en place
+si un seul reroutage échoue. La preuve qu'il ne casse rien n'est pas « aucune
+erreur nouvelle » : c'est le board rendu **strictement identique** au board reçu
+— 33 violations, 0 erreur, 1 manquante, avant comme après.
+
+**Une impossibilité peut se CALCULER, et alors on arrête de chercher.** Le
+couloir de `carte-10` fait 0,862 mm ; le raccord de masse le barre sur toute sa
+largeur (0,25 de cuivre + 0,2 de dégagement de chaque côté = 0,65). Un signal de
+0,25 mm en réclame 0,65 à son tour : il faudrait 1,30 mm. Aucune finesse ne
+rattrape 0,44 mm manquants. Sur la même face, c'est fermé — et le dire vaut
+mieux que d'élargir encore une recherche qui ne peut pas aboutir.
+
 ### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
 
 **NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**

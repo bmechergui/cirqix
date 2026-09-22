@@ -487,7 +487,17 @@ def _couloir_libre(depart, arrivee, obstacles, demi_largeur: float,
         else:
             # Boite ou segment : on echantillonne le TRAJET, la distance au
             # cuivre etant deja exacte dans `_distance_a_obstacle`.
-            pas = max(marge, 1e-9)
+            # ⚠️ LE PAS ETAIT EGAL A LA MARGE, donc un bond plus court que la
+            # marge n etait juge que par ses DEUX BOUTS. La distance a un
+            # cuivre est convexe le long d un segment : son minimum tombe a
+            # l INTERIEUR, jamais aux extremites. Mesure du 2026-09-22 : les
+            # pistes reposees apres arrachage passaient ce controle et le DRC
+            # de KiCad rendait 426 violations, toutes a 0,1993 mm pour 0,2000
+            # exiges — sept dixiemes de micrometre, c est-a-dire exactement ce
+            # qu un echantillonnage a deux points laisse passer. Un huitieme de
+            # marge borne l erreur sans couter : un bond court reste a
+            # quelques points.
+            pas = max(marge / 8.0, 1e-9)
             longueur = math.hypot(arrivee[0] - depart[0], arrivee[1] - depart[1])
             n = max(2, int(longueur / pas) + 2)
             d = min(_distance_a_obstacle(
@@ -497,6 +507,103 @@ def _couloir_libre(depart, arrivee, obstacles, demi_largeur: float,
         if d < marge:
             return False
     return True
+
+
+# Combien de segments d un autre net on accepte d ARRACHER pour rouvrir le
+# couloir d un amas de masse enferme. ⚠️ Sans plafond, « lesquels oter » est une
+# recherche combinatoire ouverte — la faute que `_NOEUDS_MAX_CONTOURNEMENT`
+# interdit deja pour l A*. Mesure du 2026-09-22 sur le board fautif de
+# `carte-10` : UN seul segment coupe le couloir de chaque face (`EXT2_1` a
+# 0,862 mm sur F.Cu, `EXT4_1` a 0,781 mm sur B.Cu). Trois laisse de la marge
+# sans ouvrir la porte a un arrachage massif — on repare une carte, on ne la
+# re-route pas.
+_SEGMENTS_ARRACHABLES: int = 3
+
+
+# Combien de BUTS au plus l A* de raccord accepte. ⚠️ Son heuristique prend
+# le minimum sur TOUS les buts, a chaque noeud : passer de un but a la liste
+# entiere du plan principal rend `h()` proportionnel au nombre de buts, et
+# `_NOEUDS_MAX_CONTOURNEMENT` ne borne QUE le nombre de noeuds, jamais le cout
+# de chacun. Sur un grand plan les cibles se comptent par milliers et se
+# reaccumulaient une fois par ilot orphelin : la famine que ce plafond devait
+# empecher revenait par la porte de derriere (revue du 2026-09-22).
+_BUTS_MAX: int = 64
+
+
+def _buts_bornes(cibles, depart, repli):
+    """Les buts de l A*, dedoublonnes et bornes aux plus proches du depart.
+
+    Viser TOUT le plan plutot qu un seul de ses points est ce qui permet de
+    contourner un obstacle par l autre cote ; le faire sans borne rend la
+    recherche impayable. On garde donc les `_BUTS_MAX` plus proches — un
+    raccord de masse qui devrait viser un point plus lointain que les
+    soixante-quatre plus proches n en serait pas un.
+
+    Rend toujours au moins un but (`repli`) : une liste vide ferait renoncer
+    l A* pour une raison qui n a rien a voir avec la geometrie.
+    """
+    if not cibles:
+        return [repli]
+    uniques = list(dict.fromkeys((float(x), float(y)) for x, y in cibles))
+    if len(uniques) > _BUTS_MAX:
+        uniques.sort(key=lambda c: (c[0] - depart[0]) ** 2
+                     + (c[1] - depart[1]) ** 2)
+        uniques = uniques[:_BUTS_MAX]
+    return uniques or [repli]
+
+
+def _segments_qui_bloquent(depart, arrivee, obstacles, demi_largeur: float,
+                           degagement: float) -> list:
+    """Les obstacles qui, A EUX SEULS, ferment ce couloir — et qu on peut bouger.
+
+    Rend les INDICES dans `obstacles`, dans l ordre. Seuls les obstacles de
+    forme `("segment", x1, y1, x2, y2, largeur)` sont candidats.
+
+    ⚠️ ON NE DEPLACE QU UN SEGMENT DE PISTE. Une pastille appartient a une
+    empreinte dont le placement est deja arbitre ; un via porte une liaison
+    verticale et un percage. Les bouger pour faire passer de la masse
+    defairait le travail des etapes precedentes — c est la faute « deux
+    correctifs qui se combattent », deja payee le 2026-08-27.
+    """
+    genants = []
+    for k, o in enumerate(obstacles):
+        if not (o and o[0] == "segment"):
+            continue
+        if not _couloir_libre(depart, arrivee, [o], demi_largeur, degagement):
+            genants.append(k)
+    return genants
+
+
+def _couloir_degageable(depart, arrivee, obstacles, demi_largeur: float,
+                        degagement: float,
+                        plafond: int = _SEGMENTS_ARRACHABLES):
+    """Ce couloir s ouvre-t-il en arrachant quelques segments ? Lesquels ?
+
+    Rend la liste des indices a arracher — **vide** si le couloir est deja
+    libre — ou `None` si l on ne sait pas le degager.
+
+    ⚠️ UNE LISTE VIDE ET UN `None` NE DISENT PAS LA MEME CHOSE. « rien a
+    arracher » est un succes, « je ne sais pas degager » un echec : les
+    confondre ferait exactement ce que ce depot traque partout, un echec qui
+    rend la valeur du cas normal.
+
+    Trois raisons de renoncer, toutes mesurables :
+      - plus de `plafond` segments bloquent — on ne re-route pas la carte ;
+      - un obstacle qui n est PAS un segment bloque aussi (pastille, via) ;
+      - les retirer tous ne suffit pas a ouvrir le couloir.
+    """
+    if _couloir_libre(depart, arrivee, obstacles, demi_largeur, degagement):
+        return []
+    genants = _segments_qui_bloquent(depart, arrivee, obstacles,
+                                     demi_largeur, degagement)
+    if not genants or len(genants) > int(plafond):
+        return None
+    restes = [o for k, o in enumerate(obstacles) if k not in set(genants)]
+    if not _couloir_libre(depart, arrivee, restes, demi_largeur, degagement):
+        # Ce ne sont pas QUE des segments qui ferment : l arrachage serait paye
+        # pour rien, et on aurait casse des liaisons sans rien reparer.
+        return None
+    return genants
 
 
 # Plafond de noeuds visites par l A* de raccord. ⚠️ Une portee geometrique ne
@@ -2033,6 +2140,167 @@ def _hors_du_plus_grand_amas(amas: list) -> list:
     return orphelines
 
 
+def _poser_piste(pcbnew, board, a, b, largeur: int, couche, netcode: int):
+    """Un segment de cuivre, et on rend l objet pour pouvoir le DEFAIRE."""
+    piste = pcbnew.PCB_TRACK(board)
+    piste.SetStart(pcbnew.VECTOR2I(int(a[0]), int(a[1])))
+    piste.SetEnd(pcbnew.VECTOR2I(int(b[0]), int(b[1])))
+    piste.SetWidth(int(largeur))
+    piste.SetLayer(couche)
+    piste.SetNetCode(int(netcode))
+    board.Add(piste)
+    return piste
+
+
+def _rerouter_un_segment(pcbnew, board, releve,
+                         clearance: float) -> str:
+    """Repose un segment ARRACHE, en contournant ce qui occupe desormais sa place.
+
+    `releve` est le releve GEOMETRIQUE pris avant l arrachage
+    `(x1, y1, x2, y2, largeur, couche, netcode)` — surtout pas l objet
+    `pcbnew` : une fois `Remove` appele, plus rien ne garantit qu il vit.
+
+    Rend `("ok", pistes_posees)`, ou `(raison, [])` sans rien poser — l appelant remet
+    alors TOUT en place. Un reroutage a moitie fait serait pire que le defaut
+    qu il repare : il echangerait une masse manquante contre une alimentation
+    manquante (avertissement de GLM, 2026-09-22).
+
+    ⚠️ Les raisons sont distinctes A DESSEIN. « impossible » a trois causes qui
+    appellent trois remedes differents, et les confondre coute un diagnostic
+    entier — ce depot l a deja paye avec `_recuperer_jobs_abandonnes`.
+
+    ⚠️ LES DEUX EXTREMITES SONT EXEMPTEES du test de place libre. Elles sont
+    la ou le segment ARRIVAIT deja : leur legalite est heritee du board, pas a
+    redemontrer. Et l A* arrondit son depart a la grille — un point legal se
+    retrouve alors a quelques centiemes de sa vraie place, souvent du mauvais
+    cote d une marge que le routeur avait serree au plus juste. Sans cette
+    exemption, `_chemin_de_contournement` renonce a son PREMIER point et le
+    reroutage echoue toujours, quelle que soit la place disponible ailleurs.
+    """
+    x1, y1, x2, y2, larg, couche, net = releve
+    obstacles = _obstacles_d_un_autre_net(board, int(net), couches=[couche])
+    marge = float(larg) / 2.0 + clearance
+    pas = max(float(larg) / 2.0, 1.0)
+    bouts = {(round(x1 / pas), round(y1 / pas)),
+             (round(x2 / pas), round(y2 / pas))}
+
+    def _libre(x, y, _obs=obstacles, _m=marge, _bouts=bouts, _p=pas):
+        if (round(x / _p), round(y / _p)) in _bouts:
+            return True
+        return all(_distance_a_obstacle(x, y, o) >= _m for o in _obs)
+
+    directe = math.hypot(x2 - x1, y2 - y1)
+    portee = min(max(directe * 4.0, float(larg) * 20.0), float(larg) * 120.0)
+    chemin = _chemin_de_contournement((x1, y1), [(x2, y2)], _libre, pas, portee)
+    if not chemin or len(chemin) < 2:
+        return "sans_chemin", []
+    # Les bonds qui TOUCHENT une extremite heritent de sa legalite : le cuivre
+    # y etait deja. On verifie exactement tous les autres.
+    for a, b in zip(chemin, chemin[1:]):
+        touche_un_bout = ((round(a[0] / pas), round(a[1] / pas)) in bouts
+                          or (round(b[0] / pas), round(b[1] / pas)) in bouts)
+        if touche_un_bout:
+            continue
+        if not _couloir_libre(a, b, obstacles, float(larg) / 2.0, clearance):
+            return "couloir_refuse", []
+    # ⚠️ ON REND LES OBJETS POSES, on ne les rededuit pas. Une premiere
+    # version les retrouvait par la DIFFERENCE de longueur de
+    # `board.GetTracks()` avant/apres — c est supposer que pcbnew ajoute
+    # toujours en fin de liste, ce qu aucun autre appelant de ce fichier ne
+    # suppose. Si l hypothese cede, la remise en etat retire des pistes
+    # preexistantes ou en laisse de neuves : un « tout ou rien » qui devient
+    # silencieusement partiel (revue du 2026-09-22).
+    posees = [_poser_piste(pcbnew, board, a, b, larg, couche, net)
+              for a, b in zip(chemin, chemin[1:])]
+    return "ok", posees
+
+
+def _degager_le_couloir(pcbnew, board, depart, arrivee, couche, netcode: int,
+                        largeur: int, clearance: float, echecs: dict) -> bool:
+    """Arrache le peu qui enferme un amas de masse, relie, puis repose le reste.
+
+    ⚠️ Mesure du 2026-09-22, `carte-10`, sur le board qui porte VRAIMENT la
+    connexion manquante : l amas orphelin est une PAIRE de 1,30 et 0,99 mm2,
+    aucun de ses points n a le plan principal en vis-a-vis, la couture refuse
+    la TOTALITE de ses 23 et 18 sites (un via ne tient pas dans un millimetre
+    carre) et l A* rend `sans_chemin`. Mais le plan principal n est qu a
+    0,862 mm, et **UN SEUL segment** coupe le couloir de chaque face.
+
+    On renverse donc le probleme : plutot que de chercher un passage A TRAVERS
+    l obstacle, on DEPLACE l obstacle. Proposition de Codex, bornee par
+    `_couloir_degageable` — jamais une recherche ouverte.
+
+    Tout ou rien : si un seul des segments arraches ne peut pas etre repose,
+    on remet l etat initial et on rend False.
+    """
+    obstacles = _obstacles_d_un_autre_net(board, netcode, couches=[couche])
+    a_arracher = _couloir_degageable(depart, arrivee, obstacles,
+                                     float(largeur) / 2.0, clearance)
+    if a_arracher is None:
+        echecs["sans_degagement"] = echecs.get("sans_degagement", 0) + 1
+        return False
+
+    # Retrouver les PISTES derriere les obstacles designes. On compare la
+    # GEOMETRIE : `_obstacles_d_un_autre_net` ne rend pas l identite des items.
+    vises = {obstacles[k] for k in a_arracher}
+    releves, objets = [], []
+    for t in list(board.GetTracks()):
+        try:
+            if int(t.GetNetCode()) == int(netcode) or t.GetClass() == "PCB_VIA":
+                continue
+            if t.GetLayer() != couche:
+                continue
+            d, f = t.GetStart(), t.GetEnd()
+            forme = ("segment", float(d.x), float(d.y), float(f.x), float(f.y),
+                     float(t.GetWidth()))
+            if forme in vises:
+                releves.append((float(d.x), float(d.y), float(f.x), float(f.y),
+                                int(t.GetWidth()), t.GetLayer(),
+                                int(t.GetNetCode())))
+                objets.append(t)
+        except Exception:
+            continue
+    if len(releves) != len(a_arracher):
+        # On n a pas su remonter des formes aux pistes : ne rien casser.
+        echecs["sans_degagement"] = echecs.get("sans_degagement", 0) + 1
+        return False
+
+    for t in objets:
+        board.Remove(t)
+
+    posees = []
+    try:
+        restant = _obstacles_d_un_autre_net(board, netcode, couches=[couche])
+        if not _couloir_libre(depart, arrivee, restant,
+                              float(largeur) / 2.0, clearance):
+            raise RuntimeError("couloir toujours ferme apres arrachage")
+        posees.append(_poser_piste(pcbnew, board, depart, arrivee,
+                                   largeur, couche, netcode))
+        for releve in releves:
+            raison, neuves = _rerouter_un_segment(pcbnew, board, releve,
+                                                  clearance)
+            if raison != "ok":
+                raise RuntimeError("reroutage : %s" % raison)
+            # Les pistes ajoutees par le reroutage doivent pouvoir etre
+            # defaites aussi : elles sont RENDUES, jamais rededuites.
+            posees.extend(neuves)
+    except Exception as exc:
+        for p in posees:
+            try:
+                board.Remove(p)
+            except Exception:
+                pass
+        for x1, y1, x2, y2, larg, c, net in releves:
+            _poser_piste(pcbnew, board, (x1, y1), (x2, y2), larg, c, net)
+        echecs["reroutage_impossible"] = echecs.get("reroutage_impossible", 0) + 1
+        # La RAISON, pas seulement le compte : trois causes appellent trois
+        # remedes, et « impossible » seul n en designe aucun.
+        motifs = echecs.setdefault("motifs_reroutage", {})
+        motifs[str(exc)] = motifs.get(str(exc), 0) + 1
+        return False
+    return True
+
+
 def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
     """Raccorde par une COURTE PISTE tout amas de plan orphelin PORTANT une pastille.
 
@@ -2053,9 +2321,16 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
     bouchait le routeur (2798 s contre 901). On repare ici un board FINI, et
     rien n est protege.
 
-    La piste part du sommet de l ilot orphelin le plus proche du plan principal,
-    sur la MEME couche, et n est posee que si le couloir est libre du cuivre des
-    autres nets (`_couloir_libre`, degagement exact). Aucun retrait, aucun via.
+    La piste part de la PASTILLE de l amas, vise le plan principal sur la MEME
+    couche, et n est posee que si le couloir est libre du cuivre des autres
+    nets (`_couloir_libre`, degagement exact).
+
+    ⚠️ « Aucun retrait, aucun via » — ce que cette docstring promettait jusqu au
+    2026-09-22 — N EST PLUS VRAI. Quand l A* echoue, l amas est ENCERCLE, et
+    `_degager_le_couloir` arrache alors le peu de segments qui le ferment,
+    pose le raccord, puis les repose ailleurs. Une docstring qui promet de ne
+    rien toucher est exactement le genre de phrase que ce depot a deja paye
+    (voir `_poser_via_dans_pastille`, 2026-09-03).
     """
     board = _charger_board(pcbnew, args["pcb"])
     nets = set(json.loads(args.get("nets", "[]")))
@@ -2065,8 +2340,21 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
     # Pourquoi un amas n est pas raccorde : « aucun raccorde » ne doit pas
     # avoir trois causes indistinguables.
     echecs = {"sans_pastille": 0, "sans_depart": 0, "sans_cible": 0,
-              "sans_chemin": 0}
+              "sans_chemin": 0, "sans_degagement": 0,
+              "reroutage_impossible": 0}
+    # Combien d amas n ont ete relies qu en DEPLACANT ce qui les enfermait : un
+    # arrachage n est pas un raccord ordinaire, il doit se voir dans le rapport.
+    degages = 0
 
+    # ⚠️ ON JUGE SUR TOUT LE NET, PAS ZONE PAR ZONE. Notre generateur ecrit UNE
+    # ZONE PAR FACE : juger une zone seule fait passer pour orphelin tout ilot
+    # de F.Cu qui rejoint le plan par B.Cu. Mesure du 2026-09-22, carte-10 :
+    # 21 « amas orphelins » annonces zone par zone, **UN SEUL** en verite — et
+    # les vingt autres recevaient du cuivre pour rien. `_stitch_zones` jugeait
+    # deja sur le net entier (`_ilots_relies_au_principal_du_net`) ; les deux
+    # jumelles ne disaient pas la meme chose, et c est la plus permissive qui
+    # posait le cuivre.
+    codes_de_plan = {}
     for zone in board.Zones():
         try:
             netcode, nom = zone.GetNetCode(), str(zone.GetNetname())
@@ -2074,14 +2362,17 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
             continue
         if nets and nom not in nets:
             continue
-        couches = [c for c in list(zone.GetLayerSet().Seq())]
+        codes_de_plan.setdefault(netcode, []).append(zone)
+
+    for netcode, zones_du_net in codes_de_plan.items():
         ilots = []                       # (couche, poly, index)
-        for c in couches:
-            try:
-                poly = zone.GetFilledPolysList(c)
-            except Exception:
-                continue
-            ilots.extend((c, poly, i) for i in range(poly.OutlineCount()))
+        for zone in zones_du_net:
+            for c in list(zone.GetLayerSet().Seq()):
+                try:
+                    poly = zone.GetFilledPolysList(c)
+                except Exception:
+                    continue
+                ilots.extend((c, poly, i) for i in range(poly.OutlineCount()))
         if len(ilots) < 2:
             continue
         aires, contient = {}, {}
@@ -2145,6 +2436,15 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
             # cuivre de l ilot.
             meilleur = None       # (distance, couche, depart, arrivee)
             n_ancres = n_cibles = 0
+            # ⚠️ TOUTES les cibles de la couche, pas seulement la plus proche.
+            # `_chemin_de_contournement` accepte une LISTE de buts depuis
+            # toujours et on ne lui en donnait qu UN — le point du plan le plus
+            # proche. Mesure du 2026-09-22, carte-10 : ce point-la est de
+            # l autre cote de la bande que le raccord occupe, et le contournement
+            # renoncait alors que d autres points du MEME plan etaient
+            # atteignables en passant de l autre cote de l ilot. Viser le plan,
+            # pas un point du plan.
+            cibles_par_couche: dict = {}
             for k in membres:
                 couche, poly, i = ilots[k]
                 ancres = [(float(p.GetPosition().x), float(p.GetPosition().y))
@@ -2166,6 +2466,7 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
                         if poly2.Contains(pcbnew.VECTOR2I(int(x), int(y)), i2)
                         and _libre(x, y)]
                     n_cibles += len(cibles)
+                    cibles_par_couche.setdefault(couche, []).extend(cibles)
                     for a in ancres:
                         for c in cibles:
                             d = math.hypot(a[0] - c[0], a[1] - c[1])
@@ -2175,6 +2476,7 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
                 echecs["sans_depart" if not n_ancres else "sans_cible"] += 1
                 continue
             _d, couche, depart, arrivee = meilleur
+            buts = _buts_bornes(cibles_par_couche.get(couche), depart, arrivee)
 
             # ⚠️ PAS DE LIGNE DROITE — mesuree et REFUTEE le 2026-09-21 : un
             # ilot est isole PAR une piste, toute droite la retraverse
@@ -2189,30 +2491,50 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
             # ⚠️ Plafond ABSOLU en plus du proportionnel : `_d` n est borne
             # par rien, et un amas lointain ferait exploser la recherche.
             portee = min(max(_d * 4.0, largeur * 20.0), largeur * 120.0)
-            chemin = _chemin_de_contournement(depart, [arrivee], _libre, pas, portee)
-            if not chemin or len(chemin) < 2:
-                echecs["sans_chemin"] += 1
-                continue
-            if not all(_couloir_libre(a, b, obstacles, largeur / 2.0, clearance)
-                       for a, b in zip(chemin, chemin[1:])):
+            chemin = _chemin_de_contournement(depart, buts, _libre, pas, portee)
+            # ⚠️ LE PREMIER BOND HERITE DE LA PASTILLE. L A* arrondit son
+            # depart a la grille : un point legal — le centre de la pastille —
+            # se retrouve a quelques centiemes de sa vraie place, souvent du
+            # mauvais cote d une marge que le routeur avait serree au plus
+            # juste. Le cuivre EST deja la, sa legalite est heritee du board.
+            # La meme regle vit dans `_rerouter_un_segment` ; les deux endroits
+            # qui en ont structurellement besoin l appliquent (revue du
+            # 2026-09-22 : elle n etait ecrite que dans un seul).
+            depart_case = (round(depart[0] / pas), round(depart[1] / pas))
+
+            def _bond_verifiable(a, b, _c=depart_case, _p=pas):
+                return (round(a[0] / _p), round(a[1] / _p)) != _c
+
+            if chemin and len(chemin) >= 2 and all(
+                    _couloir_libre(a, b, obstacles, largeur / 2.0, clearance)
+                    for a, b in zip(chemin, chemin[1:])
+                    if _bond_verifiable(a, b)):
                 # L A* juge des POINTS de grille ; le segment entre deux points
                 # peut fraiser un obstacle. Verification exacte avant la pose.
-                echecs["sans_chemin"] += 1
+                for a, b in zip(chemin, chemin[1:]):
+                    _poser_piste(pcbnew, board, a, b, largeur, couche, netcode)
+                relies += 1
                 continue
-            for a, b in zip(chemin, chemin[1:]):
-                piste = pcbnew.PCB_TRACK(board)
-                piste.SetStart(pcbnew.VECTOR2I(int(a[0]), int(a[1])))
-                piste.SetEnd(pcbnew.VECTOR2I(int(b[0]), int(b[1])))
-                piste.SetWidth(largeur)
-                piste.SetLayer(couche)
-                piste.SetNetCode(netcode)
-                board.Add(piste)
-            relies += 1
+            # ⚠️ L A* a echoue : l amas est ENCERCLE, pas mal cherche (mesure du
+            # 2026-09-21, budget quadruple sans effet). On ne cherche donc plus
+            # un passage A TRAVERS l obstacle — on DEPLACE l obstacle, quand il
+            # ne tient qu a quelques segments.
+            # ⚠️ L ECHEC N EST COMPTE QU APRES le degagement. Une premiere
+            # version incrementait `sans_chemin` avant de le tenter : un amas
+            # relie par arrachage figurait alors a la fois dans `relies` et
+            # dans les echecs, et `examines` ne retombait plus sur ses pattes.
+            # Un rapport qui se contredit ne vaut pas mieux qu un rapport muet.
+            if _degager_le_couloir(pcbnew, board, depart, arrivee, couche,
+                                   netcode, largeur, clearance, echecs):
+                relies += 1
+                degages += 1
+                continue
+            echecs["sans_chemin"] += 1
 
     pcbnew.SaveBoard(args["output"], board)
     Path(args["result"]).write_text(
         json.dumps({"relies": relies, "amas_orphelins": examines,
-                    "echecs": echecs}), encoding="utf-8")
+                    "degages": degages, "echecs": echecs}), encoding="utf-8")
 
 
 def _pads_hors_cluster_principal(pcbnew, args: dict[str, str]) -> None:
