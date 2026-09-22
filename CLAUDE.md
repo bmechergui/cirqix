@@ -2357,6 +2357,22 @@ en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
 son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
 `tests/test_chevauchements_vus_par_le_drc.py`.
 
+### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
+
+**NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**
+Même placement gelé de `carte-10` : machine libre, **4 tirages sur 4 propres**
+(139-392 s) ; machine chargée par une consultation d'agent lancée par mes soins,
+**3 échecs sur 3** (603-1838 s). J'en avais tiré « défaut intermittent du plan
+de masse, 1 tirage sur 8 » — c'était l'artefact de ma propre charge.
+
+**Et c'est un vrai défaut, pas seulement une erreur de mesure** :
+`_PLAFOND_ATTENTE_S = 300` est une horloge MURALE. Processeur disputé → moins de
+passes par seconde → le plafond tire alors que le routeur progresse encore → le
+tirage est déclaré figé et la chaîne garde un board moins bon. Ce fichier
+interdit pourtant, depuis le 2026-08-29, de « conclure qu'un processus est
+bloqué en comparant l'horloge » : la faute est ici DANS le code, pas dans une
+lecture de journal.
+
 ### Leçons inscrites le 2026-09-21 (soir) — les jumeaux qui se portent garants
 
 **NEVER laisser DEUX remèdes se valider l'un l'autre sur le même objet.** Un
