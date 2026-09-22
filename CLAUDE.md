@@ -2373,6 +2373,14 @@ interdit pourtant, depuis le 2026-08-29, de « conclure qu'un processus est
 bloqué en comparant l'horloge » : la faute est ici DANS le code, pas dans une
 lecture de journal.
 
+**Corrigé le jour même, et c'était une SŒUR OUBLIÉE.** `_faut_couper` a trois
+coupures ; `_routeur_muet` suivait déjà la cadence mesurée
+(`max(300 s, 3 × cadence)`), le temps sans progrès comparait à 300 s en dur.
+Le même fichier savait donc la règle et ne l'appliquait qu'à moitié. L'horloge
+ne peut plus couper avant la fenêtre de passes. Preuve sous charge délibérée :
+3 échecs sur 3 (603-1838 s) → **2 propres sur 2 (233 et 255 s)**.
+Garde : `tests/test_coupure_suit_la_cadence.py`.
+
 ### Leçons inscrites le 2026-09-21 (soir) — les jumeaux qui se portent garants
 
 **NEVER laisser DEUX remèdes se valider l'un l'autre sur le même objet.** Un
