@@ -296,6 +296,23 @@ réel de défaut du plan de masse n'est pas connu ; il est plus bas.
 ⚠️ **NEVER lancer un agent externe, un build ou une autre mesure pendant un banc
 de routage**, et le DIRE quand c'est arrivé : les chiffres ne valent alors rien.
 
+**Corrigé le 2026-09-22** — `_faut_couper` a trois coupures, et une seule
+ignorait la cadence :
+
+    fenêtre de passes    compte des passes          indépendante de la machine
+    routeur MUET         `max(300 s, 3 × cadence)`  SUIT déjà la cadence
+    temps sans progrès   `> 300 s` en dur           NE LA SUIVAIT PAS
+
+L'horloge ne peut plus couper avant la fenêtre de passes : le plafond vaut au
+moins ce que cette fenêtre coûte au rythme OBSERVÉ. Ce n'est pas un second
+seuil, c'est le premier traduit en secondes ; sans cadence mesurée, le plafond
+habituel s'applique inchangé.
+
+Preuve, `carte-10` sous charge délibérée (quatre boucles occupées) :
+
+    avant le correctif   3 échecs sur 3    603-1838 s
+    après                2 propres sur 2   233 et 255 s
+
 ### Combien de pastilles de masse finissent ENFERMÉES (mesure du 2026-09-21)
 
 Seize boards routés mesurés (les dix du banc + les tirages de 07, 09, 10),

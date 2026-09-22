@@ -677,7 +677,7 @@ def _temps_sans_progres(mesure_faite: bool, depuis_s: float) -> float:
 
 
 def _faut_couper(plat: int, fenetre: int, muet: bool,
-                 sans_progres_s: float = 0.0) -> bool:
+                 sans_progres_s: float = 0.0, cadence_s: float = 0.0) -> bool:
     """Faut-il cesser d attendre ce tirage ?
 
     ⚠️ `fenetre == 0` veut dire « ne coupe pas SUR LES PASSES » — presque
@@ -703,12 +703,27 @@ def _faut_couper(plat: int, fenetre: int, muet: bool,
 
     ⚠️ `sans_progres_s` vaut 0 par defaut : sans mesure on ATTEND, on
     n abandonne pas a l aveugle.
+
+    ⚠️ L HORLOGE SUIT LA CADENCE, comme le fait deja `_routeur_muet` — SŒUR
+    OUBLIEE, corrigee le 2026-09-22. Mesure sur `carte-10`, MEME placement
+    gele : machine libre, 4 tirages sur 4 propres (139-392 s) ; machine chargee
+    par une autre tache, 3 echecs sur 3 (603-1838 s). Processeur dispute ->
+    moins de passes par seconde -> le plafond de 300 s tirait alors que le
+    routeur PROGRESSAIT encore, et la chaine gardait un board moins bon.
+
+    L horloge ne doit jamais couper AVANT la fenetre de passes : le plafond
+    vaut donc au moins ce que cette fenetre coute au rythme OBSERVE. Ce n est
+    pas un second seuil — c est le premier, traduit en secondes. Sans cadence
+    mesuree (`0.0`), le plafond habituel s applique, inchange.
     """
     if fenetre and plat >= fenetre:
         return True
     if muet:
         return True
-    return sans_progres_s > _PLAFOND_ATTENTE_S
+    plafond = _PLAFOND_ATTENTE_S
+    if cadence_s > 0 and fenetre:
+        plafond = max(plafond, fenetre * cadence_s)
+    return sans_progres_s > plafond
 
 
 # Ou vit le journal de Freerouting. Meme conteneur que la JVM ; le chemin suit
@@ -1083,7 +1098,8 @@ def _route_with_freerouting_api(
                 if _faut_couper(plat, fenetre, muet,
                                 sans_progres_s=_temps_sans_progres(
                                     dernier_unrouted > 0,
-                                    time.time() - _dernier_progres_a)):
+                                    time.time() - _dernier_progres_a),
+                                cadence_s=cadence):
                     logger.warning(
                         "Freerouting fige (%d passes sans progres, %d non "
                         "routes%s) — attente abandonnee, le job finit seul",
