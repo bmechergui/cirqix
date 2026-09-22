@@ -273,6 +273,41 @@ il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
 sur ces deux cartes compactes ; la piste suivante est la densité du placement
 (406 et 483 croisements du chevelu), pas le routeur.
 
+### BANC DE RÉFÉRENCE du 2026-09-22 — 9 cartes sur 10 parfaites
+
+Premier banc mesuré dans des conditions propres : graine en étoile armée
+(réglage de banc), correctif de cadence en place (#235), **machine libre, aucune
+autre tâche** — c'est exactement ce qui manquait aux mesures du 2026-09-21.
+
+| carte | erreurs | connexions manquantes | couches de signal |
+|---|---|---|---|
+| 01 | 0 | 0 | 1 |
+| 02 | 0 | 0 | 1 |
+| 03 | 0 | 0 | 1 |
+| 04 | 0 | 0 | 2 |
+| 05 | 0 | 0 | 2 (deux centres) |
+| 06 | 0 | 0 | 2 |
+| 07 | 0 | 0 | 2 |
+| 08 | 0 | 0 | 2 |
+| 09 | 0 | 0 | 2 |
+| 10 | 0 | **1** (GND) | 2 |
+
+**Plus aucun SIGNAL ne manque sur les dix cartes**, et aucune ne dépasse deux
+couches de signal — contre 4 et 6 couches avant la graine. Le seul défaut
+restant est un amas de plan de masse isolé sur `carte-10`.
+
+⚠️ **Les DURÉES de ce banc ne veulent rien dire** : la machine se met en veille,
+et `route_s` compte le temps écoulé, pas le temps de calcul (carte-01 affiche
+14 415 s pour un routage d'une poignée de secondes). Les VERDICTS, eux, sont
+valables. Pour des durées exploitables il faut désactiver la veille.
+
+⚠️ Trois faux départs avant ce banc, tous de méthode et non de code : un
+`docker exec -d` qui n'a pas survécu, un redémarrage de la VM WSL qui a emporté
+le service en pleine exécution (dix « Connection refused » d'affilée), et un
+`pgrep` qui se trouvait lui-même et déclarait vivant un script mort. Le schéma
+qui tient : un processus Windows caché (`Start-Process wsl.exe`) qui exécute le
+banc de façon SYNCHRONE, plus un second qui maintient la VM en vie.
+
 ### ⚠️ La CHARGE DE LA MACHINE fausse le routage (mesure du 2026-09-22)
 
 Même placement gelé de `carte-10`, même code, deux séries :
