@@ -273,6 +273,29 @@ il s'arrête en laissant des connexions. Monter en couches ne suffit donc pas
 sur ces deux cartes compactes ; la piste suivante est la densité du placement
 (406 et 483 croisements du chevelu), pas le routeur.
 
+### ⚠️ La CHARGE DE LA MACHINE fausse le routage (mesure du 2026-09-22)
+
+Même placement gelé de `carte-10`, même code, deux séries :
+
+    machine LIBRE      4 tirages   4 x (0 erreur, 0 manquante)   139-392 s
+    machine CHARGÉE    3 tirages   3 ÉCHECS (1 manq, 1 err, 1 manq)  603-1838 s
+
+La charge venait d'une consultation d'agent externe lancée pendant le banc.
+
+**Mécanisme** : l'abandon d'un tirage repose en partie sur `_PLAFOND_ATTENTE_S
+= 300`, une horloge MURALE. Processeur disputé → moins de passes par seconde →
+le plafond tire alors que le routeur progressait encore → tirage déclaré figé →
+la chaîne garde un board moins bon. C'est ce que ce dépôt s'interdit ailleurs
+(« NEVER conclure qu'un processus est bloqué en comparant l'horloge ») ; ici la
+règle est DANS le code.
+
+⚠️ **Les mesures d'intermittence du 2026-09-21 sont FAUSSÉES** — le « 1 tirage
+sur 8 » a été relevé sur une machine chargée par mes propres tâches. Le taux
+réel de défaut du plan de masse n'est pas connu ; il est plus bas.
+
+⚠️ **NEVER lancer un agent externe, un build ou une autre mesure pendant un banc
+de routage**, et le DIRE quand c'est arrivé : les chiffres ne valent alors rien.
+
 ### Combien de pastilles de masse finissent ENFERMÉES (mesure du 2026-09-21)
 
 Seize boards routés mesurés (les dix du banc + les tirages de 07, 09, 10),
