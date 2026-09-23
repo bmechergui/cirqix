@@ -2,28 +2,32 @@
   "exemple": "carte-10-maximale",
   "composants": 70,
   "nets": 49,
-  "board_mm": [
+  "board_mm_demande": [
     140,
     105
   ],
-  "duree_s": 168,
-  "git": "7228ce37",
+  "board_mm": [
+    61.0,
+    45.8
+  ],
+  "duree_s": 423,
+  "git": "147906da",
   "routed_percent": 100,
-  "drc_violations": 46,
+  "drc_violations": 49,
   "drc_clean": true,
-  "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:28,silk_overlap:18",
+  "fichiers_exportes": 22,
+  "types_violations": "silk_over_copper:28,silk_overlap:18,track_dangling:3",
   "abouti": true,
   "board": {
-    "segments": 462,
-    "vias": 91,
+    "segments": 582,
+    "vias": 88,
     "zones": 3,
     "empreintes": 71
   },
   "drc_du_board": {
-    "violations": 23,
+    "violations": 26,
     "non_connectes": 0,
-    "types": "silk_over_copper:14,silk_overlap:9",
+    "types": "silk_over_copper:14,silk_overlap:9,track_dangling:3",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true

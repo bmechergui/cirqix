@@ -3,49 +3,33 @@ SchÃ©ma (driver LLM) : 56 composants, 49 nets, board 125x95mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=189560o  (2.1s)
+    -> taille=189560o  (14.1s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=6 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (7.4s)
+    -> clean=False Â· violations=6 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (10.5s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=151901o  (1.0s)
+    -> taille=151901o  (1.1s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=56 Â· status=None  (50.5s)
+    -> placÃ©s=56 Â· status=None  (32.5s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=97% Â· couches=4 Â· vias=71 Â· warning=None  (1760.7s)
+    -> routÃ©=100% Â· couches=2 Â· vias=59 Â· warning=None  (257.5s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=False Â· violations=26 Â· erreurs=2  (5.5s)
-   essai 1 retenu (97%, 2 erreur(s) DRC)
-
-==============================================================
-[5] call_agent_placement â†’ POST /place/auto (essai 2/4)
-==============================================================
-    -> placÃ©s=56 Â· status=None  (39.3s)
-
-==============================================================
-[6] call_agent_routing â†’ POST /route/auto (essai 2/4)
-==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=72 Â· warning=None  (105.6s)
-
-==============================================================
-[7] call_agent_drc â†’ POST /drc/auto (essai 2/4)
-==============================================================
-    -> clean=True Â· violations=22 Â· erreurs=0  (5.4s)
-   essai 2 retenu (100%, 0 erreur(s) DRC)
+    -> clean=True Â· violations=22 Â· erreurs=0  (4.1s)
+   essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
 [6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
@@ -53,7 +37,7 @@ SchÃ©ma (driver LLM) : 56 composants, 49 nets, board 125x95mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=22 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.3s)
+    -> clean=True Â· violations=22 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.2s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
@@ -66,7 +50,7 @@ SchÃ©ma (driver LLM) : 56 composants, 49 nets, board 125x95mm
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.5s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.6s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -92,4 +76,4 @@ SchÃ©ma (driver LLM) : 56 composants, 49 nets, board 125x95mm
 SUMMARY routed=100 drc_violations=22 drc_clean=True files=20 types=silk_over_copper:12,silk_overlap:10
 VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-08-dense-1790119100/output
+Artefacts : /tmp/banc-carte-08-dense-1790146972/output

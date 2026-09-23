@@ -2,12 +2,16 @@
   "exemple": "carte-01-diviseur",
   "composants": 5,
   "nets": 4,
-  "board_mm": [
+  "board_mm_demande": [
     25,
     20
   ],
-  "duree_s": 384,
-  "git": "7228ce37",
+  "board_mm": [
+    20.1,
+    14.6
+  ],
+  "duree_s": 107,
+  "git": "147906da",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -15,7 +19,7 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 10,
+    "segments": 15,
     "vias": 2,
     "zones": 2,
     "empreintes": 5

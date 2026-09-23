@@ -412,6 +412,80 @@ reroutage échoue.
    dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
    laisse passer. Pas ramené à un huitième de marge.
 
+### ⚠️ LE CONTOUR N'ÉTAIT JAMAIS RESSERRÉ DANS LE BANC (2026-09-23)
+
+Question de l'utilisateur devant les rendus : « tu es satisfait de ce
+placement ? ». Non. Mesure sur `carte-10` livrée :
+
+    carte                140 x 105 mm  = 14725 mm2
+    circuit               51 x  66 mm  =  3366 mm2
+    OCCUPATION                             23 %
+    connecteurs, du circuit           56 a 75 mm
+    fil de signal                       1230 mm  (VIN a lui seul : 112 mm)
+
+Une carte quatre fois trop grande, les composants entassés au centre, les
+connecteurs échoués aux bords lointains, et l'alimentation qui traverse sur
+onze centimètres. Le routeur s'en sortait — zéro erreur, zéro manquante — mais
+personne ne livrerait cela.
+
+**La cause : `run_pipeline.py` n'envoyait pas `auto_size_board` à
+`/place/auto`.** Le resserrement du contour sur le placement existe depuis le
+2026-09-13 (D-2026-09-13-c A) et ne s'exécute que si l'appelant l'autorise ; le
+défaut du modèle est `False`. **Septième levier de ce projet qui existe et que
+personne n'appelle** — après `max_distance_mm`, `anchor_pin`,
+`WorkflowConfig.grid`, `constraints`, `move_reference`, `bottom_up_placement`
+et `LocalRerouter`.
+
+⚠️ Et le défaut était INVISIBLE : la chaîne de PRODUCTION, elle, passe bien le
+drapeau depuis `handlePlacement`. Le banc mesurait donc un comportement que le
+produit n'a pas — l'inverse exact de ce à quoi sert un banc.
+
+Mesure après correction, même circuit, même graine :
+
+| | avant | après |
+|---|---|---|
+| carte | 140 × 105 mm | **61,0 × 45,8 mm** |
+| occupation | 23 % | **56 %** |
+| fil de signal | 1230 mm | **652 mm** |
+| `VIN`, le plus long | 112 mm | **45,5 mm** |
+| connecteurs, du circuit | 56-75 mm | **23-35 mm** |
+| routage | 100 % · 0 err · 0 manq | **100 % · 0 err · 0 manq** |
+
+**Et le routage ACCÉLÈRE** : `carte-08` passe de 2002 s à 347 s, six fois plus
+vite. Ce fichier le disait déjà sans en tirer parti — « l'espace de recherche
+d'un routeur croît avec la SURFACE × le nombre de nets ». Une carte quatre fois
+trop grande se paie en cases de grille explorées.
+
+⚠️ **Un second mensonge de mesure, corrigé au passage.** Le banc annonçait la
+taille DEMANDÉE au schéma, pas celle du board. `carte-10` était rapportée
+140 × 105 alors qu'elle mesurait 61,0 × 45,8 — cinq fois faux en surface, et
+rien ne permettait de s'en apercevoir. `mesures.json` porte désormais
+`board_mm` (lu sur `Edge.Cuts`) ET `board_mm_demande` : l'écart est justement
+ce qu'on veut voir.
+
+### BANC DE RÉFÉRENCE du 2026-09-23 (2e passage) — DIX cartes, chacune à la taille de son circuit
+
+| carte | demandée | RÉELLE | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 14,6** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **34,9 × 25,4** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **26,1 × 20,1** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 27,2** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **43,6 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **48,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **53,2 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **56,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,3 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **61,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé, aucune erreur, aucune connexion manquante — et les
+dix cartes divisées par deux à quatre en surface.
+
+⚠️ **Ce qui reste laid, et qui n'est pas réglé** : les composants passifs
+s'entassent encore d'un côté du boîtier central, et les étiquettes de
+sérigraphie se chevauchent (`R20`/`R21`, `D22`/`D23`). La carte est à la bonne
+taille ; la RÉPARTITION à l'intérieur ne l'est pas encore.
+
 ### BANC DE RÉFÉRENCE du 2026-09-23 — DIX cartes sur dix, parfaites
 
 Premier banc où **aucune carte ne porte le moindre défaut**. Graine en étoile

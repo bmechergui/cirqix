@@ -2,28 +2,32 @@
   "exemple": "carte-07-multi-io",
   "composants": 44,
   "nets": 37,
-  "board_mm": [
+  "board_mm_demande": [
     110,
     80
   ],
-  "duree_s": 173,
-  "git": "7228ce37",
+  "board_mm": [
+    53.2,
+    38.8
+  ],
+  "duree_s": 285,
+  "git": "147906da",
   "routed_percent": 100,
-  "drc_violations": 6,
+  "drc_violations": 16,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:4,silk_overlap:2",
+  "types_violations": "silk_over_copper:10,silk_overlap:6",
   "abouti": true,
   "board": {
-    "segments": 270,
+    "segments": 329,
     "vias": 47,
-    "zones": 4,
+    "zones": 3,
     "empreintes": 45
   },
   "drc_du_board": {
-    "violations": 3,
+    "violations": 8,
     "non_connectes": 0,
-    "types": "silk_over_copper:2,silk_overlap:1",
+    "types": "silk_over_copper:5,silk_overlap:3",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -35,9 +39,9 @@
     "empreintes": 44
   },
   "drc_du_placement": {
-    "violations": 88,
+    "violations": 93,
     "non_connectes": 85,
-    "types": "silk_over_copper:2,silk_overlap:1,unconnected_items:85",
+    "types": "silk_over_copper:5,silk_overlap:3,unconnected_items:85",
     "erreurs": [
       "unconnected_items"
     ],

@@ -2,12 +2,16 @@
   "exemple": "carte-04-mcu-minimal",
   "composants": 15,
   "nets": 7,
-  "board_mm": [
+  "board_mm_demande": [
     60,
     45
   ],
-  "duree_s": 163,
-  "git": "7228ce37",
+  "board_mm": [
+    36.55,
+    27.2
+  ],
+  "duree_s": 130,
+  "git": "147906da",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -15,9 +19,9 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 112,
-    "vias": 19,
-    "zones": 4,
+    "segments": 117,
+    "vias": 20,
+    "zones": 3,
     "empreintes": 16
   },
   "drc_du_board": {

@@ -3,32 +3,32 @@ SchÃ©ma (driver LLM) : 35 composants, 27 nets, board 80x60mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=138898o  (1.5s)
+    -> taille=138898o  (1.0s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=4 Â· fixed=32 Â· skipped=False Â· engine=kicad-cli  (8.4s)
+    -> clean=False Â· violations=4 Â· fixed=32 Â· skipped=False Â· engine=kicad-cli  (6.2s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=99494o  (0.6s)
+    -> taille=99494o  (0.4s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=35 Â· status=None  (40.5s)
+    -> placÃ©s=35 Â· status=None  (33.0s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=34 Â· warning=None  (91.3s)
+    -> routÃ©=100% Â· couches=2 Â· vias=43 Â· warning=None  (96.2s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True Â· violations=6 Â· erreurs=0  (5.0s)
+    -> clean=True Â· violations=26 Â· erreurs=0  (4.2s)
    essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
@@ -37,18 +37,20 @@ SchÃ©ma (driver LLM) : 35 composants, 27 nets, board 80x60mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=6 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.8s)
+    -> clean=True Â· violations=26 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (3.7s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! silk_over_copper: Silkscreen clipped by solder mask
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
 
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.0s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.2s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -71,7 +73,7 @@ SchÃ©ma (driver LLM) : 35 composants, 27 nets, board 80x60mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=6 drc_clean=True files=20 types=silk_over_copper:4,silk_overlap:2
+SUMMARY routed=100 drc_violations=26 drc_clean=True files=20 types=silk_overlap:14,silk_over_copper:12
 VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-06-io-etendu-1790118739/output
+Artefacts : /tmp/banc-carte-06-io-etendu-1790146507/output

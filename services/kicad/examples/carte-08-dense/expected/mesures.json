@@ -2,12 +2,16 @@
   "exemple": "carte-08-dense",
   "composants": 56,
   "nets": 49,
-  "board_mm": [
+  "board_mm_demande": [
     125,
     95
   ],
-  "duree_s": 1986,
-  "git": "7228ce37",
+  "board_mm": [
+    56.38,
+    44.1
+  ],
+  "duree_s": 333,
+  "git": "147906da",
   "routed_percent": 100,
   "drc_violations": 22,
   "drc_clean": true,
@@ -15,9 +19,9 @@
   "types_violations": "silk_over_copper:12,silk_overlap:10",
   "abouti": true,
   "board": {
-    "segments": 370,
-    "vias": 73,
-    "zones": 3,
+    "segments": 367,
+    "vias": 60,
+    "zones": 5,
     "empreintes": 57
   },
   "drc_du_board": {

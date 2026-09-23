@@ -2,12 +2,16 @@
   "exemple": "carte-05-capteur-i2c",
   "composants": 26,
   "nets": 13,
-  "board_mm": [
+  "board_mm_demande": [
     70,
     50
   ],
-  "duree_s": 203,
-  "git": "7228ce37",
+  "board_mm": [
+    43.58,
+    32.6
+  ],
+  "duree_s": 130,
+  "git": "147906da",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -15,9 +19,9 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 179,
-    "vias": 33,
-    "zones": 4,
+    "segments": 163,
+    "vias": 34,
+    "zones": 3,
     "empreintes": 27
   },
   "drc_du_board": {

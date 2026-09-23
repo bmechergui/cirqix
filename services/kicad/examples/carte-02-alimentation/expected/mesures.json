@@ -2,12 +2,16 @@
   "exemple": "carte-02-alimentation",
   "composants": 12,
   "nets": 5,
-  "board_mm": [
+  "board_mm_demande": [
     55,
     40
   ],
-  "duree_s": 219,
-  "git": "7228ce37",
+  "board_mm": [
+    34.9,
+    25.38
+  ],
+  "duree_s": 167,
+  "git": "147906da",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -15,7 +19,7 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 44,
+    "segments": 52,
     "vias": 9,
     "zones": 2,
     "empreintes": 12

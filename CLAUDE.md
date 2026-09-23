@@ -2439,6 +2439,38 @@ recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
 dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
 instrument qui condamne un board sain.
 
+### Leçon inscrite le 2026-09-23 — le banc mesurait ce que le produit ne fait pas
+
+**NEVER laisser le BANC appeler le service autrement que la PRODUCTION.**
+`run_pipeline.py` n'envoyait pas `auto_size_board` à `/place/auto` : le
+resserrement du contour sur le placement, écrit le 2026-09-13, n'a donc JAMAIS
+tourné dans le banc — alors que `handlePlacement`, en production, le passe
+depuis toujours. Le banc mesurait un comportement que le produit n'a pas, ce
+qui est l'inverse exact de ce à quoi il sert. Mesuré sur `carte-10` : carte de
+140 × 105 mm pour un circuit de 51 × 66, **23 % d'occupation**, connecteurs à
+56-75 mm, `VIN` long de 112 mm. Une ligne de correctif donne 61,0 × 45,8 mm,
+56 % d'occupation, `VIN` à 45,5 mm, et **le routage reste à 100 %, 0 erreur,
+0 manquante** sur les dix cartes.
+
+C'est le **septième** levier natif que ce projet trouve écrit et jamais appelé,
+après `max_distance_mm`, `anchor_pin`, `WorkflowConfig.grid`, `constraints`,
+`move_reference`, `bottom_up_placement` et `LocalRerouter`. Le motif est
+toujours le même : la règle existe, elle est juste, et rien ne prouve qu'elle
+est INVOQUÉE.
+
+**Une carte trop grande coûte du TEMPS, pas seulement de la place.**
+`carte-08` passe de 2002 s à 347 s, six fois plus vite, pour le même circuit.
+Ce fichier portait déjà la mesure — « l'espace de recherche d'un routeur croît
+avec la SURFACE × le nombre de nets » — sans jamais en tirer la conséquence.
+
+**NEVER rapporter une taille de carte prise dans le SCHÉMA.** Le banc écrivait
+`board_mm` d'après ce que la description demandait, pas d'après `Edge.Cuts` :
+`carte-10` était annoncée 140 × 105 quand son board mesurait 61,0 × 45,8, cinq
+fois faux en surface, et rien ne permettait de s'en apercevoir. La règle de ce
+dépôt — un compteur ment, un board non — vaut aussi pour la taille.
+`mesures.json` porte désormais les DEUX : `board_mm` mesuré et
+`board_mm_demande`.
+
 ### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
 
 **NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**

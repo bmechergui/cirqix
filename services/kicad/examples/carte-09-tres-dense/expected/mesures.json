@@ -2,28 +2,32 @@
   "exemple": "carte-09-tres-dense",
   "composants": 62,
   "nets": 49,
-  "board_mm": [
+  "board_mm_demande": [
     130,
     100
   ],
-  "duree_s": 176,
-  "git": "7228ce37",
+  "board_mm": [
+    57.28,
+    45.2
+  ],
+  "duree_s": 458,
+  "git": "147906da",
   "routed_percent": 100,
-  "drc_violations": 28,
+  "drc_violations": 36,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:16,silk_overlap:12",
+  "types_violations": "silk_overlap:18,silk_over_copper:16,silk_edge_clearance:2",
   "abouti": true,
   "board": {
-    "segments": 356,
-    "vias": 71,
-    "zones": 4,
+    "segments": 375,
+    "vias": 76,
+    "zones": 3,
     "empreintes": 63
   },
   "drc_du_board": {
-    "violations": 14,
+    "violations": 18,
     "non_connectes": 0,
-    "types": "silk_over_copper:8,silk_overlap:6",
+    "types": "silk_edge_clearance:1,silk_over_copper:8,silk_overlap:9",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -35,9 +39,9 @@
     "empreintes": 62
   },
   "drc_du_placement": {
-    "violations": 135,
+    "violations": 139,
     "non_connectes": 121,
-    "types": "silk_over_copper:8,silk_overlap:6,unconnected_items:121",
+    "types": "silk_edge_clearance:1,silk_over_copper:8,silk_overlap:9,unconnected_items:121",
     "erreurs": [
       "unconnected_items"
     ],

@@ -114,6 +114,16 @@ def main() -> int:
     schema = json.loads((_HERE / "input" / "schema.json").read_text(encoding="utf-8"))
     board_w = schema["board_width_mm"]
     board_h = schema["board_height_mm"]
+    # ⚠️ LE RESSERREMENT DU CONTOUR N A JAMAIS TOURNE DANS LE BANC. `/place/auto`
+    # n ajuste `Edge.Cuts` au placement que si l appelant l y AUTORISE
+    # (`auto_size_board`), et ce pipeline ne l envoyait pas : le defaut du
+    # modele est `False`. La chaine de PRODUCTION, elle, le passe depuis
+    # `handlePlacement` — le banc mesurait donc un comportement que le produit
+    # n a pas. Mesure du 2026-09-23, carte-10 : carte de 140 x 105 mm pour un
+    # circuit de 51 x 66, soit 23 % d occupation, et des connecteurs a 56-75 mm
+    # du circuit. Septieme levier de ce projet qui existe et n est pas appele.
+    # La taille n est imposee que si la DESCRIPTION la donne — le schema le dit.
+    taille_imposee = bool(schema.get("board_size_imposed", False))
     base = {
         "components": schema["components"],
         "nets": schema["nets"],
@@ -223,6 +233,7 @@ def main() -> int:
               "kicad_pcb_b64": _b64(pcb_gen),
               "board_width_mm": board_w,
               "board_height_mm": board_h,
+              "auto_size_board": not taille_imposee,
           })
           place = _unb64(res_p["kicad_pcb_b64"])
           _done(t, placés=res_p.get("placed_count"), status=res_p.get("status"))
