@@ -36,7 +36,11 @@ function constantePython(nom: string): number {
 describe('budget ERC', () => {
   it('couvre le pire cas que le service s’accorde lui-même', () => {
     const iterations = constantePython('_MAX_ITERATIONS');
-    const cliTimeoutS = constantePython('_KICAD_CLI_TIMEOUT_S');
+    // ⚠️ LE PLAFOND, pas le plancher : depuis le 2026-09-23 le service DÉDUIT
+    // son budget de la taille du schéma (une seconde par kilo-octet) entre un
+    // plancher de 120 s et un plafond de 240 s. Le pire cas du service est
+    // donc le PLAFOND, et c'est lui que le client doit couvrir.
+    const cliTimeoutS = constantePython('_KICAD_CLI_TIMEOUT_PLAFOND_S');
     // + la validation kicad-tools qui précède kicad-cli (≈ 3 s mesurées) et le
     // transport : on exige au moins 15 s de marge au-delà des passes kicad-cli.
     const pireCasMs = (iterations * cliTimeoutS + 15) * 1000;

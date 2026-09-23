@@ -79,11 +79,21 @@ _MAX_ITERATIONS: int = 3
 # DEDUIT DE LA TAILLE, avec un plancher : une seconde par kilo-octet de schema,
 # jamais moins de 120 s (quatre fois le point d echec mesure).
 _KICAD_CLI_TIMEOUT_PLANCHER_S: int = 120
+# ⚠️ ET UN PLAFOND, sans quoi le budget croit avec le fichier sans borne — et
+# le budget du CLIENT ne peut alors plus couvrir le pire cas du service, ce que
+# `erc-budget.test.ts` verifie justement. Un budget non borne d un cote rend
+# inatteignable la garde de l autre.
+_KICAD_CLI_TIMEOUT_PLAFOND_S: int = 240
 
 
 def _budget_erc_s(taille_octets: int) -> int:
-    """Le temps accorde a `kicad-cli sch erc`, deduit de la taille du schema."""
-    return max(_KICAD_CLI_TIMEOUT_PLANCHER_S, int(taille_octets / 1024) + 60)
+    """Le temps accorde a `kicad-cli sch erc`, deduit de la taille du schema.
+
+    Une seconde par kilo-octet, entre un plancher de 120 s (quatre fois le
+    point d echec mesure le 2026-09-23) et un plafond de 240 s.
+    """
+    return max(_KICAD_CLI_TIMEOUT_PLANCHER_S,
+               min(_KICAD_CLI_TIMEOUT_PLAFOND_S, int(taille_octets / 1024) + 60))
 
 
 # ----------------------------------------------------------------------------

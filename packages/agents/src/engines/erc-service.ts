@@ -29,7 +29,21 @@ const log = pino({
  *
  * Garde (lit les limites dans `routers/erc.py`) : tests/erc-budget.test.ts.
  */
-export const ERC_TIMEOUT_MS = 120_000;
+// ⚠️ 735 s, et ce n'est pas un chiffre rond : c'est le PIRE CAS QUE LE SERVICE
+// S'ACCORDE, lu dans `routers/erc.py` — `_MAX_ITERATIONS` (3) passes de
+// `kicad-cli sch erc` plafonnées à `_KICAD_CLI_TIMEOUT_PLAFOND_S` (240 s),
+// plus 15 s pour la validation kicad-tools qui les précède et le transport.
+//
+// Il valait 120 s jusqu'au 2026-09-23, quand le budget du service était de
+// 30 s à plat. Ce jour-là, deux cartes du banc ont été perdues parce que
+// `kicad-cli` dépassait ces 30 s sur un schéma de 140 à 190 ko ; le service
+// déduit désormais son budget de la taille du fichier, et le client doit
+// suivre. Un budget relevé à une seule extrémité est décoratif — c'est la
+// leçon des QUATRE frontières du routage, réapprise ici.
+//
+// `erc-budget.test.ts` lit les deux constantes Python et échoue si l'écart se
+// rouvre.
+export const ERC_TIMEOUT_MS = 735_000;
 
 export class ErcServiceUnavailableError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
