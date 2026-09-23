@@ -2439,6 +2439,29 @@ recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
 dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
 instrument qui condamne un board sain.
 
+### Leçon inscrite le 2026-09-23 (bis) — j'ai faussé mon propre banc, DEUX JOURS après l'avoir écrit
+
+**NEVER lancer QUOI QUE CE SOIT pendant un banc — y compris une revue en
+lecture seule.** Le 2026-09-22, ce fichier a reçu « la qualité du routage dépend
+de la CHARGE » après qu'une consultation d'agent eut fait échouer 3 tirages sur
+3. Le lendemain, j'ai lancé une revue multi-agents pendant le banc, en me disant
+qu'elle ne touchait à rien. `carte-08` est sortie `abouti=False` sur un **HTTP
+500 de `/erc`** : `kicad_tools/sexp/parser.py` a tenu le GIL **plus de 4,5 s**
+sur un schéma de 190 ko pendant que cinq agents se disputaient le processeur, et
+uvicorn tue tout worker qui ne répond pas à son ping en 5 s (leçon du
+2026-09-10). Relancée seule : **193 s, 0 erreur, 0 manquante.**
+
+Le placement n'était pas en cause. La charge l'était, et c'est moi qui l'avais
+mise. Une règle écrite n'est pas une règle appliquée — c'est vrai du code, et
+c'est vrai de moi.
+
+**NEVER répartir des composants en déplaçant ce qui est déjà posé.** Le remède
+au tas de périphériques ne change QUE l'angle de départ de la recherche : le
+premier de chaque groupe garde exactement la direction que la graine a
+calculée, les suivants s'en écartent en éventail, et `le_long_du_rayon` reste
+seul juge de ce qui est libre. Une répartition qui déplacerait les directs
+perdrait la topologie — la broche que chaque périphérique doit viser.
+
 ### Leçon inscrite le 2026-09-23 — le banc mesurait ce que le produit ne fait pas
 
 **NEVER laisser le BANC appeler le service autrement que la PRODUCTION.**

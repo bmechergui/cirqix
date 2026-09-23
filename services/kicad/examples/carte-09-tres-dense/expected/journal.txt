@@ -3,32 +3,32 @@ SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=206979o  (6.8s)
+    -> taille=206979o  (3.5s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (11.7s)
+    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (53.2s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=164366o  (1.0s)
+    -> taille=164366o  (2.9s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=62 Â· status=None  (46.9s)
+    -> placÃ©s=62 Â· status=None  (132.3s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=75 Â· warning=None  (369.2s)
+    -> routÃ©=100% Â· couches=4 Â· vias=63 Â· warning=None  (208.6s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True Â· violations=36 Â· erreurs=0  (5.9s)
+    -> clean=True Â· violations=16 Â· erreurs=0  (5.0s)
    essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
@@ -37,7 +37,7 @@ SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=36 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.7s)
+    -> clean=True Â· violations=16 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.5s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
@@ -50,7 +50,7 @@ SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.9s)
+    -> fichiers=22 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (5.2s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -66,6 +66,8 @@ SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
        + led-blinker-F_Mask.gts
        + led-blinker-F_Paste.gtp
        + led-blinker-F_Silkscreen.gto
+       + led-blinker-In1_Cu.g1
+       + led-blinker-In2_Cu.g2
        + led-blinker-Margin.gbr
        + led-blinker-User_Drawings.gbr
        + led-blinker-job.gbrjob
@@ -73,7 +75,7 @@ SchÃ©ma (driver LLM) : 62 composants, 49 nets, board 130x100mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=36 drc_clean=True files=20 types=silk_overlap:18,silk_over_copper:16,silk_edge_clearance:2
-VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
+SUMMARY routed=100 drc_violations=16 drc_clean=True files=22 types=silk_overlap:8,silk_over_copper:8
+VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 22 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-09-tres-dense-1790147320/output
+Artefacts : /tmp/banc-carte-09-tres-dense-1790151565/output

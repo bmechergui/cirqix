@@ -7,11 +7,11 @@
     50
   ],
   "board_mm": [
-    43.58,
+    40.01,
     32.6
   ],
-  "duree_s": 130,
-  "git": "147906da",
+  "duree_s": 374,
+  "git": "d0b8c32f",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -19,9 +19,9 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 163,
-    "vias": 34,
-    "zones": 3,
+    "segments": 214,
+    "vias": 33,
+    "zones": 4,
     "empreintes": 27
   },
   "drc_du_board": {

@@ -3,32 +3,32 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=230254o  (5.0s)
+    -> taille=230254o  (19.9s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (6.9s)
+    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (7.0s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=181467o  (1.2s)
+    -> taille=181467o  (1.9s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=70 Â· status=None  (44.0s)
+    -> placÃ©s=70 Â· status=None  (41.4s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=100% Â· couches=4 Â· vias=87 Â· warning=None  (346.5s)
+    -> routÃ©=100% Â· couches=2 Â· vias=83 Â· warning=None  (230.8s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True Â· violations=49 Â· erreurs=0  (4.2s)
+    -> clean=True Â· violations=9 Â· erreurs=0  (3.9s)
    essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
@@ -37,20 +37,20 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=49 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (3.8s)
+    -> clean=True Â· violations=9 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.9s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
+       ! silk_over_copper: Silkscreen clipped by solder mask
+       ! silk_over_copper: Silkscreen clipped by solder mask
+       ! silk_over_copper: Silkscreen clipped by solder mask
+       ! silk_over_copper: Silkscreen clipped by solder mask
 
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=22 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.3s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.5s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -66,8 +66,6 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
        + led-blinker-F_Mask.gts
        + led-blinker-F_Paste.gtp
        + led-blinker-F_Silkscreen.gto
-       + led-blinker-In1_Cu.g1
-       + led-blinker-In2_Cu.g2
        + led-blinker-Margin.gbr
        + led-blinker-User_Drawings.gbr
        + led-blinker-job.gbrjob
@@ -75,7 +73,7 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=49 drc_clean=True files=22 types=silk_over_copper:28,silk_overlap:18,track_dangling:3
-VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 22 fichiers exportÃ©s
+SUMMARY routed=100 drc_violations=9 drc_clean=True files=20 types=silk_overlap:4,silk_over_copper:4,via_dangling:1
+VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-10-maximale-1790147793/output
+Artefacts : /tmp/banc-carte-10-maximale-1790152007/output

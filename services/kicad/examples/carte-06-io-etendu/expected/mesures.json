@@ -7,27 +7,27 @@
     60
   ],
   "board_mm": [
-    48.5,
+    46.5,
     36.4
   ],
-  "duree_s": 150,
-  "git": "147906da",
+  "duree_s": 453,
+  "git": "d0b8c32f",
   "routed_percent": 100,
-  "drc_violations": 26,
+  "drc_violations": 32,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:14,silk_over_copper:12",
+  "types_violations": "silk_over_copper:20,silk_overlap:12",
   "abouti": true,
   "board": {
-    "segments": 214,
-    "vias": 44,
-    "zones": 3,
+    "segments": 316,
+    "vias": 43,
+    "zones": 4,
     "empreintes": 36
   },
   "drc_du_board": {
-    "violations": 13,
+    "violations": 16,
     "non_connectes": 0,
-    "types": "silk_over_copper:6,silk_overlap:7",
+    "types": "silk_over_copper:10,silk_overlap:6",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -39,9 +39,9 @@
     "empreintes": 35
   },
   "drc_du_placement": {
-    "violations": 84,
+    "violations": 87,
     "non_connectes": 71,
-    "types": "silk_over_copper:6,silk_overlap:7,unconnected_items:71",
+    "types": "silk_over_copper:10,silk_overlap:6,unconnected_items:71",
     "erreurs": [
       "unconnected_items"
     ],

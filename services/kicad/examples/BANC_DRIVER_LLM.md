@@ -412,6 +412,64 @@ reroutage échoue.
    dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
    laisse passer. Pas ramené à un huitième de marge.
 
+### Les périphériques se RÉPARTISSENT, ils ne s'empilent plus (2026-09-23)
+
+Deuxième défaut visible après le resserrement du contour : les composants
+s'entassaient d'un seul côté du boîtier, étiquettes de sérigraphie par-dessus
+les unes des autres, pendant que trois quarts de la couronne restaient vides.
+
+**Deux causes, toutes deux dans `_poser_les_peripheriques`, toutes deux la
+même faute :** un angle unique pour tout un groupe.
+
+- les périphériques **directs** qui visent la même broche — tous les
+  découplages d'un rail, toutes les résistances d'un même signal — recevaient
+  le MÊME `angle_vers` et le même rayon de départ ;
+- les **suiveurs** d'un même parent recevaient tous `atan2(parent − centre)` ;
+- les **isolés** partaient tous de l'angle `0.0`, c'est-à-dire du même point.
+
+`le_long_du_rayon` ne s'écartait qu'une fois la place prise : d'où la file
+radiale. Le remède ne déplace RIEN de posé — le premier de chaque groupe garde
+exactement la direction calculée, les suivants s'en écartent en éventail
+(`_ecart_en_eventail`, pas de `3 × _PAS_ANGLE_DEG`), et `le_long_du_rayon`
+reste seul juge de ce qui est libre.
+
+Mesuré sur `carte-10` : amas du circuit 46,5 → **39,5 mm** de large, carte
+61,0 → **59,0 mm**, toutes les étiquettes lisibles, routage inchangé.
+
+### BANC du 2026-09-23 (3e passage) — dix cartes, contour resserré ET périphériques répartis
+
+| carte | demandée | livrée | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 13,6** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **34,9 × 25,2** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **27,6 × 19,9** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 29,8** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **40,0 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **46,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **47,7 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **57,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,8 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **59,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé. `carte-07` gagne encore 5,5 mm de largeur sur le
+passage précédent, `carte-06` deux, `carte-10` deux.
+
+⚠️ **J'AI FAUSSÉ CE BANC EN COURS DE ROUTE, et c'est la faute que ce fichier
+interdit depuis la veille.** J'ai lancé une revue multi-agents pendant que le
+banc tournait. `carte-08` est sortie `abouti=False` sur un **HTTP 500 de
+`/erc`** : le lecteur S-expression de `kicad-tools` a tenu le GIL plus de
+4,5 s pendant que cinq agents se disputaient le processeur, et le superviseur
+uvicorn tue tout worker muet plus de 5 s (leçon du 2026-09-10). Relancée seule,
+machine libre : **193 s, 0 erreur, 0 manquante**. Le placement n'était pas en
+cause — la charge l'était. **NEVER lancer quoi que ce soit pendant un banc**,
+y compris une revue qui ne touche à rien.
+
+⚠️ **Ce qui reste à faire, et qui se voit encore sur le rendu** : une zone vide
+subsiste entre le circuit et les connecteurs du bord, et quelques composants
+sans lien (`C1`, `C2`, `C3` sur `carte-10`) restent loin de tout. La carte est
+à la bonne taille et la couronne est servie ; le RAPPROCHEMENT des connecteurs
+vers le circuit ne l'est pas encore.
+
 ### ⚠️ LE CONTOUR N'ÉTAIT JAMAIS RESSERRÉ DANS LE BANC (2026-09-23)
 
 Question de l'utilisateur devant les rendus : « tu es satisfait de ce
