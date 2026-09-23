@@ -755,7 +755,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "ca05b725-c9d7-4943-82da-8f1056f6f084")
+		(uuid "8581a665-4806-4474-a671-b62d8ec699e3")
 	)
 	(footprint "PinHeader_1x02_P2.54mm_Vertical"
 		(version 20260206)
@@ -937,7 +937,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "2803f516-1c42-4c5f-834b-f0db599b238c")
+		(uuid "8da9db84-6edc-44b0-bd9f-7604499f2c0b")
 	)
 	(footprint "SOT-223-3_TabPin2"
 		(version 20260206)
@@ -950,7 +950,7 @@
 		(property "Reference" "U2"
 			(at 0 -4.5 0)
 			(layer "F.SilkS")
-			(uuid "e83e3051-78fc-441a-bfde-7c7e94c2782a")
+			(uuid "c72ca9dc-bedf-4107-84a8-4ce3111fde65")
 			(effects
 				(font
 					(size 1 1)
@@ -1292,7 +1292,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "fdbf33e6-8293-4c85-9271-420dfc0fe58e")
+		(uuid "c5f7a209-da97-485d-91ec-d0e4d2da9712")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -1399,7 +1399,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "4fe0b279-ada7-4426-8245-08583424451e")
+		(uuid "e0f8410e-6b41-4962-8cff-57ec8a7dd0f3")
 	)
 	(footprint "C_0805_2012Metric"
 		(version 20260206)
@@ -1506,13 +1506,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "df1f8c6a-ecbf-4581-8000-b62537993f12")
+		(uuid "3887e003-bd22-460d-8b2c-e236486151ee")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 107.5 87)
+		(at 104.5 87.5)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R1"
@@ -1613,17 +1613,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "b368bf0d-ddca-4b07-aede-9734eca4440e")
+		(uuid "e24853cc-1302-4b15-950b-f959e1cc406b")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 101.5 87.5)
+		(at 97 88.5)
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D1"
-			(at -1.13137 -2.56137 0)
+			(at -0.565685 -1.99569 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -1766,13 +1766,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "40d8bfe6-f8bc-488e-a0ee-4d890d1e1eed")
+		(uuid "ad2f6675-f6a4-4a11-9f73-10e7a99522d0")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 100.5 80.5)
+		(at 111.5 92.5)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R2"
@@ -1873,7 +1873,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e681606d-4aec-4ffb-b9bd-0d18271e9532")
+		(uuid "5563acee-fbca-4bd4-bea8-c93979cca476")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -1883,7 +1883,7 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C20"
-			(at 4 -1.43 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -1980,7 +1980,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "35d83e53-ddc2-49a9-b12d-9ffbad65e1cc")
+		(uuid "f30c3954-5894-4a47-a4af-01db6466c41f")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -2178,17 +2178,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "af80f03a-a960-4f3c-b48f-2eeff5bc9690")
+		(uuid "05a977d1-f810-4fe2-8831-99d7e4180f94")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 112.5 76.5)
+		(at 120 76.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C30"
-			(at -0.8 -1.43 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -2285,7 +2285,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "f420aacf-15ef-4828-83fd-2db8412137ce")
+		(uuid "b9861d87-44dd-43fd-8baa-40a1b51cf035")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -2392,17 +2392,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "15adc856-d9da-458d-b717-ab8b7d7cbe65")
+		(uuid "0cef486a-f744-4764-a3b5-b1c45bccc55e")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 109 83)
+		(at 112.5 76.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C32"
-			(at 2.4 -1.43 0)
+			(at -0.8 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -2499,7 +2499,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "7b00dd8e-7dd5-4ccc-83a6-d8bfddafee85")
+		(uuid "e68c47b8-73b7-404b-a510-6d88e1a80f00")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -2606,7 +2606,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9cfc4926-634c-44a0-8ca4-f6e87c45f6b3")
+		(uuid "f31a0016-89d1-4e10-90cc-15d15ebdc426")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -2713,7 +2713,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "a1715ca2-e5f7-4fda-97bd-da7d747a310d")
+		(uuid "0871e0c1-f8cd-4c8f-a036-51d5152d3537")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -2820,7 +2820,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "88555748-36b8-419b-8d29-334ad9fec30a")
+		(uuid "d8425556-440b-4f61-9c70-1330fd035e18")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -2927,7 +2927,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "3ec8bc91-4d29-4e23-8909-9d7dd08aa101")
+		(uuid "840c9576-4b29-450b-841c-c5857db3cd1f")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3080,7 +3080,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "2ad9211b-528c-4b1c-88fd-3650ceffdec6")
+		(uuid "c16234ae-ffcd-4940-9303-10c25088023c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3187,7 +3187,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "b0c1887c-4eac-438d-978a-cc4185f0072d")
+		(uuid "1e0155c2-d005-4b9c-af74-ae73b2f5506c")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3340,7 +3340,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "10d84b2b-4148-4cbf-9785-910663d9e448")
+		(uuid "6339d3d1-c415-4265-8d37-1d69cc17dedc")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3447,7 +3447,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "4cea521f-8795-47c8-b11a-fb9f34e1c1da")
+		(uuid "8bdb2cf6-d7fa-4ca5-92a1-e9a447db346e")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3457,7 +3457,7 @@
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D12"
-			(at 0 -1.43 0)
+			(at 3.2 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -3600,7 +3600,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "1e79b3d4-26ed-4005-a4f3-a971b0adcfb4")
+		(uuid "1a60254c-4907-419e-827d-b054e500f277")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3707,17 +3707,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "12f45d51-b032-49e6-b444-c90e32dce6db")
+		(uuid "77606385-e031-4be0-9821-274bf9b112dd")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 103.5 85.5)
+		(at 104 85.5)
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D13"
-			(at 0 -1.43 0)
+			(at -2.82843 -4.25843 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -3860,7 +3860,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "5da9e70f-b46b-42bd-9f70-cc021fa2b87e")
+		(uuid "8901c7ef-205c-44d0-8e0e-70b73ef16cc1")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3870,7 +3870,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R14"
-			(at -3.2 -1.43 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -3967,7 +3967,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "f41b636e-bcb3-4215-b5f5-0ab034acd6ac")
+		(uuid "482b6c73-a2c9-43f6-a5ef-85f53e2c7aa9")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3977,7 +3977,7 @@
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D14"
-			(at 1.95943e-16 1.77 0)
+			(at 3.2 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -4120,13 +4120,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "59c67dd9-f26f-418e-8c98-2e40a3671353")
+		(uuid "59b2ec40-253f-495f-9b36-32ae737e2618")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 122 75)
+		(at 123.5 76)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R15"
@@ -4227,7 +4227,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "cdeeafcf-2c59-4e80-baab-692b6f2796ee")
+		(uuid "5288dbe6-4954-4024-b38d-5cee351c8967")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -4380,7 +4380,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "139621c9-ab88-4305-9852-90ecc38749a2")
+		(uuid "88e136e1-a824-4bad-8107-d60e9cbd3e10")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -4487,17 +4487,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "4d689a5a-98e2-4e82-baba-f25b8231fa79")
+		(uuid "11332de4-b583-4e9f-944c-859dd6d8c2c9")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 104 91)
+		(at 97 94)
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D16"
-			(at -0.565685 -1.99569 0)
+			(at -1.46958e-16 -2.23 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -4640,17 +4640,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e005cb89-3fa3-4159-b9c4-28b0d80300d2")
+		(uuid "54a87c11-7fe1-4756-ade5-5463c9b9ac98")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 104 93)
+		(at 108 87)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R17"
-			(at -4 -1.43 0)
+			(at -5.8783e-16 -4.63 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -4747,17 +4747,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "8c6e2437-9b9a-49c9-b0a1-b384b1f0a882")
+		(uuid "e3016abe-3783-46db-ad2a-c8b7e5e555db")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 104 95)
+		(at 100.5 89)
 		(descr "LED SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
 		(tags "LED")
 		(property "Reference" "D17"
-			(at 1.95943e-16 1.77 0)
+			(at -1.46958e-16 -2.23 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -4900,17 +4900,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "5549cfe0-b188-4dc0-a1db-4881ac503ef5")
+		(uuid "6ff0e53a-ea75-4988-ab5a-99132f5855e0")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 97.27 92.31)
+		(at 100.7 92.31)
 		(descr "Through hole straight pin header, 1x04, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x04 2.54mm single row")
 		(property "Reference" "J10"
-			(at 0 -2.38 0)
+			(at 3.2 -2.38 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -5098,7 +5098,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "083eeda7-1fbb-43e2-b9b9-50cf00918242")
+		(uuid "2a453cd1-522c-4493-a4da-b9303ac423ea")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -5108,7 +5108,7 @@
 		(descr "Through hole straight pin header, 1x04, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x04 2.54mm single row")
 		(property "Reference" "J11"
-			(at 3.2 -2.38 0)
+			(at 0 -2.38 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -5296,7 +5296,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "7a122462-6638-48a9-9433-823e0ae5888a")
+		(uuid "84f4fc70-f456-4544-a7c4-b6d5218f584c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5403,7 +5403,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "90735869-e8f6-4616-a757-6a5119aba77e")
+		(uuid "5ee12a77-5068-40a1-98e4-64cf6010b4c8")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5556,7 +5556,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "08382002-a6af-4001-89f5-215d3c070ad0")
+		(uuid "eb905222-b229-4a79-8468-10c419eb1b7a")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5663,7 +5663,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "87123712-6a75-43b6-8703-1f11c3cfaaf9")
+		(uuid "eae89c38-bb51-4606-bcbb-a715b7ac665e")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5816,7 +5816,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "117ecc7c-17a9-4409-b545-84d66dcf9a3f")
+		(uuid "6d23528b-aadf-4819-80af-04effe68c125")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5923,7 +5923,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "130bcc0d-e125-457e-9049-539461fd8037")
+		(uuid "97fefbd2-7ee6-43bb-83b3-ee1c5f3848be")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6076,7 +6076,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "10f2e850-b489-4b90-9c4f-0824729cb49d")
+		(uuid "5f210bba-460c-4c7a-a8f5-46858326d850")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -6183,7 +6183,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "17377dac-16ae-49cd-92b5-85e4e71f3f42")
+		(uuid "e366dffc-cf0d-4f67-95ce-a11e030b9592")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6336,7 +6336,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "27ce4db8-57a4-4789-996c-c2fc9e256957")
+		(uuid "2fa410a0-1246-4052-b2c9-ca8eaa7f15f5")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -6534,7 +6534,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "23212659-276c-459f-b355-e66c7eb65a18")
+		(uuid "50338693-129b-4b25-be7b-b1dd9f6a4b2f")
 	)
 	
 	(gr_rect

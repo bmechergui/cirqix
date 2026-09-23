@@ -10,8 +10,8 @@
     36.55,
     29.83
   ],
-  "duree_s": 133,
-  "git": "d0b8c32f",
+  "duree_s": 155,
+  "git": "14413a77",
   "routed_percent": 100,
   "drc_violations": 0,
   "drc_clean": true,
@@ -19,7 +19,7 @@
   "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 97,
+    "segments": 102,
     "vias": 22,
     "zones": 4,
     "empreintes": 16

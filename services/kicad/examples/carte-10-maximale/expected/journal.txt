@@ -3,32 +3,32 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=230254o  (19.9s)
+    -> taille=230254o  (4.8s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (7.0s)
+    -> clean=False Â· violations=4 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (24.5s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=181467o  (1.9s)
+    -> taille=181467o  (1.6s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=70 Â· status=None  (41.4s)
+    -> placÃ©s=70 Â· status=None  (40.3s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=83 Â· warning=None  (230.8s)
+    -> routÃ©=100% Â· couches=2 Â· vias=102 Â· warning=None  (913.0s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True Â· violations=9 Â· erreurs=0  (3.9s)
+    -> clean=True Â· violations=12 Â· erreurs=0  (6.3s)
    essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
@@ -37,20 +37,20 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=9 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.9s)
+    -> clean=True Â· violations=12 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.5s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
-       ! silk_over_copper: Silkscreen clipped by solder mask
-       ! silk_over_copper: Silkscreen clipped by solder mask
+       ! silk_overlap: Silkscreen clearance
+       ! silk_overlap: Silkscreen clearance
        ! silk_over_copper: Silkscreen clipped by solder mask
        ! silk_over_copper: Silkscreen clipped by solder mask
 
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.5s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (3.3s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -73,7 +73,7 @@ SchÃ©ma (driver LLM) : 70 composants, 49 nets, board 140x105mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=9 drc_clean=True files=20 types=silk_overlap:4,silk_over_copper:4,via_dangling:1
+SUMMARY routed=100 drc_violations=12 drc_clean=True files=20 types=silk_overlap:6,silk_over_copper:6
 VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-10-maximale-1790152007/output
+Artefacts : /tmp/banc-carte-10-maximale-1790172542/output

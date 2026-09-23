@@ -106,7 +106,7 @@
 		(descr "LQFP, 48 Pin (JEDEC MS-026 variation BBC, 1.40mm body thickness, https://www.jedec.org/document_search?search_api_views_fulltext=MS-026, https://www.analog.com/media/en/package-pcb-resources/package/pkg_pdf/ltc-legacy-lqfp/05081760_a_lx48.pdf)")
 		(tags "LQFP QFP CASE-932AA CASE-932-03 C48-1 C48-2 C48-3 C48-5 C48-6 C48-6C PT0048A")
 		(property "Reference" "U1"
-			(at -0.8 -5.85 0)
+			(at 0 -5.85 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -759,7 +759,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "3494f217-db8a-4ba6-9abf-1567162b1c3e")
+		(uuid "1840c29f-ad95-4e85-a15f-a4ce88fcef3d")
 	)
 	(footprint "PinHeader_1x02_P2.54mm_Vertical"
 		(version 20260206)
@@ -941,7 +941,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e5e04a31-88e1-4aad-9b90-5e94f4877e7e")
+		(uuid "125975ba-348b-4a8a-8f6a-41b25e9e3932")
 	)
 	(footprint "SOT-223-3_TabPin2"
 		(version 20260206)
@@ -954,7 +954,7 @@
 		(property "Reference" "U2"
 			(at 0 -4.5 0)
 			(layer "F.SilkS")
-			(uuid "03e2f445-bfd1-47f4-9bda-c2f42979bb13")
+			(uuid "165d4cc5-88b0-46ab-9e6b-04f791c30a1f")
 			(effects
 				(font
 					(size 1 1)
@@ -1296,7 +1296,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9808ecb5-2d3f-4a29-97a0-3db6cf9b8769")
+		(uuid "703cefbb-943f-4c50-82eb-05fc74333f6a")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -1403,7 +1403,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "ce4bb238-da3b-4a44-897c-613746fe1b36")
+		(uuid "ba76c9fd-64df-440d-bbbc-44edcaa22fc4")
 	)
 	(footprint "C_0805_2012Metric"
 		(version 20260206)
@@ -1510,17 +1510,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "77fb80d1-edad-4002-9433-787f61aef91f")
+		(uuid "7d81b80c-2c2e-4057-8234-e5530bd1ad7c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 122 66.5)
+		(at 122 63)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R1"
-			(at -5.8783e-16 -4.63 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -1617,7 +1617,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9cf9a98c-2438-449a-a1dd-d670e910aaf8")
+		(uuid "86f549d6-81c9-4a0e-b97d-ad58b5baf392")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -1770,17 +1770,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "6f85ee99-e34d-4d0e-a0f3-4fed0538c52c")
+		(uuid "b649e986-2a14-4240-8302-b7aa4413dea9")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 122 64.5)
+		(at 122 65.5)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R2"
-			(at 0 -1.43 0)
+			(at -3.2 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -1877,7 +1877,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "29fe7f07-76f6-4fdf-9a97-5ab2782896a2")
+		(uuid "468db0da-e262-4773-9c8d-ca0229e2a03c")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -1984,7 +1984,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "c39b8f39-caa6-46c0-947f-0e7acc096a06")
+		(uuid "e45614b8-1544-48aa-8f0f-d519aeb3089d")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -2182,17 +2182,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "cad6d7ce-5498-4df9-8ad5-5637b763e6be")
+		(uuid "6e46e7d2-5412-443c-bb74-a40e7f6a3f01")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 107.5 71.5)
+		(at 107 83.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C30"
-			(at 0 -1.43 0)
+			(at 1.95943e-16 1.77 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -2289,13 +2289,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "cce3b4e2-7e80-442b-8216-4811ef7a32a2")
+		(uuid "d607809c-99db-4df9-b07c-60032d4a8ea6")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 116 72.5)
+		(at 118 73)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C31"
@@ -2396,13 +2396,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "2631a085-30da-4f84-bbfb-0db30c2c0681")
+		(uuid "9eef753d-da21-41bc-9bd2-c673d98cf687")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 103 71)
+		(at 106 81.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C32"
@@ -2503,7 +2503,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9c8e37e5-5470-4f4f-aeae-bfc63039d9a5")
+		(uuid "7d66e81a-1f47-4bf0-9e91-03e76b7aefc3")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -2610,17 +2610,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "ffd036b3-5659-413d-9f4f-b5b015323118")
+		(uuid "e59804d0-abea-44dc-8196-4f7daa9eb705")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 107 82)
+		(at 110.5 70.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C34"
-			(at 0 -1.43 0)
+			(at -1.46958e-16 -2.23 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -2717,13 +2717,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "6345edc9-116b-47e4-818e-46e001d9c1f4")
+		(uuid "c421cc01-5d75-47ce-a70c-77a0d49666cd")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 111.5 70.5)
+		(at 114 71.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C35"
@@ -2824,17 +2824,17 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "35c6ea4f-195d-42f9-88d2-f6302d09b740")
+		(uuid "84fa72bb-9039-43f9-a1d0-f2931132e617")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 108 84)
+		(at 107.5 71.5)
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "capacitor")
 		(property "Reference" "C36"
-			(at 1.95943e-16 1.77 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -2931,7 +2931,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "2fc32444-a8f4-42d2-827e-72e304382682")
+		(uuid "c7e81d08-1689-4d66-96f5-45d72b0386d8")
 	)
 	(footprint "C_0603_1608Metric"
 		(version 20260206)
@@ -3038,7 +3038,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9d250ec5-ef42-4f28-885e-febf7f884ac1")
+		(uuid "7e393670-1175-4c50-b23b-1c467feda2e1")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3048,7 +3048,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R10"
-			(at -5.8783e-16 -4.63 0)
+			(at 0 -1.43 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -3145,7 +3145,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "0a38c767-d66a-4688-9bbd-063749a5e484")
+		(uuid "b89e2dd1-a880-4464-8c48-1225d14b29cd")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3298,7 +3298,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "63842a65-cff5-489f-ab70-e20e360580d8")
+		(uuid "69e84d48-93f1-4139-a951-32e10f775698")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3308,7 +3308,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R11"
-			(at 0 -1.43 0)
+			(at 1.69706 -3.12706 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -3405,7 +3405,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "0d546ab7-29c6-4b95-8d6d-26b9fb09281e")
+		(uuid "9439737b-329d-426e-abc3-2bd254290669")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3558,7 +3558,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "d609c09d-c61a-4ff3-a03a-11a606f93ac4")
+		(uuid "bc298f7a-8dab-484f-85e6-c2f4ed69e5c8")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3665,7 +3665,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "4bf34987-6a39-4397-8076-a12e11c04e01")
+		(uuid "50ec723b-8380-4424-97d8-3d5bf422652d")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -3818,7 +3818,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9bffd006-fee4-4ca3-aa7e-f5529dcd4864")
+		(uuid "90662296-a6b0-4e16-9337-7a1d837b6942")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -3925,7 +3925,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9f8c7ee7-743e-44e1-8181-3b928a28f9aa")
+		(uuid "1802cde0-8646-4f49-96db-4544cddf0bf7")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -4078,7 +4078,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "b5bd3d72-74f6-4eb4-81c7-79d867df4771")
+		(uuid "aa43484f-3b4f-4b17-8492-96c1dfa6404c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -4185,7 +4185,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "6fe6d60e-6980-434a-b7fe-ad170ea5bc01")
+		(uuid "173aad51-af0a-427c-b297-c470c41261d9")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -4338,7 +4338,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "0cb03de5-94c9-448a-9204-7aaa51778dee")
+		(uuid "a31186ed-6580-4e6e-976b-b44138894723")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -4445,7 +4445,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "8301aed0-d7ae-4655-b194-5d4cff3256dd")
+		(uuid "6dd46794-0c24-40a6-ab33-a0d787b98d8f")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -4598,7 +4598,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "f1f78bbd-165a-45a1-be57-a0b26738ae50")
+		(uuid "2ba9e10f-263b-4bcf-bd61-96b8e72fbec1")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -4705,7 +4705,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "21de7790-7161-4517-8eed-d6a7633637ce")
+		(uuid "2782c5fe-6fb3-4696-ad39-730445886c36")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -4858,7 +4858,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e4555f9a-5980-45ca-9755-449d64a37e74")
+		(uuid "695d72b6-4fbd-4adb-b96d-64e7f663b144")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -4965,7 +4965,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "0cdbf6fe-149a-499d-b81b-20a8819cb19d")
+		(uuid "e29eb16a-d4b5-4569-973c-ce7accffb8df")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5118,7 +5118,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "8c9358a0-b170-4094-ae77-985610830b28")
+		(uuid "c7628483-64cf-4b63-aeeb-f00532e85a31")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5225,7 +5225,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "09d51f22-8663-4adb-a146-ce55d212f023")
+		(uuid "ef01beeb-a3b1-4288-930f-0f735a94a0b2")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5378,7 +5378,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "b5f71069-2962-4220-86b7-a87ae461747c")
+		(uuid "312d69c7-d809-4b0d-87ed-ac93b8eadbdb")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5485,7 +5485,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "b7383289-443d-484d-ad57-39ef807ff2d4")
+		(uuid "a98f3d8c-72be-4e23-b345-d7085401cfc2")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5638,7 +5638,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "8707cd59-10f1-46d0-b901-1177818295ee")
+		(uuid "b53e4e31-82ad-4880-bb55-887ddfc295bd")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -5745,7 +5745,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "996798b4-51aa-48bf-84ff-ee617c8c1a59")
+		(uuid "80daaf9e-0ab3-429a-9cf8-704127af5eb5")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -5898,7 +5898,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "6782aaa7-c2ab-449f-8b4c-268c68191910")
+		(uuid "d1ae4c6e-4194-4cda-a4d0-cdef6e2e44ca")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -6005,7 +6005,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "3c6662ee-70df-49a5-abce-eec87b0b5e2e")
+		(uuid "3826ede6-82e8-4335-bbbe-a000d758fb65")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6158,7 +6158,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "680f9406-5400-432f-9050-aa94fb01816b")
+		(uuid "d2d2114b-efc9-4b2f-98d8-524260b33f53")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -6265,7 +6265,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "f340fcd4-ecdc-43ea-809a-50011c621f8c")
+		(uuid "788f5c06-14b9-4d14-bd7f-39635b14a2e4")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6418,7 +6418,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "ed976def-b983-4e7b-a638-579c77ecf216")
+		(uuid "561a1d15-fbe6-4655-887a-da64b7569947")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -6525,7 +6525,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "afd08e72-28ca-4524-853d-832d3241abe2")
+		(uuid "e3da9b06-f1a0-4c4d-94f0-9998ddcf170b")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6678,7 +6678,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "32222e1e-75cf-4843-9a7f-99eb059db412")
+		(uuid "2a2a5155-ffe1-4ff2-b933-f17f7a7d272c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -6785,7 +6785,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "7043cdb9-41d0-47db-8603-4fd052a4c8ae")
+		(uuid "cbe4f743-0938-4f73-91b0-7f48ff34e462")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -6938,7 +6938,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "f21ad80e-c413-4ae6-9948-f33608e7d41e")
+		(uuid "da6a933c-55e2-4c3b-96ac-24aab075cf9c")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -7045,7 +7045,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e0122cda-40d7-48b8-9a8c-8529dc5cdbcf")
+		(uuid "11da20d9-d09c-473a-ba30-b59fc2baac5a")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -7198,7 +7198,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "e6a603d5-6151-44d3-b4aa-43117c295628")
+		(uuid "4f52c9df-042a-4885-a094-cb3072668a26")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -7396,13 +7396,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "32dc3155-e3f5-4d6e-b1eb-1cd2ceac95b9")
+		(uuid "28019947-ae4d-495c-b29e-73bcddbbd0e6")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 140.03 90.11)
+		(at 140.03 89.5759)
 		(descr "Through hole straight pin header, 1x04, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x04 2.54mm single row")
 		(property "Reference" "J11"
@@ -7594,13 +7594,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "0a951e2a-c8dc-4c96-944c-949d4adfb14e")
+		(uuid "474c1def-b376-4674-991f-2f80e17c4523")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 140.03 78.6329)
+		(at 140.03 78.1329)
 		(descr "Through hole straight pin header, 1x04, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x04 2.54mm single row")
 		(property "Reference" "J12"
@@ -7792,13 +7792,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9d9056a1-1340-443a-9a00-553d0ed74c63")
+		(uuid "821bfd5f-448e-446b-b46d-aa079e464baf")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 140.03 67.19)
+		(at 140.03 66.69)
 		(descr "Through hole straight pin header, 1x04, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x04 2.54mm single row")
 		(property "Reference" "J13"
@@ -7990,7 +7990,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "df280543-db07-4ed1-af6c-1ff6c6d65293")
+		(uuid "2aa78cdc-e41c-4572-b9ff-b0f0db48d2e4")
 	)
 	(footprint "PinHeader_1x04_P2.54mm_Vertical"
 		(version 20260206)
@@ -8188,7 +8188,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "579a0352-88ee-462b-ae45-7564913c0e4c")
+		(uuid "bbe54f5d-a783-4131-9ae5-f56e9b26b8c4")
 	)
 	
 	(gr_rect
