@@ -2,47 +2,50 @@
   "exemple": "carte-08-dense",
   "composants": 56,
   "nets": 49,
-  "board_mm": [
+  "board_mm_demande": [
     125,
     95
   ],
-  "duree_s": 368,
-  "git": "4c45c7a",
+  "board_mm": [
+    57.38,
+    44.1
+  ],
+  "duree_s": 326,
+  "git": "14413a77",
   "routed_percent": 100,
-  "drc_violations": 356,
+  "drc_violations": 14,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:38,silk_over_copper:38,track_dangling:1",
+  "types_violations": "silk_over_copper:8,silk_overlap:6",
   "abouti": true,
   "board": {
-    "segments": 426,
-    "vias": 85,
+    "segments": 348,
+    "vias": 61,
     "zones": 3,
-    "empreintes": 56
+    "empreintes": 57
   },
   "drc_du_board": {
-    "violations": 1,
+    "violations": 7,
     "non_connectes": 0,
-    "types": "track_dangling:1",
+    "types": "silk_over_copper:4,silk_overlap:3",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "livre_par": "livrer_campagne.py",
-  "tirage": "carte-08-dense-t1",
-  "serigraphie_degagee": "2026-09-12",
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 107,
-    "couches": {
-      "declarees": 4,
-      "pistes_par_couche": {
-        "F.Cu": 335,
-        "B.Cu": 86,
-        "In2.Cu": 5
-      }
-    }
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 56
+  },
+  "drc_du_placement": {
+    "violations": 116,
+    "non_connectes": 109,
+    "types": "silk_over_copper:4,silk_overlap:3,unconnected_items:109",
+    "erreurs": [
+      "unconnected_items"
+    ],
+    "nb_erreurs": 109,
+    "fabricable": false
   }
 }

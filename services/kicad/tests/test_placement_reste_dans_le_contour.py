@@ -96,7 +96,18 @@ class TestReparationSurUnVraiBoard:
         monkeypatch.setattr(P, "_off_board_refs", lambda path: [])
         # Un connecteur ancré au bord est un choix : seule l'autorité de
         # l'analyseur (centre dehors) peut le faire bouger.
-        assert P._repair_off_board(f, anchored=[ref]) == []
+        # ⚠️ ON TESTE LA REF ANCRÉE, PAS LA LISTE ENTIÈRE. Cette assertion
+        # exigeait `== []`, ce qui supposait que RIEN d'autre du board de
+        # référence ne soit près d'un bord. Depuis le 2026-09-23 les cartes
+        # sont resserrées sur leur circuit — `carte-01` passe de 25 × 20 à
+        # 20,1 × 13,6 mm — et ses connecteurs sont donc LÉGITIMEMENT contre le
+        # bord : c'est la règle « toujours les connecteurs à l'extrémité ».
+        # La liste n'est plus vide, et elle n'a pas à l'être ; ce que ce test
+        # prouve est qu'un ANCRAGE n'y figure pas.
+        deplaces = P._repair_off_board(f, anchored=[ref])
+        assert ref not in deplaces, (
+            "un ancrage ne doit jamais être déplacé par la seule détection "
+            "géométrique, quels que soient les autres composants")
 
 
 class TestCablage:

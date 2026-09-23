@@ -308,6 +308,436 @@ le service en pleine exécution (dix « Connection refused » d'affilée), et un
 qui tient : un processus Windows caché (`Start-Process wsl.exe`) qui exécute le
 banc de façon SYNCHRONE, plus un second qui maintient la VM en vie.
 
+### La DERNIÈRE rupture de plan, mesurée jusqu'au bout (2026-09-22)
+
+Diagnostic complet de l'unique défaut restant, sur le board qui le porte
+VRAIMENT. Consultation de Codex et de GLM, puis mesure — et la mesure a
+tranché contre l'une des deux propositions.
+
+⚠️ **J'AI D'ABORD MESURÉ LE MAUVAIS BOARD, et il donnait un résultat
+encourageant.** `carte-10-maximale/expected/final.kicad_pcb` date du
+2026-09-21 et son propre `mesures.json` annonce `non_connectes: 0` ; mon DRC
+l'a confirmé. Le défaut du banc du 22 vit dans
+`/tmp/livr/carte-10-maximale/route.kicad_pcb`, **resté dans le conteneur** —
+la faute que ce dépôt s'interdit pourtant en toutes lettres. Sur le board
+versionné j'ai trouvé un îlot orphelin dont 92 points sur 93 faisaient face au
+plan principal, et un via y tenait avec 0,29 mm de marge : j'ai failli
+annoncer une solution pour un board qui n'a jamais eu le défaut.
+**NEVER mesurer un défaut sans avoir vérifié que l'artefact le PORTE** — un
+board propre se prête à toutes les démonstrations.
+
+Sur le vrai board (33 violations, 0 erreur, **1 connexion manquante**) :
+
+| | mesure |
+|---|---|
+| îlots du net GND, deux faces | 23 |
+| orphelins | **2**, et ce sont des JUMEAUX |
+| îlot F.Cu | 1,30 mm², porte la pastille `C35.2` |
+| îlot B.Cu | 0,99 mm², aucune pastille |
+
+**La piste « changer de face par un via » est RÉFUTÉE par la mesure.** GLM
+l'avait proposée en relevant, à juste titre, que `routing_pcbnew_runner.py`
+refuse toute cible sur l'autre face (`if c2 != couche: continue`) et que son
+A* est à deux dimensions. Mais sur ce board, **aucun** point des deux îlots
+n'a le plan principal en vis-à-vis : ils se font face L'UN L'AUTRE (9 points
+sur 25 et sur 12), ce qui est exactement le motif des jumeaux qui se portent
+garants, déjà inscrit le 2026-09-21.
+
+**Et aucun via ne tient de toute façon.** La couture de production, rejouée
+sur ce board, visite les deux îlots et refuse la TOTALITÉ de leurs sites :
+
+    ilot F.Cu 1,297 mm2   23 candidats   obstacle 16 · hors_polygone 6 · trou_trop_pres 1
+    ilot B.Cu 0,993 mm2   18 candidats   obstacle 10 · hors_polygone 7 · trou_trop_pres 1
+
+Un îlot d'un millimètre carré n'a pas la place d'un via — et le raccord par
+courte piste rend `relies: 0`, `sans_chemin: 19`.
+
+**Ce qui enferme l'amas n'est PAS un faisceau : c'est UN segment par face.**
+
+| face | distance au plan principal | ce qui coupe le couloir |
+|---|---|---|
+| F.Cu | 0,862 mm | **1 segment**, net `EXT2_1` |
+| B.Cu | 0,781 mm | **1 segment**, net `EXT4_1` |
+
+⚠️ La description « cerné par un faisceau, jusqu'à 18 segments `+3V3` »
+appartient à `carte-07`, pas à ce cas-ci. Reprise sans être re-mesurée, elle
+faisait paraître le défaut bien plus coûteux à refermer qu'il ne l'est.
+
+**Conséquence.** Le plan proposé par Codex — ne pas chercher un passage de
+masse À TRAVERS l'obstacle, mais DÉPLACER l'obstacle — a ici un ensemble à
+arracher de **un seul segment par face**, pas une recherche ouverte. C'est la
+seule voie que la mesure laisse debout.
+
+Levier natif VÉRIFIÉ, et jamais appelé : `kicad-tools/src/kicad_tools/drc/
+local_rerouter.py::LocalRerouter.reroute_segment()` — A* sur grille locale,
+arrache un segment et le recontourne, avec `extra_obstacles` et `dry_run`.
+Il est appelé par `drc/repair_clearance.py` en amont et par **AUCUN** code
+Cirqix. C'est le septième levier natif que ce projet trouve inutilisé.
+⚠️ Il travaille sur le document S-expression de kicad-tools, quand notre code
+travaille sur les objets `pcbnew` — et nous avons déjà notre A*
+(`_chemin_de_contournement`) et notre dégagement exact (`_couloir_libre`).
+Le choix entre « importer le levier » et « étendre le nôtre » reste ouvert.
+
+Avertissements de GLM sur ce plan, à honorer quand il sera décidé : le
+rerouteur est AVEUGLE aux zones, donc la masse se coule EN DERNIER ; et un
+reroutage raté échange une masse manquante contre une ALIMENTATION manquante,
+donc tout en `dry_run`, arbitrage final par le DRC et `_aggrave_le_board`.
+
+### Le dégagement est IMPLÉMENTÉ, et il bute sur une raison géométrique
+
+Livré le 2026-09-22 sur demande explicite de l'utilisateur. Le raccord des amas
+orphelins, quand son contournement échoue, arrache désormais le petit nombre de
+segments qui ferment le couloir (`_couloir_degageable`, plafond
+`_SEGMENTS_ARRACHABLES = 3`), pose le raccord de masse, puis repose ailleurs ce
+qu'il a retiré — **tout ou rien**, avec remise en état intégrale si un seul
+reroutage échoue.
+
+**Deux défauts RÉELS trouvés en le mesurant, et c'est là qu'est le gain :**
+
+| | avant | après |
+|---|---|---|
+| amas orphelins vus sur `carte-10` | **21** | **1** |
+| erreurs de dégagement introduites | **426** | **0** |
+
+1. **Le raccord jugeait ZONE PAR ZONE.** Notre générateur écrit UNE ZONE PAR
+   FACE : juger une zone seule fait passer pour orphelin tout îlot de F.Cu qui
+   rejoint le plan par B.Cu. Vingt amas sur vingt et un étaient donc parfaitement
+   reliés, et recevaient du cuivre pour rien. `_stitch_zones` jugeait déjà sur le
+   net entier — les deux jumelles ne disaient pas la même chose, et c'est la plus
+   permissive qui posait le cuivre.
+2. **`_couloir_libre` échantillonnait le trajet AU PAS DE LA MARGE.** Un bond
+   plus court que la marge n'était donc jugé que par ses deux bouts. Or la
+   distance à un cuivre est convexe le long d'un segment : son minimum tombe à
+   l'INTÉRIEUR. Mesuré : 426 violations à 0,1993 mm pour 0,2000 exigés — sept
+   dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
+   laisse passer. Pas ramené à un huitième de marge.
+
+### Le bord d'un connecteur se choisit par la DIRECTION, pas par la distance (2026-09-23)
+
+`_position_au_bord` classait les quatre bords par distance et prenait le plus
+proche. Depuis que le contour se resserre sur le circuit, les quatre bords sont
+presque ÉQUIDISTANTS : le critère perd son sens, et les connecteurs sortent du
+même côté.
+
+⚠️ **Première tentative, MESURÉE ET RÉFUTÉE le même jour** : resserrer le CADRE
+sur la frontière du circuit au lieu de changer le critère. Aucun gain de taille
+(58,98 × 45,8 avant comme après) et un aspect nettement pire — tous les
+connecteurs entassés sur le bord droit, deux se chevauchant, les trois autres
+bords vides. Ce n'était pas le cadre, c'était le critère. Le code est annulé.
+
+Quand l'appelant connaît la direction — la graine connaît l'angle du rayon des
+broches — c'est elle qui commande ; à direction égale, le plus proche départe.
+Sans direction, rien ne change : `_coller_les_ancrages_au_bord` glisse toujours
+par le plus court chemin, et c'est sa règle propre.
+
+⚠️ **Gain visible FAIBLE sur le banc, et il faut le dire.** Les connecteurs
+étaient déjà répartis sur trois bords ; le critère est désormais sensé, il ne
+dégrade rien, mais il ne transforme pas le rendu. Ce qui reste laid — une zone
+vide entre le circuit et les connecteurs du bord, quelques composants sans lien
+loin de tout — n'est pas réglé par là.
+
+### ⚠️ DEUX CARTES PERDUES SUR LE CONTRÔLE ÉLECTRIQUE, deux causes (2026-09-23)
+
+`carte-08` puis `carte-10` sont sorties `abouti=False` sur un **HTTP 500 de
+`/erc`**, à des moments différents de la journée. Deux causes distinctes, toutes
+deux de familles que ce dépôt documente déjà.
+
+**1. L'analyse tenait le GIL dans le worker.**
+
+    Timeout (0:00:04.500000)!
+      kicad_tools/sexp/parser.py:1181  _parse_list
+      kicad_tools/schematic/models/io_mixin.py:111  load
+      tools/erc.py:188  run_kicad_tools_erc
+
+`Schematic.load` est du Python PUR : il tient le GIL pendant toute l'analyse
+d'un schéma de 140 à 190 ko, et uvicorn tue par SIGKILL tout worker muet plus
+de 5 s. C'est la **sœur** du défaut corrigé le 2026-09-10 sur le journal
+Freerouting — le journal avait été traité, le schéma non, alors que `CLAUDE.md`
+l'interdit en toutes lettres. `tools/erc_runner.py` rejoint les quatre autres
+runners du service.
+
+**2. Le budget de `kicad-cli` était de 30 s à plat**, et son dépassement
+remontait en 500 : le routage entier perdu. Famille « le plafond n'était pas UN
+endroit, mais QUATRE ». Il se déduit désormais de la taille du schéma, plancher
+de 120 s — quatre fois le point d'échec mesuré. **Et une expiration ne tue plus
+le run** : kicad-tools a déjà rendu un verdict réel, il est conservé, et le fait
+que l'ERC d'autorité n'ait pas tourné est DIT.
+
+### BANC DE RÉFÉRENCE du 2026-09-23 (4e passage) — service corrigé, dix sur dix
+
+| carte | demandée | livrée | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 14,1** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **32,5 × 25,4** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **28,1 × 19,9** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 29,8** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **40,0 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **47,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **47,7 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **57,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,8 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **59,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé. `carte-02` gagne encore 2,4 mm de largeur.
+
+⚠️ **CE TABLEAU EST UN TIRAGE, PAS UNE PROPRIÉTÉ.** `carte-10` rejouée le soir
+même depuis le MÊME placement gelé, machine au repos, par la même voie HTTP :
+**98 %, 1 connexion manquante**, en 2432 s au lieu de 1027. Le journal du
+service montre les deux issues alternant toute la journée sur cette carte —
+« 1 piste posée sur 1 amas » à 13:30, 13:41, 13:46, 13:52, 14:00, 14:25, 18:19,
+et « AUCUN raccordé » à 14:14, 18:22, 18:24, 18:25, 21:04 — avant comme après
+les correctifs du jour. C'est la dispersion déjà mesurée sur cette carte
+(99 · 97 · 77 · 87 · … · 100 %), pas une régression.
+
+Ce que le tableau établit : chaque carte **peut** sortir propre, et son board
+l'est dans `expected/`. Ce qu'il n'établit pas : qu'elle le fera à chaque coup.
+**NEVER** lire une ligne de ce tableau comme une garantie de tirage.
+
+Le tirage du soir montre aussi que les gardes tiennent quand le tirage est
+mauvais : « repli GND REFUSÉ : (0 erreur, 84 manquante) ne fait pas mieux que
+(0 erreur, 1 manquante) — board conservé ». Le board rendu est le meilleur vu,
+jamais le dernier.
+
+⚠️ **Le raccord par DÉGAGEMENT DU COULOIR s'est déclenché en production** et le
+journal le dit : « raccord des amas orphelins : 1 piste(s) posée(s) sur 1 amas
+(dont 1 par DEGAGEMENT du couloir) ». Le mécanisme livré cette nuit ne dort pas
+dans le code — il travaille.
+
+⚠️ Les DURÉES varient d'un facteur six d'un banc à l'autre sur la même carte
+(`carte-06` : 468 s, puis 3204, puis 1140). Freerouting est stochastique et
+tourne jusqu'à mille passes sans gain. **Ne jamais conclure d'un écart de durée
+entre deux bancs qu'un changement a ralenti la chaîne** — j'ai failli annuler
+un correctif sain pour cette raison.
+
+### Les périphériques se RÉPARTISSENT, ils ne s'empilent plus (2026-09-23)
+
+Deuxième défaut visible après le resserrement du contour : les composants
+s'entassaient d'un seul côté du boîtier, étiquettes de sérigraphie par-dessus
+les unes des autres, pendant que trois quarts de la couronne restaient vides.
+
+**Deux causes, toutes deux dans `_poser_les_peripheriques`, toutes deux la
+même faute :** un angle unique pour tout un groupe.
+
+- les périphériques **directs** qui visent la même broche — tous les
+  découplages d'un rail, toutes les résistances d'un même signal — recevaient
+  le MÊME `angle_vers` et le même rayon de départ ;
+- les **suiveurs** d'un même parent recevaient tous `atan2(parent − centre)` ;
+- les **isolés** partaient tous de l'angle `0.0`, c'est-à-dire du même point.
+
+`le_long_du_rayon` ne s'écartait qu'une fois la place prise : d'où la file
+radiale. Le remède ne déplace RIEN de posé — le premier de chaque groupe garde
+exactement la direction calculée, les suivants s'en écartent en éventail
+(`_ecart_en_eventail`, pas de `3 × _PAS_ANGLE_DEG`), et `le_long_du_rayon`
+reste seul juge de ce qui est libre.
+
+Mesuré sur `carte-10` : amas du circuit 46,5 → **39,5 mm** de large, carte
+61,0 → **59,0 mm**, toutes les étiquettes lisibles, routage inchangé.
+
+### BANC du 2026-09-23 (3e passage) — dix cartes, contour resserré ET périphériques répartis
+
+| carte | demandée | livrée | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 13,6** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **34,9 × 25,2** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **27,6 × 19,9** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 29,8** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **40,0 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **46,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **47,7 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **57,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,8 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **59,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé. `carte-07` gagne encore 5,5 mm de largeur sur le
+passage précédent, `carte-06` deux, `carte-10` deux.
+
+⚠️ **J'AI FAUSSÉ CE BANC EN COURS DE ROUTE, et c'est la faute que ce fichier
+interdit depuis la veille.** J'ai lancé une revue multi-agents pendant que le
+banc tournait. `carte-08` est sortie `abouti=False` sur un **HTTP 500 de
+`/erc`** : le lecteur S-expression de `kicad-tools` a tenu le GIL plus de
+4,5 s pendant que cinq agents se disputaient le processeur, et le superviseur
+uvicorn tue tout worker muet plus de 5 s (leçon du 2026-09-10). Relancée seule,
+machine libre : **193 s, 0 erreur, 0 manquante**. Le placement n'était pas en
+cause — la charge l'était. **NEVER lancer quoi que ce soit pendant un banc**,
+y compris une revue qui ne touche à rien.
+
+⚠️ **Ce qui reste à faire, et qui se voit encore sur le rendu** : une zone vide
+subsiste entre le circuit et les connecteurs du bord, et quelques composants
+sans lien (`C1`, `C2`, `C3` sur `carte-10`) restent loin de tout. La carte est
+à la bonne taille et la couronne est servie ; le RAPPROCHEMENT des connecteurs
+vers le circuit ne l'est pas encore.
+
+### ⚠️ LE CONTOUR N'ÉTAIT JAMAIS RESSERRÉ DANS LE BANC (2026-09-23)
+
+Question de l'utilisateur devant les rendus : « tu es satisfait de ce
+placement ? ». Non. Mesure sur `carte-10` livrée :
+
+    carte                140 x 105 mm  = 14725 mm2
+    circuit               51 x  66 mm  =  3366 mm2
+    OCCUPATION                             23 %
+    connecteurs, du circuit           56 a 75 mm
+    fil de signal                       1230 mm  (VIN a lui seul : 112 mm)
+
+Une carte quatre fois trop grande, les composants entassés au centre, les
+connecteurs échoués aux bords lointains, et l'alimentation qui traverse sur
+onze centimètres. Le routeur s'en sortait — zéro erreur, zéro manquante — mais
+personne ne livrerait cela.
+
+**La cause : `run_pipeline.py` n'envoyait pas `auto_size_board` à
+`/place/auto`.** Le resserrement du contour sur le placement existe depuis le
+2026-09-13 (D-2026-09-13-c A) et ne s'exécute que si l'appelant l'autorise ; le
+défaut du modèle est `False`. **Septième levier de ce projet qui existe et que
+personne n'appelle** — après `max_distance_mm`, `anchor_pin`,
+`WorkflowConfig.grid`, `constraints`, `move_reference`, `bottom_up_placement`
+et `LocalRerouter`.
+
+⚠️ Et le défaut était INVISIBLE : la chaîne de PRODUCTION, elle, passe bien le
+drapeau depuis `handlePlacement`. Le banc mesurait donc un comportement que le
+produit n'a pas — l'inverse exact de ce à quoi sert un banc.
+
+Mesure après correction, même circuit, même graine :
+
+| | avant | après |
+|---|---|---|
+| carte | 140 × 105 mm | **61,0 × 45,8 mm** |
+| occupation | 23 % | **56 %** |
+| fil de signal | 1230 mm | **652 mm** |
+| `VIN`, le plus long | 112 mm | **45,5 mm** |
+| connecteurs, du circuit | 56-75 mm | **23-35 mm** |
+| routage | 100 % · 0 err · 0 manq | **100 % · 0 err · 0 manq** |
+
+**Et le routage ACCÉLÈRE** : `carte-08` passe de 2002 s à 347 s, six fois plus
+vite. Ce fichier le disait déjà sans en tirer parti — « l'espace de recherche
+d'un routeur croît avec la SURFACE × le nombre de nets ». Une carte quatre fois
+trop grande se paie en cases de grille explorées.
+
+⚠️ **Un second mensonge de mesure, corrigé au passage.** Le banc annonçait la
+taille DEMANDÉE au schéma, pas celle du board. `carte-10` était rapportée
+140 × 105 alors qu'elle mesurait 61,0 × 45,8 — cinq fois faux en surface, et
+rien ne permettait de s'en apercevoir. `mesures.json` porte désormais
+`board_mm` (lu sur `Edge.Cuts`) ET `board_mm_demande` : l'écart est justement
+ce qu'on veut voir.
+
+### BANC DE RÉFÉRENCE du 2026-09-23 (2e passage) — DIX cartes, chacune à la taille de son circuit
+
+| carte | demandée | RÉELLE | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 14,6** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **34,9 × 25,4** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **26,1 × 20,1** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 27,2** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **43,6 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **48,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **53,2 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **56,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,3 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **61,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé, aucune erreur, aucune connexion manquante — et les
+dix cartes divisées par deux à quatre en surface.
+
+⚠️ **Ce qui reste laid, et qui n'est pas réglé** : les composants passifs
+s'entassent encore d'un côté du boîtier central, et les étiquettes de
+sérigraphie se chevauchent (`R20`/`R21`, `D22`/`D23`). La carte est à la bonne
+taille ; la RÉPARTITION à l'intérieur ne l'est pas encore.
+
+### BANC DE RÉFÉRENCE du 2026-09-23 — DIX cartes sur dix, parfaites
+
+Premier banc où **aucune carte ne porte le moindre défaut**. Graine en étoile
+armée, correctif du raccord des amas en place, machine libre.
+
+| carte | comp. | erreurs | connexions manquantes | routé |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 5 | 0 | 0 | 100 % |
+| `carte-02-alimentation` | 12 | 0 | 0 | 100 % |
+| `carte-03-oscillateur` | 15 | 0 | 0 | 100 % |
+| `carte-04-mcu-minimal` | 15 | 0 | 0 | 100 % |
+| `carte-05-capteur-i2c` | 26 | 0 | 0 | 100 % |
+| `carte-06-io-etendu` | 35 | 0 | 0 | 100 % |
+| `carte-07-multi-io` | 44 | 0 | 0 | 100 % |
+| `carte-08-dense` | 56 | 0 | 0 | 100 % |
+| `carte-09-tres-dense` | 62 | 0 | 0 | 100 % |
+| **`carte-10-maximale`** | **70** | **0** | **0** | **100 %** |
+
+`carte-07` et `carte-10`, les deux qui portaient des ruptures de plan de masse,
+sortent propres. La veille encore, `carte-10` livrait une connexion manquante.
+
+⚠️ **Deux cartes ont d'abord échoué sur un HTTP 500 que J'AI introduit**, et
+c'est le piège que ce dépôt documente depuis le 2026-08-31 : *le diagnostic
+qu'on ajoute devient la panne*. Le résumé des raisons d'échec formatait toutes
+ses valeurs en `%d`, alors que `motifs_reroutage` porte un DICTIONNAIRE ; le
+`TypeError` remontait jusqu'à la route et le routage entier était perdu. Les
+huit premières cartes ne l'ont jamais touché — cette ligne ne s'exécute que
+lorsque AUCUN amas n'a pu être raccordé. Corrigé (`_resume_des_echecs`),
+gardé par trois tests, et les deux cartes relancées sortent à zéro.
+
+⚠️ Les DURÉES restent sans valeur : la machine se met en veille et le compteur
+suit l'horloge murale. Les VERDICTS, eux, tiennent.
+
+### ⚠️ LE DÉFAUT EST REFERMÉ — mesuré le 2026-09-22
+
+    board du banc          33 violations · 0 erreur · **1** connexion manquante
+    après réparation       33 violations · 0 erreur · **0** connexion manquante
+
+Même compte de violations, zéro erreur, et la rupture de plan a disparu.
+
+**Et il a fallu passer par l'autre face, pour une raison qui se calcule :** le couloir fait 0,862 mm, et le raccord de masse le barre sur toute
+sa largeur — 0,25 mm de cuivre plus 0,2 mm de dégagement de chaque côté, soit
+0,65 mm, entre un îlot et un plan distants de 0,862 mm. Il ne reste pas la place
+d'un second conducteur, quelle que soit sa finesse : un signal de 0,25 mm en
+réclame 0,65 à lui seul, et le total exigé est de 1,30 mm. **Sur la même face,
+c'est arithmétiquement impossible.** Le reroutage échoue donc, tout est remis en
+place, et le board ressort à l'identique — 33 violations, 0 erreur, 1 connexion
+manquante, exactement comme avant.
+
+**Le remède : le signal arraché CHANGE DE FACE.** Deux vias, un trajet sur
+l'autre face, et les deux tronçons qui rejoignent les extrémités d'origine
+(`_detour_par_l_autre_face`). Le site de chaque via est cherché par anneaux
+croissants autour de l'extrémité, donc borné et interrompu au premier point
+légal ; ses obstacles se prennent sur TOUTES les couches, puisqu'un via
+traverse.
+
+⚠️ **IL FAUT RECOULER AVANT DE JUGER, et c'est la mesure qui le dit.** Le
+trajet de l'autre face passe à travers le plan coulé : le board intermédiaire
+porte **51 erreurs** de dégagement, bien réelles. La coulée les efface en
+découpant le cuivre autour de la piste neuve. Juger sans recouler ferait
+rejeter un board qui, recoulé, est parfait — c'est exactement la famille de
+fautes que ce dépôt traque, un instrument qui condamne un résultat sain.
+
+    sans recoulée    84 violations · 51 erreurs · 0 manquante
+    recoulé          33 violations ·  0 erreur  · 0 manquante
+
+Une piste reste ouverte, non mesurée : **empêcher en AMONT que le routeur
+enferme la pastille**, en réservant autour de chaque via de masse la largeur
+d'un couloir plutôt que son seul dégagement. ⚠️ Cousine de l'« amorce
+protégée », RÉFUTÉE le 2026-09-02 (routeur trois fois plus lent).
+
+**Cinq constats de revue, tous traités avant livraison** — aucun n'était
+visible en test unitaire, et trois auraient mordu sur un vrai board :
+
+- l'A* recevait des milliers de buts non dédoublonnés, et son heuristique prend
+  le minimum sur TOUS les buts À CHAQUE NŒUD : `_NOEUDS_MAX_CONTOURNEMENT`
+  borne le nombre de nœuds, jamais le coût de chacun. La famine revenait par la
+  porte de derrière. Bornés à `_BUTS_MAX = 64`, dédoublonnés, les plus proches ;
+- un amas relié par arrachage était compté À LA FOIS dans `relies` et dans
+  `sans_chemin` : le rapport se contredisait. L'échec n'est plus compté qu'après
+  l'échec du dégagement ;
+- la remise en état retrouvait les pistes posées par la DIFFÉRENCE de longueur
+  de `board.GetTracks()`, c'est-à-dire en supposant que pcbnew ajoute toujours
+  en fin de liste. Le « tout ou rien » serait devenu silencieusement partiel.
+  `_rerouter_un_segment` REND désormais les objets qu'il a posés ;
+- la règle d'arrondi de grille n'était écrite que dans le reroutage, pas dans le
+  chemin amas → plan qui en a le même besoin. Écrite aux deux endroits ;
+- `_couloir_libre` devient plus stricte pour son appelant préexistant. C'est
+  voulu — elle refuse ce qui violait le dégagement — et mesuré sur le board
+  fautif : verdict et board inchangés.
+
+Gardes : `tests/test_couloir_degage_par_arrachage.py` (13 tests — les fonctions
+pures, la borne, ET le câblage) ; 732 tests de routage au vert.
+
+Rien de plus n'est implémenté : la suite est une décision de stratégie de
+routage, donc `D-2026-09-22-a`, **en attente**.
+
 ### ⚠️ La CHARGE DE LA MACHINE fausse le routage (mesure du 2026-09-22)
 
 Même placement gelé de `carte-10`, même code, deux séries :

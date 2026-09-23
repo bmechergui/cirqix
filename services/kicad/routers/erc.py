@@ -65,7 +65,35 @@ def _keep_failed_schematic(content: str) -> Optional[Path]:
 router = APIRouter(tags=["erc"])
 
 _MAX_ITERATIONS: int = 3
-_KICAD_CLI_TIMEOUT_S: int = 30
+# ⚠️ CE BUDGET ETAIT DE 30 s A PLAT, et il a fait perdre carte-10 le
+# 2026-09-23 : `subprocess.TimeoutExpired` remontait en HTTP 500, donc le
+# routage entier. Un schema du banc pese 140 a 190 ko et l ERC de kicad-cli y
+# passe plusieurs dizaines de secondes des que la machine est occupee.
+#
+# C est la famille « le plafond n etait pas UN endroit, mais QUATRE » : un
+# budget plus serre que le travail rend inatteignable ce qui est plus lent que
+# lui, et rien dans la reponse ne le trahit. Comme `--timeout` du routeur, ce
+# delai n est pas une limite de patience mais une RESSOURCE : `kicad-cli` rend
+# la main des qu il a fini, donc le relever ne coute rien sur un petit schema.
+#
+# DEDUIT DE LA TAILLE, avec un plancher : une seconde par kilo-octet de schema,
+# jamais moins de 120 s (quatre fois le point d echec mesure).
+_KICAD_CLI_TIMEOUT_PLANCHER_S: int = 120
+# ⚠️ ET UN PLAFOND, sans quoi le budget croit avec le fichier sans borne — et
+# le budget du CLIENT ne peut alors plus couvrir le pire cas du service, ce que
+# `erc-budget.test.ts` verifie justement. Un budget non borne d un cote rend
+# inatteignable la garde de l autre.
+_KICAD_CLI_TIMEOUT_PLAFOND_S: int = 240
+
+
+def _budget_erc_s(taille_octets: int) -> int:
+    """Le temps accorde a `kicad-cli sch erc`, deduit de la taille du schema.
+
+    Une seconde par kilo-octet, entre un plancher de 120 s (quatre fois le
+    point d echec mesure le 2026-09-23) et un plafond de 240 s.
+    """
+    return max(_KICAD_CLI_TIMEOUT_PLANCHER_S,
+               min(_KICAD_CLI_TIMEOUT_PLAFOND_S, int(taille_octets / 1024) + 60))
 
 
 # ----------------------------------------------------------------------------
@@ -107,8 +135,13 @@ def _run_kicad_cli_erc(cli_path: str, sch_path: Path) -> str:
         "--format", "json",
         "--severity-all",
     ]
+    try:
+        taille = sch_path.stat().st_size
+    except OSError:
+        taille = 0
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+        cmd, capture_output=True, text=True, timeout=_budget_erc_s(taille),
+        check=False,
     )
     if result.returncode != 0 and not report_path.exists():
         raise RuntimeError(
@@ -197,6 +230,42 @@ def run_erc(req: ERCRequest) -> ERCResponse:
                 sch_path.write_text(current_content, encoding="utf-8")
                 try:
                     report_json = _run_kicad_cli_erc(cli_path, sch_path)
+                except subprocess.TimeoutExpired:
+                    # ⚠️ UNE EXPIRATION NE DOIT PAS TUER LE RUN — MAIS ELLE NE
+                    # DOIT SURTOUT PAS PASSER POUR UN SCHEMA PROPRE.
+                    #
+                    # Premiere version de ce rattrapage, 2026-09-23 : un simple
+                    # `break`. Si l expiration tombe a la premiere iteration,
+                    # `violations` vaut `[]`, donc `erc_clean = True`,
+                    # `skipped=False`, `engine="kicad-cli"` — la reponse EXACTE
+                    # d un schema reellement controle et propre. Et
+                    # `skipped=False` court-circuite `runErcFallback()` cote
+                    # TypeScript : `ERC_CLEAN` etait persiste SANS AUCUN
+                    # VERDICT, sur un statut qui participe au gate JLCPCB.
+                    #
+                    # C est litteralement la faute que ce depot a corrigee cinq
+                    # fois — un echec qui rend la meme valeur que son cas
+                    # normal — reintroduite par le correctif d un autre defaut.
+                    # Relevee par la revue avant fusion, jamais par un test.
+                    #
+                    # On rend donc le verdict de kicad-tools, `skipped=True`
+                    # pour que le repli TypeScript prenne la main, et on le DIT.
+                    logger.warning(
+                        "ERC: kicad-cli a depasse son delai — l ERC d AUTORITE "
+                        "n a PAS rendu de verdict ; on rend celui de "
+                        "kicad-tools et on bascule sur le repli")
+                    return ERCResponse(
+                        erc_clean=False,
+                        violations=kt_violations,
+                        fixed_count=kt_fixed,
+                        kicad_sch_b64=(base64.b64encode(
+                            current_content.encode("utf-8")).decode("ascii")
+                            if kt_fixed > 0 else None),
+                        skipped=True,
+                        engine="kicad-tools",
+                        warning=("kicad-cli sch erc a depasse son delai — "
+                                 "verdict de kicad-tools uniquement"),
+                    )
                 except Exception:
                     # Conserver AVANT de laisser remonter : le tempdir disparaît
                     # à la sortie du bloc, et avec lui la seule trace exploitable.

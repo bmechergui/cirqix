@@ -106,7 +106,16 @@ class TestCablage:
     def test_aucun_raccord_possible_se_DIT(self):
         corps = _bloc(self.ROUTING, "_relier_les_amas_orphelins")
         i = corps.index("if not relies:")
-        assert "logger.warning" in corps[i:i + 400],             "« rien a faire » et « rien n a marche » rendent la meme trace"
+        # ⚠️ ANCRE SUR LA FIN DU BLOC, PAS SUR UNE DISTANCE. Cette garde
+        # cherchait `logger.warning` dans les 400 caractères suivants ; le
+        # 2026-09-23, un commentaire ajouté au-dessus de l'appel l'a repoussé
+        # au-delà et la garde a crié alors que l'avertissement était bien là.
+        # Une garde doit s'ancrer sur ce qui ne bouge pas — ici le `return`
+        # qui ferme le bloc. Ce dépôt a déjà payé deux fois cette faute :
+        # une garde qui cherchait `_api("PUT"` et une autre qui trouvait sa
+        # propre docstring.
+        fin = corps.index("return pcb_bytes", i)
+        assert "logger.warning" in corps[i:fin],             "« rien a faire » et « rien n a marche » rendent la meme trace"
 
     def test_ne_peut_qu_ameliorer(self):
         assert "_aggrave_le_board(" in _bloc(self.ROUTING, "_relier_les_amas_orphelins")

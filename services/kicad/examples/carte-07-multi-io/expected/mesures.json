@@ -2,54 +2,50 @@
   "exemple": "carte-07-multi-io",
   "composants": 44,
   "nets": 37,
-  "board_mm": [
-    99.5,
-    79.8
+  "board_mm_demande": [
+    110,
+    80
   ],
-  "duree_s": 1103,
-  "git": "02f7b26",
+  "board_mm": [
+    47.69,
+    38.8
+  ],
+  "duree_s": 273,
+  "git": "14413a77",
   "routed_percent": 100,
-  "drc_violations": 260,
+  "drc_violations": 18,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:82,silk_overlap:36",
+  "types_violations": "silk_over_copper:10,silk_overlap:6,via_dangling:1,track_dangling:1",
   "abouti": true,
   "board": {
-    "segments": 364,
-    "vias": 64,
-    "zones": 3,
-    "empreintes": 44
+    "segments": 264,
+    "vias": 46,
+    "zones": 4,
+    "empreintes": 45
   },
   "drc_du_board": {
-    "violations": 0,
+    "violations": 10,
     "non_connectes": 0,
-    "types": "",
+    "types": "silk_over_copper:5,silk_overlap:3,track_dangling:1,via_dangling:1",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "livre_par": "livrer_campagne.py",
-  "tirage": "carte-07-multi-io-t1",
-  "serigraphie_degagee": "2026-09-12",
-  "contour_resserre": {
-    "date": "2026-09-14",
-    "decision": "D-2026-09-13-c A",
-    "avant_mm": [
-      110,
-      80
-    ]
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 44
   },
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 88,
-    "couches": {
-      "declarees": 2,
-      "pistes_par_couche": {
-        "F.Cu": 285,
-        "B.Cu": 79
-      }
-    }
+  "drc_du_placement": {
+    "violations": 93,
+    "non_connectes": 85,
+    "types": "silk_over_copper:5,silk_overlap:3,unconnected_items:85",
+    "erreurs": [
+      "unconnected_items"
+    ],
+    "nb_erreurs": 85,
+    "fabricable": false
   }
 }

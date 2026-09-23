@@ -2,71 +2,50 @@
   "exemple": "carte-10-maximale",
   "composants": 70,
   "nets": 49,
-  "board_mm": [
-    60.9,
-    45.7
+  "board_mm_demande": [
+    140,
+    105
   ],
-  "duree_s": 174.6,
-  "git": "2422b29",
+  "board_mm": [
+    58.98,
+    45.8
+  ],
+  "duree_s": 1027,
+  "git": "14413a77",
   "routed_percent": 100,
+  "drc_violations": 12,
   "drc_clean": true,
   "fichiers_exportes": 20,
+  "types_violations": "silk_overlap:6,silk_over_copper:6",
   "abouti": true,
   "board": {
-    "segments": 528,
-    "vias": 107,
-    "zones": 3,
-    "empreintes": 70
+    "segments": 689,
+    "vias": 103,
+    "zones": 4,
+    "empreintes": 71
   },
   "drc_du_board": {
-    "violations": 35,
+    "violations": 6,
     "non_connectes": 0,
-    "types": "silk_over_copper:18,silk_overlap:16,track_dangling:1",
+    "types": "silk_over_copper:3,silk_overlap:3",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "livre_par": "banc_exemples.py + livrer_boards.py",
-  "tirage": 2,
-  "couches": 4,
-  "date": "2026-09-12",
-  "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
-  "serigraphie_degagee": "2026-09-12",
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 172,
-    "couches": {
-      "declarees": 4,
-      "pistes_par_couche": {
-        "F.Cu": 268,
-        "B.Cu": 39,
-        "In1.Cu": 38,
-        "In2.Cu": 33
-      }
-    }
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 70
   },
-  "carte_compacte": {
-    "date": "2026-09-21",
-    "decision": "D-2026-09-20-a",
-    "pr": 220,
-    "note": "banc en DEUX PHASES (consigne de l utilisateur : placement valide d abord, puis routage, sans aller-retour) : placement juge seul (0 erreur DRC, connecteurs a 2,0 mm du bord), puis route GELE par HTTP ; code de #226/#227 ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
-    "taille_avant_mm": [
-      140.0,
-      105.0
+  "drc_du_placement": {
+    "violations": 143,
+    "non_connectes": 137,
+    "types": "silk_over_copper:3,silk_overlap:3,unconnected_items:137",
+    "erreurs": [
+      "unconnected_items"
     ],
-    "vias_avant": 95,
-    "place_s": 164,
-    "route_s": 849,
-    "moteur": "freerouting-api",
-    "pistes_par_couche": {
-      "F.Cu": 360,
-      "In1.Cu": 25,
-      "In2.Cu": 70,
-      "B.Cu": 19,
-      "In3.Cu": 20,
-      "In4.Cu": 34
-    }
+    "nb_erreurs": 137,
+    "fabricable": false
   }
 }

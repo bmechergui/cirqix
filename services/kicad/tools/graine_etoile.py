@@ -236,8 +236,27 @@ def _poser_les_connecteurs(e: _Etoile, centres: list) -> None:
         # TOUT ce qui est deja pose fait obstacle — centres et leur couloir compris :
         # sur une carte basse, le bord vise peut etre a quelques mm du boitier.
         autres = list(e.occupees.values())
-        pos = _position_au_bord(depart, b, e.bornes, autres)
+        # ⚠️ LA DIRECTION COMMANDE LE BORD, pas la distance. Depuis que le
+        # contour se resserre sur le circuit, les quatre bords sont presque
+        # equidistants : le plus proche perd son sens et tous les connecteurs
+        # sortent du meme cote (mesure du 2026-09-23, carte-10 — trois bords
+        # vides, deux connecteurs qui se chevauchent). Le rayon des broches,
+        # lui, designe sans ambiguite ou ce connecteur doit sortir.
+        pos = _position_au_bord(depart, b, e.bornes, autres, direction=a)
         e.fixer_ou_avouer(r, pos if pos != depart else None)
+
+
+def _ecart_en_eventail(i: int) -> float:
+    """L angle du i-eme suiveur, en eventail autour du rayon de son parent.
+
+    0, +pas, -pas, +2 pas, -2 pas... Le premier garde EXACTEMENT la direction
+    du parent — c est la topologie que la graine a calculee, on ne la perd pas
+    pour faire joli. Les suivants s en ecartent symetriquement, du pas
+    angulaire de la recherche, pour que la couronne serve au lieu d une file.
+    """
+    k = (i + 1) // 2
+    sens = 1 if i % 2 else -1
+    return sens * k * math.radians(_PAS_ANGLE_DEG * 3.0)
 
 
 def _poser_les_peripheriques(e: _Etoile, centres: list, mobiles: list) -> None:
@@ -248,9 +267,21 @@ def _poser_les_peripheriques(e: _Etoile, centres: list, mobiles: list) -> None:
     for signaux in (True, False):
         directs = [(r, c) for r in reste if r not in e.pos
                    for c in [e.centre_de(r, centres, signaux)] if c]
-        for r, c in sorted(directs, key=lambda x: (-len(e.fps[x[0]].pads), x[0])):
-            pos = e.le_long_du_rayon(r, e.milieu(c), e.angle_vers(r, c, signaux),
+        # ⚠️ PLUSIEURS PERIPHERIQUES VISENT SOUVENT LA MEME BROCHE — tous les
+        # decouplages d un rail, toutes les resistances d un meme signal. Ils
+        # recevaient alors le MEME angle et s empilaient sur un seul rayon.
+        # On garde la direction calculee pour le PREMIER de chaque groupe, et
+        # on ecarte les suivants en eventail : la topologie est preservee, la
+        # couronne sert.
+        ordonnes = sorted(directs, key=lambda x: (-len(e.fps[x[0]].pads), x[0]))
+        rang: collections.Counter = collections.Counter()
+        for r, c in ordonnes:
+            angle = e.angle_vers(r, c, signaux)
+            cle = (c, round(angle, 3))
+            pos = e.le_long_du_rayon(r, e.milieu(c),
+                                     angle + _ecart_en_eventail(rang[cle]),
                                      e.demi_diagonale(c) * 0.75)
+            rang[cle] += 1
             e.fixer_ou_avouer(r, pos)
             file.append((r, c))
     voisins = collections.defaultdict(set)
@@ -264,14 +295,29 @@ def _poser_les_peripheriques(e: _Etoile, centres: list, mobiles: list) -> None:
             voisins[r] |= refs - {r}
     while file:
         parent, c = file.popleft()
-        for r in sorted(voisins[parent] - set(e.pos)):
+        suiveurs = sorted(voisins[parent] - set(e.pos))
+        # ⚠️ LES SUIVEURS S ECARTENT DE PART ET D AUTRE DU RAYON DU PARENT.
+        # Tous recevaient le MEME angle et le meme rayon de depart : ils se
+        # rangeaient en une file radiale, `le_long_du_rayon` ne s ecartant que
+        # lorsque la place manquait. Mesure du 2026-09-23, carte-10 : seize
+        # diodes en tas d un seul cote du LQFP, etiquettes l une sur l autre,
+        # trois quarts de la couronne vides. On ne deplace rien de pose — seul
+        # l ANGLE DE DEPART de la recherche change, et `le_long_du_rayon`
+        # reste seul juge de ce qui est libre.
+        for i, r in enumerate(suiveurs):
             (ox, oy), (px, py) = e.milieu(c), e.milieu(parent)
-            pos = e.le_long_du_rayon(r, (ox, oy), math.atan2(py - oy, px - ox),
+            base = math.atan2(py - oy, px - ox)
+            pos = e.le_long_du_rayon(r, (ox, oy), base + _ecart_en_eventail(i),
                                      math.hypot(px - ox, py - oy))
             e.fixer_ou_avouer(r, pos)
             file.append((r, c))
-    for r in [x for x in reste if x not in e.pos]:
-        pos = e.le_long_du_rayon(r, e.milieu(centres[0]), 0.0, e.demi_diagonale(centres[0]))
+    # ⚠️ LES ISOLES FONT LE TOUR DU CENTRE. Ils partaient TOUS de l angle 0,
+    # c est-a-dire du meme point : un tas, la aussi.
+    isoles = [x for x in reste if x not in e.pos]
+    for i, r in enumerate(isoles):
+        angle = 2.0 * math.pi * i / max(len(isoles), 1)
+        pos = e.le_long_du_rayon(r, e.milieu(centres[0]), angle,
+                                 e.demi_diagonale(centres[0]))
         e.fixer_ou_avouer(r, pos)
 
 

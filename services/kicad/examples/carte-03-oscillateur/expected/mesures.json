@@ -2,62 +2,50 @@
   "exemple": "carte-03-oscillateur",
   "composants": 15,
   "nets": 9,
-  "board_mm": [
-    27.8,
-    19.8
+  "board_mm_demande": [
+    50,
+    35
   ],
-  "duree_s": 121,
-  "git": "6fb7359",
+  "board_mm": [
+    28.1,
+    19.87
+  ],
+  "duree_s": 155,
+  "git": "14413a77",
   "routed_percent": 100,
-  "drc_violations": 13,
+  "drc_violations": 10,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_overlap:10,silk_over_copper:2,track_dangling:1",
+  "types_violations": "silk_overlap:6,silk_over_copper:4",
   "abouti": true,
   "board": {
-    "segments": 85,
-    "vias": 13,
+    "segments": 63,
+    "vias": 9,
     "zones": 2,
     "empreintes": 15
   },
   "drc_du_board": {
-    "violations": 2,
+    "violations": 5,
     "non_connectes": 0,
-    "types": "silk_over_copper:1,silk_overlap:1",
+    "types": "silk_over_copper:2,silk_overlap:3",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "serigraphie_degagee": "2026-09-12",
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 21,
-    "couches": {
-      "declarees": 2,
-      "pistes_par_couche": {
-        "F.Cu": 76,
-        "B.Cu": 3
-      }
-    }
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 15
   },
-  "carte_compacte": {
-    "date": "2026-09-20",
-    "decision": "D-2026-09-20-a",
-    "pr": 220,
-    "note": "chaine place -> route rejouee par HTTP avec 25 % d occupation ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
-    "taille_avant_mm": [
-      50.0,
-      35.0
+  "drc_du_placement": {
+    "violations": 32,
+    "non_connectes": 27,
+    "types": "silk_over_copper:2,silk_overlap:3,unconnected_items:27",
+    "erreurs": [
+      "unconnected_items"
     ],
-    "vias_avant": 9,
-    "place_s": 741,
-    "route_s": 86,
-    "moteur": "freerouting-api",
-    "pistes_par_couche": {
-      "F.Cu": 81,
-      "B.Cu": 4
-    }
+    "nb_erreurs": 27,
+    "fabricable": false
   }
 }

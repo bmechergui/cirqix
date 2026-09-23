@@ -78,6 +78,36 @@ def _wslifier(chemin: Path) -> str:
     return "/mnt/" + s[0].lower() + s[2:]
 
 
+def _contour_du_board(conteneur: str, chemin: str) -> list | None:
+    """La taille REELLE de la carte, lue sur son contour `Edge.Cuts`.
+
+    ⚠️ Le banc annoncait jusqu au 2026-09-23 la taille demandee au SCHEMA. Or
+    le placement RESSERRE le contour sur le circuit quand la taille n est pas
+    imposee : `carte-10` etait rapportee 140 x 105 mm alors que son board
+    mesurait 61,0 x 45,8. Un rapport cinq fois faux en surface, et personne ne
+    pouvait s en apercevoir — c est la regle de ce depot, un compteur ment, un
+    board non, appliquee a la taille elle-meme.
+
+    Rend `None` si la mesure echoue : une taille absente se voit, une taille
+    inventee non.
+    """
+    programme = (
+        "import pcbnew,sys;b=pcbnew.LoadBoard(sys.argv[1]);"
+        "x=b.GetBoardEdgesBoundingBox();"
+        "print(round(x.GetWidth()/1e6,2),round(x.GetHeight()/1e6,2))")
+    sortie = _wsl("docker exec %s python3 -c %s %s"
+                  % (shlex.quote(conteneur), shlex.quote(programme),
+                     shlex.quote(chemin)), 180)
+    for ligne in reversed((sortie.stdout or "").splitlines()):
+        morceaux = ligne.split()
+        if len(morceaux) == 2:
+            try:
+                return [float(morceaux[0]), float(morceaux[1])]
+            except ValueError:
+                continue
+    return None
+
+
 def _mesurer_board(conteneur: str, chemin: str) -> dict:
     """Compte le cuivre reellement pose. Un compteur de progression ment ; un
     board, non — ce depot l'a paye trois fois."""
@@ -227,7 +257,12 @@ def executer(dossier: Path, conteneur: str) -> dict:
         "exemple": nom,
         "composants": len(schema.get("components", [])),
         "nets": len(schema.get("connections", [])),
-        "board_mm": [schema.get("board_width_mm"), schema.get("board_height_mm")],
+        # ⚠️ CE QUE LE SCHEMA A DEMANDE, pas ce que la carte mesure : le
+        # placement resserre le contour. `board_mm_reel` est ecrit plus bas,
+        # lu sur `Edge.Cuts`. Les deux sont gardes — l ecart est justement ce
+        # qu on veut voir.
+        "board_mm_demande": [schema.get("board_width_mm"), schema.get("board_height_mm")],
+        "board_mm": None,
         "duree_s": round(duree),
         "git": _sha_git(),
         "routed_percent": int(resume.group(1)) if resume else None,
@@ -245,6 +280,7 @@ def executer(dossier: Path, conteneur: str) -> dict:
                       shlex.quote(_wslifier(dossier / "expected" / "final.kicad_pcb"))), 300)
     if extrait.returncode == 0:
         mesures["board"] = _mesurer_board(conteneur, board)
+        mesures["board_mm"] = _contour_du_board(conteneur, board)
         # ⚠️ LE VERDICT VIENT DU BOARD, pas du resume du pipeline.
         mesures["drc_du_board"] = _drc_du_board(conteneur, board)
 

@@ -3990,6 +3990,28 @@ def _sans_derniers_vias(pcb_bytes: bytes, combien: int) -> bytes:
     return txt.encode("utf-8")
 
 
+def _resume_des_echecs(echecs) -> str:
+    """Les raisons d un raccord manque, en une ligne lisible.
+
+    ⚠️ Les valeurs ne sont pas toutes des entiers : `motifs_reroutage` porte un
+    DICTIONNAIRE. Les formater toutes en `%d` levait un `TypeError` qui sortait
+    en HTTP 500 et faisait perdre le routage entier (carte-09, 2026-09-23).
+    Un compteur muet vaut mieux qu un diagnostic qui tue son appelant.
+    """
+    if not echecs:
+        return ""
+    morceaux = []
+    for cle, valeur in sorted(echecs.items()):
+        if isinstance(valeur, dict):
+            detail = " ".join("%s:%s" % (k, v)
+                              for k, v in sorted(valeur.items()) if v)
+            if detail:
+                morceaux.append("%s[%s]" % (cle, detail))
+        elif valeur:
+            morceaux.append("%s=%s" % (cle, valeur))
+    return " ".join(morceaux)
+
+
 def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
     """Raccorde par une courte piste les amas de plan orphelins PORTANT une pastille.
 
@@ -4028,23 +4050,38 @@ def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
         bilan = json.loads(resultat.read_text(encoding="utf-8"))
         recousu = sortie.read_bytes()
     examines, relies = bilan.get("amas_orphelins", 0), bilan.get("relies", 0)
+    degages = bilan.get("degages", 0)
     if not examines:
         return pcb_bytes
     if not relies:
         # ⚠️ On le DIT : des amas orphelins existent et AUCUN n a pu etre
         # raccorde. « Rien a faire » et « rien n a marche » ne doivent pas
         # rendre la meme trace.
+        # ⚠️ UN COMPTEUR N EST PAS TOUJOURS UN ENTIER. `motifs_reroutage` est un
+        # DICTIONNAIRE de raisons, et le formater en `%d` levait un TypeError
+        # qui remontait jusqu a un HTTP 500 — le routage entier perdu. Mesure
+        # du 2026-09-23, carte-09. C est la faute deja inscrite pour
+        # `_recuperer_jobs_abandonnes` : le DIAGNOSTIC qu on ajoute casse ce
+        # qu il devait eclairer. On formate chaque valeur pour ce qu elle est.
         logger.warning("raccord des amas orphelins : %d amas vu(s), AUCUN raccorde — %s",
                        examines,
-                       " ".join("%s=%d" % (k, v)
-                                for k, v in sorted((bilan.get("echecs") or {}).items())
-                                if v) or "raison inconnue")
+                       _resume_des_echecs(bilan.get("echecs")) or "raison inconnue")
         return pcb_bytes
+    # ⚠️ RECOULER AVANT DE JUGER. Un raccord obtenu en DEGAGEANT le couloir
+    # fait passer le signal arrache par l AUTRE FACE, donc a travers le plan
+    # coule : le board intermediaire porte alors de vraies violations de
+    # degagement — 51 erreurs mesurees sur carte-10 le 2026-09-22 — que la
+    # coulee efface en decoupant le cuivre autour de la piste neuve. Juger
+    # sans recouler ferait rejeter un board qui, recoule, est PARFAIT :
+    # 33 violations, 0 erreur, 0 connexion manquante, contre 1 manquante avant.
+    if degages:
+        recousu = _fill_zones(recousu)
     if _aggrave_le_board(pcb_bytes, recousu):
         logger.warning("raccord des amas orphelins : erreurs ajoutees — board conserve")
         return pcb_bytes
-    logger.info("raccord des amas orphelins : %d piste(s) posee(s) sur %d amas",
-                relies, examines)
+    logger.info("raccord des amas orphelins : %d piste(s) posee(s) sur %d amas"
+                "%s", relies, examines,
+                " (dont %d par DEGAGEMENT du couloir)" % degages if degages else "")
     return recousu
 
 

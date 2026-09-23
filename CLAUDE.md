@@ -2357,6 +2357,177 @@ en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
 son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
 `tests/test_chevauchements_vus_par_le_drc.py`.
 
+### Leçons inscrites le 2026-09-22 (soir) — le board propre qui se prêtait à tout
+
+**NEVER mesurer un défaut sans avoir vérifié que l'artefact le PORTE.** J'ai
+diagnostiqué la dernière rupture de plan de `carte-10` sur
+`expected/final.kicad_pcb`, board VERSIONNÉ du 2026-09-21 dont le propre
+`mesures.json` annonce `non_connectes: 0` — et mon DRC le confirmait. Le
+défaut du banc du 22 vivait dans `/tmp/livr/…/route.kicad_pcb`, **resté dans
+le conteneur**, faute que ce fichier s'interdit pourtant depuis le 2026-09-03.
+Sur le board propre, tout marchait : 92 points sur 93 de l'îlot orphelin
+faisaient face au plan principal, un via y tenait avec 0,29 mm de marge, et la
+couture de production le posait en annonçant `stitched: 1`. J'ai failli
+annoncer une solution pour un board qui n'a jamais eu le problème. Sur le VRAI
+board, la même sonde rend **zéro** vis-à-vis avec le plan principal.
+Un board sain se prête à toutes les démonstrations : vérifier d'abord que
+l'instrument voit le défaut.
+
+**NEVER laisser une sonde raisonner ZONE PAR ZONE sur un plan.** Ma première
+sonde ne regardait que les îlots d'UNE zone : or `carte-10` porte **deux zones
+GND**, une par face, et le vis-à-vis d'un îlot F.Cu vit dans l'AUTRE zone.
+Elle rendait donc « aucun cuivre en face » pour la totalité des points, sur une
+carte qui porte un plan arrière de 2656 mm². Détectée par l'invraisemblance du
+résultat, jamais par le code — c'est la quatrième sonde de ce projet sauvée de
+cette façon.
+
+**NEVER reprendre une mesure faite sur une AUTRE carte comme si elle décrivait
+le cas courant.** Le brief décrivait l'amas « cerné par un faisceau, jusqu'à
+18 segments `+3V3` » : c'était `carte-07`. Sur `carte-10`, la mesure donne
+**un seul segment par face** (`EXT2_1` à 0,862 mm sur F.Cu, `EXT4_1` à
+0,781 mm sur B.Cu). Le défaut paraissait coûteux à refermer ; il ne l'est pas.
+
+**Consulter les agents coûte de la MÉMOIRE, et cette charge fausse les
+mesures.** Codex lit ce fichier, y trouve « Use Graphify by default before
+source browsing », et lance `graphify query` — **1,04 Go par requête**. Deux en
+parallèle ont fait tomber la mémoire libre à 2,8 Go et tuer mes propres tâches
+de fond ; c'est la même charge qui avait faussé un banc entier la veille.
+Tout prompt d'agent externe commence désormais par l'interdiction explicite
+d'exécuter graphify, et `codex exec` reçoit `< /dev/null` (sans quoi il attend
+une saisie au clavier et ne rend jamais la main).
+
+### Leçons inscrites le 2026-09-22 (nuit) — l'arrachage borné, et ses deux sœurs
+
+**NEVER juger un plan ZONE PAR ZONE.** Notre générateur écrit UNE ZONE PAR
+FACE. `_relier_les_amas_orphelins` calculait ses orphelins sur la zone
+courante : tout îlot de F.Cu qui rejoint le plan par B.Cu passait pour orphelin.
+Mesuré sur `carte-10` : **21 amas orphelins annoncés, UN seul en vérité** — et
+les vingt autres recevaient du cuivre pour rien. `_stitch_zones` jugeait déjà
+sur le net entier (`_ilots_relies_au_principal_du_net`) : deux jumelles, deux
+réponses, et c'est la plus permissive qui posait le cuivre. Ma propre sonde
+d'analyse avait fait exactement la même faute une heure plus tôt.
+
+**NEVER échantillonner un trajet au pas de sa propre marge.** `_couloir_libre`
+prenait `pas = marge` : un bond plus court que la marge n'était jugé que par ses
+DEUX BOUTS. Or la distance à un cuivre est convexe le long d'un segment — son
+minimum tombe à l'INTÉRIEUR, jamais aux extrémités. Mesuré : **426 violations de
+dégagement**, toutes à 0,1993 mm pour 0,2000 exigés. Sept dixièmes de
+micromètre, c'est-à-dire précisément ce qu'un échantillonnage à deux points
+laisse passer. Pas ramené à `marge / 8`.
+
+**Un remède tout-ou-rien se PROUVE par l'égalité, pas par l'absence de
+plainte.** `_degager_le_couloir` arrache, pose, reroute, et remet tout en place
+si un seul reroutage échoue. La preuve qu'il ne casse rien n'est pas « aucune
+erreur nouvelle » : c'est le board rendu **strictement identique** au board reçu
+— 33 violations, 0 erreur, 1 manquante, avant comme après.
+
+**Une impossibilité peut se CALCULER, et elle DÉSIGNE alors le remède.** Le
+couloir de `carte-10` fait 0,862 mm ; le raccord de masse le barre sur toute sa
+largeur (0,25 de cuivre + 0,2 de dégagement de chaque côté = 0,65). Un signal de
+0,25 mm en réclame 0,65 à son tour : il faudrait 1,30 mm. Aucune finesse ne
+rattrape 0,44 mm manquants — donc la recherche sur la même face est vaine, et
+la seule issue est de CHANGER DE FACE. Le calcul n'a pas dit « abandonne », il a
+dit où chercher. Livré (`_detour_par_l_autre_face`) : **1 connexion manquante →
+0**, à violations et erreurs inchangées.
+
+**NEVER juger un board qui vient de recevoir du cuivre SANS avoir recoulé ses
+plans.** Le détour par l'autre face traverse le plan coulé : le board
+intermédiaire porte **51 erreurs** de dégagement, parfaitement réelles, que la
+coulée efface en découpant le cuivre autour de la piste neuve. Juger avant de
+recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
+0 erreur, 0 connexion manquante. C'est la famille que ce dépôt traque, prise
+dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
+instrument qui condamne un board sain.
+
+### Leçons inscrites le 2026-09-23 (ter) — l'ERC, et deux réfutations utiles
+
+**NEVER analyser un fichier de plusieurs centaines de kilo-octets DANS le
+worker uvicorn.** `run_kicad_tools_erc` appelait `Schematic.load`, du Python
+pur, qui tient le GIL pendant toute l'analyse. Deux cartes du banc perdues le
+même jour sur un **HTTP 500 de `/erc`** — `carte-08` (190 ko) et `carte-10`
+(141 ko) — parce qu'uvicorn tue par SIGKILL tout worker muet plus de 5 s.
+C'est la **sœur** du défaut corrigé le 2026-09-10 sur le journal Freerouting :
+le journal avait été traité, le schéma non, alors que ce fichier l'interdisait
+déjà en toutes lettres. `tools/erc_runner.py` rejoint les quatre autres
+runners. **Corriger un défaut dans une fonction sans chercher ses sœurs coûte
+toujours une deuxième fois.**
+
+**NEVER laisser une EXPIRATION tuer un run quand un verdict réel existe
+déjà.** Le budget de `kicad-cli sch erc` valait 30 s à plat, et son dépassement
+remontait en 500 : le routage entier perdu, alors que kicad-tools avait rendu
+son verdict quelques lignes plus haut. Le budget se déduit désormais de la
+taille du schéma (plancher 120 s, quatre fois le point d'échec), et une
+expiration conserve le verdict acquis en le DISANT. Famille « le plafond n'était
+pas UN endroit, mais QUATRE ».
+
+**NEVER conclure d'un écart de DURÉE entre deux bancs qu'un changement a
+ralenti la chaîne.** `carte-06` a mis 468 s, puis 3204, puis 1140, sans que rien
+ne change dans son circuit : Freerouting est stochastique et tourne jusqu'à
+mille passes sans gain. J'ai failli annuler un correctif sain sur cette seule
+observation. Deux tirages ne prouvent rien — la règle vaut aussi pour le temps.
+
+**Deux propositions mesurées et RÉFUTÉES le même jour, et c'est le travail de
+la mesure.** Resserrer le CADRE des connecteurs sur la frontière du circuit :
+aucun gain de taille, connecteurs entassés sur un seul bord, deux se
+chevauchant — annulé. Et le choix du bord par la DIRECTION, qui le remplace,
+ne dégrade rien mais ne transforme pas le rendu : le gain visible est faible,
+et il faut le dire plutôt que de le vendre.
+
+### Leçon inscrite le 2026-09-23 (bis) — j'ai faussé mon propre banc, DEUX JOURS après l'avoir écrit
+
+**NEVER lancer QUOI QUE CE SOIT pendant un banc — y compris une revue en
+lecture seule.** Le 2026-09-22, ce fichier a reçu « la qualité du routage dépend
+de la CHARGE » après qu'une consultation d'agent eut fait échouer 3 tirages sur
+3. Le lendemain, j'ai lancé une revue multi-agents pendant le banc, en me disant
+qu'elle ne touchait à rien. `carte-08` est sortie `abouti=False` sur un **HTTP
+500 de `/erc`** : `kicad_tools/sexp/parser.py` a tenu le GIL **plus de 4,5 s**
+sur un schéma de 190 ko pendant que cinq agents se disputaient le processeur, et
+uvicorn tue tout worker qui ne répond pas à son ping en 5 s (leçon du
+2026-09-10). Relancée seule : **193 s, 0 erreur, 0 manquante.**
+
+Le placement n'était pas en cause. La charge l'était, et c'est moi qui l'avais
+mise. Une règle écrite n'est pas une règle appliquée — c'est vrai du code, et
+c'est vrai de moi.
+
+**NEVER répartir des composants en déplaçant ce qui est déjà posé.** Le remède
+au tas de périphériques ne change QUE l'angle de départ de la recherche : le
+premier de chaque groupe garde exactement la direction que la graine a
+calculée, les suivants s'en écartent en éventail, et `le_long_du_rayon` reste
+seul juge de ce qui est libre. Une répartition qui déplacerait les directs
+perdrait la topologie — la broche que chaque périphérique doit viser.
+
+### Leçon inscrite le 2026-09-23 — le banc mesurait ce que le produit ne fait pas
+
+**NEVER laisser le BANC appeler le service autrement que la PRODUCTION.**
+`run_pipeline.py` n'envoyait pas `auto_size_board` à `/place/auto` : le
+resserrement du contour sur le placement, écrit le 2026-09-13, n'a donc JAMAIS
+tourné dans le banc — alors que `handlePlacement`, en production, le passe
+depuis toujours. Le banc mesurait un comportement que le produit n'a pas, ce
+qui est l'inverse exact de ce à quoi il sert. Mesuré sur `carte-10` : carte de
+140 × 105 mm pour un circuit de 51 × 66, **23 % d'occupation**, connecteurs à
+56-75 mm, `VIN` long de 112 mm. Une ligne de correctif donne 61,0 × 45,8 mm,
+56 % d'occupation, `VIN` à 45,5 mm, et **le routage reste à 100 %, 0 erreur,
+0 manquante** sur les dix cartes.
+
+C'est le **septième** levier natif que ce projet trouve écrit et jamais appelé,
+après `max_distance_mm`, `anchor_pin`, `WorkflowConfig.grid`, `constraints`,
+`move_reference`, `bottom_up_placement` et `LocalRerouter`. Le motif est
+toujours le même : la règle existe, elle est juste, et rien ne prouve qu'elle
+est INVOQUÉE.
+
+**Une carte trop grande coûte du TEMPS, pas seulement de la place.**
+`carte-08` passe de 2002 s à 347 s, six fois plus vite, pour le même circuit.
+Ce fichier portait déjà la mesure — « l'espace de recherche d'un routeur croît
+avec la SURFACE × le nombre de nets » — sans jamais en tirer la conséquence.
+
+**NEVER rapporter une taille de carte prise dans le SCHÉMA.** Le banc écrivait
+`board_mm` d'après ce que la description demandait, pas d'après `Edge.Cuts` :
+`carte-10` était annoncée 140 × 105 quand son board mesurait 61,0 × 45,8, cinq
+fois faux en surface, et rien ne permettait de s'en apercevoir. La règle de ce
+dépôt — un compteur ment, un board non — vaut aussi pour la taille.
+`mesures.json` porte désormais les DEUX : `board_mm` mesuré et
+`board_mm_demande`.
+
 ### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
 
 **NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**

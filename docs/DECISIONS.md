@@ -14,6 +14,57 @@
 
 ## En attente de validation
 
+### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
+
+- **Statut : LIVRÉ sur demande explicite de l'utilisateur, et le défaut est
+  REFERMÉ.** Mesuré sur le board fautif de `carte-10` : 1 connexion manquante
+  → **0**, à violations et erreurs inchangées (33 / 0). Le signal arraché
+  change de face par deux vias, et les zones sont recoulées avant le jugement.
+- **Statut historique : partiellement livré**
+  (2026-09-22, « pourquoi tu ne le résous pas alors que c'est notre
+  objectif »). L'arrachage borné est implémenté et actif dans
+  `_relier_les_amas_orphelins` ; il est tout-ou-rien et ne garde jamais un
+  board dégradé. **Ce qui reste EN ATTENTE** est la suite décrite plus bas :
+  faire changer de face au signal arraché, ou réserver un couloir de masse en
+  amont du routage. Aucune de ces deux-là n'est écrite.
+- **Mesuré après livraison :** sur `carte-10`, les amas orphelins vus passent de
+  **21 à 1** (le jugement était fait zone par zone alors que la carte porte une
+  zone par face) et les erreurs de dégagement introduites de **426 à 0** (le
+  contrôle de couloir échantillonnait au pas de la marge). Le défaut de
+  `carte-10` reste ouvert : le couloir fait 0,862 mm et le raccord de masse le
+  barre entièrement (0,65 mm), il ne reste pas la place d'un signal qui en
+  réclame 0,65. Impossible sur la même face, arithmétiquement.
+- **Ce qui est proposé :** quand un îlot de plan porte une pastille et ne
+  rejoint pas la masse principale, arracher le petit nombre de segments
+  d'autres nets qui coupent son couloir, poser le raccord de masse, puis
+  rerouter localement les segments retirés. Tout en essai à blanc d'abord ;
+  on ne garde le résultat que si le DRC ne se dégrade pas
+  (`_aggrave_le_board`). La masse se coule EN DERNIER, le rerouteur étant
+  aveugle aux zones.
+- **Pourquoi :** c'est la seule voie que la mesure laisse debout sur le dernier
+  défaut du banc (`carte-10`, board du 2026-09-22). Mesuré sur ce board :
+  l'amas orphelin est une PAIRE de 1,30 et 0,99 mm² ; aucun de ses points n'a
+  le plan principal en vis-à-vis ; la couture refuse ses 23 et 18 sites
+  (« obstacle », « trou trop près ») car un via ne tient pas dans un
+  millimètre carré ; le raccord par piste rend `sans_chemin` 19 fois. En
+  revanche le plan principal n'est qu'à 0,862 mm sur F.Cu et 0,781 mm sur
+  B.Cu, et **un seul segment coupe le couloir de chaque face** (`EXT2_1`,
+  `EXT4_1`). L'ensemble à arracher est donc d'UN segment, pas d'un faisceau.
+- **Ce que cela coûte :** un reroutage raté échange une masse manquante contre
+  une alimentation manquante — strictement pire. D'où l'essai à blanc et
+  l'arbitrage par le DRC, sans lesquels la proposition ne tient pas.
+- **Pistes écartées par la mesure, à ne pas rouvrir :** le via changeant de
+  face (aucun vis-à-vis avec le plan principal) ; la ligne droite et le départ
+  depuis le bord de l'îlot (réfutés le 2026-09-21) ; le contournement A* même
+  à budget quadruplé ; la réservation de masse avant routage (réfutée le
+  2026-09-02, routeur trois fois plus lent).
+- **Origine :** proposition de Codex, avertissements de GLM, mesures faites
+  ensuite sur le board réellement fautif. Détail complet dans
+  `services/kicad/examples/BANC_DRIVER_LLM.md`.
+- **Alternative si refus :** déclarer qu'une carte portant une rupture de plan
+  n'est pas livrable et re-tirer le routage. Codex comme GLM jugent qu'elle
+  n'est pas livrable en l'état ; c'est une décision produit, pas technique.
+
 ### D-2026-09-21-a — Graine en ÉTOILE : armer un placement CALCULÉ à la place du tirage au hasard
 
 - **Statut : EN ATTENTE.** Le code est livré **DÉSARMÉ** (réglage de banc

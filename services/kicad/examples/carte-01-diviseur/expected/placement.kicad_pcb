@@ -1,5 +1,5 @@
 (kicad_pcb
-	(version 20260206)
+	(version 20241229)
 	(generator "kicad_tools")
 	(generator_version "10.0")
 	(general
@@ -9,7 +9,7 @@
 	(paper "A4")
 	(title_block
 		(title "Cirqix PCB")
-		(date "2026-09-13")
+		(date "2026-09-23")
 		(rev 1.0)
 		(company "")
 	)
@@ -43,7 +43,7 @@
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 141 100 0)
+		(at 139.77 100 0)
 		(descr "Through hole straight pin header, 1x02, 2.54mm pitch, single row")
 		(tags "Through hole pin header THT 1x02 2.54mm single row")
 		(property "Reference" "J1"
@@ -219,7 +219,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "cffa84c4-1d35-4ce8-ad77-f8bdede87659")
+		(uuid "22fc4e8d-7daa-41c9-8c6d-2b8b05fb9a7e")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
@@ -229,7 +229,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R1"
-			(at -2.4 -1.43 0)
+			(at 1.95943e-16 1.77 0)
 			(layer "F.SilkS")
 			(effects
 				(font
@@ -326,13 +326,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "da9c9a33-637a-4a8f-b72b-35a7c551c935")
+		(uuid "c786aa64-2c18-4dba-87bd-6656350db9f2")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 145 99 0)
+		(at 146 102 270)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R2"
@@ -433,13 +433,13 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "54b1106e-6dae-48f8-8804-3679f8f2e08d")
+		(uuid "fa793d3a-c7d0-4c49-ac3e-bec174ab8873")
 	)
 	(footprint "R_0603_1608Metric"
 		(version 20260206)
 		(generator "kicad-footprint-generator")
 		(layer "F.Cu")
-		(at 149 105 90)
+		(at 149.5 105 90)
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf)")
 		(tags "resistor")
 		(property "Reference" "R3"
@@ -520,14 +520,14 @@
 			)
 		)
 		(pad "1" smd roundrect
-			(at -0.825 0 90)
+			(at -0.825 0)
 			(size 0.8 0.95)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
 			(net 2 "MID")
 		)
 		(pad "2" smd roundrect
-			(at 0.825 0 90)
+			(at 0.825 0)
 			(size 0.8 0.95)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
@@ -540,7 +540,7 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "5e74e066-5f81-403f-82b4-201de5c96556")
+		(uuid "6fe74e70-8b13-4b0c-b2e1-279414e34229")
 	)
 	(footprint "LED_0603_1608Metric"
 		(version 20260206)
@@ -673,14 +673,14 @@
 			)
 		)
 		(pad "1" smd roundrect
-			(at -0.7875 0 180)
+			(at -0.7875 0)
 			(size 0.875 0.95)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
 			(net 1 "GND")
 		)
 		(pad "2" smd roundrect
-			(at 0.7875 0 180)
+			(at 0.7875 0)
 			(size 0.875 0.95)
 			(layers "F.Cu" "F.Mask" "F.Paste")
 			(roundrect_rratio 0.25)
@@ -693,12 +693,12 @@
 			(rotate (xyz 0 0 0)
 			)
 		)
-		(uuid "9f5466c3-e046-4afd-9e23-d08c131ae9df")
+		(uuid "66d57d58-602e-4c70-bfe0-1a6d22c6de42")
 	)
 	
 	(gr_rect
-		(start 136.230 95.230)
-		(end 156.230 109.230)
+		(start 136.000 95.230)
+		(end 156.000 109.230)
 		(stroke
 			(width 0.1)
 			(type default)
