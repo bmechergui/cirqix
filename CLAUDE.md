@@ -2439,6 +2439,40 @@ recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
 dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
 instrument qui condamne un board sain.
 
+### Leçons inscrites le 2026-09-23 (ter) — l'ERC, et deux réfutations utiles
+
+**NEVER analyser un fichier de plusieurs centaines de kilo-octets DANS le
+worker uvicorn.** `run_kicad_tools_erc` appelait `Schematic.load`, du Python
+pur, qui tient le GIL pendant toute l'analyse. Deux cartes du banc perdues le
+même jour sur un **HTTP 500 de `/erc`** — `carte-08` (190 ko) et `carte-10`
+(141 ko) — parce qu'uvicorn tue par SIGKILL tout worker muet plus de 5 s.
+C'est la **sœur** du défaut corrigé le 2026-09-10 sur le journal Freerouting :
+le journal avait été traité, le schéma non, alors que ce fichier l'interdisait
+déjà en toutes lettres. `tools/erc_runner.py` rejoint les quatre autres
+runners. **Corriger un défaut dans une fonction sans chercher ses sœurs coûte
+toujours une deuxième fois.**
+
+**NEVER laisser une EXPIRATION tuer un run quand un verdict réel existe
+déjà.** Le budget de `kicad-cli sch erc` valait 30 s à plat, et son dépassement
+remontait en 500 : le routage entier perdu, alors que kicad-tools avait rendu
+son verdict quelques lignes plus haut. Le budget se déduit désormais de la
+taille du schéma (plancher 120 s, quatre fois le point d'échec), et une
+expiration conserve le verdict acquis en le DISANT. Famille « le plafond n'était
+pas UN endroit, mais QUATRE ».
+
+**NEVER conclure d'un écart de DURÉE entre deux bancs qu'un changement a
+ralenti la chaîne.** `carte-06` a mis 468 s, puis 3204, puis 1140, sans que rien
+ne change dans son circuit : Freerouting est stochastique et tourne jusqu'à
+mille passes sans gain. J'ai failli annuler un correctif sain sur cette seule
+observation. Deux tirages ne prouvent rien — la règle vaut aussi pour le temps.
+
+**Deux propositions mesurées et RÉFUTÉES le même jour, et c'est le travail de
+la mesure.** Resserrer le CADRE des connecteurs sur la frontière du circuit :
+aucun gain de taille, connecteurs entassés sur un seul bord, deux se
+chevauchant — annulé. Et le choix du bord par la DIRECTION, qui le remplace,
+ne dégrade rien mais ne transforme pas le rendu : le gain visible est faible,
+et il faut le dire plutôt que de le vendre.
+
 ### Leçon inscrite le 2026-09-23 (bis) — j'ai faussé mon propre banc, DEUX JOURS après l'avoir écrit
 
 **NEVER lancer QUOI QUE CE SOIT pendant un banc — y compris une revue en

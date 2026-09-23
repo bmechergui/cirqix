@@ -412,6 +412,85 @@ reroutage échoue.
    dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
    laisse passer. Pas ramené à un huitième de marge.
 
+### Le bord d'un connecteur se choisit par la DIRECTION, pas par la distance (2026-09-23)
+
+`_position_au_bord` classait les quatre bords par distance et prenait le plus
+proche. Depuis que le contour se resserre sur le circuit, les quatre bords sont
+presque ÉQUIDISTANTS : le critère perd son sens, et les connecteurs sortent du
+même côté.
+
+⚠️ **Première tentative, MESURÉE ET RÉFUTÉE le même jour** : resserrer le CADRE
+sur la frontière du circuit au lieu de changer le critère. Aucun gain de taille
+(58,98 × 45,8 avant comme après) et un aspect nettement pire — tous les
+connecteurs entassés sur le bord droit, deux se chevauchant, les trois autres
+bords vides. Ce n'était pas le cadre, c'était le critère. Le code est annulé.
+
+Quand l'appelant connaît la direction — la graine connaît l'angle du rayon des
+broches — c'est elle qui commande ; à direction égale, le plus proche départe.
+Sans direction, rien ne change : `_coller_les_ancrages_au_bord` glisse toujours
+par le plus court chemin, et c'est sa règle propre.
+
+⚠️ **Gain visible FAIBLE sur le banc, et il faut le dire.** Les connecteurs
+étaient déjà répartis sur trois bords ; le critère est désormais sensé, il ne
+dégrade rien, mais il ne transforme pas le rendu. Ce qui reste laid — une zone
+vide entre le circuit et les connecteurs du bord, quelques composants sans lien
+loin de tout — n'est pas réglé par là.
+
+### ⚠️ DEUX CARTES PERDUES SUR LE CONTRÔLE ÉLECTRIQUE, deux causes (2026-09-23)
+
+`carte-08` puis `carte-10` sont sorties `abouti=False` sur un **HTTP 500 de
+`/erc`**, à des moments différents de la journée. Deux causes distinctes, toutes
+deux de familles que ce dépôt documente déjà.
+
+**1. L'analyse tenait le GIL dans le worker.**
+
+    Timeout (0:00:04.500000)!
+      kicad_tools/sexp/parser.py:1181  _parse_list
+      kicad_tools/schematic/models/io_mixin.py:111  load
+      tools/erc.py:188  run_kicad_tools_erc
+
+`Schematic.load` est du Python PUR : il tient le GIL pendant toute l'analyse
+d'un schéma de 140 à 190 ko, et uvicorn tue par SIGKILL tout worker muet plus
+de 5 s. C'est la **sœur** du défaut corrigé le 2026-09-10 sur le journal
+Freerouting — le journal avait été traité, le schéma non, alors que `CLAUDE.md`
+l'interdit en toutes lettres. `tools/erc_runner.py` rejoint les quatre autres
+runners du service.
+
+**2. Le budget de `kicad-cli` était de 30 s à plat**, et son dépassement
+remontait en 500 : le routage entier perdu. Famille « le plafond n'était pas UN
+endroit, mais QUATRE ». Il se déduit désormais de la taille du schéma, plancher
+de 120 s — quatre fois le point d'échec mesuré. **Et une expiration ne tue plus
+le run** : kicad-tools a déjà rendu un verdict réel, il est conservé, et le fait
+que l'ERC d'autorité n'ait pas tourné est DIT.
+
+### BANC DE RÉFÉRENCE du 2026-09-23 (4e passage) — service corrigé, dix sur dix
+
+| carte | demandée | livrée | erreurs | manquantes |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 25 × 20 | **20,1 × 14,1** | 0 | 0 |
+| `carte-02-alimentation` | 55 × 40 | **32,5 × 25,4** | 0 | 0 |
+| `carte-03-oscillateur` | 50 × 35 | **28,1 × 19,9** | 0 | 0 |
+| `carte-04-mcu-minimal` | 60 × 45 | **36,6 × 29,8** | 0 | 0 |
+| `carte-05-capteur-i2c` | 70 × 50 | **40,0 × 32,6** | 0 | 0 |
+| `carte-06-io-etendu` | 80 × 60 | **47,5 × 36,4** | 0 | 0 |
+| `carte-07-multi-io` | 110 × 80 | **47,7 × 38,8** | 0 | 0 |
+| `carte-08-dense` | 125 × 95 | **57,4 × 44,1** | 0 | 0 |
+| `carte-09-tres-dense` | 130 × 100 | **57,8 × 45,2** | 0 | 0 |
+| `carte-10-maximale` | 140 × 105 | **59,0 × 45,8** | 0 | 0 |
+
+Dix sur dix, 100 % routé. `carte-02` gagne encore 2,4 mm de largeur.
+
+⚠️ **Le raccord par DÉGAGEMENT DU COULOIR s'est déclenché en production** et le
+journal le dit : « raccord des amas orphelins : 1 piste(s) posée(s) sur 1 amas
+(dont 1 par DEGAGEMENT du couloir) ». Le mécanisme livré cette nuit ne dort pas
+dans le code — il travaille.
+
+⚠️ Les DURÉES varient d'un facteur six d'un banc à l'autre sur la même carte
+(`carte-06` : 468 s, puis 3204, puis 1140). Freerouting est stochastique et
+tourne jusqu'à mille passes sans gain. **Ne jamais conclure d'un écart de durée
+entre deux bancs qu'un changement a ralenti la chaîne** — j'ai failli annuler
+un correctif sain pour cette raison.
+
 ### Les périphériques se RÉPARTISSENT, ils ne s'empilent plus (2026-09-23)
 
 Deuxième défaut visible après le resserrement du contour : les composants
