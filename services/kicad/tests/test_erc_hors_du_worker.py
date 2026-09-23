@@ -125,7 +125,64 @@ class TestUneExpirationNeTuePasLeRun:
         code = inspect.getsource(E.run_erc)
         assert "subprocess.TimeoutExpired" in code, (
             "l'expiration de kicad-cli doit être rattrapée, pas propagée en 500")
+        # ⚠️ ANCRE SUR LE BLOC, PAS SUR UNE DISTANCE. Cette garde cherchait
+        # dans les 900 caractères suivants ; le commentaire qui explique
+        # POURQUOI l'expiration doit être fail-closed l'a repoussé au-delà, et
+        # la garde a crié alors que l'avertissement était bien là. C'est la
+        # DEUXIÈME fois le même jour — l'autre était
+        # `test_aucun_raccord_possible_se_DIT`. Une garde s'ancre sur ce qui
+        # ne bouge pas : ici le `except` suivant, qui ferme le bloc.
         i = code.index("subprocess.TimeoutExpired")
-        suite = code[i:i + 900]
-        assert "logger.warning" in suite, (
+        fin = code.index("except Exception", i)
+        assert "logger.warning" in code[i:fin], (
             "un contrôle qui n'a pas tourné doit être DIT, jamais tu")
+
+
+class TestUneExpirationNePASSEPasPourUnSchemaPROPRE:
+    """⚠️ LE DÉFAUT LE PLUS GRAVE DE CETTE JOURNÉE, introduit par le correctif
+    d'un autre défaut et trouvé par la revue avant fusion, jamais par un test.
+
+    Le premier rattrapage de `TimeoutExpired` était un simple `break`. Si
+    l'expiration tombe à la PREMIÈRE itération, `violations` vaut `[]`, donc
+    la route répondait `erc_clean=True`, `skipped=False`,
+    `engine="kicad-cli"` — la réponse EXACTE d'un schéma réellement contrôlé
+    et propre.
+
+    Et `skipped=False` court-circuite `runErcFallback()` côté TypeScript :
+    `ERC_CLEAN` était persisté SANS AUCUN VERDICT, sur un statut qui
+    participe au gate JLCPCB.
+
+    C'est littéralement la faute que ce dépôt a corrigée cinq fois — un échec
+    qui rend la même valeur que son cas normal — réintroduite en réparant
+    autre chose.
+    """
+
+    def _bloc_expiration(self):
+        source = (RACINE / "routers" / "erc.py").read_text(encoding="utf-8")
+        debut = source.index("except subprocess.TimeoutExpired")
+        fin = source.index("except Exception", debut)
+        return source[debut:fin]
+
+    def test_elle_ne_rend_jamais_erc_clean(self):
+        bloc = self._bloc_expiration()
+        assert "erc_clean=False" in bloc, (
+            "une expiration ne doit JAMAIS rendre erc_clean=True : c'est la "
+            "réponse d'un schéma contrôlé et propre")
+
+    def test_elle_bascule_sur_le_repli(self):
+        bloc = self._bloc_expiration()
+        assert "skipped=True" in bloc, (
+            "skipped=False court-circuite runErcFallback() : ERC_CLEAN serait "
+            "persisté sans le moindre verdict")
+
+    def test_elle_rend_le_verdict_REELLEMENT_obtenu(self):
+        bloc = self._bloc_expiration()
+        assert "kt_violations" in bloc, (
+            "le commentaire promettait de garder le verdict de kicad-tools — "
+            "il doit être RENDU, pas seulement promis")
+
+    def test_elle_le_DIT(self):
+        bloc = self._bloc_expiration()
+        assert "warning=" in bloc and "logger.warning" in bloc, (
+            "un contrôle d'autorité qui n'a pas tourné se DIT, dans le journal "
+            "ET dans la réponse")

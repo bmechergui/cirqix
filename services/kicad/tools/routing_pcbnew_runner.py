@@ -2249,8 +2249,19 @@ def _site_de_via(board, autour, netcode: int, via_d: float, perc_d: float,
             if not all(_distance_a_obstacle(x, y, o) >= besoin
                        for o in obstacles):
                 continue
-            if not _trou_libre(x, y, float(perc_d) / 2.0, trous,
-                               float(perc_d)):
+            # ⚠️ L ECART ENTRE PERCAGES EST UNE REGLE DE FABRICATION, PAS LE
+            # DIAMETRE DU TROU. Cette ligne passait `float(perc_d)` — 0,30 mm —
+            # la ou les six autres poses de via du fichier passent
+            # `_ECART_TROUS_MM` (0,50 mm, regle JLCPCB). Un via de detour etait
+            # donc accepte a 0,30 mm bord-a-bord d un trou voisin.
+            #
+            # Et le defaut etait INVISIBLE : `hole_to_hole` sort en WARNING,
+            # `_aggrave_le_board` ne compte que les `error`, donc le board
+            # partait « 0 erreur » et se faisait refuser au percage. C est la
+            # faute que ce depot traque — un echec qui rend la valeur du cas
+            # normal — relevee par la revue avant fusion, jamais par un test.
+            if not _trou_libre(x, y, _percage_pour_via(via_d) / 2.0, trous,
+                               _ECART_TROUS_MM):
                 continue
             return (x, y)
     return None
@@ -2340,7 +2351,12 @@ def _detour_par_l_autre_face(pcbnew, board, releve, clearance: float):
                           trous, pas, rayon)
         if p1 is None or p2 is None:
             continue
-        if math.hypot(p1[0] - p2[0], p1[1] - p2[1]) < float(perc_d) * 2.0:
+        # ⚠️ MEME REGLE ENTRE LES DEUX VIAS DE LA PAIRE. `perc_d * 2.0` vaut
+        # 0,60 mm entre CENTRES, soit 0,30 bord-a-bord : la moitie de ce que la
+        # fabrication exige. On mesure bord-a-bord, avec la meme constante.
+        rayon_perce = _percage_pour_via(via_d) / 2.0
+        if (math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+                < 2.0 * rayon_perce + _ECART_TROUS_MM):
             continue          # deux vias trop proches : trou contre trou
         amont = _chemin_sur_couche(board, (x1, y1), p1, net, couche, larg,
                                    clearance, [(x1, y1), p1])
@@ -2564,6 +2580,9 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
             if not any(_dedans(k, p.GetPosition()) for k in membres for p in pads):
                 echecs["sans_pastille"] += 1
                 continue          # sans pastille : ce n est pas a nous de trancher
+            # Obstacles TOUTES COUCHES pour l echantillonnage des ancres et
+            # des cibles, qui precede le choix de la couche. Le TRAJET, lui,
+            # est juge sur sa seule couche — voir `obstacles_couche` plus bas.
             obstacles = _obstacles_d_un_autre_net(board, netcode)
             marge = largeur / 2.0 + clearance
             pas = max(largeur / 2.0, 1.0)
@@ -2621,6 +2640,18 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
                 continue
             _d, couche, depart, arrivee = meilleur
             buts = _buts_bornes(cibles_par_couche.get(couche), depart, arrivee)
+            # ⚠️ LE TRAJET NE VIT QUE SUR SA COUCHE. L A* prenait ses obstacles
+            # sur TOUTES les couches alors que l arrachage, lui, ne regarde que
+            # celle du raccord : du cuivre de la face OPPOSEE faisait donc
+            # echouer l A* et ouvrait le chemin DESTRUCTIF sur une face qui
+            # etait libre. Le raccord ne pose aucun via — seul un via traverse.
+            # Lecon du 2026-09-14 (« NEVER prendre les obstacles d un TRAJET
+            # sur toutes les couches »), que la revue a retrouvee ici.
+            obstacles_couche = _obstacles_d_un_autre_net(board, netcode,
+                                                         couches=[couche])
+
+            def _libre_couche(x, y, _obs=obstacles_couche, _m=marge):
+                return all(_distance_a_obstacle(x, y, o) >= _m for o in _obs)
 
             # ⚠️ PAS DE LIGNE DROITE — mesuree et REFUTEE le 2026-09-21 : un
             # ilot est isole PAR une piste, toute droite la retraverse
@@ -2635,7 +2666,8 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
             # ⚠️ Plafond ABSOLU en plus du proportionnel : `_d` n est borne
             # par rien, et un amas lointain ferait exploser la recherche.
             portee = min(max(_d * 4.0, largeur * 20.0), largeur * 120.0)
-            chemin = _chemin_de_contournement(depart, buts, _libre, pas, portee)
+            chemin = _chemin_de_contournement(depart, buts, _libre_couche,
+                                              pas, portee)
             # ⚠️ LE PREMIER BOND HERITE DE LA PASTILLE. L A* arrondit son
             # depart a la grille : un point legal — le centre de la pastille —
             # se retrouve a quelques centiemes de sa vraie place, souvent du
@@ -2650,7 +2682,8 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
                 return (round(a[0] / _p), round(a[1] / _p)) != _c
 
             if chemin and len(chemin) >= 2 and all(
-                    _couloir_libre(a, b, obstacles, largeur / 2.0, clearance)
+                    _couloir_libre(a, b, obstacles_couche, largeur / 2.0,
+                                   clearance)
                     for a, b in zip(chemin, chemin[1:])
                     if _bond_verifiable(a, b)):
                 # L A* juge des POINTS de grille ; le segment entre deux points
@@ -2673,7 +2706,15 @@ def _relier_les_amas_orphelins(pcbnew, args: dict[str, str]) -> None:
                 relies += 1
                 degages += 1
                 continue
-            echecs["sans_chemin"] += 1
+            # ⚠️ NE PAS COMPTER DEUX FOIS. `_degager_le_couloir` a DEJA
+            # incremente `sans_degagement` ou `reroutage_impossible` sur son
+            # propre echec ; y ajouter `sans_chemin` faisait compter chaque
+            # amas perdu deux fois, et `examines` ne retombait plus sur ses
+            # pattes. Un rapport qui se contredit ne vaut pas mieux qu un
+            # rapport muet — releve par la revue avant fusion.
+            if not any(echecs.get(cle) for cle in
+                       ("sans_degagement", "reroutage_impossible")):
+                echecs["sans_chemin"] += 1
 
     pcbnew.SaveBoard(args["output"], board)
     Path(args["result"]).write_text(

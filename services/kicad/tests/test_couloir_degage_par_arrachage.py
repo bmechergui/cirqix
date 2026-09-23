@@ -285,3 +285,56 @@ class TestLeResumeDesEchecs:
     def test_les_zeros_ne_polluent_pas_la_ligne(self):
         resume = self._resume()
         assert resume({"sans_cible": 0, "sans_chemin": 3}) == "sans_chemin=3"
+
+
+class TestLeViaDuDetourRespecteLaFABRICATION:
+    """⚠️ Trouvé par la revue avant fusion, et invisible à tout le reste.
+
+    `_site_de_via` passait `float(perc_d)` — 0,30 mm — comme écart entre
+    perçages, là où les six autres poses de via du fichier passent
+    `_ECART_TROUS_MM` (0,50 mm, règle JLCPCB). Un via de détour était donc
+    accepté à 0,30 mm bord-à-bord d'un trou voisin.
+
+    Et le défaut ne se voyait NULLE PART : `hole_to_hole` sort en **warning**,
+    `_aggrave_le_board` ne compte que les `error`. Le board partait donc
+    « 0 erreur » et se faisait refuser au perçage. C'est la famille que ce
+    dépôt traque — un échec qui rend la valeur du cas normal.
+    """
+
+    def _bloc(self, nom):
+        code = _code_seul(SOURCE)
+        debut = code.index("def %s" % nom)
+        fin = code.index(chr(10) + "def ", debut + 1)
+        return code[debut:fin]
+
+    def test_le_site_de_via_utilise_la_regle_de_fabrication(self):
+        corps = self._bloc("_site_de_via")
+        assert "_ECART_TROUS_MM" in corps, (
+            "l'écart entre perçages est une règle de fabrication, pas le "
+            "diamètre du trou")
+
+    def test_le_percage_passe_par_le_plancher_kicad(self):
+        corps = self._bloc("_site_de_via")
+        assert "_percage_pour_via" in corps, (
+            "le perçage doit passer par le plancher KiCad, comme les six "
+            "autres poses de via du fichier")
+
+    def test_les_deux_vias_de_la_paire_gardent_le_meme_ecart(self):
+        corps = self._bloc("_detour_par_l_autre_face")
+        assert "_ECART_TROUS_MM" in corps, (
+            "le garde-fou entre les deux vias mesurait perc_d * 2.0 entre "
+            "CENTRES, soit 0,30 mm bord-à-bord — la moitié de la règle")
+
+
+class TestLeRapportNeSeContreditPas:
+    """Un amas perdu était compté DEUX fois : `_degager_le_couloir` incrémente
+    déjà sa propre raison, et l'appelant rajoutait `sans_chemin`."""
+
+    def test_l_appelant_ne_recompte_pas_un_echec_deja_compte(self):
+        code = _code_seul(SOURCE)
+        debut = code.index("def _relier_les_amas_orphelins")
+        corps = code[debut:]
+        i = corps.index("_degager_le_couloir(")
+        suite = corps[i:i + 800]
+        assert "sans_degagement" in suite and "reroutage_impossible" in suite, (
+            "l'appelant doit vérifier que l'échec n'a pas déjà été compté")

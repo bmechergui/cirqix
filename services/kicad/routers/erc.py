@@ -231,17 +231,41 @@ def run_erc(req: ERCRequest) -> ERCResponse:
                 try:
                     report_json = _run_kicad_cli_erc(cli_path, sch_path)
                 except subprocess.TimeoutExpired:
-                    # ⚠️ UNE EXPIRATION NE DOIT PAS TUER LE RUN. kicad-tools a
-                    # DEJA rendu un verdict reel sur ce schema, plus haut dans
-                    # cette fonction ; le perdre pour un depassement de delai
-                    # faisait sortir la carte SANS BOARD (carte-10, 2026-09-23).
-                    # On garde ce verdict et on le DIT — jamais un succes
-                    # fabrique, jamais un silence.
+                    # ⚠️ UNE EXPIRATION NE DOIT PAS TUER LE RUN — MAIS ELLE NE
+                    # DOIT SURTOUT PAS PASSER POUR UN SCHEMA PROPRE.
+                    #
+                    # Premiere version de ce rattrapage, 2026-09-23 : un simple
+                    # `break`. Si l expiration tombe a la premiere iteration,
+                    # `violations` vaut `[]`, donc `erc_clean = True`,
+                    # `skipped=False`, `engine="kicad-cli"` — la reponse EXACTE
+                    # d un schema reellement controle et propre. Et
+                    # `skipped=False` court-circuite `runErcFallback()` cote
+                    # TypeScript : `ERC_CLEAN` etait persiste SANS AUCUN
+                    # VERDICT, sur un statut qui participe au gate JLCPCB.
+                    #
+                    # C est litteralement la faute que ce depot a corrigee cinq
+                    # fois — un echec qui rend la meme valeur que son cas
+                    # normal — reintroduite par le correctif d un autre defaut.
+                    # Relevee par la revue avant fusion, jamais par un test.
+                    #
+                    # On rend donc le verdict de kicad-tools, `skipped=True`
+                    # pour que le repli TypeScript prenne la main, et on le DIT.
                     logger.warning(
-                        "ERC: kicad-cli a depasse son delai — le verdict de "
-                        "kicad-tools est conserve, l ERC d autorite n a PAS "
-                        "tourne sur cette iteration")
-                    break
+                        "ERC: kicad-cli a depasse son delai — l ERC d AUTORITE "
+                        "n a PAS rendu de verdict ; on rend celui de "
+                        "kicad-tools et on bascule sur le repli")
+                    return ERCResponse(
+                        erc_clean=False,
+                        violations=kt_violations,
+                        fixed_count=kt_fixed,
+                        kicad_sch_b64=(base64.b64encode(
+                            current_content.encode("utf-8")).decode("ascii")
+                            if kt_fixed > 0 else None),
+                        skipped=True,
+                        engine="kicad-tools",
+                        warning=("kicad-cli sch erc a depasse son delai — "
+                                 "verdict de kicad-tools uniquement"),
+                    )
                 except Exception:
                     # Conserver AVANT de laisser remonter : le tempdir disparaît
                     # à la sortie du bloc, et avec lui la seule trace exploitable.

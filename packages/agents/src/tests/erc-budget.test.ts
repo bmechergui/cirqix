@@ -25,11 +25,18 @@ import { PLACEMENT_TIMEOUT_MS } from '../engines/placement-budget';
  */
 
 const ERC_PY = resolve(__dirname, '../../../../services/kicad/routers/erc.py');
+// ⚠️ LE PIRE CAS NE VIT PAS DANS UN SEUL FICHIER. La validation kicad-tools
+// s'exécute dans un processus ENFANT depuis le 2026-09-23, avec son propre
+// budget dans `tools/erc.py` — et cette garde ne lisait que `routers/erc.py`.
+// Elle passait donc au vert sur un client (735 s) plus serré que le service
+// (120 + 3 × 240 = 840 s). Relevé par la revue avant fusion, pas par la garde.
+// Une garde qui ne lit qu'une partie des frontières ne mesure qu'une partie.
+const ERC_TOOLS_PY = resolve(__dirname, '../../../../services/kicad/tools/erc.py');
 
-function constantePython(nom: string): number {
-  const source = readFileSync(ERC_PY, 'utf-8');
+function constantePython(nom: string, fichier: string = ERC_PY): number {
+  const source = readFileSync(fichier, 'utf-8');
   const m = source.match(new RegExp(`^${nom}\\s*(?::\\s*int)?\\s*=\\s*(\\d+)`, 'm'));
-  if (!m) throw new Error(`${nom} introuvable dans routers/erc.py — la garde ne mesure plus rien`);
+  if (!m) throw new Error(`${nom} introuvable dans ${fichier} — la garde ne mesure plus rien`);
   return Number(m[1]);
 }
 
@@ -43,7 +50,10 @@ describe('budget ERC', () => {
     const cliTimeoutS = constantePython('_KICAD_CLI_TIMEOUT_PLAFOND_S');
     // + la validation kicad-tools qui précède kicad-cli (≈ 3 s mesurées) et le
     // transport : on exige au moins 15 s de marge au-delà des passes kicad-cli.
-    const pireCasMs = (iterations * cliTimeoutS + 15) * 1000;
+    // Le budget de l'ENFANT qui valide avec kicad-tools, AVANT les passes
+    // kicad-cli : il fait partie du pire cas, et il manquait au calcul.
+    const enfantS = constantePython('_ERC_ENFANT_TIMEOUT_S', ERC_TOOLS_PY);
+    const pireCasMs = (enfantS + iterations * cliTimeoutS + 15) * 1000;
     expect(ERC_TIMEOUT_MS).toBeGreaterThanOrEqual(pireCasMs);
   });
 
