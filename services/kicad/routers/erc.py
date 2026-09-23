@@ -65,7 +65,25 @@ def _keep_failed_schematic(content: str) -> Optional[Path]:
 router = APIRouter(tags=["erc"])
 
 _MAX_ITERATIONS: int = 3
-_KICAD_CLI_TIMEOUT_S: int = 30
+# ⚠️ CE BUDGET ETAIT DE 30 s A PLAT, et il a fait perdre carte-10 le
+# 2026-09-23 : `subprocess.TimeoutExpired` remontait en HTTP 500, donc le
+# routage entier. Un schema du banc pese 140 a 190 ko et l ERC de kicad-cli y
+# passe plusieurs dizaines de secondes des que la machine est occupee.
+#
+# C est la famille « le plafond n etait pas UN endroit, mais QUATRE » : un
+# budget plus serre que le travail rend inatteignable ce qui est plus lent que
+# lui, et rien dans la reponse ne le trahit. Comme `--timeout` du routeur, ce
+# delai n est pas une limite de patience mais une RESSOURCE : `kicad-cli` rend
+# la main des qu il a fini, donc le relever ne coute rien sur un petit schema.
+#
+# DEDUIT DE LA TAILLE, avec un plancher : une seconde par kilo-octet de schema,
+# jamais moins de 120 s (quatre fois le point d echec mesure).
+_KICAD_CLI_TIMEOUT_PLANCHER_S: int = 120
+
+
+def _budget_erc_s(taille_octets: int) -> int:
+    """Le temps accorde a `kicad-cli sch erc`, deduit de la taille du schema."""
+    return max(_KICAD_CLI_TIMEOUT_PLANCHER_S, int(taille_octets / 1024) + 60)
 
 
 # ----------------------------------------------------------------------------
@@ -107,8 +125,13 @@ def _run_kicad_cli_erc(cli_path: str, sch_path: Path) -> str:
         "--format", "json",
         "--severity-all",
     ]
+    try:
+        taille = sch_path.stat().st_size
+    except OSError:
+        taille = 0
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=_KICAD_CLI_TIMEOUT_S, check=False,
+        cmd, capture_output=True, text=True, timeout=_budget_erc_s(taille),
+        check=False,
     )
     if result.returncode != 0 and not report_path.exists():
         raise RuntimeError(
@@ -197,6 +220,18 @@ def run_erc(req: ERCRequest) -> ERCResponse:
                 sch_path.write_text(current_content, encoding="utf-8")
                 try:
                     report_json = _run_kicad_cli_erc(cli_path, sch_path)
+                except subprocess.TimeoutExpired:
+                    # ⚠️ UNE EXPIRATION NE DOIT PAS TUER LE RUN. kicad-tools a
+                    # DEJA rendu un verdict reel sur ce schema, plus haut dans
+                    # cette fonction ; le perdre pour un depassement de delai
+                    # faisait sortir la carte SANS BOARD (carte-10, 2026-09-23).
+                    # On garde ce verdict et on le DIT — jamais un succes
+                    # fabrique, jamais un silence.
+                    logger.warning(
+                        "ERC: kicad-cli a depasse son delai — le verdict de "
+                        "kicad-tools est conserve, l ERC d autorite n a PAS "
+                        "tourne sur cette iteration")
+                    break
                 except Exception:
                     # Conserver AVANT de laisser remonter : le tempdir disparaît
                     # à la sortie du bloc, et avec lui la seule trace exploitable.

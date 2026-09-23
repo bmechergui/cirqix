@@ -236,7 +236,13 @@ def _poser_les_connecteurs(e: _Etoile, centres: list) -> None:
         # TOUT ce qui est deja pose fait obstacle — centres et leur couloir compris :
         # sur une carte basse, le bord vise peut etre a quelques mm du boitier.
         autres = list(e.occupees.values())
-        pos = _position_au_bord(depart, b, e.bornes, autres)
+        # ⚠️ LA DIRECTION COMMANDE LE BORD, pas la distance. Depuis que le
+        # contour se resserre sur le circuit, les quatre bords sont presque
+        # equidistants : le plus proche perd son sens et tous les connecteurs
+        # sortent du meme cote (mesure du 2026-09-23, carte-10 — trois bords
+        # vides, deux connecteurs qui se chevauchent). Le rayon des broches,
+        # lui, designe sans ambiguite ou ce connecteur doit sortir.
+        pos = _position_au_bord(depart, b, e.bornes, autres, direction=a)
         e.fixer_ou_avouer(r, pos if pos != depart else None)
 
 

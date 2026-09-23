@@ -167,6 +167,11 @@ def parse_erc_report(report_json: str) -> list[dict[str, Any]]:
     return out
 
 
+# Un schema de 190 ko s analyse en quelques secondes ; au-dela, ce n est plus
+# une lenteur mais une panne, et l ERC de secours vaut mieux qu une attente.
+_ERC_ENFANT_TIMEOUT_S: int = 120
+
+
 def run_kicad_tools_erc(
     sch_content: str,
     auto_fix: bool = True,
@@ -176,23 +181,42 @@ def run_kicad_tools_erc(
     Returns (violations, updated_sch_content, fixed_count).
     Fixes off-grid symbols and duplicate refs automatically when auto_fix=True.
     """
+    import json as _json
+    import subprocess
+    import sys as _sys
     import tempfile
     from pathlib import Path as _Path
 
-    from kicad_tools.schematic.models.schematic import Schematic
+    # ⚠️ DANS UN ENFANT, JAMAIS DANS LE WORKER. `Schematic.load` est du Python
+    # PUR : il tient le GIL pendant toute l analyse, et uvicorn tue par SIGKILL
+    # tout worker muet plus de 5 s. Mesure du 2026-09-23, deux cartes du banc
+    # perdues le meme jour sur un HTTP 500 de cette route — carte-08 (schema de
+    # 190 ko) et carte-10 (141 ko). C est la SŒUR du defaut corrige le
+    # 2026-09-10 sur le journal Freerouting, que `CLAUDE.md` interdit en toutes
+    # lettres et qui n avait jamais ete traitee ici.
+    runner = _Path(__file__).resolve().parent / "erc_runner.py"
 
     with tempfile.TemporaryDirectory() as tmp:
         sch_path = _Path(tmp) / "schematic.kicad_sch"
         sch_path.write_text(sch_content, encoding="utf-8")
+        resultat = _Path(tmp) / "erc.json"
 
-        sch = Schematic.load(sch_path)
-        issues = sch.validate(fix_auto=auto_fix)
-
-        if auto_fix:
-            sch.write(sch_path)
-            fixed_content = sch_path.read_text(encoding="utf-8")
-        else:
-            fixed_content = sch_content
+        proc = subprocess.run(
+            [_sys.executable, str(runner),
+             _json.dumps({"sch": str(sch_path), "resultat": str(resultat),
+                          "auto_fix": bool(auto_fix)})],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=_ERC_ENFANT_TIMEOUT_S, check=False)
+        if proc.returncode != 0 or not resultat.is_file():
+            # ⚠️ LEVER, jamais rendre une liste vide : « aucune violation » et
+            # « je n ai pas pu analyser » ne doivent pas se ressembler. Le
+            # fail-closed de l appelant bascule alors sur l ERC de secours.
+            raise RuntimeError(
+                "ERC kicad-tools : l enfant a echoue (code %s) — %s"
+                % (proc.returncode, (proc.stderr or "").strip()[-400:] or "sans message"))
+        issues = _json.loads(resultat.read_text(encoding="utf-8")).get("issues", [])
+        fixed_content = (sch_path.read_text(encoding="utf-8")
+                         if auto_fix else sch_content)
 
         violations: list[dict] = []
         fixed_count = 0

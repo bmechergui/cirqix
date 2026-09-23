@@ -870,15 +870,34 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
-def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list) -> tuple:
-    """Position d un ancrage glisse contre le bord LE PLUS PROCHE de son corps.
+def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
+                      direction: Optional[float] = None) -> tuple:
+    """Position d un ancrage glisse contre un bord : celui que vise la
+    ``direction``, ou a defaut le plus proche de son corps.
 
     ``boite`` est la boite ORIENTEE relative a la position, ``bornes`` le
     contour deja diminue de la marge ``(min_x, max_x, min_y, max_y)``,
-    ``autres`` les boites absolues des ancrages deja poses. Essaie les quatre
-    bords du plus proche au plus lointain ; sur un bord occupe, glisse LE LONG
-    de ce bord. Rend ``pos`` inchangee si la piece ne tient pas ou si aucun
-    bord n est libre — on ne degrade jamais un ancrage pour l y forcer.
+    ``autres`` les boites absolues des ancrages deja poses. Sur un bord occupe,
+    glisse LE LONG de ce bord. Rend ``pos`` inchangee si la piece ne tient pas
+    ou si aucun bord n est libre — on ne degrade jamais un ancrage pour l y
+    forcer.
+
+    ⚠️ ``direction`` est l ANGLE du rayon des broches, en radians, dans le
+    repere de KiCad (y descend). Quand l appelant le connait, c est lui qui
+    commande, et le plus proche ne sert plus que de departage.
+
+    Mesure du 2026-09-23, `carte-10` : depuis que le contour se resserre sur le
+    circuit, les quatre bords sont presque EQUIDISTANTS. Classer par distance
+    perd alors son sens — tous les connecteurs sortaient du meme cote, et il
+    restait un vide entre le circuit et eux.
+
+    ⚠️ Une premiere tentative resserrait le CADRE sur la frontiere du circuit
+    au lieu de changer ce critere : MESUREE ET REFUTEE le meme jour — aucun
+    gain de taille, connecteurs entasses sur un seul bord, deux se
+    chevauchant. Ce n etait pas le cadre, c etait le critere.
+
+    Sans ``direction``, rien ne change : `_coller_les_ancrages_au_bord` glisse
+    toujours par le plus court chemin, et c est sa regle propre.
     """
     x, y = pos
     bx0, by0, bx1, by1 = boite
@@ -893,14 +912,24 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list) -> 
     cx = _clamp_axe(x, bx0, bx1, min_x, max_x)
     cy = _clamp_axe(y, by0, by1, min_y, max_y)
     # (deplacement, position contre le bord, axe LIBRE le long de ce bord)
-    bords = sorted([
-        (abs((min_x - bx0) - x), (min_x - bx0, cy), "y"),
-        (abs((max_x - bx1) - x), (max_x - bx1, cy), "y"),
-        (abs((min_y - by0) - y), (cx, min_y - by0), "x"),
-        (abs((max_y - by1) - y), (cx, max_y - by1), "x"),
-    ], key=lambda b: b[0])
+    # (deplacement, position contre le bord, axe LIBRE, normale sortante)
+    bords = [
+        (abs((min_x - bx0) - x), (min_x - bx0, cy), "y", (-1.0, 0.0)),
+        (abs((max_x - bx1) - x), (max_x - bx1, cy), "y", (1.0, 0.0)),
+        (abs((min_y - by0) - y), (cx, min_y - by0), "x", (0.0, -1.0)),
+        (abs((max_y - by1) - y), (cx, max_y - by1), "x", (0.0, 1.0)),
+    ]
+    if direction is None:
+        bords.sort(key=lambda b: b[0])
+    else:
+        # Le bord vers lequel le rayon POINTE le plus franchement vient en
+        # premier — produit scalaire avec sa normale sortante. A egalite, le
+        # plus proche departage, ce qui conserve l ancien comportement sur un
+        # rayon exactement diagonal.
+        dx, dy = math.cos(direction), math.sin(direction)
+        bords.sort(key=lambda b: (-(dx * b[3][0] + dy * b[3][1]), b[0]))
     pas = _PAS_RECHERCHE_FIN_MM
-    for _, (px, py), axe in bords:
+    for _, (px, py), axe, _normale in bords:
         if libre(px, py):
             return px, py
         lo, hi = (min_y - by0, max_y - by1) if axe == "y" else (min_x - bx0, max_x - bx1)
