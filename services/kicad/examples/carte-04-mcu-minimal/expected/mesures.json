@@ -3,22 +3,22 @@
   "composants": 15,
   "nets": 7,
   "board_mm": [
-    38.8,
-    30.0
+    60,
+    45
   ],
-  "duree_s": 156,
-  "git": "02f7b26",
+  "duree_s": 163,
+  "git": "7228ce37",
   "routed_percent": 100,
-  "drc_violations": 18,
+  "drc_violations": 0,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:12,silk_overlap:6",
+  "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 92,
-    "vias": 17,
-    "zones": 3,
-    "empreintes": 15
+    "segments": 112,
+    "vias": 19,
+    "zones": 4,
+    "empreintes": 16
   },
   "drc_du_board": {
     "violations": 0,
@@ -28,44 +28,20 @@
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "serigraphie_degagee": "2026-09-12",
-  "contour_resserre": {
-    "date": "2026-09-14",
-    "decision": "D-2026-09-13-c A",
-    "avant_mm": [
-      60,
-      45
-    ]
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 15
   },
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 30,
-    "couches": {
-      "declarees": 2,
-      "pistes_par_couche": {
-        "F.Cu": 91,
-        "B.Cu": 4
-      }
-    }
-  },
-  "carte_compacte": {
-    "date": "2026-09-20",
-    "decision": "D-2026-09-20-a",
-    "pr": 220,
-    "note": "chaine place -> route rejouee par HTTP avec 25 % d occupation ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
-    "taille_avant_mm": [
-      45.0,
-      44.8
+  "drc_du_placement": {
+    "violations": 36,
+    "non_connectes": 36,
+    "types": "unconnected_items:36",
+    "erreurs": [
+      "unconnected_items"
     ],
-    "vias_avant": 16,
-    "place_s": 137,
-    "route_s": 103,
-    "moteur": "freerouting-api",
-    "pistes_par_couche": {
-      "F.Cu": 81,
-      "B.Cu": 11
-    }
+    "nb_erreurs": 36,
+    "fabricable": false
   }
 }

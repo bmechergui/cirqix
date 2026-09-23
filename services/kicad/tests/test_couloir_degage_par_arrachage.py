@@ -243,3 +243,45 @@ class TestLaRecouleeApresDegagement:
         assert "_fill_zones(recousu)" in corps
         # La recoulée vient AVANT le jugement, sinon elle ne sert à rien.
         assert corps.index("_fill_zones(recousu)") < corps.index("_aggrave_le_board")
+
+
+class TestLeResumeDesEchecs:
+    """⚠️ Le DIAGNOSTIC ne doit jamais tuer son appelant.
+
+    Mesure du 2026-09-23, `carte-09` : `motifs_reroutage` est un DICTIONNAIRE
+    de raisons, et le résumé formatait toutes les valeurs en `%d`. Le
+    `TypeError` remontait jusqu'à un **HTTP 500** et le routage entier était
+    perdu — la carte sortait sans board.
+
+    C'est la faute déjà inscrite pour `_recuperer_jobs_abandonnes` : le compteur
+    qu'on ajoute pour comprendre un échec devient lui-même la panne.
+    """
+
+    def _resume(self):
+        import importlib.util as iu
+        spec = iu.spec_from_file_location(
+            "_routers_routing_resume", RACINE / "routers" / "routing.py")
+        # Le module importe pcbnew et consorts : on lit la fonction seule.
+        source = (RACINE / "routers" / "routing.py").read_text(encoding="utf-8")
+        debut = source.index("def _resume_des_echecs")
+        fin = source.index(chr(10) + "def ", debut + 1)
+        espace: dict = {}
+        exec(compile(source[debut:fin], "<resume>", "exec"), espace)
+        return espace["_resume_des_echecs"]
+
+    def test_un_compteur_dictionnaire_ne_leve_pas(self):
+        resume = self._resume()
+        texte = resume({"sans_chemin": 2,
+                        "motifs_reroutage": {"reroutage : sans_chemin": 1}})
+        assert "sans_chemin=2" in texte
+        assert "reroutage : sans_chemin:1" in texte
+
+    def test_aucun_echec_rend_une_chaine_vide(self):
+        # Vide, pas None : l'appelant y substitue « raison inconnue ».
+        resume = self._resume()
+        assert resume({}) == ""
+        assert resume(None) == ""
+
+    def test_les_zeros_ne_polluent_pas_la_ligne(self):
+        resume = self._resume()
+        assert resume({"sans_cible": 0, "sans_chemin": 3}) == "sans_chemin=3"

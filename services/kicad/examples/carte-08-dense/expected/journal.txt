@@ -1,43 +1,59 @@
-Schéma (driver LLM) : 56 composants, 49 nets, board 125x95mm
+SchÃ©ma (driver LLM) : 56 composants, 49 nets, board 125x95mm
 
 ==============================================================
-[1] call_agent_schema → POST /schematic/generate
+[1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=187144o  (18.1s)
+    -> taille=189560o  (2.1s)
 
 ==============================================================
-[2] call_agent_erc → POST /erc
+[2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False · violations=394 · fixed=281 · skipped=False · engine=kicad-cli  (2.8s)
+    -> clean=False Â· violations=6 Â· fixed=21 Â· skipped=False Â· engine=kicad-cli  (7.4s)
 
 ==============================================================
-[4] call_agent_gen_pcb → POST /pcb/generate
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=151230o  (1.8s)
+    -> taille=151901o  (1.0s)
 
 ==============================================================
-[5] call_agent_placement → POST /place/auto (essai 1/4)
+[5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placés=56 · status=None  (86.2s)
+    -> placÃ©s=56 Â· status=None  (50.5s)
 
 ==============================================================
-[6] call_agent_routing → POST /route/auto (essai 1/4)
+[6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routé=100% · couches=4 · vias=107 · warning=None  (614.4s)
+    -> routÃ©=97% Â· couches=4 Â· vias=71 Â· warning=None  (1760.7s)
 
 ==============================================================
-[7] call_agent_drc → POST /drc/auto (essai 1/4)
+[7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True · violations=356 · erreurs=0  (2.8s)
-   essai 1 retenu (100%, 0 erreur(s) DRC)
-   100 % atteint — on arrete les essais
-
-[6b] Reasoner NON déclenché — routage déjà à 100% (comportement attendu).
+    -> clean=False Â· violations=26 Â· erreurs=2  (5.5s)
+   essai 1 retenu (97%, 2 erreur(s) DRC)
 
 ==============================================================
-[7] call_agent_drc → POST /drc/auto (rapport final)
+[5] call_agent_placement â†’ POST /place/auto (essai 2/4)
 ==============================================================
-    -> clean=True · violations=356 · fixed=0 · skipped=False · warning=kicad-tools DRC indisponible — résultat kicad-cli officiel seul  (2.0s)
+    -> placÃ©s=56 Â· status=None  (39.3s)
+
+==============================================================
+[6] call_agent_routing â†’ POST /route/auto (essai 2/4)
+==============================================================
+    -> routÃ©=100% Â· couches=2 Â· vias=72 Â· warning=None  (105.6s)
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto (essai 2/4)
+==============================================================
+    -> clean=True Â· violations=22 Â· erreurs=0  (5.4s)
+   essai 2 retenu (100%, 0 erreur(s) DRC)
+   100 % atteint â€” on arrete les essais
+
+[6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto (rapport final)
+==============================================================
+    -> clean=True Â· violations=22 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.3s)
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
        ! silk_overlap: Silkscreen clearance
@@ -48,9 +64,9 @@ Schéma (driver LLM) : 56 composants, 49 nets, board 125x95mm
        ! silk_overlap: Silkscreen clearance
 
 ==============================================================
-[8] call_agent_export → POST /export/all
+[8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=22 · devis=$None · skipped=False · warning=kicad-tools unavailable — kicad-cli export  (5.8s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.5s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -66,8 +82,6 @@ Schéma (driver LLM) : 56 composants, 49 nets, board 125x95mm
        + led-blinker-F_Mask.gts
        + led-blinker-F_Paste.gtp
        + led-blinker-F_Silkscreen.gto
-       + led-blinker-In1_Cu.g1
-       + led-blinker-In2_Cu.g2
        + led-blinker-Margin.gbr
        + led-blinker-User_Drawings.gbr
        + led-blinker-job.gbrjob
@@ -75,7 +89,7 @@ Schéma (driver LLM) : 56 composants, 49 nets, board 125x95mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=356 drc_clean=True files=22 types=silk_over_copper:222,silk_overlap:132,track_dangling:2
-VERDICT : routage 100% · DRC clean=True (skipped=False) · 22 fichiers exportés
+SUMMARY routed=100 drc_violations=22 drc_clean=True files=20 types=silk_over_copper:12,silk_overlap:10
+VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/campagne-1789194262/carte-08-dense-t1/output
+Artefacts : /tmp/banc-carte-08-dense-1790119100/output

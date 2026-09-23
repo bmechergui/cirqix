@@ -412,6 +412,39 @@ reroutage échoue.
    dixièmes de micromètre, exactement ce qu'un échantillonnage à deux points
    laisse passer. Pas ramené à un huitième de marge.
 
+### BANC DE RÉFÉRENCE du 2026-09-23 — DIX cartes sur dix, parfaites
+
+Premier banc où **aucune carte ne porte le moindre défaut**. Graine en étoile
+armée, correctif du raccord des amas en place, machine libre.
+
+| carte | comp. | erreurs | connexions manquantes | routé |
+|---|---|---|---|---|
+| `carte-01-diviseur` | 5 | 0 | 0 | 100 % |
+| `carte-02-alimentation` | 12 | 0 | 0 | 100 % |
+| `carte-03-oscillateur` | 15 | 0 | 0 | 100 % |
+| `carte-04-mcu-minimal` | 15 | 0 | 0 | 100 % |
+| `carte-05-capteur-i2c` | 26 | 0 | 0 | 100 % |
+| `carte-06-io-etendu` | 35 | 0 | 0 | 100 % |
+| `carte-07-multi-io` | 44 | 0 | 0 | 100 % |
+| `carte-08-dense` | 56 | 0 | 0 | 100 % |
+| `carte-09-tres-dense` | 62 | 0 | 0 | 100 % |
+| **`carte-10-maximale`** | **70** | **0** | **0** | **100 %** |
+
+`carte-07` et `carte-10`, les deux qui portaient des ruptures de plan de masse,
+sortent propres. La veille encore, `carte-10` livrait une connexion manquante.
+
+⚠️ **Deux cartes ont d'abord échoué sur un HTTP 500 que J'AI introduit**, et
+c'est le piège que ce dépôt documente depuis le 2026-08-31 : *le diagnostic
+qu'on ajoute devient la panne*. Le résumé des raisons d'échec formatait toutes
+ses valeurs en `%d`, alors que `motifs_reroutage` porte un DICTIONNAIRE ; le
+`TypeError` remontait jusqu'à la route et le routage entier était perdu. Les
+huit premières cartes ne l'ont jamais touché — cette ligne ne s'exécute que
+lorsque AUCUN amas n'a pu être raccordé. Corrigé (`_resume_des_echecs`),
+gardé par trois tests, et les deux cartes relancées sortent à zéro.
+
+⚠️ Les DURÉES restent sans valeur : la machine se met en veille et le compteur
+suit l'horloge murale. Les VERDICTS, eux, tiennent.
+
 ### ⚠️ LE DÉFAUT EST REFERMÉ — mesuré le 2026-09-22
 
     board du banc          33 violations · 0 erreur · **1** connexion manquante

@@ -6,42 +6,42 @@
     130,
     100
   ],
-  "duree_s": 2321,
-  "git": "29caf3e",
+  "duree_s": 176,
+  "git": "7228ce37",
   "routed_percent": 100,
-  "drc_violations": 348,
+  "drc_violations": 28,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "silk_over_copper:50,silk_overlap:36",
+  "types_violations": "silk_over_copper:16,silk_overlap:12",
   "abouti": true,
   "board": {
-    "segments": 394,
-    "vias": 92,
-    "zones": 3,
-    "empreintes": 62
+    "segments": 356,
+    "vias": 71,
+    "zones": 4,
+    "empreintes": 63
   },
   "drc_du_board": {
-    "violations": 5,
+    "violations": 14,
     "non_connectes": 0,
-    "types": "silk_over_copper:5",
+    "types": "silk_over_copper:8,silk_overlap:6",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "livre_par": "livrer_campagne.py",
-  "tirage": "carte-09-tres-dense-t2",
-  "serigraphie_degagee": "2026-09-12",
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 124,
-    "couches": {
-      "declarees": 2,
-      "pistes_par_couche": {
-        "F.Cu": 291,
-        "B.Cu": 103
-      }
-    }
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 62
+  },
+  "drc_du_placement": {
+    "violations": 135,
+    "non_connectes": 121,
+    "types": "silk_over_copper:8,silk_overlap:6,unconnected_items:121",
+    "erreurs": [
+      "unconnected_items"
+    ],
+    "nb_erreurs": 121,
+    "fabricable": false
   }
 }

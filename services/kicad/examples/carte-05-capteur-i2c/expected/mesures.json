@@ -3,63 +3,45 @@
   "composants": 26,
   "nets": 13,
   "board_mm": [
-    45.5,
-    32.5
+    70,
+    50
   ],
-  "duree_s": 1052,
-  "git": "6fb7359",
+  "duree_s": 203,
+  "git": "7228ce37",
   "routed_percent": 100,
-  "drc_violations": 59,
+  "drc_violations": 0,
   "drc_clean": true,
-  "fichiers_exportes": 27,
-  "types_violations": "silk_over_copper:26,silk_overlap:12",
+  "fichiers_exportes": 20,
+  "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 169,
-    "vias": 31,
-    "zones": 3,
-    "empreintes": 26
+    "segments": 179,
+    "vias": 33,
+    "zones": 4,
+    "empreintes": 27
   },
   "drc_du_board": {
-    "violations": 5,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "silk_over_copper:5",
+    "types": "",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "livre_par": "livrer_campagne.py",
-  "tirage": "carte-05-capteur-i2c-t1",
-  "serigraphie_degagee": "2026-09-12",
-  "couture_corrigee": {
-    "date": "2026-09-19",
-    "pr": 217,
-    "note": "rerouté par HTTP depuis placement.kicad_pcb inchangé ; journal.txt et les champs du pipeline d origine (routed_percent, drc_violations) décrivent le run d origine, drc_du_board juge CE board",
-    "vias_avant": 37,
-    "couches": {
-      "declarees": 2,
-      "pistes_par_couche": {
-        "F.Cu": 152,
-        "B.Cu": 25
-      }
-    }
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 26
   },
-  "carte_compacte": {
-    "date": "2026-09-20",
-    "decision": "D-2026-09-20-a",
-    "pr": 220,
-    "note": "chaine place -> route rejouee par HTTP avec 25 % d occupation ; placement.kicad_pcb et final.kicad_pcb remplaces ensemble ; journal.txt et les champs du run d origine decrivent l ancien run, drc_du_board juge CE board",
-    "taille_avant_mm": [
-      70.0,
-      50.0
+  "drc_du_placement": {
+    "violations": 62,
+    "non_connectes": 62,
+    "types": "unconnected_items:62",
+    "erreurs": [
+      "unconnected_items"
     ],
-    "vias_avant": 26,
-    "place_s": 321,
-    "route_s": 99,
-    "moteur": "freerouting-api",
-    "pistes_par_couche": {
-      "F.Cu": 142,
-      "B.Cu": 27
-    }
+    "nb_erreurs": 62,
+    "fabricable": false
   }
 }
