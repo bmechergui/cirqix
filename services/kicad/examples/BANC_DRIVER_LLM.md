@@ -480,6 +480,24 @@ que l'ERC d'autorité n'ait pas tourné est DIT.
 
 Dix sur dix, 100 % routé. `carte-02` gagne encore 2,4 mm de largeur.
 
+⚠️ **CE TABLEAU EST UN TIRAGE, PAS UNE PROPRIÉTÉ.** `carte-10` rejouée le soir
+même depuis le MÊME placement gelé, machine au repos, par la même voie HTTP :
+**98 %, 1 connexion manquante**, en 2432 s au lieu de 1027. Le journal du
+service montre les deux issues alternant toute la journée sur cette carte —
+« 1 piste posée sur 1 amas » à 13:30, 13:41, 13:46, 13:52, 14:00, 14:25, 18:19,
+et « AUCUN raccordé » à 14:14, 18:22, 18:24, 18:25, 21:04 — avant comme après
+les correctifs du jour. C'est la dispersion déjà mesurée sur cette carte
+(99 · 97 · 77 · 87 · … · 100 %), pas une régression.
+
+Ce que le tableau établit : chaque carte **peut** sortir propre, et son board
+l'est dans `expected/`. Ce qu'il n'établit pas : qu'elle le fera à chaque coup.
+**NEVER** lire une ligne de ce tableau comme une garantie de tirage.
+
+Le tirage du soir montre aussi que les gardes tiennent quand le tirage est
+mauvais : « repli GND REFUSÉ : (0 erreur, 84 manquante) ne fait pas mieux que
+(0 erreur, 1 manquante) — board conservé ». Le board rendu est le meilleur vu,
+jamais le dernier.
+
 ⚠️ **Le raccord par DÉGAGEMENT DU COULOIR s'est déclenché en production** et le
 journal le dit : « raccord des amas orphelins : 1 piste(s) posée(s) sur 1 amas
 (dont 1 par DEGAGEMENT du couloir) ». Le mécanisme livré cette nuit ne dort pas
