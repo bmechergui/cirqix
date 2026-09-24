@@ -1842,69 +1842,32 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     return 0
 
 
-def _escalade_peut_aider(percent_moteur: int, erreurs: int,
-                         manquants: Optional[set] = None,
-                         orpheline_sans_issue: bool = False) -> bool:
-    """Ajouter des couches peut-il encore servir a quelque chose ?
+def _escalade_peut_aider(percent_livre: int, erreurs: int,
+                         manquants: Optional[set] = None) -> bool:
+    """Le palier suivant peut-il servir ? OUI des que le board LIVRE n est pas
+    complet ou pas propre — QUEL QUE SOIT le net qui manque (D-2026-09-24-e).
 
-    ⚠️ `orpheline_sans_issue` (D-2026-09-14-b, validee) : la broche de masse
-    orpheline est NOMMEE et son repli cible vient d echouer a ce palier. Le
-    palier suivant offre alors un chemin — deux couches internes pour une
-    piste de masse courte — et l appelant n accorde ce palier qu UNE fois.
+    Consigne de l utilisateur : « si tu n atteins pas 100 % routage tu dois
+    escalader le numero de couche ».
 
-    ⚠️ Non quand le ROUTEUR annonce 100 % sur un board propre. Il a tout relie
-    par des pistes ; l ecart restant vient de NOTRE verification, qui regarde
-    le board livre et compte un net confie au PLAN — GND, qui n est pas route
-    mais COULE. Du cuivre supplementaire n y change rien, par construction.
+    ⚠️ La regle du 2026-08-31 refusait d escalader quand seul un net confie au
+    PLAN manquait (GND), sur la foi d `arduino-uno` : 93 % a 2, 4 et 6 couches.
+    Ce jour-la les paliers superieurs repartaient du routage precedent, pistes
+    protegees ; depuis le 2026-09-24 ils routent librement (D-2026-09-24-a), et
+    la mesure du meme jour la contredit — `carte-08` passe de 98 % (GND seul) a
+    100 % a 4 couches, tandis que `carte-07` restait a 97 % sans jamais monter.
+    A 2 couches, B.Cu porte le plan ET des signaux : les pistes decoupent le
+    plan et enferment une broche de masse. Deux couches de plus pour les
+    signaux, c est un plan moins decoupe.
 
-    Mesure du 2026-08-31, `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a
-    100 % et un seul net incomplet (GND) a chaque palier. Douze minutes
-    d escalade pour zero gain — et une carte 6 couches proposee la ou 2
-    suffisent, alors qu elle coute sensiblement plus cher a fabriquer.
+    ⚠️ Lire le pourcentage LIVRE (`_percent_verifie`), jamais celui du moteur :
+    le moteur ignore les nets confies au plan, et c est exactement ce qui
+    laissait une masse orpheline passer pour « le routeur a fini ».
 
-    L escalade existe pour donner de la place a un routeur qui n y arrive pas.
-    Elle n a aucun sens face a un routeur qui a fini.
-
-    ⚠️ On continue en revanche si le board porte des ERREURS : une violation de
-    fabricabilite (clearance, largeur) peut, elle, se resoudre avec plus
-    d espace — contrairement a une pastille de plan orpheline.
-
-    Garde : tests/test_escalade_inutile.py.
+    L arret reste borne par `_escalade_epuisee` et par le plafond du plan.
+    Garde : tests/test_escalade_toute_connexion_manquante.py.
     """
-    if erreurs > 0:
-        return True
-    # ⚠️ REGLE DEMANDEE PAR L UTILISATEUR (2026-08-31), et mieux fondee que la
-    # precedente, qui ne regardait que « le moteur annonce-t-il 100 % » :
-    #
-    #     il manque du GND     -> le plan ne l atteint pas   -> PAS d escalade
-    #     il manque du SIGNAL  -> le routeur manque de place -> escalade
-    #
-    # Un net confie au PLAN n est pas route par des pistes : il est COULE. Du
-    # cuivre supplementaire ne l atteint pas davantage. Preuve mesuree sur
-    # `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a 100 % chaque fois,
-    # un seul net incomplet — GND. Six tirages, douze minutes, zero gain.
-    #
-    # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
-    # justifie l escalade ; dix nets de plan ne la justifient pas.
-    if manquants:
-        # ⚠️ PLUS DE REPLI SUR `_NETS_DE_PLAN_CONNUS` ICI (2026-09-10). Depuis
-        # qu on route GND (decision validee par l utilisateur), une liste vide
-        # signifie « rien n est confie au plan » — pas « on ne sait pas ». Le
-        # repli faisait retomber sur {GND, AGND, DGND} et REFUSAIT d escalader
-        # sur une masse manquante, alors qu elle est desormais une piste comme
-        # une autre, que du cuivre en plus peut relier. Garde :
-        # tests/test_escalade_selon_le_net.py (un net de masse NON confie au
-        # plan fait escalader).
-        # On lit la CONSTANTE, pas la fonction : le module la reaffecte lui-meme
-        # (`global`) pendant `_router_en_incluant_gnd`, et les gardes la
-        # monkeypatchent. Lire la fonction ici rendrait ces deux mecanismes
-        # inertes — mesure : deux gardes rouges sur une regle pourtant juste.
-        plan = set(_NETS_CONFIES_AU_PLAN)
-        if plan and set(manquants) <= plan:
-            # D-2026-09-14-b : l orpheline est nommee et son repli vient
-            # d echouer ici — le palier suivant lui donne un chemin.
-            return bool(orpheline_sans_issue)
-    return percent_moteur < 100
+    return erreurs > 0 or bool(manquants) or percent_livre < 100
 
 
 def _escalade_epuisee(sans_gain: int) -> bool:
@@ -4044,7 +4007,10 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
     nets = _nets_incomplets(rapport)
     if not nets:
         return percent_moteur
-    reel = int(round(100 * max(0, routables - len(nets)) / routables))
+    # ⚠️ PLAFONNE A 99 : 1 net manquant sur 250 s arrondissait a
+    # round(99,6) = 100 — le cas de SUCCES rendu sur une carte incomplete,
+    # et `route_auto` s arretait la. Des qu un net manque, on est sous 100.
+    reel = min(99, int(round(100 * max(0, routables - len(nets)) / routables)))
     if reel < percent_moteur:
         # ⚠️ NOMMER les nets, pas seulement les compter. Sans leur nom on ne
         # peut pas savoir si le manque vient d un SIGNAL que le routeur a rate
@@ -4807,6 +4773,18 @@ def _compte_erreurs(rapport: dict) -> int:
     """
     from tools.drc import est_bloquante
     return sum(1 for v in (rapport.get("violations") or []) if est_bloquante(v))
+
+
+def _types_bloquants(rapport: dict) -> dict:
+    """{type: nombre} des violations qui font refuser la carte — les MEMES que
+    `_compte_erreurs`, pour que le journal nomme ce que le juge a compte."""
+    from tools.drc import est_bloquante
+    types: dict = {}
+    for v in (rapport.get("violations") or []):
+        if est_bloquante(v):
+            t = str(v.get("type") or "?")
+            types[t] = types.get(t, 0) + 1
+    return types
 
 
 def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
@@ -6200,11 +6178,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
     # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
     bonus_accorde: set[int] = set()
-    # ⚠️ Le routeur a-t-il DEJA fini, sur un board propre ? Si oui, escalader
-    # est inutile par construction : l ecart restant vient d un net confie au
-    # PLAN, que du cuivre supplementaire ne relie pas.
+    # ⚠️ Le board LIVRE est-il complet et propre ? Alors monter d une couche
+    # ne peut rien apporter et coute plus cher a fabriquer (D-2026-09-24-e).
     escalade_inutile = False
-    palier_orpheline_accorde = False  # D-2026-09-14-b : un palier de plus, une fois
     # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
@@ -6259,10 +6235,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # couche ne peut rien apporter, et coute plus cher a fabriquer.
             if escalade_inutile:
                 logger.info(
-                    "route_auto: escalade arretee avant %d couches — le routeur "
-                    "annonce 100%% sur un board sans erreur ; ce qui manque est "
-                    "confie au PLAN, que du cuivre en plus ne relie pas",
-                    palier)
+                    "route_auto: escalade arretee avant %d couches — le board "
+                    "livre est complet et sans erreur", palier)
                 break
             if palier_courant is not None and palier_courant not in bonus_accorde:
                 bonus = _tirages_bonus(meilleur_du_palier)
@@ -6518,10 +6492,6 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # qui sera juge plat ou non, a sa sortie.
             continue
 
-        # ⚠️ Initialise AVANT le bloc : lire cette variable par `locals()`
-        # serait fragile, et un tirage sans board la laisserait indefinie.
-        # Zero veut dire « le routeur n a rien annonce », donc on escalade.
-        percent_moteur = 0
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
         if res.kicad_pcb_b64 and not res.skipped:
@@ -6700,11 +6670,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # ⚠️ Dernier mot au DRC, qui voit le board LIVRE — plans coules,
             # reparations faites. La mesure du moteur, elle, regarde le board
             # juste apres le routeur et ignore les nets confies au plan.
-            # ⚠️ CONSERVER le chiffre du MOTEUR avant de l ecraser : c est lui
-            # qui dit si le routeur a fini, et donc si escalader a encore un
-            # sens. Le chiffre corrige, lui, melange le routage et l etat du
-            # plan de masse.
-            percent_moteur = res.routed_percent
+            # C est CE chiffre, celui du board livre, qui decide de l escalade
+            # (D-2026-09-24-e) : il compte aussi les nets confies au plan.
             res.routed_percent = _percent_verifie(
                 final, res.routed_percent, nets_routables
             )
@@ -6724,33 +6691,32 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         _rap_final = _rapport_drc(final) if res.kicad_pcb_b64 and not res.skipped else None
         erreurs = (10 ** 6 if _rap_final is None or _sans_verdict(_rap_final)
                    else _compte_erreurs(_rap_final))
-        # ⚠️ QUELS nets manquent, pas seulement combien. Regle de l utilisateur :
-        # un net confie au PLAN ne se relie pas avec du cuivre en plus.
+        # ⚠️ QUELS nets manquent, pas seulement combien : le journal les NOMME.
+        # Tous comptent pour l escalade, masse comprise (D-2026-09-24-e).
         manquants_du_palier = (
             _nets_incomplets(_rap_final) if _rap_final is not None else set())
-        # D-2026-09-14-b : l orpheline est NOMMEE et son repli cible vient
-        # d echouer a ce palier -> un palier de plus, une seule fois.
-        orpheline_sans_issue = bool(
-            orphelines and not palier_orpheline_accorde
-            and _repli_deja_tente(orphelines, couches=couches_final))
-        if not _escalade_peut_aider(percent_moteur, erreurs,
-                                    manquants=manquants_du_palier,
-                                    orpheline_sans_issue=orpheline_sans_issue):
+        # ⚠️ NOMMER les erreurs qui font refuser le palier (2026-09-24) : deux
+        # tirages de carte-07 a 100 % en 2 couches ont ete ecartes sans que le
+        # journal dise pourquoi. Un defaut reparable ici vaut deux couches.
+        if 0 < erreurs < 10 ** 6:
+            logger.info(
+                "route_auto: %d couches — %d erreur(s) bloquante(s) : %s",
+                couches_final or palier, erreurs,
+                ", ".join("%s x%d" % kv for kv in
+                          sorted(_types_bloquants(_rap_final).items())))
+        # ⚠️ TOUTE connexion manquante fait monter d un palier, masse comprise
+        # (D-2026-09-24-e). Ce qui manque est NOMME dans le journal : c est
+        # la seule facon de savoir si l escalade a relie une masse ou un signal.
+        if not _escalade_peut_aider(res.routed_percent, erreurs,
+                                    manquants=manquants_du_palier):
             escalade_inutile = True
-        elif orpheline_sans_issue and (
-                _NETS_CONFIES_AU_PLAN and manquants_du_palier
-                and set(manquants_du_palier) <= set(_NETS_CONFIES_AU_PLAN)):
-            palier_orpheline_accorde = True
+        elif manquants_du_palier:
             logger.info(
-                "route_auto: broche(s) de masse orpheline(s) nommee(s) (%s) et repli "
-                "cible refuse a %d couches — UN palier de plus pour lui donner un "
-                "chemin (D-2026-09-14-b)",
-                ", ".join(f"{r}-{p}" for r, p in orphelines), couches_final or 0)
-            logger.info(
-                "route_auto: ce qui manque est confie au PLAN (%s) — escalader "
-                "n y changerait rien, c est un probleme d acces a la broche",
-                ", ".join(sorted(manquants_du_palier)) or "-")
-        if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
+                "route_auto: %d couches — il manque %s ; le palier suivant sera "
+                "tente", couches_final or palier,
+                ", ".join(sorted(manquants_du_palier)[:8]))
+        if (res.routed_percent >= 100 and not res.skipped and erreurs == 0
+                and not manquants_du_palier):
             return res
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
         # ⚠️ UNE PANNE NE PEUT PAS ETRE « LE MEILLEUR ». Sans ce filtre, le

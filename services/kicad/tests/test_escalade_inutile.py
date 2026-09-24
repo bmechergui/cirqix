@@ -1,4 +1,10 @@
-"""Quand le ROUTEUR annonce 100 %, ajouter des couches ne peut rien apporter.
+"""Quand le board LIVRE est complet et propre, ajouter des couches ne sert a rien.
+
+⚠️ REVISE LE 2026-09-24 (D-2026-09-24-e). La premiere version de cette garde
+lisait le pourcentage du MOTEUR, et laissait s arreter une carte dont seul GND
+manquait. La decision lit desormais le board LIVRE : toute connexion manquante
+fait monter d un palier. Voir tests/test_escalade_toute_connexion_manquante.py.
+Historique conserve ci-dessous.
 
 ⚠️ Mesure du 2026-08-31, `arduino-uno` au banc final :
 
@@ -73,11 +79,3 @@ class TestCablage:
 
     def test_la_regle_est_APPELEE(self):
         assert "_escalade_peut_aider(" in self._boucle()
-
-    def test_le_pourcentage_du_MOTEUR_est_conserve(self):
-        """⚠️ `_percent_verifie` ECRASE `res.routed_percent`. Sans copie
-        prealable, la regle lirait le pourcentage corrige (93 %) au lieu de
-        celui du moteur (100 %) — et ne se declencherait jamais."""
-        assert "percent_moteur" in self.SOURCE
-        i = self.SOURCE.index("res.routed_percent = _percent_verifie(")
-        assert "percent_moteur" in self.SOURCE[max(0, i - 500):i]

@@ -98,7 +98,9 @@ class TestCablage:
     def test_le_tirage_fige_memorise_sa_passe(self):
         corps = self._route_auto()
         i = corps.index("except RoutageFige as fige:")
-        bloc = corps[i: corps.index("\n        # ⚠️ Initialise AVANT le bloc", i)]
+        # Le bloc se termine a son `continue` : ancrer sur un commentaire
+        # voisin cassait la garde des qu on le reformulait (2026-09-24).
+        bloc = corps[i: corps.index("            continue", i)]
         assert "fige.passes" in bloc
 
     def test_le_partiel_est_tente_avant_le_recours_aux_jobs_morts(self):

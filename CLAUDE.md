@@ -2499,6 +2499,20 @@ PREMIER PALIER a failli être annoncé comme la preuve du correctif de
 libération, qui n'avait pas tourné. **Lire dans le journal QUEL mécanisme a
 produit le résultat**, jamais seulement le résultat.
 
+**NEVER écrire « ✅ résolu » sur une preuve qui ne couvre qu'un des cas.**
+J'ai annoncé l'escalade « résolue » sur `nucleo-f401`, `carte-10` et `carte-08`,
+trois cartes où il manquait un SIGNAL. Quand seule la MASSE manquait, une règle
+du 2026-08-31 interdisait toujours de monter. Et j'ai écrit dans la foulée que
+`carte-07` n'avait « jamais escaladé » : le journal de la campagne la montrait
+à 4 et 6 couches. L'utilisateur l'a relevé en une question : « si
+98 %, il manque 2 %, j'escalade ? ». Toute connexion manquante fait désormais
+monter d'un palier (D-2026-09-24-e).
+
+**NEVER arrondir un pourcentage de complétude.** `_percent_verifie` rendait
+`round(99,6) = 100` pour un net manquant sur 250 : le cas de SUCCÈS, rendu sur
+une carte incomplète, et `route_auto` s'arrêtait là. Plafonné à 99 dès qu'un
+net manque — encore un échec qui rendait la valeur du cas normal.
+
 ### Leçons inscrites le 2026-09-23 (ter) — l'ERC, et deux réfutations utiles
 
 **NEVER analyser un fichier de plusieurs centaines de kilo-octets DANS le

@@ -14,6 +14,43 @@
 
 ## En attente de validation
 
+### D-2026-09-24-e — Toute connexion manquante fait monter d'un palier, masse comprise
+
+- **Statut : validée — consigne explicite de l'utilisateur** dans l'objectif du
+  2026-09-24 : « si tu n'atteins pas 100 % routage tu dois escalader le numéro
+  de couche », puis « si par exemple 98 %, il manque 2 %, j'escalade le numéro
+  de couche ? ».
+- **Lève une limite acceptée** : la règle du 2026-08-31 (`_escalade_peut_aider`)
+  refusait d'escalader quand seul un net confié au PLAN manquait (GND), sur la
+  foi d'`arduino-uno` (93 % à 2, 4 et 6 couches). Ce jour-là, les paliers
+  supérieurs repartaient du routage précédent, pistes protégées ; depuis
+  D-2026-09-24-a ils routent librement. Mesure du 2026-09-24 : `carte-08` 98 %
+  à 2 couches (GND seul) puis **100 % à 4**. `carte-07`, placement gelé de la
+  campagne du jour : 97 % (GND seul) à 2 couches ; la campagne était montée
+  à 4 et 6 couches pour PIRE (85-95 %). Rejouée avec la règle et les tirages
+  libres : **100 % à 4 couches, 0 erreur, 0 connexion manquante, aucun court
+  vs schéma** (vérifié par `kicad-cli`, 26 min). ⚠️ Dans ce run, l'escalade a
+  été déclenchée par des SIGNAUX manquants et des erreurs DRC à 2 couches —
+  l'ancienne règle l'aurait aussi permise : ce 100 % prouve le palier libre,
+  pas encore l'escalade « masse seule ».
+- **La règle.** Le palier suivant est tenté dès que le board LIVRÉ n'est pas
+  complet ou pas propre, quel que soit le net qui manque. La décision lit le
+  pourcentage LIVRÉ (`_percent_verifie`), plus celui du moteur, qui ignore les
+  nets confiés au plan. Arrêt inchangé : `_escalade_epuisee` (un palier sans
+  gain toléré) et plafond du plan. D-2026-09-14-b (un palier de plus pour une
+  orpheline nommée) est absorbée par la règle générale.
+- **Défaut trouvé en chemin, corrigé.** `_percent_verifie` ARRONDISSAIT : un net
+  manquant sur 250 donnait `round(99,6) = 100`, et `route_auto` s'arrêtait sur
+  un « 100 %, 0 erreur » incomplet. Plafonné à 99 dès qu'un net manque, et le
+  succès exige désormais qu'aucun net ne soit nommé incomplet.
+- **Coût connu.** Une carte dont la masse ne se relie à aucun palier monte
+  jusqu'à deux paliers plats avant l'arrêt (≈ 12 min sur `arduino-uno` le
+  2026-08-31). Le meilleur palier est gardé, jamais le dernier.
+- **Suite proposée par l'utilisateur** (« les GND liés d'abord, et on escalade
+  seulement pour router les autres signaux ») : relier et PROTÉGER toute la
+  masse avant les signaux — à mesurer, puis à journaliser.
+- Garde : `services/kicad/tests/test_escalade_toute_connexion_manquante.py`.
+
 ### D-2026-09-24-d — Un board qui court-circuite deux nets du schéma est refusé à la génération
 
 - **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 % pro ».
@@ -1006,6 +1043,9 @@ qu un nombre COMPTE avant d en tirer une decision.**
 ---
 
 ## D-2026-09-14-b — ne pas arrêter l'escalade sur un manque GND tant qu'une orpheline NOMMÉE n'a pas eu son repli au palier suivant
+
+> **Absorbée le 2026-09-24 par D-2026-09-24-e** : toute connexion manquante,
+> masse comprise, fait désormais monter d'un palier.
 
 **Statut : validée** par l'utilisateur le 2026-09-14 (« ok »). Implémentée :
 `_escalade_peut_aider(..., orpheline_sans_issue=)`, drapeau
