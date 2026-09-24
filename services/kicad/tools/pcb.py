@@ -1027,6 +1027,48 @@ def _courts_circuits(contenu: str, connections) -> list:
             for net, s in sorted(par_net.items()) if len(s) > 1]
 
 
+class _Broche:
+    __slots__ = ("ref", "pin")
+
+    def __init__(self, ref, pin):
+        self.ref, self.pin = str(ref), str(pin)
+
+
+class _Liaison:
+    __slots__ = ("name", "pins")
+
+    def __init__(self, name, pins):
+        self.name, self.pins = name, pins
+
+
+def courts_du_board(board_texte: str, schema: dict) -> list:
+    """`_courts_circuits` depuis un `schema.json` / `circuit.json` BRUT.
+
+    Pour les outils de banc, qui lisent des fichiers et ne construisent pas de
+    requete : les deux formats d entree sont acceptes (`connections` ou
+    `nets` detailles). Une liaison sans broches lisibles est ignoree.
+
+    ⚠️ Pourquoi ces outils en ont besoin : ils classent les boards sur
+    `(perdus, erreurs, -% route)`. Un board COURT-CIRCUITE y obtient
+    « 0 perdu, 0 erreur, 100 % » — et la protection « on ne remplace jamais par
+    moins bon » GARDAIT le court face a un board correct a 98 %. Mesure du
+    2026-09-24 : les boards versionnes de carte-04 a carte-10 portaient tous le
+    court `PWR_FLAG`.
+    """
+    liaisons = schema.get("connections")
+    if not isinstance(liaisons, list):
+        liaisons = schema.get("nets") or []
+    conns = []
+    for c in liaisons:
+        if not isinstance(c, dict) or "name" not in c:
+            continue
+        pins = [_Broche(p["ref"], p["pin"]) for p in c.get("pins", [])
+                if isinstance(p, dict) and "ref" in p and "pin" in p]
+        if pins:
+            conns.append(_Liaison(c["name"], pins))
+    return _courts_circuits(board_texte, conns)
+
+
 def generate_pcb(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
