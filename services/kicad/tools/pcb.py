@@ -1039,6 +1039,15 @@ def generate_pcb(
                 # le niveau qui a genere le board : un pave thermique et ses vias sont
                 # un seul noeud, et le cuivre laisse sans nom court-circuite le plan.
                 content = propager_nets_pastilles_homonymes(content)
+                # ⚠️ Les broches ORPHELINES reviennent sur leur net du SCHEMA.
+                # Cette reparation n etait appelee NULLE PART en production
+                # (constat du 2026-09-24) — seuls ses tests l invoquaient. Sur
+                # `carte-10`, la SORTIE du regulateur et deux VDD du MCU
+                # naissaient sur des nets orphelins : la carte n etait pas
+                # alimentee, et aucun DRC ne pouvait le voir. Neuvieme « regle
+                # ecrite et jamais appelee » de ce depot.
+                # Garde : tests/test_nets_flottants_repares_en_production.py.
+                content = _patch_floating_nets(content, connections or [])
                 content, requoted = _quote_bare_property_values(content)
                 if requoted:
                     logger.warning(
@@ -1068,6 +1077,9 @@ def generate_pcb(
             content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
                 content = propager_nets_pastilles_homonymes(content)
+                # Meme reparation qu au niveau 1 : un niveau oublie serait la
+                # meme faute, un cran plus loin.
+                content = _patch_floating_nets(content, connections or [])
                 content, _ = _quote_bare_property_values(content)
                 perdus = _composants_perdus(content, [c.ref for c in components])
                 if perdus:
