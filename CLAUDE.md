@@ -2439,6 +2439,66 @@ recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
 dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
 instrument qui condamne un board sain.
 
+### Leçons inscrites le 2026-09-24 — l'escalade qui ne pouvait pas monter
+
+Question de l'utilisateur : « si on escalade le nombre de couches, on doit
+atteindre 100 % ». Il avait raison en principe ; le code l'en empêchait, de
+trois façons indépendantes. Et « je veux une solution générale, tu es en train
+de bricoler la carte nucleo » — il avait raison là aussi.
+
+**NEVER laisser une protection s'appliquer au-delà du tirage pour lequel elle a
+été posée.** L'escalade incrémentale (D-2026-09-10-b) protège les pistes du
+meilleur board au changement de palier. La protection restait posée pour TOUS
+les tirages du palier ; comme le premier palier n'a droit qu'à un tirage de
+preuve, **après le tout premier tirage, plus aucun n'était libre** — on ne
+donnait pas plus de couches à la carte, on en donnait au premier tirage pour
+qu'il se rapièce. Mesure sur `nucleo-f401` : 6 couches PIRES que 4. Désormais le
+premier tirage d'un palier reste incrémental, les suivants sont libres
+(`_tirage_libre`, D-2026-09-24-a). Preuve au banc du même jour, même placement
+gelé : **palier 4, tirage protégé → 0 %, tirage libre → 100 %**.
+
+**NEVER compter dans une autre unité que celle que la règle annonce.** « Arrêt
+après deux paliers sans gain » comptait des TIRAGES (tolérance `2 × 3`). Le
+palier 4 de `nucleo-f401` avait PROGRESSÉ, mais ses tirages bonus et figés ont
+rempli le compteur : **8 couches jamais essayées**, et un journal qui disait
+« 7 paliers » pour 7 tirages. Les bonus, faits pour aider, fermaient la porte
+au palier suivant (`_paliers_sans_gain_apres`, D-2026-09-24-b).
+
+**NEVER mesurer la distance d'une piste depuis ses EXTRÉMITÉS.** La libération
+autour d'une pastille non reliée testait les deux bouts de chaque segment. Une
+diagonale de 13,7 mm passant à **0,533 mm** de la pastille restait protégée —
+ses bouts étaient à 1,9 et 13 mm. Le défaut est structurel : une piste LONGUE a
+presque toujours ses bouts loin de la zone, et c'est précisément elle qui la
+traverse. Les trois segments gagnés sur `nucleo-f401` font 13, 43 et 44 mm
+(`_segment_pres_d_une_zone`).
+
+**NEVER confier un verdict de fabrication à la SÉVÉRITÉ que KiCad attribue.**
+`hole_to_hole` et `holes_co_located` sortent en avertissement par défaut ;
+tous nos juges ne comptaient que les `error`. `carte-11` a donc été livrée
+`drc_clean: true` avec deux vias dont le perçage RECOUPE celui d'une broche de
+connecteur (−0,050 mm) — et `drc_clean` ouvre le gate JLCPCB. Le docstring du
+juge portait la prémisse fausse en toutes lettres : « une erreur de
+fabricabilité fait refuser la carte, un avertissement non ». UNE liste,
+`TYPES_BLOQUANTS_FABRICATION`, UN prédicat, `est_bloquante`, lus par le juge de
+la commande ET celui du routage (D-2026-09-24-c).
+
+**NEVER oublier de porter un filtre chez les SŒURS — quatrième fois.**
+`_pads_plan_a_degager` excluait les pastilles traversantes depuis le
+2026-09-02, en toutes lettres. `_pads_gnd_fine_pitch` et
+`_pads_signal_fine_pitch` ne l'ont jamais reçu : un connecteur 2×20 au pas de
+2,54 mm passait pour un boîtier « fine-pitch » (40 pastilles), et sa broche GND
+recevait un via d'échappement **dans son propre perçage**. Le correctif
+général a réparé aussi `nucleo-f401`, dont les connecteurs Morpho portaient le
+même défaut latent — une carte que personne ne regardait sous cet angle.
+
+**Une escalade qui marche n'est pas un tirage libre qui marche.** Sur
+`carte-11`, le banc a sorti 100 % à 4 couches — mais le palier 2 avait figé
+sans rendre de board, donc il n'y avait rien à protéger ni à libérer : le
+mécanisme corrigé n'a pas joué. Et un 100 % de `nucleo-f401` obtenu DÈS LE
+PREMIER PALIER a failli être annoncé comme la preuve du correctif de
+libération, qui n'avait pas tourné. **Lire dans le journal QUEL mécanisme a
+produit le résultat**, jamais seulement le résultat.
+
 ### Leçons inscrites le 2026-09-23 (ter) — l'ERC, et deux réfutations utiles
 
 **NEVER analyser un fichier de plusieurs centaines de kilo-octets DANS le

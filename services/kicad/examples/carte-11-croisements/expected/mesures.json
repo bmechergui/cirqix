@@ -10,27 +10,28 @@
     109.87,
     76.83
   ],
-  "duree_s": 161,
-  "git": "d5eb5682",
+  "duree_s": 493,
+  "git": "banc de preuve 2026-09-24",
   "routed_percent": 100,
-  "drc_violations": 8,
+  "drc_violations": 0,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "types_violations": "hole_to_hole:8",
+  "types_violations": "-",
   "abouti": true,
   "board": {
-    "segments": 369,
-    "vias": 51,
-    "zones": 4,
+    "segments": 271,
+    "vias": 22,
+    "zones": 5,
     "empreintes": 8
   },
   "drc_du_board": {
-    "violations": 4,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "hole_to_hole:4",
+    "types": "-",
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true
+    "fabricable": true,
+    "juge": "tools.drc.est_bloquante (percages bloquants, D-2026-09-24-c)"
   },
   "board_place": {
     "segments": 0,
@@ -47,5 +48,8 @@
     ],
     "nb_erreurs": 42,
     "fabricable": false
-  }
+  },
+  "source": "banc de preuve : placement GELE (expected/placement.kicad_pcb), route par la voie HTTP de production, juge par le juge corrige",
+  "couches_cuivre": 4,
+  "remplace": "board du 2026-09-23 : 2 couches, 4 violations hole_to_hole BLOQUANTES (deux vias dans le percage de J1.33 / J2.33 a -0,050 mm) — declare `fabricable: true` par l ancien juge, qui ne comptait que les `error`"
 }
