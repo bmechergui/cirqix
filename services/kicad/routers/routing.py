@@ -3338,10 +3338,12 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
         """
         trouves = []
         for morceau in bloc.split('(pad "')[1:]:
-            nom = morceau.split('"', 1)[0]
+            nom, reste = morceau.split('"', 1)
             m = re.search(r'\(net \d+ "([^"]*)"\)', morceau)
             if m:
-                trouves.append((nom, m.group(1)))
+                # Le TYPE suit le nom : `(pad "2" smd roundrect`. On le garde
+                # pour trier plus bas — voir la raison au point de ciblage.
+                trouves.append((nom, m.group(1), reste.lstrip().startswith("smd")))
         return trouves
 
     # Nets presents sur au moins DEUX boitiers : les seuls a router.
@@ -3358,15 +3360,25 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
                or re.search(r'\(fp_text reference "([^"]+)"', bloc))
         pads = _pads(bloc)
         par_bloc.append((ref.group(1) if ref else "", pads))
-        for net in {n for _, n in pads}:
+        # ⚠️ TOUTES les pastilles comptent pour les LIAISONS : une broche de
+        # LQFP reliee a un connecteur traversant EST une liaison. Ne compter
+        # que les CMS ici ferait disparaitre ce net, et avec lui le fanout du
+        # LQFP.
+        for net in {n for _, n, _ in pads}:
             occurrences[net] = occurrences.get(net, 0) + 1
     liaisons = {n for n, k in occurrences.items() if k >= 2 and n}
 
     cibles = []
     for ref, pads in par_bloc:
-        if not ref or len(pads) < _PADS_FINE_PITCH:
+        # ⚠️ Densite ET ciblage sur les CMS seulement : « fine-pitch » est une
+        # notion CMS, et une traversante est deja reliee aux deux faces par son
+        # percage. Meme defaut que `_pads_gnd_fine_pitch` — un connecteur 2x20
+        # passait pour un boitier dense. Garde :
+        # `tests/test_traversantes_jamais_visees.py`.
+        cms = [(nom, net) for nom, net, est_cms in pads if est_cms]
+        if not ref or len(cms) < _PADS_FINE_PITCH:
             continue
-        for nom, net in pads:
+        for nom, net in cms:
             if net in _NETS_CONFIES_AU_PLAN or net not in liaisons:
                 continue
             cibles.append((ref, nom))
@@ -3422,7 +3434,19 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
             continue
         pads = []
         for morceau in bloc_fp.split('(pad "')[1:]:
-            nom = morceau.split('"', 1)[0]
+            nom, reste = morceau.split('"', 1)
+            # ⚠️ CMS SEULEMENT, pour la densite ET pour le ciblage. Une
+            # traversante est deja reliee aux deux faces par son propre
+            # percage. On comptait TOUTES les pastilles : un connecteur 2x20
+            # au pas de 2,54 mm (40 pastilles) passait pour un boitier
+            # « fine-pitch », et sa broche GND recevait un via d echappement…
+            # dans son propre percage. Mesure sur `carte-11` : -0,050 mm bord a
+            # bord, sur un board declare drc_clean. La soeur
+            # `_pads_plan_a_degager` excluait deja les traversantes depuis le
+            # 2026-09-02 ; le filtre n avait jamais ete porte ici.
+            # Garde : `tests/test_traversantes_jamais_visees.py`.
+            if not reste.lstrip().startswith("smd"):
+                continue
             m = (re.search(r'\(net \d+ "([^"]*)"\)', morceau)
                  or re.search(r'\(net "([^"]*)"\)', morceau))
             pads.append((nom, m.group(1) if m else ""))
