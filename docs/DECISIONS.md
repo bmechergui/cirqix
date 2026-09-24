@@ -14,6 +14,31 @@
 
 ## En attente de validation
 
+### D-2026-09-24-c — Un perçage trop proche BLOQUE la fabrication, même en avertissement
+
+- **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 %
+  fabricable ». Touche le gate de commande JLCPCB, dans le sens STRICT : il
+  refuse davantage, il n'autorise rien de plus.
+- **Le défaut.** KiCad classe `hole_to_hole` et `holes_co_located` en
+  AVERTISSEMENT par défaut ; tous nos juges ne comptaient que les `error`.
+  `carte-11-croisements` est sortie `drc_clean: true` avec deux vias dont le
+  perçage RECOUPE celui d'une broche de connecteur (−0,050 mm bord à bord).
+  Or `drc_clean` ouvre le gate JLCPCB — par `DRC_CLEAN` comme par
+  `PCB_LIVRÉ`.
+- **La règle.** `tools/drc.py` porte UNE liste nommée,
+  `TYPES_BLOQUANTS_FABRICATION`, et UN prédicat, `est_bloquante`. Le juge de
+  la commande (`parse_drc_report` → `/drc/auto`) promeut ces types en erreur ;
+  le juge du routage (`_compte_erreurs`, `_erreurs_ajoutees`) lit le même
+  prédicat — une réparation qui ajoute un perçage recoupé est désormais
+  refusée ET nommée.
+- ⚠️ **Ce qui n'est PAS décidé — à te soumettre** : le SEUIL. KiCad juge
+  `hole_to_hole` à **0,25 mm** ; nos poseurs de vias visent **0,50 mm**
+  (`_ECART_TROUS_MM`, « règle JLCPCB »). Aligner le juge sur 0,50 rejetterait
+  des cartes aujourd'hui acceptées : c'est un chiffre qui change le
+  comportement livré. La promotion seule attrape les perçages qui se
+  recoupent et tout ce qui est sous 0,25 mm.
+- **Garde** : `services/kicad/tests/test_percages_bloquent_la_fabrication.py`.
+
 ### D-2026-09-24-b — L'escalade s'arrête après deux PALIERS plats, pas après N tirages
 
 - **Statut : validée — même objectif utilisateur que D-2026-09-24-a**

@@ -2488,10 +2488,14 @@ def _aggrave_le_board(avant: bytes, apres: bytes, *,
 
 def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
     """{type: +n} des erreurs DRC en plus dans `r_apres` (types en hausse seulement)."""
+    from tools.drc import est_bloquante
+
     def _par_type(rap):
         c: dict = {}
         for v in (rap or {}).get("violations") or []:
-            if isinstance(v, dict) and v.get("severity") == "error":
+            # Meme predicat que `_compte_erreurs` : la garde doit NOMMER ce
+            # qu elle refuse, y compris un percage recoupe.
+            if est_bloquante(v):
                 c[v.get("type", "?")] = c.get(v.get("type", "?"), 0) + 1
         return c
     a, b = _par_type(r_avant), _par_type(r_apres)
@@ -4792,11 +4796,17 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
 
 
 def _compte_erreurs(rapport: dict) -> int:
-    """Nombre de violations de severite `error`. Les warnings ne bloquent rien."""
-    return sum(
-        1 for v in (rapport.get("violations") or [])
-        if isinstance(v, dict) and v.get("severity") == "error"
-    )
+    """Nombre de violations qui font REFUSER la carte a la fabrication.
+
+    ⚠️ On comptait les seules `error`, sur la premisse « les warnings ne
+    bloquent rien ». Faux pour un percage : KiCad classe `hole_to_hole` en
+    avertissement, et `carte-11` est sortie `drc_clean` avec des percages qui
+    se recoupent. Une reparation qui en AJOUTAIT passait la garde « ne peut
+    qu ameliorer ». La liste vit dans `tools/drc.py`, UNE fois, lue par ce
+    juge-ci comme par celui de la commande.
+    """
+    from tools.drc import est_bloquante
+    return sum(1 for v in (rapport.get("violations") or []) if est_bloquante(v))
 
 
 def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
