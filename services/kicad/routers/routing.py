@@ -2617,6 +2617,52 @@ def _liberation_active() -> bool:
 def _pres_d_une_zone_liberee(x: float, y: float, zones, rayon: float) -> bool:
     return any((x - zx) ** 2 + (y - zy) ** 2 <= rayon * rayon for zx, zy in zones)
 
+
+def _segment_pres_d_une_zone(a, b, zones, rayon: float) -> bool:
+    """Le SEGMENT `a`-`b` passe-t-il a moins de `rayon` d une zone ?
+
+    ⚠️ On mesurait la distance des deux EXTREMITES, jamais celle du segment.
+    Une piste qui TRAVERSE la zone avec ses deux bouts au loin y echappait
+    donc en silence — et c est le cas le plus frequent, puisqu une piste qui
+    genve une pastille passe a cote d elle sans s y arreter.
+
+    Mesure sur `nucleo-f401` (2026-09-24, board reel d une campagne de
+    production) : la pastille `U1.37 [MORPHO_R_6]` restait non reliee, et le
+    couloir qui y mene etait barre par
+
+        MORPHO_R_5  B.Cu  (169.004,110.826) -> (159.287,101.109)
+
+    une diagonale de 13,7 mm qui passe a **0,533 mm** du point non relie et que
+    la regle des extremites declarait PROTEGEE. Quatre paliers d escalade
+    (2 -> 4 -> 6 couches) n ont rien pu y faire : on ajoutait du cuivre autour
+    d un verrou qu on interdisait de toucher.
+
+    Le rayon ne change PAS. C est la mesure qui devient celle que la regle
+    annonce depuis le debut. Garde : `tests/test_liberation_segment_traversant.py`.
+    """
+    if not zones:
+        return False
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    long2 = dx * dx + dy * dy
+    r2 = rayon * rayon
+    for zx, zy in zones:
+        if long2 <= 0.0:
+            # ⚠️ `start == end` existe dans de vrais boards : diviser par la
+            # longueur y leverait ZeroDivisionError AU MILIEU d un routage.
+            if (zx - ax) ** 2 + (zy - ay) ** 2 <= r2:
+                return True
+            continue
+        # Projection bornee au segment : le point le plus proche est soit un
+        # bout, soit un point interieur — jamais au-dela.
+        t = ((zx - ax) * dx + (zy - ay) * dy) / long2
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        px, py = ax + t * dx, ay + t * dy
+        if (zx - px) ** 2 + (zy - py) ** 2 <= r2:
+            return True
+    return False
+
 # ⚠️ NOM DISTINCT de `_SEGMENT_RE` (ligne ~847), qui sert a `_track_length_mm`
 # et ne capture que quatre groupes. Reutiliser le nom l ecrasait EN SILENCE :
 # la mesure de longueur recevait sept groupes au lieu de quatre. Attrape par
@@ -2910,9 +2956,12 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
         # plan. Mesure du 2026-09-14, carte-10 : « 51 LIBERE(S) » a chaque palier,
         # puis « Pad 8 [GND] of U1 <-> Via [GND] » au DRC final — le via reste, le
         # troncon a disparu.
-        if zones and nom not in _NETS_CONFIES_AU_PLAN and (
-                _pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
-                or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
+        # ⚠️ La distance se mesure au SEGMENT, jamais a ses deux extremites :
+        # une piste qui traverse la zone avec ses bouts au loin y echappait en
+        # silence. Voir `_segment_pres_d_une_zone`.
+        if zones and nom not in _NETS_CONFIES_AU_PLAN and _segment_pres_d_une_zone(
+                (float(x1), float(y1)), (float(x2), float(y2)),
+                zones, _RAYON_LIBERATION_MM):
             liberes += 1
             continue
         lignes.append(
