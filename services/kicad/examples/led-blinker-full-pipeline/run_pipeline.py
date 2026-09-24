@@ -196,8 +196,14 @@ def main() -> int:
     # n a rien a gagner d un tirage de plus, et chaque tirage coute 5 a 40
     # minutes sur les cartes denses.
     tentatives = int(schema.get("tentatives", 4))
-    plafond = int(schema.get("max_layers", 2))
-    budget = int(schema.get("route_budget_s", 1800))
+    # ⚠️ LE BANC APPELLE LE ROUTAGE COMME LA PRODUCTION (D-2026-09-24-f). Le
+    # defaut valait 2 couches et 1800 s : dix cartes sur quinze ne pouvaient
+    # JAMAIS escalader, et `carte-07` restait a 97 % (masse seule) en annoncant
+    # « le palier suivant sera tente ». Le plafond n est pas une consigne : le
+    # routeur part de 2 et ne monte que sur preuve d echec. Le banc joue un
+    # client Pro Max ; le budget suit `routingSearchBudgetS` du client TS.
+    plafond = int(schema.get("max_layers", 8))
+    budget = int(schema.get("route_budget_s", min(600 + 300 * plafond, 3600)))
 
     meilleur = None          # (routé, -violations, place_b64, route_b64, res)
     echecs = []

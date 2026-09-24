@@ -2502,9 +2502,12 @@ produit le résultat**, jamais seulement le résultat.
 **NEVER écrire « ✅ résolu » sur une preuve qui ne couvre qu'un des cas.**
 J'ai annoncé l'escalade « résolue » sur `nucleo-f401`, `carte-10` et `carte-08`,
 trois cartes où il manquait un SIGNAL. Quand seule la MASSE manquait, une règle
-du 2026-08-31 interdisait toujours de monter. Et j'ai écrit dans la foulée que
-`carte-07` n'avait « jamais escaladé » : le journal de la campagne la montrait
-à 4 et 6 couches. L'utilisateur l'a relevé en une question : « si
+du 2026-08-31 interdisait toujours de monter — et le BANC plafonnait dix
+cartes sur quinze à 2 couches (D-2026-09-24-f). J'ai même « corrigé » à tort
+`carte-07` en « escaladée à 4 et 6 » : ces lignes du journal étaient celles
+de `carte-08`, démarrée la même minute. **Un journal partagé ne dit pas de
+quelle carte parle une ligne : l'attribuer par l'heure, jamais par la
+proximité.** L'utilisateur l'a relevé en une question : « si
 98 %, il manque 2 %, j'escalade ? ». Toute connexion manquante fait désormais
 monter d'un palier (D-2026-09-24-e).
 

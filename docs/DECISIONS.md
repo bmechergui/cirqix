@@ -14,6 +14,24 @@
 
 ## En attente de validation
 
+### D-2026-09-24-f — Le banc appelle le routage comme la production : plafond 8, budget du client
+
+- **Statut : validée — consigne explicite de l'utilisateur** (objectif du
+  2026-09-24 : « si tu n'atteins pas 100 % routage tu dois escalader le numéro
+  de couche »), et précédent du 2026-09-10 où le plafond de `carte-08/09/10`
+  avait été porté à 6 **à sa demande**.
+- **Le défaut.** `run_pipeline.py` prenait `max_layers` = 2 par DÉFAUT et
+  1800 s de budget ; `carte-07` écrivait 2 en dur. Dix cartes sur quinze ne
+  pouvaient donc JAMAIS escalader, et D-2026-09-24-e était inerte dans le banc.
+  Mesuré le soir même : `carte-07` à 97 %, masse seule manquante, le service
+  annonce « le palier suivant sera tenté »… et rend la main à 2 couches.
+- **La règle.** Plafond par défaut 8 (client Pro Max) ; budget par défaut
+  `min(600 + 300 × plafond, 3600)`, la formule de `routingSearchBudgetS` côté
+  client. Le plafond n'est pas une consigne : le routeur part de 2 et ne monte
+  que sur preuve d'échec. En PRODUCTION, rien ne change : le plafond reste
+  celui du plan du client (Free 2, Pro 4, Pro Max 8).
+- Garde : `services/kicad/tests/test_banc_plafond_de_production.py`.
+
 ### D-2026-09-24-e — Toute connexion manquante fait monter d'un palier, masse comprise
 
 - **Statut : validée — consigne explicite de l'utilisateur** dans l'objectif du
@@ -26,8 +44,8 @@
   supérieurs repartaient du routage précédent, pistes protégées ; depuis
   D-2026-09-24-a ils routent librement. Mesure du 2026-09-24 : `carte-08` 98 %
   à 2 couches (GND seul) puis **100 % à 4**. `carte-07`, placement gelé de la
-  campagne du jour : 97 % (GND seul) à 2 couches ; la campagne était montée
-  à 4 et 6 couches pour PIRE (85-95 %). Rejouée avec la règle et les tirages
+  campagne du jour : 97 % (GND seul) à 2 couches, jamais escaladée — son
+  schéma plafonnait à 2 couches (voir D-2026-09-24-f). Rejouée avec la règle et les tirages
   libres : **100 % à 4 couches, 0 erreur, 0 connexion manquante, aucun court
   vs schéma** (vérifié par `kicad-cli`, 26 min). ⚠️ Dans ce run, l'escalade a
   été déclenchée par des SIGNAUX manquants et des erreurs DRC à 2 couches —
