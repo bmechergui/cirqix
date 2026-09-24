@@ -2,34 +2,50 @@
   "exemple": "carte-11-croisements",
   "composants": 6,
   "nets": 34,
-  "board_mm": [
+  "board_mm_demande": [
     140,
     120
   ],
-  "duree_s": 291.6,
-  "git": "2422b29",
+  "board_mm": [
+    109.87,
+    76.83
+  ],
+  "duree_s": 161,
+  "git": "d5eb5682",
   "routed_percent": 100,
+  "drc_violations": 8,
   "drc_clean": true,
   "fichiers_exportes": 20,
+  "types_violations": "hole_to_hole:8",
   "abouti": true,
   "board": {
-    "segments": 312,
-    "vias": 55,
+    "segments": 369,
+    "vias": 51,
     "zones": 4,
-    "empreintes": 7
+    "empreintes": 8
   },
   "drc_du_board": {
     "violations": 4,
     "non_connectes": 0,
+    "types": "hole_to_hole:4",
     "erreurs": [],
     "nb_erreurs": 0,
-    "fabricable": true,
-    "types": "hole_to_hole:4"
+    "fabricable": true
   },
-  "couches": 4,
-  "date": "2026-09-12",
-  "methode": "phase 1 placement valide et gele (valider_placements.py), phase 2 routage dessus (banc_exemples.py --placement-fige)",
-  "livre_par": "banc_exemples.py + livrer_boards.py",
-  "tirage": 2,
-  "serigraphie_degagee": "2026-09-12"
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 6
+  },
+  "drc_du_placement": {
+    "violations": 42,
+    "non_connectes": 42,
+    "types": "unconnected_items:42",
+    "erreurs": [
+      "unconnected_items"
+    ],
+    "nb_erreurs": 42,
+    "fabricable": false
+  }
 }

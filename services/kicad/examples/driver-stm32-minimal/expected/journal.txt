@@ -1,34 +1,34 @@
-SchÃ©ma (driver LLM) : 6 composants, 34 nets, board 140x120mm
+SchÃ©ma (driver LLM) : 27 composants, 21 nets, board 70x50mm
 
 ==============================================================
 [1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=62853o  (5.1s)
+    -> taille=128439o  (2.0s)
 
 ==============================================================
 [2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=True Â· violations=0 Â· fixed=12 Â· skipped=False Â· engine=kicad-cli  (8.2s)
+    -> clean=False Â· violations=4 Â· fixed=31 Â· skipped=False Â· engine=kicad-cli  (22.0s)
 
 ==============================================================
 [4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=29150o  (0.2s)
+    -> taille=79633o  (0.4s)
 
 ==============================================================
 [5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placÃ©s=6 Â· status=None  (26.6s)
+    -> placÃ©s=27 Â· status=None  (33.2s)
 
 ==============================================================
 [6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routÃ©=100% Â· couches=2 Â· vias=49 Â· warning=None  (108.2s)
+    -> routÃ©=100% Â· couches=2 Â· vias=28 Â· warning=None  (79.6s)
 
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True Â· violations=8 Â· erreurs=0  (4.8s)
+    -> clean=True Â· violations=0 Â· erreurs=0  (4.4s)
    essai 1 retenu (100%, 0 erreur(s) DRC)
    100 % atteint â€” on arrete les essais
 
@@ -37,20 +37,12 @@ SchÃ©ma (driver LLM) : 6 composants, 34 nets, board 140x120mm
 ==============================================================
 [7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> clean=True Â· violations=8 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (3.9s)
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+    -> clean=True Â· violations=0 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (4.7s)
 
 ==============================================================
 [8] call_agent_export â†’ POST /export/all
 ==============================================================
-    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.5s)
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.3s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -73,7 +65,7 @@ SchÃ©ma (driver LLM) : 6 composants, 34 nets, board 140x120mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=8 drc_clean=True files=20 types=hole_to_hole:8
+SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
 VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/banc-carte-11-croisements-1790202986/output
+Artefacts : /tmp/banc-driver-stm32-minimal-1790202636/output
