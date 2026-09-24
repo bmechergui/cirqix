@@ -14,6 +14,30 @@
 
 ## En attente de validation
 
+### D-2026-09-24-d — Un board qui court-circuite deux nets du schéma est refusé à la génération
+
+- **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 % pro ».
+  Gate plus STRICT : il refuse davantage, n'autorise rien de plus.
+- **Le défaut.** Aucun juge ne comparait le board à son SCHÉMA. Le DRC le
+  compare à son propre netlist. Sur `carte-05`, le net `PWR_FLAG` reliait en
+  cuivre (22 pistes/vias) +3V3, GND, SDA et VIN — un court-circuit des rails —
+  sur un board « 100 % routé, 0 erreur, fabricable », présent comme référence.
+- **La règle.** `_courts_circuits` : un net du BOARD qui réunit des broches de
+  PLUSIEURS nets du SCHÉMA est un court, jamais légitime (une liaison voulue
+  passe par un composant). Traitement identique à `_composants_perdus` : le
+  niveau de génération fautif est refusé, on tente le suivant. Aucun seuil.
+  Ne juge que le certain : une COUPURE peut venir d'un écart de numérotation,
+  un MÉLANGE non.
+- **Mesuré sur les 22 boards du banc** : les 7 courts `PWR_FLAG` sont refusés ;
+  les 12 cartes saines acceptées, sans faux positif ; et **trois courts
+  inconnus découverts** dans des boards versionnés — `esp32-baseline` (GPIO7 sur
+  +3,3 V), `nucleo-f401` (MORPHO_L_9 sur GND), `stm32-100` (GPIO33 sur VIN, et
+  GPIO18/34/50 réunis). Leur cause — générateur ou `circuit.json`
+  contradictoire — reste à établir.
+- **Effet attendu** : ces trois cartes, et toute carte future dont la chaîne
+  corrompt le netlist, ÉCHOUENT à la génération au lieu de livrer un court.
+- **Garde** : `services/kicad/tests/test_board_court_circuite_refuse.py`.
+
 ### D-2026-09-24-c — Un perçage trop proche BLOQUE la fabrication, même en avertissement
 
 - **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 %
