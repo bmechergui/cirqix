@@ -14,6 +14,40 @@
 
 ## En attente de validation
 
+### D-2026-09-24-a — Chaque palier d'escalade reçoit au moins UN tirage LIBRE
+
+- **Statut : validée — objectif énoncé par l'utilisateur le 2026-09-24**, mot
+  pour mot : « si tu n'atteins pas 100 % de routage, tu dois escalader le
+  nombre de couches, et normalement on doit l'atteindre si on escalade le
+  nombre de couches » ; et « je veux une solution générale, tu es en train de
+  bricoler la carte nucleo ». Le MÉCANISME ci-dessous est celui que la mesure
+  désigne ; son effet sur une escalade réelle reste à prouver (voir plus bas).
+- **Le défaut.** L'escalade incrémentale (D-2026-09-10-b) protège les pistes du
+  meilleur board au changement de palier — et cette protection restait posée
+  pour TOUS les tirages du palier. Après le tout premier tirage, plus aucun
+  n'était libre : on ne donnait pas plus de couches à la carte, on en donnait
+  au PREMIER tirage pour qu'il se rapièce.
+- **Mesuré sur `nucleo-f401`** (campagne de production du 2026-09-23) :
+
+      2 couches -> 96 %      4 couches (protégés) -> 98 %
+      6 couches (protégés) -> 96 %      arrêt : 7 paliers sans gain
+
+  **Six couches PIRES que quatre.** Le même jour, au même placement, un tirage
+  LIBRE a rendu **100 % sur DEUX couches en 98 s**.
+- **La règle.** Le premier tirage d'un palier reste incrémental —
+  D-2026-09-10-b n'est pas remise en cause. Les suivants du même palier
+  repartent du board placé. `_palier_meilleur` garde déjà le meilleur de tous :
+  un tirage libre ne peut rien dégrader. **Aucun seuil touché, aucun tirage
+  ajouté** — seule la nature des tirages déjà prévus change.
+- **Réglage** : `tirages_libres_par_palier` (défaut : actif), pour l'A/B.
+- **Garde** : `services/kicad/tests/test_tirage_libre_par_palier.py`
+  (la décision, le rang remis à zéro à chaque palier, la protection vidée,
+  la décision prise AVANT le routage).
+- ⚠️ **Ce qui n'est PAS prouvé** : qu'une vraie escalade atteigne désormais
+  100 %. `nucleo-f401` a réussi du premier coup au tirage suivant, donc sans
+  escalader : le mécanisme n'y a pas été exercé. La preuve demande une carte
+  dont le premier palier échoue réellement.
+
 ### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
 
 - **Statut : LIVRÉ sur demande explicite de l'utilisateur, et le défaut est

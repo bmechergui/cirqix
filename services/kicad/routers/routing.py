@@ -1714,6 +1714,40 @@ def _escalade_incrementale() -> bool:
         return True
 
 
+def _tirage_libre(rang_au_palier: int) -> bool:
+    """Ce tirage repart-il du board PLACE, sans rien proteger ?
+
+    Le premier tirage d un palier (rang 0) reste INCREMENTAL — D-2026-09-10-b,
+    validee le 2026-09-11 : il protege les pistes du meilleur board et ne route
+    que ce qui manque, ce qui est souvent le plus rapide. Les tirages suivants
+    du MEME palier sont LIBRES.
+
+    ⚠️ Pourquoi. La protection posee au changement de palier restait en place
+    pour TOUS les tirages du palier : apres le tout premier tirage, plus aucun
+    n etait libre. Mesure sur `nucleo-f401` (2026-09-23) :
+
+        2 couches -> 96 %     4 couches (proteges) -> 98 %
+        6 couches (proteges) -> 96 %     arret : 7 paliers sans gain
+
+    Six couches PIRES que quatre : on ne donnait pas plus de couches a la
+    carte, on en donnait au premier tirage pour qu il se rapiece. Un tirage
+    libre de la meme carte, au meme placement, a rendu 100 % sur DEUX couches
+    en 98 s (2026-09-24).
+
+    `_palier_meilleur` garde le meilleur de tous : un tirage libre ne peut rien
+    degrader. Aucun seuil touche, aucun tirage ajoute — seule la NATURE des
+    tirages deja prevus change. Reglage `tirages_libres_par_palier` pour l A/B.
+    Garde : `tests/test_tirage_libre_par_palier.py`.
+    """
+    if rang_au_palier <= 0:
+        return False
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("tirages_libres_par_palier", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _placement_condamne(fige_max: int) -> bool:
     """Tous les tirages ont fige et le meilleur d entre eux reste sous le
     seuil : la carte n est pas a portee, on ne paie pas la derniere chance."""
@@ -6100,6 +6134,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "preuve par palier (D-2026-09-11-a) — echelle %s", plancher, essais)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
+    # Rang du tirage DANS son palier : 0 = incremental, 1+ = libre. Voir
+    # `_tirage_libre` — sans lui, 6 couches faisaient pire que 4.
+    rang_au_palier = 0
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
     # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
     bonus_accorde: set[int] = set()
@@ -6242,6 +6279,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # 09:08 : 673 pistes protegees deux fois, 4 couches -> 79 % apres
             # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
             palier_courant, meilleur_du_palier = palier, 0
+            rang_au_palier = 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
         # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
         # carte n a jamais essaye 4 couches (mesure du 2026-08-29).
@@ -6265,6 +6303,22 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 palier,
             )
             break
+
+        # ⚠️ TIRAGE LIBRE. Au-dela du premier tirage du palier, on ne protege
+        # RIEN : le tirage repart du board place, avec toutes les couches du
+        # palier. Sans cela, apres le tout premier tirage aucun n etait plus
+        # libre, et 6 couches faisaient pire que 4 (voir `_tirage_libre`).
+        # Decide AVANT `_expand_stackup` : apres, on routerait avec la
+        # protection du tirage precedent.
+        if _tirage_libre(rang_au_palier) and (_PISTES_A_PROTEGER or _ZONES_LIBEREES):
+            _PISTES_A_PROTEGER = None
+            _ZONES_LIBEREES = []
+            logger.info(
+                "route_auto: tirage %d a %d couches LIBRE — il repart du board "
+                "place, sans proteger les pistes du meilleur (%d%%)",
+                rang_au_palier + 1, palier,
+                meilleur.routed_percent if meilleur is not None else 0)
+        rang_au_palier += 1
 
         # ⚠️ Les plans sont coules APRES le routage, pas ici. Coules avant, le
         # routeur voyait la zone GND, en deduisait « GND est pris en charge » et
