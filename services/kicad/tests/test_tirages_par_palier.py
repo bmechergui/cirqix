@@ -53,9 +53,19 @@ class TestEchelle:
 
 class TestTolerance:
     def test_l_arret_tolere_au_moins_un_palier_entier_a_plat(self):
-        # Sinon deux tirages malchanceux au meme palier couperaient l escalade
-        # avant meme d avoir essaye le palier suivant.
-        assert R._TOLERANCE_SANS_GAIN >= R._TIRAGES_ROUTAGE_PAR_PALIER
+        """Deux tirages malchanceux au meme palier ne coupent pas l escalade.
+
+        ⚠️ Cette garde exigeait `tolerance >= tirages par palier` : l intention
+        etait juste, mais exprimee en TIRAGES, parce que le compteur comptait
+        chaque tirage. Il compte desormais des PALIERS (2026-09-24, voir
+        `test_escalade_compte_des_paliers.py`) : un palier, quel que soit son
+        nombre de tirages plats, ne compte qu UNE fois. On teste donc
+        l intention elle-meme, plus le nombre qui la traduisait.
+        """
+        # Un palier entier a plat — trois tirages, ou vingt — laisse passer
+        # au palier suivant.
+        un_palier_plat = R._paliers_sans_gain_apres(0, False)
+        assert R._escalade_epuisee(un_palier_plat) is False
 
     def test_l_arret_finit_par_se_declencher(self):
         assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN + 1) is True

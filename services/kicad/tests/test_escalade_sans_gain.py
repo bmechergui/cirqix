@@ -43,18 +43,28 @@ class TestRegle:
         assert R._escalade_epuisee(0) is False
 
     def test_la_tolerance_est_nommee_et_bornee(self):
-        """⚠️ Ce test exigeait `1 <= tolerance <= 2`.
+        """⚠️ Troisieme forme de ce test — et chacune avait sa raison.
 
-        Il datait d avant les TIRAGES PAR PALIER (2026-08-28) : le compteur ne
-        comptait alors que des paliers, un par palier. Il compte desormais des
-        TIRAGES, et deux tirages malchanceux au meme palier couperaient
-        l escalade avant d avoir essaye le palier suivant.
+        1. `1 <= tolerance <= 2` : le compteur comptait des PALIERS, un par
+           palier.
+        2. `tolerance == 2 x tirages par palier` (2026-08-28) : avec plusieurs
+           tirages par palier, un compteur incremente A CHAQUE TIRAGE coupait
+           l escalade apres deux tirages malchanceux au meme palier. On avait
+           donc multiplie la tolerance.
+        3. `tolerance == 1` PALIER (2026-09-24) : la forme 2 ne tenait plus des
+           que les paliers se sont allonges. Sur `nucleo-f401`, le palier 4
+           PROGRESSE (96 -> 98 %), mais ses deux tirages bonus et ses deux
+           figes remplissent le compteur : un seul palier plat ensuite, et
+           8 couches ne sont JAMAIS essayees.
 
-        La borne suit donc le nombre de tirages — deux paliers entiers a plat —
-        et reste bornee : chaque tirage inutile coute de une a quinze minutes.
+        La forme 3 compte les paliers, mais un palier n est plat que si AUCUN
+        de ses tirages n a progresse — ce qui regle aussi le souci de la
+        forme 2. Arret apres DEUX paliers plats (`> 1`). Voir
+        `tests/test_escalade_compte_des_paliers.py`.
         """
-        assert R._TOLERANCE_SANS_GAIN == 2 * R._TIRAGES_ROUTAGE_PAR_PALIER
-        assert R._TOLERANCE_SANS_GAIN <= 12
+        assert R._TOLERANCE_SANS_GAIN == 1
+        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN) is False
+        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN + 1) is True
 
 
 class TestCablage:

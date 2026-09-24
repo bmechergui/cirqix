@@ -14,6 +14,29 @@
 
 ## En attente de validation
 
+### D-2026-09-24-b — L'escalade s'arrête après deux PALIERS plats, pas après N tirages
+
+- **Statut : validée — même objectif utilisateur que D-2026-09-24-a**
+  (« si tu n'atteins pas 100 %, tu dois escalader le nombre de couches »).
+- **Le défaut.** La règle écrite était « arrêt après deux paliers entiers sans
+  gain », mais le code comptait des TIRAGES (tolérance `2 × 3 = 6`). Sur
+  `nucleo-f401` (2026-09-23), le palier 4 a PROGRESSÉ (96 → 98 %), puis ses deux
+  tirages bonus et ses deux tirages figés ont rempli le compteur ; un seul
+  palier plat ensuite (6 couches), et **8 couches n'ont jamais été essayées**.
+  Le journal disait « 7 paliers sans gain » : c'étaient 7 tirages.
+- **La règle.** Un palier n'est plat que si AUCUN de ses tirages n'a amélioré
+  le meilleur board ; il compte alors UNE fois. Arrêt après deux paliers plats
+  consécutifs. `_TOLERANCE_SANS_GAIN` passe de 6 (tirages) à 1 (palier) —
+  **le seuil décrit ne change pas, seule l'unité devient celle qu'il annonce**.
+- **Ce qui continue de jouer** : l'arrêt protège toujours de l'escalade
+  inutile (ESP32 du 2026-08-27 : 2 → 80 %, 4 → 80 %, 6 → 40 %, 8 → 73 % —
+  deux paliers plats, arrêt). Le plafond de couches du PLAN et le budget de
+  temps restent maîtres ; le meilleur board est toujours rendu, jamais le dernier.
+- **Garde** : `services/kicad/tests/test_escalade_compte_des_paliers.py`, qui
+  rejoue la séquence réelle de `nucleo-f401`. Deux gardes existantes réécrites
+  pour tester leur INTENTION plutôt que le nombre qui la traduisait
+  (`test_escalade_sans_gain.py`, `test_tirages_par_palier.py`).
+
 ### D-2026-09-24-a — Chaque palier d'escalade reçoit au moins UN tirage LIBRE
 
 - **Statut : validée — objectif énoncé par l'utilisateur le 2026-09-24**, mot

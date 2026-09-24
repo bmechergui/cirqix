@@ -1549,11 +1549,34 @@ _MAX_LAYERS: int = 16
 # routeur.
 _TIRAGES_ROUTAGE_PAR_PALIER = 3
 
-# Tirages consecutifs sans le moindre gain que l on tolere avant de cesser
-# d escalader. Deux paliers entiers a plat : en dessous, deux tirages
-# malchanceux au meme palier couperaient l escalade avant d avoir essaye le
-# palier suivant.
-_TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
+# PALIERS consecutifs sans le moindre gain que l on tolere : au-dela, on cesse
+# d escalader. `_escalade_epuisee` coupe quand le compte DEPASSE cette valeur,
+# donc apres DEUX paliers entiers a plat.
+#
+# ⚠️ On comptait des TIRAGES, avec une tolerance de `2 x 3 = 6`, pour qu un
+# compteur naif incremente a chaque tirage ne coupe pas apres deux tirages
+# malchanceux au meme palier. Cela ne tenait plus des que les paliers se sont
+# allonges — tirages bonus « a portee de 100 % », tirages figes. Mesure sur
+# `nucleo-f401` (2026-09-23) : le palier 4 PROGRESSE (96 -> 98 %), mais ses deux
+# bonus et ses deux figes remplissent le compteur ; un seul palier plat ensuite,
+# et 8 couches ne sont JAMAIS essayees. Le journal disait « 7 paliers sans
+# gain » : c etaient 7 tirages.
+#
+# Compter les PALIERS regle les deux : un palier n est plat que si AUCUN de ses
+# tirages n a ameliore le meilleur board. Voir `_paliers_sans_gain_apres`.
+_TOLERANCE_SANS_GAIN = 1
+
+
+def _paliers_sans_gain_apres(sans_gain: int, gain_au_palier: bool) -> int:
+    """Compte de paliers plats consecutifs, a la SORTIE d un palier.
+
+    Un palier qui a ameliore le meilleur board — ne serait-ce qu une fois, sur
+    un seul de ses tirages — remet le compte a zero. Un palier plat l incremente
+    d UN, quel que soit son nombre de tirages : c est la difference avec
+    l ancien compteur, qui comptait chaque tirage.
+    Garde : `tests/test_escalade_compte_des_paliers.py`.
+    """
+    return 0 if gain_au_palier else sans_gain + 1
 
 
 def _tirage_de_preuve() -> bool:
@@ -6086,7 +6109,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # recalculer sur la sortie fausserait le pourcentage.
     nets_routables = _count_routable_nets(pcb_bytes)
 
+    # Paliers PLATS consecutifs (voir `_TOLERANCE_SANS_GAIN`), et : le palier
+    # en cours a-t-il ameliore le meilleur board, sur l un de ses tirages ?
     sans_gain = 0
+    gain_au_palier = False
     meilleur_note = (-1, 10 ** 6)
     # ⚠️ Le palier de DEPART se deduit du board, il n est plus toujours 2.
     # `stm32-100` a brule 45 minutes a 2 couches — un palier qu aucun tirage
@@ -6278,6 +6304,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # seconde fois DOUBLAIT les fils dans le DSN (mesure du 2026-09-11,
             # 09:08 : 673 pistes protegees deux fois, 4 couches -> 79 % apres
             # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
+            # On QUITTE le palier precedent : c est maintenant, et seulement
+            # maintenant, qu on sait s il a ete plat. Un palier compte UNE fois.
+            if palier_courant is not None:
+                sans_gain = _paliers_sans_gain_apres(sans_gain, gain_au_palier)
+            gain_au_palier = False
             palier_courant, meilleur_du_palier = palier, 0
             rang_au_palier = 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
@@ -6449,7 +6480,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # `_board_partiel_par_cli`).
             if meilleur_fige is None or int(fige.routed_percent or 0) > meilleur_fige[0]:
                 meilleur_fige = (int(fige.routed_percent or 0), etendu, int(fige.passes or 0))
-            sans_gain += 1
+            # Un tirage fige ne compte PAS un par un : c est le palier entier
+            # qui sera juge plat ou non, a sa sortie.
             continue
 
         # ⚠️ Initialise AVANT le bloc : lire cette variable par `locals()`
@@ -6701,14 +6733,11 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 "route_auto: tirage ECARTE comme panne — %d%%, skipped=%s, "
                 "board=%s, moteur=%s", res.routed_percent, res.skipped,
                 "oui" if res.kicad_pcb_b64 else "NON", res.engine or "-")
-            sans_gain += 1
             continue
         if meilleur is None or _palier_meilleur(
                 (res.routed_percent, erreurs), meilleur_note):
             meilleur, meilleur_note = res, (res.routed_percent, erreurs)
-            sans_gain = 0
-        else:
-            sans_gain += 1
+            gain_au_palier = True
 
     # Aucun palier n'a atteint 100 % : on rend le MEILLEUR, jamais le dernier.
     # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
