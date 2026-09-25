@@ -60,7 +60,10 @@ export const PCB_TOOLS: Tool[] = [
       '(instantané), (2) cache communautaire pgvector, (3) SnapMagic (si la clé est configurée), ' +
       '(4) LCSC/EasyEDA, (5) génération .kicad_mod par IA (3 crédits). Si tout échoue, il renvoie un ' +
       'footprint générique — celui du package fourni, sinon Resistor_SMD:R_0402 — avec la source ' +
-      '"kicad_official" : seule la note le signale, lis-la avant de continuer. Appelle-le une fois par ref ' +
+      '"kicad_official" : seule la note le signale, lis-la avant de continuer. call_agent_gen_pcb ne pose ' +
+      'que des footprints « Bibliothèque:Nom » présents dans les bibliothèques KiCad installées : un nom ' +
+      'venu de SnapMagic, de LCSC ou de l’IA (source ai_generated, kicad_mod non installé) ne se charge pas ' +
+      'tel quel sur la carte. Appelle-le une fois par ref ' +
       'de unresolved_footprints (renvoyé par call_agent_schema) ; une ref absente du schéma ne met rien à jour.',
     input_schema: {
       type: 'object' as const,
@@ -181,8 +184,9 @@ export const PCB_TOOLS: Tool[] = [
       'PCB_LIVRÉ que si call_agent_drc l’a validé (drc_clean:true), sinon aucun statut n’est émis. ' +
       'quote_usd et lead_time_days ne sont présents que si le service a obtenu un devis réel : leur absence ' +
       'signifie « pas de devis ». Aucun Gerber produit : status:"error", avec le BOM CSV quand même fourni. ' +
-      'Cet outil n’envoie aucune commande. JAMAIS déclencher la commande sans "OUI JE CONFIRME" explicite ' +
-      'de l’utilisateur. Aucun paramètre.',
+      'Ni cet outil ni la conversation ne passent commande : l’utilisateur prépare le dossier JLCPCB ' +
+      'lui-même dans l’onglet Export, en cochant « OUI JE CONFIRME » ; rien n’est envoyé à JLCPCB, la ' +
+      'soumission reste manuelle. Aucun paramètre.',
     input_schema: {
       type: 'object' as const,
       properties: {},

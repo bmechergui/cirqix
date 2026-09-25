@@ -6,7 +6,7 @@ description: Grille de validation obligatoire avant chaque transition de pipelin
 
 ## Quand invoquer
 
-**OBLIGATOIRE** après chaque étape du pipeline avant de passer à la suivante :
+Après chaque étape du pipeline, avant de passer à la suivante :
 - Après `call_agent_schema` → avant ERC
 - Après `call_agent_erc` → avant Placement
 - Après `call_agent_placement` → avant Routing
@@ -30,8 +30,6 @@ description: Grille de validation obligatoire avant chaque transition de pipelin
 **Blocage si :**
 - Un composant n'a aucune connexion → l'ajouter ou le supprimer
 - Un net a 1 seule pin → net ouvert = erreur électrique
-
-**NEVER** progresser vers ERC si le schéma a des composants non connectés.
 
 ---
 
@@ -72,7 +70,7 @@ description: Grille de validation obligatoire avant chaque transition de pipelin
 - [ ] Tout avertissement restant est listé et justifié dans le rapport, jamais passé sous silence
 - [ ] 0 connexion manquante
 - [ ] Contour de carte fermé (Edge.Cuts)
-- [ ] Carte ≤ 200×200 mm (MVP)
+- [ ] Dimensions dans les limites du profil fabricant (`max_board_width_mm`, `max_board_height_mm` de kicad-tools)
 
 **NEVER** exporter vers JLCPCB avec une violation bloquante : `DRC_CLEAN` ouvre le gate de commande.
 
@@ -106,27 +104,13 @@ Quand une étape passe :
 
 ## Critères de qualité visuelle (viewer)
 
-### Schéma (KiCanvas native)
-- Symboles groupés par fonction (gauche → droite : connecteurs, power, core, passives)
-- Labels de nets visibles sans zoom (font ≥ 1.524mm)
-- Stubs de fils ≥ 5mm (lisibles dans KiCanvas)
-- Référence et valeur en bold lisible
-
-### PCB (KiCanvas native)
-- Composants visibles avec contours (fab layer présent)
-- Traces visibles (width ≥ 0.25mm)
-- GND plane couvre ≥ 60% de la surface
-- Board outline clairement visible
-
-### PCB (Spec canvas)
-- Tous les composants avec label REF + VALUE lisibles
-- Traces affichées (showRouting = true après routing)
-- Zoom auto-fit centré sur les composants
+À vérifier à l'œil dans KiCanvas. Aucun seuil chiffré : le code n'en applique aucun, et les largeurs de piste suivent le profil fabricant (0,15 mm admis sur une carte fine-pitch, `_REGLES_FINE_PITCH` dans `services/kicad/routers/routing.py`).
+- Schéma : symboles groupés par fonction ; labels de nets, références et valeurs lisibles sans zoom.
+- PCB (KiCanvas) : contours des composants (couche fab), pistes, plan GND et contour de carte visibles.
+- PCB (vue Cirqix) : REF et VALUE lisibles, pistes affichées après le routage (`showRouting`), cadrage centré sur les composants.
 
 ---
 
 ## Règle d'or
 
-> **Un PCB ne doit jamais arriver à l'étape suivante avec des composants flottants, des nets ouverts, des DRC violations, ou des stubs de connexion invisibles.**
->
-> Si l'étape précédente ne satisfait pas les critères, **corriger d'abord** et **re-valider** avant de progresser.
+Un PCB n'avance pas à l'étape suivante avec des composants flottants, des nets ouverts ou une violation bloquante au sens de `est_bloquante` ; un avertissement restant est listé et justifié. Si l'étape précédente échoue, corriger puis re-valider.

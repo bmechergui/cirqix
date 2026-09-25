@@ -1878,6 +1878,10 @@ def _relier_liaisons_critiques(pcb_bytes: bytes, nets_plan: set,
         logger.warning("routage prioritaire : erreurs ajoutees — board recu conserve")
         return pcb_bytes, set()
     reliees = {(str(r), str(n)) for paire in bilan.get("reliees") or [] for r, n in paire}
+    # La ligne « posee(s) » plus haut précède les gardes : seule celle-ci dit
+    # que le cuivre de la passe entre dans le tirage.
+    logger.info("routage prioritaire : RETENUE, %d liaison(s) dans le tirage",
+                bilan.get("poses", 0))
     return relie, reliees
 
 

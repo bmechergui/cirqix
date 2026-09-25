@@ -8,40 +8,11 @@ version: 0.1.0
 
 ## Tarifs et droits
 
-Source unique : `packages/types/src/index.ts`. `CREDIT_COSTS` a les clés chat, spec, schema, erc, placement, routing, drc, export, footprint, view3d et simulation ; `PLAN_ENTITLEMENTS` porte `maxLayers`, `canSimulate` et `canView3D`. Lire ces objets plutôt que les recopier. `maxLayers` et `canSimulate` sont appliqués côté serveur, dans les handlers ; `canView3D` côté client seulement.
+Source unique : `packages/types/src/index.ts`. `CREDIT_COSTS` a les clés chat, spec, schema, erc, placement, routing, drc, export, footprint, view3d et simulation ; `PLAN_ENTITLEMENTS` porte `maxLayers`, `canSimulate` et `canView3D`. Lire ces objets plutôt que les recopier. `maxLayers` et `canSimulate` sont appliqués côté serveur, dans les handlers ; `canView3D` côté client seulement. Un run de pipeline est facturé au forfait `PIPELINE_COST` (`apps/web/src/app/api/agent/lib/credits.ts`) : aucun code de facturation ne lit `CREDIT_COSTS`.
 
-## Table Supabase
+## Tables
 
-```sql
--- Solde crédits par utilisateur
-create table credits (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users not null unique,
-  balance numeric(10,1) default 0,
-  plan text default 'free' check (plan in ('free','pro','pro_max','enterprise')),
-  daily_used numeric(10,1) default 0,
-  daily_reset_at date default current_date,
-  updated_at timestamptz default now()
-);
-
--- Historique transactions
-create table credit_transactions (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users not null,
-  project_id uuid references projects,
-  action text not null,
-  amount numeric(10,1) not null,  -- négatif = déduction, positif = recharge
-  balance_after numeric(10,1) not null,
-  created_at timestamptz default now()
-);
-
--- RLS
-alter table credits enable row level security;
-alter table credit_transactions enable row level security;
-
-create policy "own credits" on credits for all using (auth.uid() = user_id);
-create policy "own transactions" on credit_transactions for all using (auth.uid() = user_id);
-```
+`credits` (`user_id`, `balance`, `plan`) et `credit_transactions` : DDL dans `001_initial.sql`, droits dans `010_credits_integrity_hardening.sql`. Un compte authentifié n'a que `SELECT` sur ses propres lignes ; toute écriture passe par les RPC gardées. Une policy `FOR ALL` laisserait un utilisateur réécrire son propre solde.
 
 ## Flux de facturation
 
@@ -59,13 +30,6 @@ Le SQL fait foi dans `packages/db/supabase/migrations/` : 009 (appel réservé a
 
 Badge de crédits : `apps/web/src/features/dashboard/ui/CreditsBadge.tsx` (couleurs issues de `docs/design/design-system.md`).
 
-## Classe d'erreur
+## Erreurs
 
-```typescript
-export class CreditError extends Error {
-  constructor(message: string, public code: "INSUFFICIENT" | "DAILY_LIMIT" | "PLAN_REQUIRED") {
-    super(message);
-    this.name = "CreditError";
-  }
-}
-```
+`apps/web/src/app/api/agent/lib/credits.ts` : `InsufficientCreditsError` (l'appelant répond 402), `PipelineAlreadyRunningError` (409), `CreditReservationError` (500), `CreditDeductionError`. Réutiliser ces classes plutôt qu'en créer une autre.

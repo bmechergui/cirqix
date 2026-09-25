@@ -54,6 +54,9 @@ class TestCablage:
         i_prot = code.index("_ajouter_aux_pistes_protegees(etendu)")
         assert i_resa < i_avant < i_passe < i_gnd < i_prot
         assert "_passe_prioritaire_au_tirage(rang_au_palier)" in code
+        # Le rang est incrémenté AVANT la passe : le premier tirage vaut 1, donc
+        # la passe tourne au moins une fois par palier quand elle est activée.
+        assert code.index("rang_au_palier += 1") < code.index("_passe_prioritaire_au_tirage(rang_au_palier)")
 
     def test_une_pastille_reliee_perd_sa_reservation(self):
         """Une pastille, un propriétaire : une broche reliée en priorité ne garde
@@ -78,3 +81,10 @@ class TestCablage:
         assert "_nets_du_board(" in code and "_aggrave_le_board(" in code
         assert "_fill_zones(" in code
         assert code.index("_fill_zones(") < code.index("_aggrave_le_board(")
+
+    def test_la_retenue_est_journalisee_apres_toutes_les_gardes(self):
+        """« posee(s) » précède les gardes ; seule « RETENUE » prouve que le
+        cuivre de la passe entre dans le tirage (contre-vérification du banc A/B)."""
+        code = _code(R._relier_liaisons_critiques)
+        assert code.index("_aggrave_le_board(") < code.index("RETENUE")
+        assert code.index("PERDU(S)") < code.index("RETENUE")

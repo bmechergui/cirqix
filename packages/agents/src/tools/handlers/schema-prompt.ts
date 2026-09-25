@@ -7,7 +7,7 @@ import type { SchemaJson } from '../../engines/engine-router';
  * dans_pastille` cote service, dont la docstring promettait de suivre le
  * fanout et ne le faisait plus.
  */
-export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a circuit description, return a JSON object with exactly these four keys:
+export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a circuit description, return a JSON object with the keys "components", "nets" and "connections" described here, plus "board_size_imposed" (and, when you choose the board size, "board_width_mm" / "board_height_mm") described under Rules:
 
 "components": array of { "ref": string, "value": string, "footprint": string, "symbol": string, "lcsc"?: string }
 "nets": array of net name strings — every net that appears in connections MUST be listed here
@@ -15,8 +15,8 @@ export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a 
   - EVERY net in "nets" MUST appear in "connections"
   - Every component "ref" used in pins MUST exist in "components"
   - "pin" rules:
-      • Passives (R, C, LED, D, J/connector): use INTEGER pad number (1 or 2)
-      • ICs (NE555, LM7805, regulators, op-amps, transistors): use KiCad PIN NAME string (see table below)
+      • Passives and connectors (R, C, LED, D, J): INTEGER pad number, from 1 to the part's pin count
+      • ICs and transistors: the KiCad pin NAME string from the table below — except where the table gives pin numbers (LM358)
 
 KiCad symbol table — use EXACTLY these values for "symbol":
   Resistor           → "Device:R"

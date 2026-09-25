@@ -138,6 +138,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
     zip_b64: 'ZIP_B64_HANDLER_BLOB',
     bom_csv: 'BOM_BLOB',
     simulation_output_raw: 'RAW_BLOB',
+    kicad_mod: 'MOD_BLOB',
     routed_percent: 100,
     note: 'export ok',
   };
@@ -158,6 +159,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
       zip_b64: TRUNCATED,
       bom_csv: TRUNCATED,
       simulation_output_raw: TRUNCATED,
+      kicad_mod: TRUNCATED,
     });
     // Aucun blob ne fuit nulle part ailleurs dans le contexte envoyé.
     const sentToSonnet = JSON.stringify(hoisted.createCalls[1]?.messages);
@@ -168,6 +170,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
       'ZIP_B64_HANDLER_BLOB',
       'BOM_BLOB',
       'RAW_BLOB',
+      'MOD_BLOB',
     ]) {
       expect(sentToSonnet).not.toContain(blob);
     }
@@ -374,7 +377,7 @@ describe('contexte de conversation', () => {
       { role: 'assistant', content: 'schéma généré' },
       {
         role: 'user',
-        content: [{ type: 'text', text: 'ajoute une LED', cache_control: { type: 'ephemeral' } }],
+        content: [{ type: 'text', text: 'ajoute une LED', cache_control: { type: 'ephemeral', ttl: '1h' } }],
       },
     ]);
   });

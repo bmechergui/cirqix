@@ -13,9 +13,9 @@ Source : `PCBStatus` dans `packages/types/src/index.ts` (INITIAL → SCHEMA_DONE
 ## Règles impératives
 - Max **15 itérations** globales — compter à chaque tour
 - **JAMAIS** de commande JLCPCB sans "OUI JE CONFIRME" explicite
-- Footprint manquant → appeler `call_agent_footprint` immédiatement, interrompre le flux
+- Empreinte non résolue : `call_agent_footprint` pour chaque ref de `unresolved_footprints`, après l'ERC et avant `call_agent_gen_pcb` (`packages/agents/src/prompts.ts`)
 - Contexte : les blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) sont retirés des `tool_result` avant d'être renvoyés à Sonnet (`orchestrator.ts`). Aucune compression par résumé.
-- Moteur : **Circuit-Synth** (Python → .kicad_sch + .kicad_pcb natifs) | fallback → KiCad + Freerouting
+- Moteurs : schéma par circuit_synth (`POST /schematic/generate`), board par kicad-tools `PCBFromSchematic` (`POST /pcb/generate`), routage par Freerouting, kicad-tools en repli
 - Viewer : **KiCanvas** charge les fichiers KiCad depuis Supabase Storage (signed URL)
 
 ## Où vit la boucle

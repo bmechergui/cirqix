@@ -59,7 +59,7 @@ parfaitement intégrée, puisque les PR sont fusionnées en **squash**. Vérifie
 **contenu**, pas la parenté.
 
 ## Projet
-SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → commande JLCPCB.
+SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB DRC-clean → Gerber → dossier de commande JLCPCB, soumis à la main.
 
 ⚠️ **LA COMMANDE JLCPCB N'ENVOIE RIEN** (vérifié le 2026-09-05).
 `POST /api/jlcpcb/order` valide le gate, produit une référence et répond
@@ -67,10 +67,8 @@ SaaS 100% cloud de conception PCB par langage naturel. Agent IA autonome → PCB
 « No order was sent to JLCPCB ». C'est une PRÉPARATION de dossier, pas une
 commande — et c'est un choix sûr, puisqu'aucun envoi accidentel n'est possible.
 
-Mais la tagline, la ligne ci-dessus et `PLAN.md` §4.3 disent « commande
-JLCPCB » sans réserve. Un lecteur — humain ou agent — en conclut que la boucle
-est fermée. Elle ne l'est pas : la dernière étape est manuelle.
-Relevé par Grok en consultation le 2026-09-05.
+La tagline et `PLAN.md` §4.3 disent encore « commande JLCPCB » sans réserve :
+la boucle n'est pas fermée, la dernière étape est manuelle.
 Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously"
 
 ## graphify
@@ -100,9 +98,9 @@ annoncé avant l'appel) est réellement invoqué par le Skill tool. Le niveau de
 Avant un commit :
 - `pnpm type-check` rend 0 erreur ;
 - pour un bug fix ou une feature, les tests sont écrits avant le code ou avec lui ;
-- une revue `code-reviewer` a suivi l'implémentation, et
-  `everything-claude-code:security-scan` a tourné si auth, paiement, secrets, RPC ou
-  RLS sont touchés ;
+- une revue `code-reviewer` a suivi l'implémentation, et l'agent `security-reviewer`
+  a relu le diff si auth, paiement, secrets, RPC ou RLS sont touchés
+  (`everything-claude-code:security-scan` n'audite que la configuration `.claude/`) ;
 - une étape du pipeline PCB (Schema→ERC→Place→Route→DRC→Export) n'avance que validée
   par `cirqix-quality-gate` : ERC sauté, composant non connecté ou violation DRC ne
   sont jamais « OK » sans correction ou documentation explicite ;
@@ -183,9 +181,11 @@ apps/web/src/
 │   └── (dashboard)/          ← cirqix.ai/dashboard
 ├── features/
 │   ├── marketing/ui/         ← Hero, Navbar, Pricing, WaitlistForm…
-│   └── dashboard/ui/         ← ChatPanel, Sidebar, ProjectCard, StatusBadge…
+│   ├── dashboard/ui/         ← Sidebar, ProjectCard, StatusBadge, CreditsBadge…
+│   ├── workspace/ui/         ← Workspace, ChatRail, ChatInput, Timeline…
+│   └── auth/ · credits/ · settings/
 ├── widgets/
-│   └── viewer/               ← ViewerPanel + KiCanvasViewer + PixiCanvas + Three.js 3D
+│   └── viewer/               ← KiCanvasViewer, Board3DView (GLB), RenderView (PNG), View3D (ExportView)
 ├── entities/
 │   ├── project/              ← Project, PCBStatus
 │   ├── pcb/                  ← PCBState, DRCViolation, AgentStep
@@ -196,8 +196,7 @@ apps/web/src/
 │   ├── store/                ← app-store.ts (Zustand)
 │   └── types/                ← kicanvas.d.ts (web component declarations)
 ├── middleware.ts              ← Auth Supabase JWT — protège /dashboard/*
-├── processes/                ← (Phase 3+ — boucle agentique UI)
-└── entities/                 ← (modèles métier)
+└── processes/                ← vide (réservé à la boucle agentique UI)
 
 packages/
 ├── @cirqix/types   ← SOURCE DE VÉRITÉ unique (PCBStatus, Plan, AgentAction…)
@@ -319,7 +318,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         sans retenue ni commandabilité — zéro appel API de bout en bout.
      Haiku 4.5 → JSON typé → POST /schematic/generate :
        ① circuit_synth pip · ② kicad-tools Schematic · ③ TypeScript S-expr
-     Stocke : kicad_sch_content dans _pcbStateCache
+     Stocke : kicad_sch_content dans pcbStateCache (tools/shared.ts)
   ② call_agent_erc        → Ingénieur ERC
      ① kicad-tools Schematic.validate() — pur Python, toujours dispo
      ② kicad-cli sch erc — ERC officiel (si dispo), auto-fix no_connect max 3×
@@ -355,8 +354,8 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         un fail fast : il existe ici un vérificateur de secours légitime.
         Garde : tests/handler-erc.test.ts.
   ③ call_agent_footprint  → Ingénieur Composants (1 appel par ref dans unresolved_footprints)
-     Cascade : KiCad libs → pgvector → LCSC → SnapMagic → AI Haiku
-     Met à jour _pcbStateCache[projectId].schema.components[ref].footprint
+     Cascade (`findFootprint`) : KiCad libs → pgvector → SnapMagic → LCSC → AI Haiku
+     Met à jour pcbStateCache[projectId].schema.components[ref].footprint
   ④ call_agent_gen_pcb      → Ingénieur Layout — génère .kicad_pcb
      Netlist résolution 3 niveaux (tools/pcb.py _generate_with_kicad_tools) :
      ① kicad-tools Python pur  — build_netlist_from_schematic, sans kicad-cli
@@ -367,21 +366,12 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      ③ TypeScript S-expr → fallback final (success=False)
      fallback : runCircuitSynthEngine() TypeScript
   ⑤ call_agent_placement  → Ingénieur Placement   [100% natif, 1 appel]
-     ⚠️ 3 bugs de CÂBLAGE corrigés le 2026-07-27, tous invisibles aux tests
-        mockés (les mocks reproduisaient l'hypothèse du client, pas la réalité du
-        service) et révélés par `packages/agents/src/tests/pipeline-live.test.ts`,
-        premier test à faire tourner la chaîne TS contre le service réel :
-        1. `handlePlacement` RÉGÉNÉRAIT le board via le générateur TS
-           (`runPCBEngine`), écrasant celui que `gen_pcb` venait de produire — que
-           le service ne parvenait même pas à parser (`500 ParseError`). Il
-           utilise désormais le board du cache, comme `handleRouting`.
-        2. `PLACEMENT_TIMEOUT_MS` valait 10 s pour une étape mesurée à 34-45 s :
-           le placement expirait SYSTÉMATIQUEMENT en production. Porté à 180 s.
-           (`ROUTING_TIMEOUT_MS` 90 s → 330 s pour la même raison : le service
-           s'accorde 300 s.)
-        3. `/place/auto` renvoyait `{ref, x, y}` alors que son propre modèle de
-           réponse et le client TS documentent `{ref, x_mm, y_mm}` : le client
-           filtrait TOUTES les positions et `placements` sortait vide.
+     Contrat vérifié contre le service RÉEL par
+     `packages/agents/src/tests/pipeline-live.test.ts` — les tests mockés
+     reproduisent l'hypothèse du client et ne le voient pas : `handlePlacement`
+     part du board que `gen_pcb` a mis en cache (`pcbStateCache`) au lieu de le
+     régénérer ; `/place/auto` rend `{ref, x_mm, y_mm}` ; le budget client est
+     `PLACEMENT_TIMEOUT_MS` (`engines/placement-budget.ts`, 900 s).
      POST /place/auto (kicad_pcb_b64) — gen_pcb fournit une grille de départ
      Commande native : OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
          enable_clustering=True, fixed_refs=<J*/P*>, generations=100,
@@ -419,8 +409,8 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
 
         Les vingt erreurs étaient dans le board placé **depuis le début**. Le
         passage par pcbnew ne les CRÉAIT pas — il les RÉVÉLAIT, en réparant à la
-        lecture et en réécrivant un fichier lisible. J'ai accusé la coulée du
-        plan de masse plusieurs heures pour cette raison.
+        lecture et en réécrivant un fichier lisible : la coulée du plan de masse
+        n'y était pour rien.
         Entre les deux, la boucle de re-tirage acceptait au premier tirage un
         board condamné, et la chaîne routait 25 min dessus. C'est l'explication
         complète de l'instabilité ESP32 : **la boucle était correcte, on lui
@@ -505,24 +495,20 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      carte 2 couches coûte moins cher. La mesure lui donne raison : cette carte
      route à 100 % sur DEUX couches en 208 s.
 
-     ⚠️ **Rien ne configurait la journalisation avant le 2026-09-07.** Le logger
-     racine restait à `WARNING` et uvicorn ne configure que SES loggers : toutes
-     les décisions d'escalade — qui coûtent du cuivre, donc de l'argent au
-     client — étaient indéchiffrables, `docker logs` ne montrant que Freerouting.
-     Corrigé dans `main.py`, niveau pilotable par `LOG_LEVEL`.
+     La journalisation est configurée dans `main.py` (niveau `LOG_LEVEL`, INFO par
+     défaut) : uvicorn ne configure que SES loggers, et sans elle les décisions
+     d'escalade — qui coûtent du cuivre, donc de l'argent au client — n'apparaissent
+     pas dans `docker logs`.
 
      ⚠️ **NEVER conclure qu'un défaut de routage est STRUCTUREL sans avoir
-     compté plusieurs tirages.** `stm32-100` gardait une connexion manquante ;
-     j'ai cherché une cause structurelle pendant des heures — îlot de 0,9 mm²
-     autour de la masse de `D21`, réel et correctement diagnostiqué. Rejouée
-     avec `--tirages=3`, la MÊME carte au MÊME placement gelé donne :
+     compté plusieurs tirages.** `stm32-100`, qui gardait une connexion
+     manquante près d'un îlot réel de 0,9 mm² autour de la masse de `D21`,
+     donne, rejouée avec `--tirages=3` au MÊME placement gelé :
 
         99 %   97 %   77 %   (panne écartée)   87 %   …   **100 %**
 
-     23 points d'écart. **Deux tirages concordants ne prouvent rien** — c'est
-     exactement ce sur quoi je m'étais appuyé pour conclure. Ce dépôt le savait
-     pour le PLACEMENT (« dispersion de la chaîne STM32 ») ; la même prudence
-     vaut pour le ROUTAGE.
+     23 points d'écart : **deux tirages concordants ne prouvent rien**, pour le
+     routage comme pour le placement.
 
      ⚠️ **LE PLAN EST COULÉ AVANT LE ROUTAGE, PAS APRÈS.** On le coulait après :
      le routeur ne voyait donc jamais le cuivre de masse et routait comme si la
@@ -531,7 +517,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      débloqué le 100 % sur six cartes du banc.
 
      ⚠️ Un plan **non rempli** n'est qu'un contour, dont le routeur ne tient
-     aucun compte — même défaut que le 2026-08-23. `_fill_zones` est obligatoire.
+     aucun compte. `_fill_zones` est obligatoire.
 
      ⚠️ La couture se RÉPÈTE : joindre deux îlots de plan en révèle un troisième.
      Une passe unique laissait des îlots. Garde : `tests/test_couture_repetee.py`.
@@ -554,20 +540,14 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      DRC — « 1 net incomplet ; net(s) : GND » — et c'est le seul critère
      recevable.
 
-     J'ai moi-même lu cet avertissement comme un diagnostic et cherché la panne
-     dans la couture pendant une heure ; un agent délégué a proposé « coudre
-     jusqu'à ≤ 1 îlot » sur la même lecture. C'est la faute déjà inscrite plus
-     haut : **NEVER** relayer le message d'une garde comme un diagnostic.
+     Ne pas lire cet avertissement comme un diagnostic de connectivité, ni viser
+     « ≤ 1 îlot » par la couture : le message d'une garde dit ce qu'elle a mesuré.
 
-     ~~Défaut latent voisin, non corrigé : `_router_en_incluant_gnd` remplace
-     le board sans jamais comparer.~~ **Corrigé le 2026-08-31** (comparaison par
-     `_secours_est_meilleur`), mais cette ligne est restée « non corrigé »
-     pendant dix-huit jours — et a envoyé le 2026-09-18 re-corriger un défaut
-     déjà fermé. En y allant, on a trouvé le VRAI trou restant : les replis GND
-     (ciblé et global) comparaient des couples bruts, que `_SANS_VERDICT` fait
-     valoir `(0, 0)` — un secours que kicad-cli n'avait pas su ouvrir battait
-     tout board mesuré. `_bilan_drc` rend désormais `None` sans verdict, et
-     `_secours_est_meilleur` refuse toute comparaison avec `None`. Garde :
+     Les replis GND (`_router_en_incluant_gnd`, ciblé et global) ne remplacent le
+     board que si `_secours_est_meilleur` le juge meilleur. `_bilan_drc` rend
+     `None` sans verdict (kicad-cli n'a pas su ouvrir le board), et
+     `_secours_est_meilleur` refuse toute comparaison avec `None` : un secours
+     illisible ne bat jamais un board mesuré. Garde :
      `tests/test_repli_gnd_sans_verdict.py`.
 
      **ESCALADE DES COUCHES** — méthode demandée : tirages au palier courant,
@@ -688,7 +668,7 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
        (« 🤖 Reasoner IA — déblocage du routage : déplace C12 près de U1… »)
      ⚠️ Fix 34be8ae : _refresh_agent recharge l'état après chaque commande réussie
         — PCBReasoningAgent ne resync pas PCBState en session → sinon pct=0 sur
-        un board routé à 100% + boucle infinie jusqu'à max_steps. Voir notefinal.md
+        un board routé à 100% + boucle infinie jusqu'à max_steps. Voir docs/notefinal.md
      Trigger déterministe : commit 13b919c (shouldRescueRouting/mergeRescueIntoRouting, TDD)
   ⑦ call_agent_drc        → Ingénieur Qualité (boucle max 3×)
      POST /drc/auto
@@ -853,8 +833,9 @@ l'alignement les défait. Détail et gardes de chaque étape :
      ⚠️ La distance se mesure entre les **CORPS**, jamais entre les origines.
      L'origine d'un module est sur sa pastille 1 — courtyard ESP32-WROOM :
      y de -30,74 à +10,51. « Coller à 3 mm de l'origine » poserait la capa EN
-     PLEIN DANS le module. `_boite_locale_fp` porte déjà ce décalage, ce qui rend
-     l'« offset courtyard » inutile comme étape distincte.
+     PLEIN DANS le module. Le courtyard se lit par `placement._boite_orientee_fp`,
+     qui TOURNE avec le composant ; `_boite_locale_fp` rend le repère du
+     footprint, non tourné, et ne s'ajoute jamais tel quel à `fp.position`.
 
      ⚠️ **Limite connue, non corrigée.** `FunctionalCluster` n'a qu'UNE ancre :
      rien ne contraint la distance entre deux MEMBRES. Sur le board STM32 les
@@ -868,25 +849,14 @@ l'alignement les défait. Détail et gardes de chaque étape :
      `tests/test_snap_apres_geometre.py` (l'ORDRE dans `auto_place` — un snap
      correct mais jamais appelé est indistinguable d'un snap absent).
 
-  Historique de la décision inverse, conservé : ablation contrôlée (board STM32 réel, CMA-ES seul sur un board déjà
-  placé) = 8/10 paires resserrées (ex. Y1-U2 16.7→7.5mm), 2 légèrement dégradées,
-  toujours 0 ERROR final (1 ERROR + 6 WARNING bruts nettoyés par l'Inspecteur à
-  0 ERROR / 2 WARNING). Sur le board complet (GA+CMA-ES enchaînés), le filet de
-  sécurité s'est déclenché une fois (17 conflits non résorbés → revert), confirmé
-  zéro régression sur l'invariant 0-ERROR par 11/11 tests (`test_placement.py`).
-  Routage rapide (gros boards) = backend C++ `kct build-native` (Docker).
-  ⚠️ **CE BACKEND N'EST PAS LE CHEMIN EMPRUNTÉ** (mesuré le 2026-08-30). Il
-  appartient à `kct route`, c'est-à-dire aux Niveaux 3-4 de la cascade, qui ne
-  servent que si Freerouting (Niveaux 1-2) est absent, échoue ou n'a plus de
-  budget. Comptage sur trois journaux (run qui a livré `stm32-100` à 100 %, banc
-  des 7 cartes) :
+  Le backend C++ `kct build-native` n'accélère que `kct route`, c'est-à-dire les
+  Niveaux 3-4 de la cascade, qui ne servent que si Freerouting (Niveaux 1-2) est
+  absent, échoue ou n'a plus de budget. Comptage sur trois journaux (2026-08-30 :
+  run qui a livré `stm32-100` à 100 %, banc des 7 cartes) :
 
       16 routages effectués :  16 × (freerouting-api)  ·  0 × (kicad-tools)
 
-  Le compiler ou non ne change donc RIEN aux résultats actuels. Deux agents
-  délégués ont proposé `kct build-native` comme correctif prioritaire, en
-  s'appuyant sur cette ligne : elle décrivait une capacité, ils l'ont lue comme
-  une description du chemin réel.
+  Le compiler ou non ne change donc rien aux résultats actuels.
   **NEVER** conclure qu'un moteur est en cause sans avoir compté, dans les
   journaux, lequel a effectivement routé.
   Voir `services/kicad/DEPENDENCIES.md`.
@@ -945,7 +915,7 @@ un réglage à trouver. Garde : `tests/test_tirage_fige_rend_un_partiel.py`.
 
 ⚠️ **Les 4 workers N'ISOLENT PAS `pcbnew` à eux seuls (constat 2026-08-09).**
 Ils isolent bien les requêtes **entre** workers, mais **pas à l'intérieur** d'un
-worker : les onze routes du service sont déclarées `def` et non `async def`, donc
+worker : les routes du service sont déclarées `def` et non `async def`, donc
 FastAPI les exécute dans son pool de threads. Deux requêtes reçues par le même
 worker peuvent donc appeler `pcbnew` **simultanément, dans le même processus**.
 
@@ -982,12 +952,10 @@ du service.
 'ContainerConfig'`) et **supprime le conteneur AVANT d'échouer** : il laisse le
 service mort. Passer par un `docker run` explicite.
 
-### ⚠️ « UN ROUTAGE COÛTE 6,2 Go » ÉTAIT FAUX — il en coûte 0,2 (rectifié le 2026-09-05)
+### Mémoire d'un routage : ~0,2 Go (mesuré le 2026-09-05)
 
-Ce fichier a porté pendant deux jours, avec le code et le journal des décisions,
-l'affirmation qu'un routage consommait 6,2 Go. **C'était une généralisation
-depuis UNE mesure**, celle du RSS d'un processus tué en lançant DEUX routages
-concurrents dans le même processus Python. J'en ai déduit le coût d'UN routage.
+Les 6,2 Go parfois cités sont le RSS d'un processus tué en lançant DEUX routages
+concurrents dans le même processus Python — pas le coût d'UN routage.
 
 Échantillonnage du cgroup, un point par seconde pendant trois routages réussis :
 
@@ -1003,12 +971,9 @@ emballement — le verrou de `tools/verrou_routage.py` reste justifié — mais 
 motif inscrit était trompeur, et un chiffre faux dans ce fichier est pire qu'un
 chiffre absent : il sert de prémisse à la décision suivante.
 
-⚠️ Ce défaut est INTERMITTENT. Quatre hypothèses ont été écartées, mais Grok,
-consulté le 2026-09-05, a relevé la faute de méthode : **« 1 worker et 4 workers
-réussissent tous deux » ne RÉFUTE rien sur un défaut intermittent — il faut un
-TAUX d'échec, pas un succès isolé.** Ce dépôt le savait déjà pour le routage
-(« deux tirages concordants ne prouvent rien ») ; je ne l'ai pas appliqué à mon
-propre diagnostic. Ces quatre pistes valent comme INDICES, jamais comme preuves :
+⚠️ Ce défaut est INTERMITTENT : **« 1 worker et 4 workers réussissent tous
+deux » ne RÉFUTE rien — il faut un TAUX d'échec, pas un succès isolé.** Les
+quatre pistes écartées valent donc comme INDICES, jamais comme preuves :
 
 | piste | ce qui a été observé | statut |
 |---|---|---|
@@ -1018,8 +983,8 @@ propre diagnostic. Ces quatre pistes valent comme INDICES, jamais comme preuves 
 | origine de l'appel | hôte et intérieur du conteneur ont réussi | indice |
 
 ⚠️ Les asserts `PROPERTY_ENUM` du journal sont du **BRUIT** : 10947 occurrences
-dans l'historique, présentes aussi quand tout va bien. Je les ai d'abord pris
-pour l'indice principal. **NEVER** lire un message répété comme un diagnostic.
+dans l'historique, présentes aussi quand tout va bien. **NEVER** lire un message
+répété comme un diagnostic.
 
 ⚠️ **Le banc ne voit RIEN de tout cela** : `banc_exemples.py` importe
 `route_auto` en Python et n'exerce donc JAMAIS la voie HTTP. Les huit cartes à
@@ -1036,7 +1001,8 @@ signalait. L'entrypoint supprime désormais verrou et socket avant `Xvfb :99`
 reconstruction de l'image**, l'entrypoint n'étant pas monté à chaud.
 Toujours vérifier `pgrep Xvfb` après un redémarrage du conteneur.
 
-Dimensionnement : décision produit `D-2026-09-03-b`, **en attente**.
+Dimensionnement : `D-2026-09-03-b`, tranchée le 2026-09-04 — un seul routage à la
+fois (verrou de `tools/verrou_routage.py`, 503 si occupé), 4 workers conservés.
 
 **Variables obligatoires dans Docker :**
 ```
@@ -1051,7 +1017,7 @@ Toutes les routes KiCad sauf `/health` exigent
 échoue fermée. Le service ne fournit ni CORS ni endpoint d'exécution de Python
 généré. Hors localhost/réseau Docker privé, le transport doit être HTTPS.
 
-**Routing — nets routables :** `_count_routable_nets` compte uniquement les nets avec ≥3 occurrences dans le PCB (1 déclaration globale + ≥2 pads). Les nets mono-pad `Net-(U1-X)` ne comptent pas.
+**Routing — nets routables :** `_count_routable_nets` compte les nets portés par au moins deux pastilles — `(net 3 "GND")` (kicad-tools, KiCad ≤ 9) ajoute une déclaration en tête, `(net "GND")` (pcbnew 10) non — et exclut les nets à une seule pastille (`Net-(U1-X)`) ainsi que les nets confiés au plan (`_NETS_CONFIES_AU_PLAN`).
 
 ## Pipeline asynchrone — pourquoi la file existe
 
@@ -1166,10 +1132,10 @@ mêmes 1800 s. Chaque niveau reçoit le budget entier, donc un appel peut valoir
 plusieurs fois `timeout_s`. Acceptable dans un worker sans plafond, à revoir si
 la borne devient contractuelle.
 
-### « Freerouting perd la netlist » était FAUX (2026-08-20)
+### Nets KiCad 10 : le round-trip Freerouting conserve la netlist (2026-08-20)
 
-Ce diagnostic, écrit ici le matin même, disait : *round-trip Specctra, 99 nets en
-entrée, 0 en sortie*. Il venait du message de la garde, relayé sans être vérifié.
+Une garde qui annonce *99 nets en entrée, 0 en sortie* après le round-trip
+Specctra mesure mal : elle ne lit pas l'écriture de KiCad 10.
 
 **La netlist était intacte.** Deux écritures coexistent pour la même information :
 
@@ -1193,26 +1159,23 @@ mesure, jamais la garde. Gardes : `tests/test_net_counting_kicad10.py`.
 **NEVER** relayer le message d'une garde comme un diagnostic : il dit ce que la
 garde a MESURÉ, pas ce qui s'est passé.
 
-### Le Niveau 2 (API Freerouting) n'avait jamais servi
+### Contrat de l'API Freerouting v2.1.0 (Niveau 1)
 
-La JVM persistante (~400 Mo, port 37864) répondait correctement depuis toujours.
-`_find_freerouting_api` sondait `/api/v1/system/status` — un chemin que
-Freerouting v2.1.0 ne sert pas ; le vrai préfixe est `/v1`. La sonde renvoyait
-donc toujours `None` et chaque routage repartait sur le Niveau 3, un `java -jar`
-complet avec démarrage de JVM.
+`_find_freerouting_api` sonde la JVM persistante (port 37864) sous le préfixe
+`/v1` — pas `/api/v1`, que ce serveur ne sert pas : la sonde rendrait `None` et
+chaque routage retomberait sur le Niveau 2, un `java -jar` complet.
 
-Quatre erreurs indépendantes du client, chacune suffisante seule : préfixe
-`/api`, absence des en-têtes d'identité (`Freerouting-Profile-ID`…, sinon 500),
-envoi du DSN en multipart (415 au lieu de `{"data": <b64>}`), et comparaison
-d'état en minuscules (le serveur sérialise `"COMPLETED"`). `POST …/start` répond
-405 : c'est un `PUT`. Gardes : `tests/test_freerouting_api_contract.py`.
+Chacun de ces points suffit seul à casser le client : envoyer les en-têtes
+d'identité (`Freerouting-Profile-ID`…, sinon 500), passer le DSN en JSON
+`{"data": <b64>}` (multipart → 415), comparer l'état en majuscules (le serveur
+sérialise `"COMPLETED"`), démarrer un job par `PUT …/start` (`POST` → 405).
+Gardes : `tests/test_freerouting_api_contract.py`.
 
 ⚠️ **`api_server-endpoints` ne peut PAS se passer en ligne de commande** :
-`ApiServerSettings.endpoints` est un `String[]`. L'option levait
-« Failed to set property value » à chaque démarrage depuis le 2026-07-27 sans
-jamais s'appliquer — une erreur rouge, réelle, mais SANS RAPPORT avec le 404.
-Elle m'a fait conclure à un serveur mort pendant des heures. Pour changer le
-port, il faut un `freerouting.json` sous `--user_data_path`.
+`ApiServerSettings.endpoints` est un `String[]`. L'option lève « Failed to set
+property value » au démarrage sans jamais s'appliquer — une erreur rouge, réelle,
+qui ne dit rien de l'état du serveur. Pour changer le port, il faut un
+`freerouting.json` sous `--user_data_path`.
 
 ⚠️ `via_count` et `track_length_mm` ressortaient à **0** sur le chemin Niveau 4 :
 il ne les calculait pas et laissait les défauts du modèle. Ce ne sont pas des
@@ -1342,8 +1305,8 @@ désormais publié sur `127.0.0.1` uniquement (il n'a pas de mot de passe).
 
 Le drapeau `CIRQIX_ASYNC_PIPELINE` est **allumé** (`1` dans
 `apps/web/.env.local`), Redis répond sur `127.0.0.1:6379`, et le worker a
-réellement **consommé un job** — `job reçu`, `runId 965a6fd6`, puis échec sur
-le seul point qui reste : le solde de l'API du modèle.
+réellement **consommé un job** (`runId 965a6fd6`, arrêté ce jour-là par le
+solde de l'API du modèle).
 
 La dernière moitié non prouvée l'est désormais : **un utilisateur CONNECTÉ
 reçoit bien ses événements par Realtime, et seulement les siens.**
@@ -1362,31 +1325,17 @@ HTTP de `followRun` reste nécessaire, et c'est ainsi qu'il est écrit. Un tirag
 isolé n'aurait rien prouvé, dans un sens comme dans l'autre — c'est la règle
 déjà inscrite pour le routage, appliquée ici.
 
-⚠️ **Ma sonde a failli conclure à tort.** `pcb_run_events` n'a pas de colonne
-`id` — sa clé est `seq`. Ma sonde demandait `id` : le propriétaire recevait une
-erreur 42703, **et l'autre utilisateur aussi**, donc `data` valait `null` des
-deux côtés et mon test « il ne voit rien (0) » PASSAIT sans rien prouver. Une
-erreur se lisait exactement comme une isolation réussie. C'est le défaut que ce
-dépôt poursuit partout — rapport DRC vide lu « 0 erreur », nets KiCad 10
-comptés à zéro, `via_count` jamais calculé rendu à zéro. **NEVER** laisser un
-échec rendre la même valeur que son cas normal, y compris dans une sonde
-jetable écrite pour dix minutes.
+⚠️ **Deux pièges de la sonde Realtime, qui font passer un échec pour un succès :**
 
-⚠️ **Et mon NETTOYAGE mentait aussi.** Le script annonçait « comptes supprimés »
-alors que **quinze comptes de test s'accumulaient** dans le projet. Trois causes
-cumulées :
-
-1. `admin.auth.admin.deleteUser` **renvoie** une erreur, il ne la **lève** pas.
-   Le `try/catch` autour ne voyait rien.
-2. Une inscription crée une ligne dans `credits` par déclencheur, et
-   `credits_user_id_fkey` est en `NO ACTION` : la suppression échoue avec
-   « Database error deleting user » tant que cette ligne est là.
-3. Le second compte n'était supprimé que sur le chemin de **succès** — donc
-   jamais quand la preuve échouait, c'est-à-dire quand on en a le plus besoin.
-
-C'est la même faute que ci-dessus, dans l'autre sens : là une erreur passait pour
-une preuve, ici un échec passait pour un nettoyage. Le script vérifie désormais
-ce qu'il a supprimé, et le DIT quand il n'y arrive pas.
+- `pcb_run_events` n'a pas de colonne `id` — sa clé est `seq`. Une requête sur
+  `id` rend l'erreur 42703 au propriétaire COMME à l'autre utilisateur : `data`
+  vaut `null` des deux côtés, et « l'autre ne voit rien » passe sans rien prouver.
+- Nettoyage des comptes de test : `admin.auth.admin.deleteUser` **renvoie** son
+  erreur au lieu de la lever (un `try/catch` ne voit rien) ; la ligne `credits`
+  créée par déclencheur bloque la suppression (`credits_user_id_fkey` en
+  `NO ACTION`, « Database error deleting user ») ; la suppression doit aussi
+  courir sur le chemin d'échec. Le script relit ce qu'il a supprimé et le dit
+  quand il n'y arrive pas.
 
 **NEVER** annoncer qu'un nettoyage a eu lieu sans avoir relu ce qui reste. Un
 effet de bord silencieux sur une vraie base coûte plus cher qu'un test raté.
@@ -1481,15 +1430,15 @@ appel peut valoir plusieurs fois `timeout_s`.
 
 ## Système de crédits
 
-- Chat:0.5 | Schéma:2 | Placement:2 | Routage:3 | DRC:1 | Export:1 | Footprint IA:3 | Vue 3D:1 | Simulation:3
-- Plans : Free (5/jour, 2 couches max) | Pro 25€/mois (100, 4 couches) | Pro Max 50€/mois (300, 8 couches) | Enterprise (illimité)
-- **TOUJOURS** vérifier solde AVANT, déduire APRÈS succès
+- Coûts par action : `CREDIT_COSTS` ; droits par plan (couches, simulation, 3D) : `PLAN_ENTITLEMENTS` — les deux dans `@cirqix/types`, qui fait foi.
+- Plans : Free (5/jour, 2 couches max) | Pro 25€/mois (100, 4 couches) | Pro Max 50€/mois (300, 8 couches) | Enterprise (illimité, 8 couches)
+- Un run RÉSERVE ses crédits avant de démarrer (`reserve_pipeline_credits`), les débite au succès (`finalize_pipeline_success`) et les LIBÈRE sinon (`release_pipeline_reservation`) : jamais de débit sans résultat.
 
 ## Base de données
 
 - RLS activée sur toutes les tables — tester isolation user A / user B
 - pgvector pour embeddings footprints
-- Schéma complet dans `PLAN.md` §Phase 0
+- Schéma : les migrations `packages/db/supabase/migrations/` font foi ; `PLAN.md` §Phase 0 n'en donne que l'état initial
 
 ## Types source de vérité — `@cirqix/types`
 
@@ -1578,9 +1527,8 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
 - `led-blinker-full-pipeline/` — pipeline **complet** ①→⑧ description → Gerbers (`run_pipeline.py`) ; board simple NE555+LED (8 composants, **6 nets** dans `input/schema.json`, 60×45 mm) ; `expected/led_blinker_final.kicad_pcb` = 100 % routé / DRC-clean (2026-07-27). **Terrain d'apprentissage RL routing** documenté dans `docs/rl/routing/` — ne plus écrire que la fixture « n'existe pas »
 
 - `carte-01-diviseur/` … `carte-10-maximale/` — **le banc du driver LLM**, de 5 à
-  70 composants, toutes 100 % routées et 0 erreur. ⚠️ « sur deux couches »,
-  écrit ici jusqu'au 2026-09-19, était FAUX. Relivrées ce jour-là avec la
-  couture corrigée (#217, 678 → 443 vias) : huit sur 2 couches, carte-08 et
+  70 composants, toutes 100 % routées et 0 erreur, relivrées le 2026-09-19
+  (couture corrigée, #217, 678 → 443 vias) : huit sur 2 couches, carte-08 et
   carte-10 sur 4 — un tirage, pas une propriété. Détail et compte par couche :
   `BANC_DRIVER_LLM.md`, `mesures.json`. Leur schéma
   est ÉCRIT PAR LE DRIVER (Claude Code joue l'Ingénieur Schéma) : c'est le seul
@@ -1636,11 +1584,8 @@ Le détail des livraisons des phases 2 à 4 est suivi dans `PLAN.md` et dans l'h
 
 ### Phase 4.4 — Paiement Lemon Squeezy ✅ (vérifié le 2026-09-03)
 
-⚠️ **Cette étape était annoncée « à faire » alors qu'elle était LIVRÉE.** Le
-2026-09-03, en démarrant le travail, j'ai trouvé le webhook, la page de
-facturation, la signature de checkout, cinq migrations et 39 tests verts. Rien
-à construire. Une ligne « prochaine étape » périmée fait recommencer du travail
-fait — c'est le pendant de la section d'ordre d'exécution périmée du routage.
+Avant de recommander une étape, vérifier dans le code qu'elle n'est pas déjà
+livrée : une « prochaine étape » périmée fait recommencer du travail fait.
 
 - `apps/web/src/app/api/webhooks/lemon-squeezy/route.ts` — cinq événements :
   `order_created` (top-ups), `subscription_created`, `subscription_renewed`,
@@ -1651,8 +1596,7 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
   20 / 100 / 300 crédits, plans Pro et Pro Max
 - Migrations `008` (idempotence webhook), `009` (verrouillage RPC crédits),
   `013` (crédit atomique), `016` (expiration d'abonnement)
-- Tests : `lemon-squeezy-webhook` (23) · `lemon-squeezy-subscription-end` (8) ·
-  `checkout-signature` (8) — **39 passed**
+- Tests : `lemon-squeezy-webhook`, `lemon-squeezy-subscription-end`, `checkout-signature`
 
 ### Prochaine étape
 
@@ -1667,9 +1611,8 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
 
 ⚠️ **`TEXT-FLOW PLACEMENT FAILED` n'est PAS un blocage** (vérifié le
 2026-09-03). Le message apparaît sur toute carte d'environ 55 composants ou
-plus — `nucleo-f401`, `stm32-100` — jamais sur `stm32-30`. Je l'ai d'abord
-annoncé comme « au-delà de 55 composants la génération de schéma échoue ». Faux :
-la ligne SUIVANTE du journal dit
+plus — `nucleo-f401`, `stm32-100` — jamais sur `stm32-30`, et la ligne SUIVANTE
+du journal dit
 
     🔄 PLACE_COMPONENTS: Using fallback grid placement
 
@@ -1692,12 +1635,12 @@ d'une garde comme un diagnostic** — et lire la ligne suivante avant de conclur
 2. `cirqix-circuit-synth` — génération schéma KiCad, mapping symbols, pin names
 3. `cirqix-kicad-service` — FastAPI pcbnew : placement, Freerouting, DRC, export
 4. `cirqix-pcb-agent` — boucle agentique + états machine
-5. `cirqix-footprint` — cascade LCSC/SnapMagic/Octopart/AI + pgvector community cache
+5. `cirqix-footprint` — cascade KiCad → cache pgvector → SnapMagic → LCSC → génération Haiku
 6. `cirqix-drc` — boucle DRC max 3×, corrections pcbnew
 7. `cirqix-credits` — déduction crédits Supabase
 8. `cirqix-viewer` — KiCanvas dual-mode + Three.js 3D
 9. `/everything-claude-code:python-patterns` — FastAPI / pcbnew / ngspice
-10. `/everything-claude-code:security-scan` — avant commit (auth / paiement)
+10. agent `security-reviewer` (ou `/everything-claude-code:security-review`) — avant commit (auth / paiement)
 
 **Créer un skill :** `/skill-creator:skill-creator` → `.claude/skills/cirqix-xxx/`
 **Améliorer un skill :** montrer les changements proposés → attendre confirmation

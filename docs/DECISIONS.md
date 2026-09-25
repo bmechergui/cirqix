@@ -14,6 +14,73 @@
 
 ## En attente de validation
 
+### D-2026-09-25-e — Le routage ne s'arrête qu'au résultat : escalade jusqu'au plafond, puis agrandissement
+
+- **Statut : validée** — l'utilisateur, le 2026-09-25, après le banc A/B :
+  « Je veux solution générale », puis, sur la boucle proposée : « contunue
+  quellee la sotluon » et « tou les crates dsont dans exmepeles » (preuve sur
+  toutes les cartes de `examples/`). Interprété comme un accord ; à corriger
+  ici s'il ne l'était pas.
+- **Constat qui la motive** (banc du 2026-09-25, `docs/mesures/`) : carte-08,
+  même placement, livrée 100 % à 4 couches trois fois et **85 %, 7 connexions
+  manquantes, 7 erreurs** une fois. Ce dernier appel a monté 2 → 4 (77 %) → 6
+  (62 %) puis s'est ARRÊTÉ (« 2 paliers sans gain ») sans essayer 8 couches, et
+  a livré son meilleur board : un 2 couches. L'agrandissement de D-2026-09-11-b
+  ne s'est pas déclenché, parce qu'il regarde les couches du board LIVRÉ (2),
+  pas le plus haut palier ESSAYÉ.
+- **Règle** :
+  1. Critère de livraison unique : 100 % routé, 0 connexion manquante, 0 erreur
+     bloquante (`est_bloquante`). Rien d'autre n'est un succès.
+  2. Tant que le meilleur board n'est pas livrable, l'escalade continue jusqu'au
+     plafond du plan ; seul le budget de temps l'arrête. La règle « deux
+     paliers sans gain » ne s'applique plus qu'à un board déjà livrable (elle
+     n'a alors plus de raison d'être).
+  3. Le service rend le plus haut palier essayé ; l'agrandissement (+20 %,
+     deux fois au plus, D-2026-09-11-b) se déclenche sur ce palier, dans
+     l'orchestrateur comme dans le banc.
+  4. Sinon, échec explicite, avec les nets manquants.
+- Inchangés : `_SEUIL_REDRAW_PCT` (80) — il accélère la montée vers le plafond,
+  il ne l'empêche pas ; facteur et nombre d'agrandissements.
+
+### D-2026-09-25-c — Critère pour activer `routage_prioritaire` par défaut (fixé AVANT la mesure)
+
+- **Statut : en attente** — proposé le 2026-09-25, avant toute mesure, sur les
+  recommandations de la contre-vérification du banc A/B (55 agents). Fixer le
+  critère après avoir vu les chiffres ferait choisir le seuil qui arrange.
+- **Banc** : `scripts/ab_routage_prioritaire.py`, placements gelés, voie HTTP,
+  ordre ABBA, 3 paires par carte sur carte-03, carte-05, carte-08, carte-10.
+  Toutes les liaisons détectées sont des DÉCOUPLAGES (aucun quartz à moins de
+  6 mm sur le banc) : la décision ne vaudra que pour eux.
+- **Conditions de validité**, sinon la campagne ne compte pas : service démarré
+  après le code de la passe (vérifié par le script) ; aucun agent, banc ni
+  graphify pendant la mesure ; au moins 90 % des essais B avec la signature de
+  la passe dans le board rendu (pistes à 0,4 mm), 0 % des essais A ; au plus un
+  essai sans verdict ou en erreur par bras, rejoué par paire.
+- **Qualité (critère principal)**, apparié par liaison : une liaison est
+  « courte » si son chemin de cuivre mesure au plus max(1,5 × d ; d + 1 mm),
+  d = distance détectée. Activer exige les trois : taux de liaisons courtes de B
+  supérieur à celui de A d'au moins 20 points ; baisse médiane de la longueur
+  d'au moins 25 % ; amélioration sur au moins 3 cartes sur 4.
+- **Non-régression** (board livré, alternance comprise) : un essai est
+  « livrable » à 100 %, 0 erreur bloquante, 0 connexion manquante. B au plus un
+  livrable sous A sur 12 ; couches médianes de B au plus égales à A par carte ;
+  durée médiane de B au plus 1,3 × A ; vias de B au plus 1,1 × A ; pas plus de
+  `tirages_figes` en B.
+- **Sinon** : pas d'activation par défaut. Trois paires ne suffisent jamais à
+  conclure « aucun effet » sur la routabilité (23 points d'écart mesurés entre
+  tirages d'un même placement).
+- **Résultat (banc du 2026-09-25, `docs/mesures/ab-routage-prioritaire-2026-09-25.jsonl`)** :
+  la campagne est INVALIDE pour juger la passe. Sa signature n'est présente que
+  dans 5 essais B sur 12 (carte-03 3/3, carte-05 0/3, carte-08 0/3, carte-10
+  2/3) : ailleurs, `_relier_liaisons_critiques` pose ses liaisons puis les
+  rejette EN BLOC (« erreurs ajoutees »). Là où elle passe, le gain est faible
+  (carte-03, médiane 3,51 → 3,41 mm). **`routage_prioritaire` reste désactivé.**
+  Suite possible : juger chaque liaison seule au lieu du tout-ou-rien.
+- **Question ouverte** : carte-07 et carte-09 sont écartées parce qu'elles
+  figent souvent — ce sont justement celles où une piste protégée pourrait
+  ajouter des blocages. Les inclure en non-régression seule coûterait environ
+  deux heures de plus.
+
 ### D-2026-09-25-b — Audit des prompts : six points qui touchaient une règle de l'utilisateur
 
 - **Statut : validée pour F08, F52, F70, F79 et F99 — consigne de l'utilisateur**

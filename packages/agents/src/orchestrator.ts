@@ -12,7 +12,9 @@ import { nextBoardSize, type BoardGrowth } from './engines/board-growth';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 4096;
+// Un tour coupé par max_tokens échoue fermé (plus bas) : le plafond doit rester
+// hors d'atteinte d'un tour normal. Streamé, Sonnet 4.6 accepte bien plus.
+const MAX_TOKENS = 16000;
 
 export interface AgentHistoryMessage {
   role: 'user' | 'assistant';
@@ -229,8 +231,9 @@ export function mergeRescueIntoRouting(
 
 /**
  * Point de cache sur le dernier bloc du dernier tour, sans muter l'historique.
- * Outils + système (TTL 1 h : placement et routage durent plusieurs minutes),
- * puis l'historique déjà vu, sont relus à ~0,1× au tour suivant.
+ * Outils + système, puis l'historique déjà vu, sont relus à ~0,1× au tour
+ * suivant. TTL 1 h des deux côtés : placement et routage séparent deux tours de
+ * plusieurs minutes, et une entrée 5 min expirerait entre eux.
  */
 function avecPointDeCache(msgs: MessageParam[]): MessageParam[] {
   const dernier = msgs[msgs.length - 1];
@@ -239,7 +242,7 @@ function avecPointDeCache(msgs: MessageParam[]): MessageParam[] {
     typeof dernier.content === 'string' ? [{ type: 'text', text: dernier.content }] : dernier.content;
   const fin = blocs[blocs.length - 1];
   if (!fin) return msgs;
-  const marque = { ...fin, cache_control: { type: 'ephemeral' as const } } as Anthropic.ContentBlockParam;
+  const marque = { ...fin, cache_control: { type: 'ephemeral' as const, ttl: '1h' as const } } as Anthropic.ContentBlockParam;
   return [...msgs.slice(0, -1), { ...dernier, content: [...blocs.slice(0, -1), marque] }];
 }
 
@@ -513,6 +516,9 @@ export async function* runOrchestrator(
         'zip_b64',
         'bom_csv',
         'simulation_output_raw',
+        // .kicad_mod généré par l'IA (jusqu'à 8192 jetons) : conservé dans le
+        // cache communautaire, sans usage pour le raisonnement de Sonnet.
+        'kicad_mod',
       ] as const;
       const slimResult: Record<string, unknown> = { ...result };
       for (const field of LARGE_FIELDS) {

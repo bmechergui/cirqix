@@ -24,7 +24,7 @@ RÈGLES DU PIPELINE
 - Appelle call_agent_footprint pour chaque ref de unresolved_footprints avant call_agent_gen_pcb.
 - Passe par call_agent_drc avant call_agent_export : un PCB non DRC-clean ne part pas en fabrication.
 - Si un outil renvoie status:"error", n'enchaîne pas l'étape suivante : un placement ou un routage en échec laisse un board inutilisable, et le DRC produirait un rapport mensonger. Relance si la cause est transitoire, sinon explique-la à l'utilisateur et arrête-toi.
-- Aucune commande JLCPCB sans "OUI JE CONFIRME" explicite de l'utilisateur.
+- Tu ne passes aucune commande JLCPCB : l'utilisateur prépare le dossier dans l'onglet Export, en cochant "OUI JE CONFIRME". Oriente-le vers cet onglet ; une confirmation tapée dans la conversation ne déclenche rien.
 - Si l'utilisateur pose une question technique, réponds, puis reprends le pipeline là où il s'est arrêté.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -63,35 +63,7 @@ Utiliser les outils Chrome DevTools MCP :
 
 ## Étape 3 — Analyse visuelle des screenshots
 
-Pour chaque screenshot, inspecter les catégories suivantes.
-
-### Catégories de problèmes à détecter
-
-#### A. Chevauchements texte/éléments
-- Texte qui déborde de son conteneur
-- Deux éléments occupant la même zone (z-index conflict)
-- Badge ou label superposé sur du contenu
-- Image recouvrant du texte de façon non intentionnelle
-
-#### B. Overflow et débordements
-- Scroll horizontal non attendu (largeur > viewport)
-- Élément sortant du bounding box de son parent
-- Contenu coupé par `overflow: hidden` involontaire
-
-#### C. Problèmes responsive
-- Layout cassé sur mobile (colonnes trop larges, texte trop grand)
-- Éléments qui disparaissent ou se superposent quand l'écran est petit
-- Navigation ou header qui déborde sur le contenu
-
-#### D. Espacement et alignement
-- Marges/paddings incorrects créant un décalage
-- Éléments mal centrés ou non alignés avec la grille
-- Sections sans séparation visuelle claire
-
-#### E. Typographie
-- Texte tronqué avec `text-overflow: ellipsis` non voulu
-- Line-height insuffisant causant des lignes qui se collent
-- Font-size trop grand pour le conteneur mobile
+Inspecter chaque capture pour les défauts que nomme la description du skill : chevauchements, débordements (dont un scroll horizontal), texte coupé, alignement et espacement, régressions responsive.
 
 ---
 
@@ -128,7 +100,7 @@ Breakpoints testés : Mobile 375px | Tablet 768px | Desktop 1440px
 
 | # | Composant | Fichier | Breakpoint | Description | Cause probable |
 |---|-----------|---------|------------|-------------|----------------|
-| 1 | Hero | Hero.tsx | Mobile 375px | Titre H1 déborde hors du viewport | `text-7xl` sans responsive → ajouter `text-4xl md:text-7xl` |
+| 1 | Hero | Hero.tsx | Mobile 375px | Titre H1 déborde hors du viewport | taille fixe `text-7xl` → `text-[1.8rem] sm:text-[2.4rem] md:text-[3rem]` |
 
 #### MOYEN (dégradation visible)
 
@@ -149,7 +121,7 @@ Pour chaque problème CRITIQUE ou MOYEN, proposer le diff exact :
 **Problème #1 — Hero.tsx titre trop grand mobile**
 ```diff
 - className="text-7xl font-extrabold"
-+ className="text-4xl md:text-6xl xl:text-7xl font-extrabold"
++ className="text-[1.8rem] sm:text-[2.4rem] md:text-[3rem] font-extrabold"
 ```
 
 ---

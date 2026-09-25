@@ -67,75 +67,23 @@ La table fait foi dans `services/kicad/tools/schematic.py` : `_SYMBOL_RULES` (or
 ### Vérifier que le symbol existe
 
 ```bash
-grep -oP '\(symbol "\K[^"]+' kicad-symbols/Device.kicad_sym \
+grep -oP '\(symbol "\K[^"]+' "$KICAD_SYMBOL_DIR/Device.kicad_sym" \
   | grep -v '_[0-9]_[0-9]$' | sort | head -30
 ```
 
 ---
 
-## 4. Noms de pins — pièges courants
+## 4. Noms de broches
 
-Les noms de pins KiCad **diffèrent** des noms "logiques" que l'on utilise habituellement.
-Toujours vérifier avec `comp.available_pins` ou depuis `.kicad_sym`.
+Les bibliothèques KiCad ne nomment pas les broches comme les datasheets. Le nom fait foi dans le `.kicad_sym` de `KICAD_SYMBOL_DIR`, ou dans la liste `Available:` de l'erreur `ComponentError` de circuit_synth. En cas de doute, brancher par numéro (`u1[4]`).
 
-### NE555P (Timer:NE555P)
-
-| Pin logique | Nom circuit_synth | N° pin |
-|------------|------------------|--------|
-| GND        | `GND`            | 1      |
-| TRIG       | `TR`             | 2      |
-| OUT        | `Q`              | 3      |
-| RST        | `R`              | 4      |
-| CV         | `CV`             | 5      |
-| THR        | `THR`            | 6      |
-| DIS        | `DIS`            | 7      |
-| VCC        | `VCC`            | 8      |
-
-> `TRIG` → `TR`, `OUT` → `Q`, `RST` → `R` — les trois pièges classiques NE555.
-
-### Lire les pins disponibles depuis l'erreur
-
-Quand un pin n'existe pas, circuit_synth affiche les pins valides :
-```
-ComponentError: Pin 'RST' not found in U (Timer:NE555P).
-Available: 'CV', 'DIS', 'GND', 'Q', 'R', 'THR', 'TR', 'VCC', 1, 2, 3, 4, 5, 6, 7, 8
-```
-→ Utiliser les noms entre guillemets (ex: `u1["R"]`) ou les numéros de pin (ex: `u1[4]`).
+Exemple, `Timer:NE555P` en KiCad 10 : 1 `GND`, 2 `TRIG`, 3 `OUT`, 4 `~{RST}`, 5 `CONT`, 6 `THRES`, 7 `DISCH`, 8 `VCC`. Les abréviations de datasheet (TR, Q, R, CV, THR, DIS) n'existent pas dans la bibliothèque : `_resolve_pin` (`services/kicad/tools/schematic.py`) les traduit par `_ALIAS_BROCHES`, puis par un préfixe qui ne désigne qu'une seule broche, jamais par sous-chaîne, car « R », contenu dans « THRES », branchait VCC sur la broche seuil (`services/kicad/tests/test_broches_par_nom.py`). Une abréviation nouvelle s'ajoute à `_ALIAS_BROCHES`, avec son test.
 
 ---
 
-## 5. Gestion des `ref` : préfixe vs ref complète
+## 5. Références
 
-Circuit_synth accepte deux modes :
-
-```python
-# Mode préfixe — auto-numérotation R1, R2, R3...
-r1 = Component(ref="R", ...)   # → numéroté R1 automatiquement
-r2 = Component(ref="R", ...)   # → numéroté R2 automatiquement
-
-# Mode ref complète (trailing digits détectés)
-r1 = Component(ref="R1", ...)  # → utilisé tel quel
-r2 = Component(ref="R2", ...)  # → utilisé tel quel
-```
-
-**Pour le router FastAPI** (JSON avec refs numérotées comme "R1", "U1") :
-→ Utiliser le **mode préfixe** (strip des chiffres) + dict `json_ref → Component` :
-
-```python
-comps: dict[str, CSComponent] = {}
-for comp in req.components:
-    ref_prefix = comp.ref.rstrip("0123456789") or comp.ref
-    c = CSComponent(symbol=..., ref=ref_prefix, value=comp.value, footprint=comp.footprint)
-    comps[comp.ref] = c   # clé = "R1", objet = Component avec prefix "R"
-
-# Connexions avec les refs JSON originales
-for conn in req.connections:
-    net = nets[conn.name]
-    for pin in conn.pins:
-        comp_obj = comps.get(pin.ref)   # lookup par "R1", "U1", etc.
-        if comp_obj:
-            comp_obj[pin.pin] += net
-```
+`Component(ref="C12")` garde `C12` ; `Component(ref="C")` laisse circuit_synth renuméroter dans son ordre de création. Le service passe toujours la référence complète du JSON (`_generate_with_cs_lib`, `services/kicad/tools/schematic.py`) : avec un préfixe, le board et le BOM portaient C1..C8 là où le schéma déclarait C1, C2, C3, C10…, et le résultat dépendait de la course avec le repli kicad-tools. Les broches se branchent par `_resolve_pin` (§4), pas par `comp[pin] += net` direct.
 
 ---
 
@@ -177,9 +125,8 @@ Routeur : `services/kicad/routers/schematic.py` (`POST /schematic/generate`). Lo
 | Erreur | Cause | Fix |
 |--------|-------|-----|
 | `LibraryNotFound: Library 'Device' not found` | `KICAD_SYMBOL_DIR` non défini ou mauvais chemin | Définir `KICAD_SYMBOL_DIR` pointant vers dossier avec `.kicad_sym` |
-| `LibraryNotFound: Library 'Device' not found` | Fichier téléchargé depuis `master` (→ 404 car HEAD = `.kicad_symdir`) | Utiliser tag `7.0.11` : `/-/raw/7.0.11/Device.kicad_sym` |
-| `SymbolNotFoundError: Symbol 'IC' not found in library 'Device'` | `Device:IC` n'existe pas dans KiCad 7 | Utiliser `Timer:NE555P` pour NE555, `Device:R` etc. |
-| `ComponentError: Pin 'RST' not found in U (Timer:NE555P)` | Noms pins différents du schéma logique | Voir table pins §4 : `RST`→`R`, `TRIG`→`TR`, `OUT`→`Q` |
+| `SymbolNotFoundError: Symbol 'IC' not found in library 'Device'` | Symbole générique absent de la bibliothèque installée | Symbole réel (`Timer:NE555P`…) ajouté à `_SYMBOL_RULES` (§3) |
+| `ComponentError: Pin 'RST' not found in U (Timer:NE555P)` | Nom de datasheet absent de la bibliothèque | Nom KiCad (`~{RST}`), numéro de broche, ou alias dans `_ALIAS_BROCHES` (§4) |
 | `CircuitSynthError: No active circuit found` | `Net()` ou `Component()` créé hors du contexte `@circuit` | Tout mettre INSIDE la fonction décorée |
 | `'charmap' codec can't encode character '\U0001f50d'` | circuit_synth utilise des emojis dans ses logs, incompatible Windows | `PYTHONUTF8=1` ou `os.environ["PYTHONUTF8"] = "1"` avant import |
 | `Circuit.generate_json_netlist() missing 1 required positional argument: 'filename'` | API mal appelée | Ignorer — la méthode JSON n'est pas nécessaire pour le workflow principal |

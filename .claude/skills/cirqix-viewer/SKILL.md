@@ -19,7 +19,7 @@ PCB    (.kicad_pcb) → service POST /render/auto (kicad-cli pcb render)
 
 KiCanvas est monté en `controls="full"` + `controlslist="nooverlay"` : panneaux
 couches / nets / objets / empreintes / propriétés comme dans KiCad ; l'événement
-`kicanvas:select` (bubbles + composed, `detail.item`) porte l'objet cliqué —
+`kicanvas:select` (`detail.item`, émis sur l'objet viewer, voir ci-dessous) porte l'objet cliqué —
 `describeSelection()` dans `KiCanvasViewer.tsx` le nomme. Presets et bornes des
 rendus : `apps/web/src/shared/lib/render-presets.ts` (partagé route ↔ viewer).
 
@@ -37,17 +37,9 @@ rendus : `apps/web/src/shared/lib/render-presets.ts` (partagé route ↔ viewer)
 
 Bucket privé `kicad-files`, chemins `{userId}/{projectId}/schematic.kicad_sch` et `pcb.kicad_pcb`. Dépôt : `store.uploadArtifact` (`packages/agents/src/pipeline/store.ts`) ou `apps/web/src/app/api/agent/lib/kicad-storage.ts`. URL signées (1 h) réémises par `GET /api/projects/[id]/pcb-state`.
 
-### Migration Supabase — Bucket kicad-files
+### Bucket kicad-files
 
-```sql
--- Bucket privé — accès par signed URL uniquement
-INSERT INTO storage.buckets (id, name, public) VALUES ('kicad-files', 'kicad-files', false);
-
--- RLS : chaque user accède uniquement à son dossier
-CREATE POLICY "kicad files owner only"
-  ON storage.objects FOR ALL
-  USING (bucket_id = 'kicad-files' AND (storage.foldername(name))[1] = auth.uid()::text);
-```
+Migrations `002_kicad_files_bucket.sql` (bucket privé, policies par dossier `{userId}/`), `024_kicad_files_png_renders.sql` et `025_kicad_files_bucket_glb.sql` (types MIME `image/png` et `model/gltf-binary`, sans lesquels le dépôt d'un rendu est refusé). Un nouveau type d'artefact demande sa migration de types MIME.
 
 ---
 

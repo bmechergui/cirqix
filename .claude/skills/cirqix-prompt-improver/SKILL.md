@@ -8,18 +8,18 @@ description: Améliore tout prompt avant exécution — ajoute le contexte Cirqi
 
 Lire la phase en cours et les phases terminées dans la section « Phase actuelle » de `CLAUDE.md` et dans `PLAN.md` au moment de la tâche ; ne pas les recopier ici.
 
-**Focus :** footprint cascade (KiCad → SnapMagic → LCSC → AI Haiku), pcbnew placement/routing réels, DRC natif, export Gerbers/BOM/STEP, viewer KiCanvas dual-mode, JLCPCB commande
+**Focus :** cascade footprint (KiCad → cache pgvector → SnapMagic → LCSC → Haiku), placement kicad-tools et routage Freerouting réels, DRC kicad-cli, export Gerbers/BOM/CPL et modèle 3D GLB, viewer KiCanvas, préparation de commande JLCPCB
 **Fichiers :** `packages/agents/src/engines/`, `services/kicad/routers/`, `apps/web/src/widgets/viewer/`
 **Contraintes à toujours mentionner :**
-- Skill `cirqix-footprint` : cascade 4 étapes — s'arrêter à la 1ère réussite
+- Skill `cirqix-footprint` : cascade en 5 étapes (cache pgvector compris), arrêt à la première réussite
 - Skill `cirqix-kicad-service` : service FastAPI (`/schematic/generate`, `/pcb/generate`, `/place/auto`, `/erc`, `/route/auto`, `/drc/auto`, `/export/all`, `/render/auto`, `/export/glb`), jeton Bearer requis sauf sur `/health`
-- Skill `cirqix-drc` : boucle DRC max 3×, corrections pcbnew automatiques
-- Skill `cirqix-credits` : vérifier solde AVANT, déduire APRÈS succès
+- Skill `cirqix-drc` : boucle DRC max 3× dans le service ; kicad-cli fait foi ; corrections limitées (via vers le plan, remplissage des zones par pcbnew en processus enfant)
+- Skill `cirqix-credits` : réserver avant le run, libérer sur échec, débiter après un succès prouvé (RPC atomiques)
 - Skill `cirqix-viewer` : modes `native` (KiCanvas `controls="full"`), `spec` (vue Cirqix SVG), `png` et `3d` (rendus KiCad : `RenderView.tsx`, `Board3DView.tsx`)
-- Moteur PCB : **Circuit-Synth** (Python) — JAMAIS TSCircuit en nouveau code
+- Moteurs : circuit_synth pour le schéma, kicad-tools pour le board ; pas de TSCircuit en nouveau code (déprécié depuis v0.3.0)
 - JLCPCB : confirmation **"OUI JE CONFIRME"** obligatoire — jamais automatique
 - Événements d'un run : `RunEvent` JSON (SSE en synchrone ; `pcb_run_events` + Realtime en asynchrone), sans marqueur `[DONE]`
-- Orchestrateur = Sonnet 4.6, agents spécialisés = Haiku 4.5, max 15 itérations
+- Orchestrateur = Sonnet 4.6, max 15 itérations ; seuls le schéma, l'empreinte IA et le reasoner appellent Haiku 4.5, les autres étapes sont des handlers déterministes
 - Middleware auth : `apps/web/src/middleware.ts` → `/dashboard/*`
 - Zustand store : `apps/web/src/shared/store/app-store.ts`
 
@@ -51,7 +51,7 @@ Lire la phase en cours et les phases terminées dans la section « Phase actuell
 [Verbe fort] [opération précise].
 </task>
 <constraints>
-Contraintes réelles de la tâche, chacune avec sa raison (ex. : « vérifier le solde avant, débiter après succès — sinon un run échoué est facturé »).
+Contraintes réelles de la tâche, chacune avec sa raison (ex. : « réserver les crédits avant le run, débiter après succès — sinon un run échoué est facturé, ou deux runs partent sur le même solde »).
 Critère d'arrêt : [condition vérifiable]
 </constraints>
 <output_format>
@@ -76,8 +76,8 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 | "agent" sans précision | Orchestrateur / Schéma / DRC / Footprint ? |
 | "base de données" | Table + RLS + migration Supabase |
 | "affiche X" | Composant + classes design system + états loading/empty/error |
-| Touche aux crédits | Vérifier AVANT, déduire APRÈS (skill `cirqix-credits`) |
-| Touche aux agents | Modèle (Sonnet ou Haiku), max 15 itérations, streaming SSE |
+| Touche aux crédits | Réserver avant, libérer sur échec, débiter après succès (skill `cirqix-credits`) |
+| Touche aux agents | Modèle (Sonnet ; Haiku pour schéma, empreinte IA, reasoner), max 15 itérations, `RunEvent` (SSE ou `pcb_run_events`) |
 | Touche à la DB | RLS + uuid-ossp + pgvector si embeddings |
 | Touche au viewer | `widgets/viewer/ui/KiCanvasViewer.tsx`, `shared/lib/render-presets.ts`, `docs/design/design-system.md` |
 | Touche à JLCPCB | Confirmation "OUI JE CONFIRME" obligatoire, jamais automatique |

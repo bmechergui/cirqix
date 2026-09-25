@@ -10,102 +10,13 @@ version: 0.1.0
 
 `handleDrc` (`packages/agents/src/tools/handlers/drc.ts`) → `POST /drc/auto` (`services/kicad/routers/drc.py`) : pré-filtre kicad-tools, puis `kicad-cli pcb drc` qui fait foi, auto-correction au plus 3 fois dans le service. Verdict : `est_bloquante` (`services/kicad/tools/drc.py`). Fail-closed : service injoignable, `skipped` ou board absent → `status: 'error'`, jamais `DRC_CLEAN`. Aucun modèle dans cette étape.
 
-## Application des corrections (pcbnew Python)
+## Corrections automatiques
 
-```python
-# services/kicad/tools/drc.py
-import pcbnew
-from typing import TypedDict
-
-class DRCFix(TypedDict):
-    type: str
-    net: str | None
-
-def apply_drc_fixes(pcb_path: str, fixes: list[DRCFix], output_path: str) -> dict:
-    board = pcbnew.LoadBoard(pcb_path)
-    applied, skipped = 0, 0
-
-    for fix in fixes:
-        try:
-            if fix["type"] == "adjust_track_width":
-                _fix_track_width(board, fix)
-                applied += 1
-
-            elif fix["type"] == "adjust_via":
-                _fix_via(board, fix)
-                applied += 1
-
-            elif fix["type"] == "cannot_fix":
-                skipped += 1  # Logger pour remontée orchestrateur
-
-        except Exception as e:
-            skipped += 1
-
-    pcbnew.SaveBoard(output_path, board)
-    return {"applied": applied, "skipped": skipped, "path": output_path}
-
-
-def _fix_track_width(board: pcbnew.BOARD, fix: dict):
-    """Ajuste la largeur d'une piste par ses coordonnées."""
-    from_pt = pcbnew.VECTOR2I(pcbnew.FromMM(fix["from"]["x_mm"]), pcbnew.FromMM(fix["from"]["y_mm"]))
-    to_pt   = pcbnew.VECTOR2I(pcbnew.FromMM(fix["to"]["x_mm"]),   pcbnew.FromMM(fix["to"]["y_mm"]))
-    new_width = pcbnew.FromMM(fix["new_width_mm"])
-
-    for track in board.GetTracks():
-        if (isinstance(track, pcbnew.PCB_TRACK)
-            and track.GetStart() == from_pt
-            and track.GetEnd() == to_pt):
-            track.SetWidth(new_width)
-            break
-
-
-def _fix_via(board: pcbnew.BOARD, fix: dict):
-    """Ajuste les dimensions d'un via par position."""
-    pos = pcbnew.VECTOR2I(pcbnew.FromMM(fix["x_mm"]), pcbnew.FromMM(fix["y_mm"]))
-    new_drill = pcbnew.FromMM(fix["new_drill_mm"])
-    new_diam  = pcbnew.FromMM(fix["new_diameter_mm"])
-
-    for track in board.GetTracks():
-        if isinstance(track, pcbnew.PCB_VIA) and track.GetPosition() == pos:
-            track.SetDrillValue(new_drill)
-            track.SetWidth(new_diam)
-            break
-```
+`_apply_fixes` (`services/kicad/routers/drc.py`) : via micro dans une pastille de net de plan restée orpheline (`add_zone_via_for_unconnected_pads`, en texte pur), puis remplissage des zones par `pcbnew` dans un processus enfant (`tools/drc_pcbnew_runner.py`), jamais dans le handler, car `pcbnew` n'est pas thread-safe et la route tourne dans le pool de threads d'uvicorn. Une correction qui échoue n'est pas comptée. `apply_drc_fixes` de `tools/drc.py` est un reliquat sans appelant.
 
 ## Types DRC
 
-```typescript
-// packages/agents/src/types/drc.ts
-export interface DRCViolation {
-  type: string;
-  severity: "error" | "warning";
-  x_mm: number;
-  y_mm: number;
-  description: string;
-  net?: string;
-  ref1?: string;
-  ref2?: string;
-}
-
-export interface DRCResult {
-  status: "DRC_CLEAN" | "DRC_FAILED";
-  violations: DRCViolation[];
-  iterations: number;
-}
-
-export interface DRCFix {
-  type: "adjust_track_width" | "adjust_via" | "move_track" | "cannot_fix";
-  net?: string;
-  from?: { x_mm: number; y_mm: number };
-  to?: { x_mm: number; y_mm: number };
-  new_width_mm?: number;
-  x_mm?: number;
-  y_mm?: number;
-  new_drill_mm?: number;
-  new_diameter_mm?: number;
-  reason?: string;  // pour cannot_fix
-}
-```
+`DRCViolation` (`packages/types/src/index.ts`) : `id`, `severity`, `message`, `x_mm`, `y_mm`, `layer?`. Réponse du service côté client : `RealDrcResult` (`packages/agents/src/engines/drc-service.ts`) : `drcClean`, `violations`, `fixedCount`, `kicadPcbContent?`, `skipped`, `warning?`. Côté Python, une violation porte aussi `type`, que lit `est_bloquante`.
 
 ## Violations et règles
 

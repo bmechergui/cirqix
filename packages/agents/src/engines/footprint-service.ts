@@ -195,21 +195,23 @@ function buildFootprintPrompt(partNumber: string, packageHint?: string): string 
 Rules:
 - Determine the package type from the part number (SOT-23, SOIC-8, 0402, DIP-8, etc.)
 - Use standard IPC-7351 pad dimensions for the detected package
-- Include: Reference and Value properties, pads (numbered from 1), F.Courtyard rect, F.Fab rect, F.SilkS outline
+- Include: Reference and Value properties, pads (numbered from 1), a courtyard on layer "F.CrtYd", a body outline on "F.Fab", a silkscreen outline on "F.SilkS" that stays clear of the pads. Layer names are KiCad's file names ("F.CrtYd", not the display name "F.Courtyard").
 - Put the footprint name in "footprint_name" and the complete S-expression in "kicad_mod"
 
-Example structure for SOT-23 (3 pads):
+Illustrative syntax — SOT-23 as in KiCad's own library (another package takes its own IPC-7351 dimensions):
 (footprint "SOT-23"
   (layer "F.Cu")
   (descr "SOT-23 3-pin package")
   (attr smd)
-  (property "Reference" "REF**" (at 0 -1.8 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
-  (property "Value" "SOT-23" (at 0 2 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
-  (pad "1" smd rect (at -0.95 0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "2" smd rect (at 0.95 0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "3" smd rect (at 0 -0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.Courtyard") (stroke (width 0.05) (type solid)))
-  (fp_rect (start -0.7 -1.2) (end 0.7 1.2) (layer "F.Fab") (stroke (width 0.1) (type solid)))
+  (property "Reference" "REF**" (at 0 -2.4 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+  (property "Value" "SOT-23" (at 0 2.4 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
+  (fp_line (start -0.76 -1.56) (end 0.76 -1.56) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -0.76 1.56) (end 0.76 1.56) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_rect (start -1.93 -1.7) (end 1.93 1.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+  (fp_rect (start -0.65 -1.45) (end 0.65 1.45) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+  (pad "1" smd roundrect (at -0.9375 -0.95) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
+  (pad "2" smd roundrect (at -0.9375 0.95) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
+  (pad "3" smd roundrect (at 0.9375 0) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
 )
 
 Generate for "${partNumber}"${packageHint ? ` / ${packageHint}` : ''} now:`;

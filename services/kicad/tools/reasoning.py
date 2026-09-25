@@ -76,7 +76,7 @@ _PLACE_NEAR = _commande("place_component", {"ref": _S, "near": _S, "offset": _XY
                         ["ref", "near", "offset"])
 _DELETE = _commande("delete_trace", {"net": _S, "delete_all_routing": {"type": "boolean"}},
                     ["net"])
-_PLACEMENT_SCHEMA = _schema_action(_PLACE_AT, _PLACE_NEAR, _DELETE)
+_PLACEMENT_SCHEMA = _schema_action(_PLACE_AT, _PLACE_NEAR)
 _ROUTING_SCHEMA = _schema_action(
     _commande("route_net", {"net": _S, "prefer_layer": _S,
                             "avoid_regions": {"type": "array", "items": _XY}}, ["net"]),
@@ -93,7 +93,7 @@ def _claude_decider(model: str, system: str = _SYSTEM_PROMPT,
 
     Isolé pour permettre l'injection d'un décideur déterministe dans les tests
     (sans ANTHROPIC_API_KEY). ``system`` et ``schema`` restreignent le
-    vocabulaire (boucle placement-feedback : place_component/delete_trace).
+    vocabulaire (boucle placement-feedback : place_component seul).
     """
     import anthropic
 
@@ -227,7 +227,10 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
 
 _MAX_ITERATIONS = 3
 _MAX_MOVES_PER_ITER = 4
-_ALLOWED_FEEDBACK_COMMANDS = frozenset({"place_component", "delete_trace"})
+# delete_trace n'y figure pas : chaque itération dé-route TOUT le board
+# (_strip_routing) avant de re-router — effacer une piste n'aurait aucun effet
+# et consommerait un des _MAX_MOVES_PER_ITER tours.
+_ALLOWED_FEEDBACK_COMMANDS = frozenset({"place_component"})
 
 _PLACEMENT_SYSTEM_PROMPT = """\
 Tu es un ingénieur placement PCB. Le routeur automatique a échoué sur certains \
@@ -235,10 +238,9 @@ nets : son analyse d'échec t'indique QUELS composants bloquent QUELS chemins.
 
 Ton SEUL levier est le placement. À chaque tour, choisis UNE commande :
 - {"type":"place_component","ref":"D1","at":[x,y]}  ou  {"ref":"D1","near":"U1","offset":[3,0]}
-- {"type":"delete_trace","net":"NOM","delete_all_routing":true}
 
-INTERDIT : route_net, add_via, define_zone — le routage appartient au routeur \
-négocié qui repassera après tes déplacements.
+Le routage lui-même appartient au routeur négocié, qui repassera après tes \
+déplacements.
 
 Stratégie :
 Tu n'es consulté que lorsque le code n'a appliqué aucune « Routing Suggestion » du \
@@ -430,7 +432,7 @@ def rescue_with_placement_feedback(
       2. ``route_fn(pcb) -> (routed_bytes, pct, failure_analysis)`` — routeur
          négocié complet (kct route), from scratch ;
       3. si pct = 100 → terminé ; sinon le LLM décide jusqu'à
-         ``max_moves_per_iter`` déplacements (place_component / delete_trace
+         ``max_moves_per_iter`` déplacements (place_component
          uniquement — jamais route_net) à partir de l'analyse d'échec ;
       4. re-route au tour suivant.
 
