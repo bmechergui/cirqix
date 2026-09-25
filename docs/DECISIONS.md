@@ -14,6 +14,53 @@
 
 ## En attente de validation
 
+### D-2026-09-25-a — Routage PRIORITAIRE des liaisons critiques, avant le routage général
+
+- **Statut : validée — consigne de l'utilisateur** le 2026-09-25 : « propose
+  toi et fais tout selon votre recommandation », sur le plan présenté (étape 0,
+  étape 1, quatre choix).
+- **La règle.** Avant Freerouting, `tools/nets_critiques.py` détecte les
+  liaisons critiques par la TOPOLOGIE (quartz → broche du circuit, charge →
+  quartz, condensateur entre un net et la masse → broche d'alimentation), et
+  l'opération runner `relier_liaisons` les pose par des pistes courtes, sur une
+  face, sans via, en évitant les vias réservés. Elles sont ensuite PROTÉGÉES
+  avec la liaison GND ; Freerouting route autour. Une pastille reliée perd sa
+  réservation d'échappement (une pastille, un propriétaire).
+- **Les quatre choix.**
+  1. Limite : écart entre CORPS ≤ 3 mm (comme le cluster natif) **et** piste
+     ≤ 6 mm centre à centre — une piste protégée longue deviendrait un obstacle
+     à chaque tirage.
+  2. Largeur des liaisons d'alimentation : 0,4 mm (0,25 mm pour le quartz).
+  3. Paires différentielles : détectées et signalées, jamais routées.
+  4. Alternance : la passe tourne un tirage sur deux ; `_palier_meilleur`
+     garde le meilleur des deux familles.
+- **Désactivée par défaut** (réglage de banc `routage_prioritaire`) jusqu'à la
+  mesure A/B sur placements gelés.
+- **Mesure de détection** (placements versionnés) : 2 à 9 liaisons de
+  découplage par carte ; AUCUN quartz retenu — ceux de `stm32-validation` et
+  `driver-stm32-minimal` sont à 9-27 mm des broches OSC. Pour les nets
+  critiques, le défaut dominant est le PLACEMENT, pas le routage.
+- Gardes : `test_detection_liaisons_critiques.py`,
+  `test_passe_prioritaire_cablee.py`, `test_une_pastille_un_proprietaire.py`.
+
+### D-2026-09-24-g — Chaque palier d'escalade repart LIBRE, le premier tirage compris
+
+- **Statut : validée — consigne explicite de l'utilisateur** le 2026-09-24 :
+  « fais le tirage libre, s'il fait 100 % et rapide ».
+- **Remplace par défaut D-2026-09-10-b** (escalade incrémentale : le premier
+  tirage d'un nouveau palier protégeait les pistes du meilleur board précédent).
+  Ce tirage protégé échouait à CHAQUE fois : des dizaines de « Multiple vias
+  skipped », HTTP 500 de l'API Freerouting, repli CLI à 0 %. Mesuré sur
+  `carte-07` (2 → 4 couches) : protégé 0 %, puis tirage libre **100 % en 11 s
+  de routeur** ; même motif la veille sur `nucleo-f401`.
+- **La règle.** `_escalade_incrementale()` rend `False` par défaut : tous les
+  tirages d'un palier repartent du board placé. Le mécanisme est conservé,
+  réarmable par le réglage de banc `escalade_incrementale`, pour le comparer
+  une fois la cause de l'échec réparée (hypothèse en cours : pistes et vias
+  écrits en double dans le DSN, par le meilleur board ET la liaison GND ET les
+  vias réservés).
+- Garde : `services/kicad/tests/test_escalade_incrementale.py`.
+
 ### D-2026-09-24-f — Le banc appelle le routage comme la production : plafond 8, budget du client
 
 - **Statut : validée — consigne explicite de l'utilisateur** (objectif du

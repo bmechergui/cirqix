@@ -1727,14 +1727,23 @@ _CONDAMNE_PCT: int = 50
 
 def _escalade_incrementale() -> bool:
     """Le palier suivant garde-t-il les pistes du meilleur board du palier
-    quitte ? Defaut : oui (D-2026-09-10-b). Reglage `escalade_incrementale`
-    pour l A/B — la mesure anterieure (kicad-tools, `--preserve-existing`)
-    est perimee et ne vaut pas pour Freerouting."""
+    quitte ? Defaut : NON depuis le 2026-09-24 (D-2026-09-24-g).
+
+    Consigne de l utilisateur : « fais le tirage libre, s il fait 100 % et
+    rapide ». Le tirage PROTEGE d un nouveau palier echouait a CHAQUE fois :
+    Freerouting journalise des dizaines de « Multiple vias skipped », rend
+    HTTP 500, et le repli CLI donne 0 %. Mesure sur carte-07 le 2026-09-24,
+    passage 2 -> 4 couches : protege 0 %, puis tirage LIBRE 100 % (11 s de
+    routeur). Meme motif la veille sur nucleo-f401 (protege 0 %, libre 100 %).
+    Un tirage qui echoue toujours coute un tirage par palier et n apporte rien.
+
+    Le mecanisme (D-2026-09-10-b) est CONSERVE, rearmable par le reglage de
+    banc `escalade_incrementale`, pour le comparer une fois repare."""
     try:
         from tools.reglages_banc import reglage
-        return bool(reglage("escalade_incrementale", True))
+        return bool(reglage("escalade_incrementale", False))
     except Exception:  # noqa: BLE001
-        return True
+        return False
 
 
 def _tirage_libre(rang_au_palier: int) -> bool:
@@ -1769,6 +1778,107 @@ def _tirage_libre(rang_au_palier: int) -> bool:
         return bool(reglage("tirages_libres_par_palier", True))
     except Exception:  # noqa: BLE001
         return True
+
+
+def _reservations_du_tirage(vias: list, protege: bool) -> list:
+    """Les vias a reserver pour CE tirage : aucun si le tirage est protege.
+
+    Un tirage protege complete le meilleur board du palier precedent, qui
+    porte DEJA ses vias d echappement. Mesure du 2026-09-25 sur carte-07
+    (2 -> 4 couches, board a 97 % protege) : sans reservation 7 s et 100 % ;
+    avec, 220 s ou plus, 4 vias poses au meme point, et en production HTTP 500
+    puis 0 % a chaque changement de palier.
+    Garde : tests/test_tirage_protege_sans_reservation.py.
+    """
+    return [] if protege else list(vias)
+
+
+def _passe_prioritaire_au_tirage(rang: int) -> bool:
+    """Ce tirage (rang compte a partir de 1) fait-il le routage PRIORITAIRE ?
+
+    D-2026-09-25-a. Desactive par defaut jusqu a la mesure A/B (reglage de banc
+    `routage_prioritaire`). Quand il est actif, un tirage sur DEUX : une piste
+    protegee mal posee reviendrait a chaque tirage sans qu aucun ne puisse la
+    rattraper ; l alternance garde des tirages libres, et `_palier_meilleur`
+    garde le meilleur des deux familles.
+    Garde : tests/test_passe_prioritaire_cablee.py.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        actif = bool(reglage("routage_prioritaire", False))
+    except Exception:  # noqa: BLE001
+        actif = False
+    return actif and int(rang) % 2 == 1
+
+
+def _sans_les_pastilles_reliees(vias: list, reliees: set) -> list:
+    """Une pastille, un proprietaire : une broche reliee en priorite ne garde
+    pas son via d echappement reserve."""
+    if not reliees:
+        return list(vias)
+    return [v for v in vias if not (isinstance(v, dict)
+                                    and (str(v.get("ref")), str(v.get("pad"))) in reliees)]
+
+
+def _relier_liaisons_critiques(pcb_bytes: bytes, nets_plan: set,
+                               vias_reserves: list) -> tuple:
+    """ROUTAGE PRIORITAIRE (D-2026-09-25-a). Rend `(board, pastilles_reliees)`.
+
+    Pose, AVANT le routage general, les liaisons critiques detectees par
+    `tools.nets_critiques` : quartz, charges du quartz, decouplages — des
+    pistes courtes, sur une face, sans via. Le board rendu est ensuite PROTEGE
+    avec la liaison GND : Freerouting route autour.
+
+    ⚠️ NE PEUT QU AMELIORER : nets perdus, ou board aggrave apres recoulee des
+    plans, et on rend le board recu. Jugee AVANT recoulee, la passe serait
+    condamnee a tort (lecon du 2026-09-22 : un board qui vient de recevoir du
+    cuivre porte des erreurs que la coulee efface).
+    """
+    from tools.nets_critiques import liaisons_critiques
+    try:
+        liaisons = liaisons_critiques(pcb_bytes.decode("utf-8", "replace"),
+                                      nets_plan=tuple(nets_plan) or ("GND",))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("routage prioritaire : detection impossible (%s)", exc)
+        return pcb_bytes, set()
+    if not liaisons:
+        logger.info("routage prioritaire : aucune liaison critique courte a poser")
+        return pcb_bytes, set()
+    reserves = [{"ref": v.get("ref"), "pad": v.get("pad"), "x": v["via_x"], "y": v["via_y"]}
+                for v in vias_reserves if isinstance(v, dict) and "via_x" in v]
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree, sortie, resultat = (Path(tmp) / n for n in ("in.kicad_pcb", "out.kicad_pcb", "r.json"))
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "relier_liaisons",
+                "pcb": str(entree), "output": str(sortie), "result": str(resultat),
+                "liaisons": json.dumps([l.en_dict() for l in liaisons]),
+                "vias_reserves": json.dumps(reserves),
+            })
+            if not sortie.is_file():
+                return pcb_bytes, set()
+            bilan = json.loads(resultat.read_text(encoding="utf-8"))
+            relie = sortie.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("routage prioritaire impossible (%s) — board recu conserve", exc)
+        return pcb_bytes, set()
+    logger.info(
+        "routage prioritaire : %d liaison(s) posee(s) sur %d visee(s), %d renoncee(s) %s",
+        bilan.get("poses", 0), len(liaisons), bilan.get("renonces", 0),
+        bilan.get("raisons") or "")
+    if not bilan.get("poses"):
+        return pcb_bytes, set()
+    perdus = _nets_du_board(pcb_bytes) - _nets_du_board(relie)
+    if perdus:
+        logger.error("routage prioritaire : %d net(s) PERDU(S) — board recu conserve", len(perdus))
+        return pcb_bytes, set()
+    relie = _fill_zones(relie)
+    if _aggrave_le_board(pcb_bytes, relie):
+        logger.warning("routage prioritaire : erreurs ajoutees — board recu conserve")
+        return pcb_bytes, set()
+    reliees = {(str(r), str(n)) for paire in bilan.get("reliees") or [] for r, n in paire}
+    return relie, reliees
 
 
 def _placement_condamne(fige_max: int) -> bool:
@@ -3215,6 +3325,75 @@ def _nets_declares_dsn(dsn_text: str) -> set:
             for n in _NET_DECLARE_RE.findall(_section_network(dsn_text))}
 
 
+# Deux trous plus proches que l ecart minimal font un `hole_to_hole` : pour une
+# reservation, « a cote » veut dire sous cet ecart (runner : _ECART_TROUS_MM).
+_ECART_RESERVE_UM: float = 500.0
+# Deux vias proteges a moins de 50 um sont le MEME via, ecrit deux fois (meme
+# tolerance que `_TOLERANCE_VIA_EXISTANT_NM` du runner).
+_MEME_VIA_UM: float = 50.0
+_VIA_WIRING_RE = re.compile(r'\(via\s+"[^"]*"\s+(-?[\d.]+)\s+(-?[\d.]+)')
+_FIL_WIRING_RE = re.compile(r'\(wire\s+\(path\s+\S+\s+[\d.]+\s+((?:-?[\d.]+\s*)+)\)')
+
+
+def _dedoublonner_wiring(reserves: str, proteges: str) -> tuple:
+    """Une pastille, un seul proprietaire, dans le bloc `(wiring)` du DSN.
+
+    Rend `(reserves, proteges, vias_reserves_ecartes, doublons_proteges)` :
+
+    - un via RESERVE a moins de `_ECART_RESERVE_UM` d un via PROTEGE est
+      ecarte, avec son troncon — la pastille est deja servie ;
+    - un element PROTEGE ecrit deux fois (meme ligne, ou via a moins de
+      `_MEME_VIA_UM` d un autre) n est garde qu une fois : le meilleur board du
+      palier et la liaison GND recalculee portent souvent le meme via.
+
+    Mesure du 2026-09-25 (carte-07, tirage protege 4 couches) : sans doublon
+    7 s et 100 % ; avec 4 vias au meme point, 220 s ou plus, puis HTTP 500 en
+    production. Garde : tests/test_une_pastille_un_proprietaire.py.
+    """
+    import math
+
+    def _proche(pt, pts, tol):
+        return any(math.hypot(pt[0] - q[0], pt[1] - q[1]) < tol for q in pts)
+
+    vias_gardes, lignes_p, vues, doublons = [], [], set(), 0
+    for ligne in (proteges or "").splitlines():
+        cle = ligne.strip()
+        if not cle:
+            continue
+        m = _VIA_WIRING_RE.search(ligne)
+        if cle in vues or (m and _proche((float(m.group(1)), float(m.group(2))),
+                                         vias_gardes, _MEME_VIA_UM)):
+            doublons += 1
+            continue
+        vues.add(cle)
+        if m:
+            vias_gardes.append((float(m.group(1)), float(m.group(2))))
+        lignes_p.append(ligne)
+
+    lignes_r, ecartes, via_ecarte = [], 0, None
+    for ligne in (reserves or "").splitlines():
+        m = _VIA_WIRING_RE.search(ligne)
+        if m:
+            pt = (float(m.group(1)), float(m.group(2)))
+            if _proche(pt, vias_gardes, _ECART_RESERVE_UM):
+                ecartes += 1
+                via_ecarte = pt
+                continue
+            via_ecarte = None
+            lignes_r.append(ligne)
+            continue
+        f = _FIL_WIRING_RE.search(ligne)
+        if f and via_ecarte is not None:
+            coords = [float(v) for v in f.group(1).split()]
+            if len(coords) >= 2 and _proche((coords[-2], coords[-1]), [via_ecarte], 1.0):
+                continue   # le troncon du via ecarte part avec lui
+        lignes_r.append(ligne)
+
+    if not ecartes and not doublons:
+        return reserves, proteges, 0, 0
+    return chr(10).join(lignes_r), chr(10).join(lignes_p), ecartes, doublons
+
+
 def _injecter_wiring(dsn_text: str, vias: list, net: str,
                      pistes: Optional[bytes] = None) -> str:
     """Ecrit les vias reserves dans le bloc `(wiring)` du DSN.
@@ -3248,6 +3427,15 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
             if pistes else "")
     if declares:
         fils = _garder_les_nets_declares(fils, declares, "piste")
+    # ⚠️ UNE PASTILLE, UN PROPRIETAIRE (2026-09-25). Trois sources ecrivent des
+    # vias ici — reservation, meilleur board protege, liaison GND — et visent
+    # souvent les memes pastilles : « Multiple vias skipped », routeur trente
+    # fois plus lent, HTTP 500. Voir `_dedoublonner_wiring`.
+    bloc, fils, ecartes, doublons = _dedoublonner_wiring(bloc, fils)
+    if ecartes or doublons:
+        logger.info(
+            "wiring : %d via(s) reserve(s) ecarte(s) (deja un via protege a cote), "
+            "%d element(s) protege(s) en double retire(s)", ecartes, doublons)
     bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
@@ -6300,6 +6488,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "meilleur board (%d%%) PROTEGEES, le routeur complete "
                         "au lieu de repartir de zero",
                         palier, n_fils, meilleur.routed_percent)
+            else:
+                # ⚠️ RIEN n est protege en entrant dans ce palier (tirage libre,
+                # D-2026-09-24-g, ou pas encore de meilleur board). Sans cette
+                # remise a zero, la LIAISON GND du dernier tirage du palier
+                # quitte — posee sur un AUTRE empilage — restait protegee, et la
+                # nouvelle s y ajoutait : des vias en double dans le DSN, le
+                # defaut meme qu on chassait (revue du 2026-09-25).
+                _PISTES_A_PROTEGER = None
+                _ZONES_LIBEREES = []
             # ⚠️ ESCALADE INCREMENTALE (D-2026-09-10-b, validee par l utilisateur
             # le 2026-09-11 : « normalement on garde le routage et on ajoute »).
             # Le palier suivant recoit les pistes du MEILLEUR board du palier
@@ -6430,8 +6627,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # KiCad : le DSN ne connait que les noms.
         _VIAS_RESERVES = _nommer_les_nets(
             _sans_doublons(_VIAS_RESERVES), etendu)
+        # ⚠️ TIRAGE PROTEGE : aucune reservation neuve (2026-09-25). A ce stade,
+        # `_PISTES_A_PROTEGER` ne porte que le meilleur board du palier
+        # precedent — la liaison GND ne s y ajoute que plus bas.
+        if _PISTES_A_PROTEGER and _VIAS_RESERVES:
+            logger.info(
+                "reservation : %d via(s) ecarte(s) — tirage protege, le board "
+                "garde porte deja ses vias d echappement", len(_VIAS_RESERVES))
+        _VIAS_RESERVES = _reservations_du_tirage(
+            _VIAS_RESERVES, protege=bool(_PISTES_A_PROTEGER))
 
         avant_liaison = etendu
+        # ⚠️ ROUTAGE PRIORITAIRE (D-2026-09-25-a) : quartz, charges et
+        # decouplages d abord, par des pistes courtes, puis la liaison GND
+        # (qui voit ces pistes comme des obstacles), puis Freerouting. Un
+        # tirage sur deux, et seulement si le reglage l active.
+        if _passe_prioritaire_au_tirage(rang_au_palier):
+            etendu, reliees = _relier_liaisons_critiques(
+                etendu, set(_NETS_CONFIES_AU_PLAN), _VIAS_RESERVES)
+            _VIAS_RESERVES = _sans_les_pastilles_reliees(_VIAS_RESERVES, reliees)
+            _deposer_etape("prioritaire", etendu)
         etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
         _deposer_etape("gnd_lie", etendu)
         if etendu is not avant_liaison:
