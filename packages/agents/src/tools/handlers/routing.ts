@@ -107,6 +107,9 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
           ),
           routed_percent: service.routedPercent,
           verdict: service.verdict,
+          // Palier le plus haut essayé (D-2026-09-25-e) : figé au plafond, la
+          // carte doit pouvoir être agrandie au re-tirage.
+          ...(typeof service.layersTried === 'number' ? { layers_tried: service.layersTried } : {}),
         };
       }
       log.error({ projectId, warning: service.warning }, 'routing skipped — no traces laid');
@@ -155,6 +158,9 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     };
     if (typeof service.viaCount === 'number') {
       success['via_count'] = service.viaCount;
+    }
+    if (typeof service.layersTried === 'number') {
+      success['layers_tried'] = service.layersTried;
     }
     if (typeof service.trackLengthMm === 'number') {
       success['track_length_mm'] = service.trackLengthMm;

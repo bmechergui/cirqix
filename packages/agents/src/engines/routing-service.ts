@@ -58,6 +58,12 @@ export interface RealRoutingResult {
    * la mesure du routeur sur le meilleur tirage figé (2026-09-20).
    */
   verdict?: string;
+  /**
+   * Plus haut palier où un tirage a réellement tourné (D-2026-09-25-e). Le
+   * board livré peut n'avoir que 2 couches après un essai à 8 : c'est ce
+   * palier, pas `layers`, qui dit si le plafond a été essayé.
+   */
+  layersTried?: number;
 }
 
 interface ServiceResponseBody {
@@ -66,6 +72,7 @@ interface ServiceResponseBody {
   layers?: unknown;
   via_count?: unknown;
   track_length_mm?: unknown;
+  layers_tried?: unknown;
   skipped?: unknown;
   warning?: unknown;
   engine?: unknown;
@@ -160,6 +167,7 @@ export async function runRealRouting(
   }
   if (typeof parsed.via_count === 'number') result.viaCount = parsed.via_count;
   if (typeof parsed.track_length_mm === 'number') result.trackLengthMm = parsed.track_length_mm;
+  if (typeof parsed.layers_tried === 'number') result.layersTried = parsed.layers_tried;
   const engine = readRoutingEngine(parsed);
   if (engine) result.engine = engine;
   if (typeof parsed.warning === 'string') result.warning = parsed.warning;

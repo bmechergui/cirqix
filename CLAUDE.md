@@ -485,9 +485,9 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
 
      `examples/carte-11-croisements` éprouve l'escalade 2 → 4 → 6 → 8 : son
      faisceau inversé n'est pas planaire, et sur 2 couches la face arrière porte
-     le plan, ce qui ne laisse qu'une face de signal. L'escalade s'arrête après
-     deux PALIERS entiers sans gain (`_paliers_sans_gain_apres`), jamais sur un
-     compte de tirages.
+     le plan, ce qui ne laisse qu'une face de signal. Tant que le meilleur board
+     n'est pas livrable, l'escalade va jusqu'au plafond du plan ; seul le budget
+     l'arrête (D-2026-09-25-e).
 
      ⚠️ **Le PLANCHER reste un simple message de journal, et c'est voulu.**
      `_couches_pour_echapper` rend 4 pour `stm32-100` ; le service tente quand
@@ -556,7 +556,8 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         `_layer_ladder`            2, 4, 6, 8 … jusqu'au plafond du plan
         `_TIRAGES_ROUTAGE_PAR_PALIER = 3`   Freerouting est STOCHASTIQUE
         `_palier_meilleur`         classe sur (pourcentage, erreurs DRC)
-        `_escalade_epuisee`        arrêt après 2 paliers entiers sans gain
+        `layers_tried`             plus haut palier essayé, rendu au client : il
+                                   déclenche l'agrandissement (D-2026-09-11-b)
 
      ⚠️ Freerouting est stochastique : 65, 77 et 91 % sur le MÊME board placé de
      la Nucleo. Un palier jugé insuffisant ne l'était peut-être que ce tirage-là

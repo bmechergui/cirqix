@@ -184,7 +184,16 @@ export function growBoardIfStalled(
 ): BoardGrowth {
   const ceiling = maxLayersForPlan(getProjectPlan(projectId));
   const pct = typeof routing?.['routed_percent'] === 'number' ? (routing['routed_percent'] as number) : 100;
-  const layers = typeof routing?.['layers'] === 'number' ? (routing['layers'] as number) : ceiling;
+  // Le plafond se juge sur le palier ESSAYÉ (D-2026-09-25-e) : le meilleur
+  // board peut n'avoir que 2 couches après un essai à 8. `layers` ne sert que
+  // si le service ne rend pas `layers_tried`.
+  const tried = routing?.['layers_tried'];
+  const layers =
+    typeof tried === 'number'
+      ? tried
+      : typeof routing?.['layers'] === 'number'
+        ? (routing['layers'] as number)
+        : ceiling;
   const drcClean = typeof drc?.['drc_clean'] === 'boolean' ? (drc['drc_clean'] as boolean) : undefined;
   const next = nextBoardSize(growth, { routedPercent: pct, drcClean, layers, ceiling });
   if (next === growth) return growth;

@@ -290,7 +290,9 @@ def main() -> int:
           # AGRANDIT la carte pour l essai suivant plutot que de re-tirer le
           # meme espace. Le service rend le contour a la taille demandee.
           nw, nh, agrandissements_apres = taille_suivante(
-              board_w, board_h, routed, erreurs, res_r.get("layers"), plafond, agrandissements)
+              board_w, board_h, routed, erreurs,
+              # D-2026-09-25-e : le palier ESSAYE, pas les couches du board livre.
+              res_r.get("layers_tried") or res_r.get("layers"), plafond, agrandissements)
           if agrandissements_apres > agrandissements:
               print("   carte AGRANDIE pour l essai suivant : %sx%s -> %sx%s mm "
                     "(routee a %s%% au plafond de %d couches, %d erreur(s))"

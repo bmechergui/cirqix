@@ -119,13 +119,15 @@ schéma → ERC → footprints → gen_pcb → [placement → routage → DRC] �
 On retire tant que le DRC n'est pas propre ; le meilleur est gardé
 (`(composants perdus, erreurs, -%)`, puis couches).
 
-**Agrandissement (D-2026-09-11-b, validée).** Une carte routée à son plafond
-de couches sans 100 % / 0 erreur est agrandie de 20 % par côté pour l'essai
+**Agrandissement (D-2026-09-11-b, validée).** Une carte dont l'escalade a
+essayé le plafond de couches sans 100 % / 0 erreur est agrandie de 20 % par côté pour l'essai
 suivant, au plus deux fois (`run_pipeline.py::taille_suivante`) ; le service
 rend alors le contour à la taille demandée (`tools/placement.py::_taille_contour`).
 Mesure carte-08 : 98 % à 2, 4 et 6 couches pendant 24 h ; +20 % → 100 % /
 0 erreur à 2 couches au premier tirage. Sous le plafond, l'escalade garde la
-main ; un « 0 % (aucun moteur) » n'agrandit rien.
+main ; un « 0 % (aucun moteur) » n'agrandit rien. Le plafond se lit dans
+`layers_tried` (plus haut palier ESSAYÉ), jamais dans les couches du board
+livré, qui peut être un 2 couches après un essai à 8 (D-2026-09-25-e).
 
 ## Infrastructure — ce qui a coûté une journée et ne doit plus revenir
 

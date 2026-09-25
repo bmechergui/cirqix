@@ -51,27 +51,6 @@ class TestEchelle:
         assert R._paliers_avec_tirages([2, 4], 0) == [2, 4]
 
 
-class TestTolerance:
-    def test_l_arret_tolere_au_moins_un_palier_entier_a_plat(self):
-        """Deux tirages malchanceux au meme palier ne coupent pas l escalade.
-
-        ⚠️ Cette garde exigeait `tolerance >= tirages par palier` : l intention
-        etait juste, mais exprimee en TIRAGES, parce que le compteur comptait
-        chaque tirage. Il compte desormais des PALIERS (2026-09-24, voir
-        `test_escalade_compte_des_paliers.py`) : un palier, quel que soit son
-        nombre de tirages plats, ne compte qu UNE fois. On teste donc
-        l intention elle-meme, plus le nombre qui la traduisait.
-        """
-        # Un palier entier a plat — trois tirages, ou vingt — laisse passer
-        # au palier suivant.
-        un_palier_plat = R._paliers_sans_gain_apres(0, False)
-        assert R._escalade_epuisee(un_palier_plat) is False
-
-    def test_l_arret_finit_par_se_declencher(self):
-        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN + 1) is True
-        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN) is False
-
-
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 

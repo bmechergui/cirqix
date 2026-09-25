@@ -17,8 +17,8 @@ prémisse ne tient plus, et la mesure du même jour la contredit :
 et enferment une broche de masse. À 4 couches les signaux ont deux couches de
 plus, le plan est moins découpé — du cuivre en plus RELIE la masse.
 
-L'arrêt reste borné par `_escalade_epuisee` (un palier sans gain toléré), et
-le plafond du plan n'est jamais dépassé.
+L'escalade va jusqu'au plafond du plan tant que le board n'est pas livrable
+(D-2026-09-25-e) ; le plafond n'est jamais dépassé.
 """
 from __future__ import annotations
 

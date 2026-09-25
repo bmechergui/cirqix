@@ -180,6 +180,11 @@ class RouteAutoResponse(BaseModel):
     # declenche — au lieu de lire `skipped` comme un service eteint.
     # `skipped` reste vrai et aucun board n est rendu : on n invente rien.
     verdict: Optional[str] = None
+    # Le plus haut palier ou un tirage a reellement tourne (D-2026-09-25-e).
+    # L agrandissement de la carte se juge sur lui : le board livre peut n avoir
+    # que 2 couches apres un essai a 8. `None` quand la boucle des paliers n a
+    # pas tourne (cas simples) : le client retombe alors sur `layers`.
+    layers_tried: Optional[int] = None
 
 
 # ----------------------------------------------------------------------------
@@ -1549,34 +1554,10 @@ _MAX_LAYERS: int = 16
 # routeur.
 _TIRAGES_ROUTAGE_PAR_PALIER = 3
 
-# PALIERS consecutifs sans le moindre gain que l on tolere : au-dela, on cesse
-# d escalader. `_escalade_epuisee` coupe quand le compte DEPASSE cette valeur,
-# donc apres DEUX paliers entiers a plat.
-#
-# ⚠️ On comptait des TIRAGES, avec une tolerance de `2 x 3 = 6`, pour qu un
-# compteur naif incremente a chaque tirage ne coupe pas apres deux tirages
-# malchanceux au meme palier. Cela ne tenait plus des que les paliers se sont
-# allonges — tirages bonus « a portee de 100 % », tirages figes. Mesure sur
-# `nucleo-f401` (2026-09-23) : le palier 4 PROGRESSE (96 -> 98 %), mais ses deux
-# bonus et ses deux figes remplissent le compteur ; un seul palier plat ensuite,
-# et 8 couches ne sont JAMAIS essayees. Le journal disait « 7 paliers sans
-# gain » : c etaient 7 tirages.
-#
-# Compter les PALIERS regle les deux : un palier n est plat que si AUCUN de ses
-# tirages n a ameliore le meilleur board. Voir `_paliers_sans_gain_apres`.
-_TOLERANCE_SANS_GAIN = 1
-
-
-def _paliers_sans_gain_apres(sans_gain: int, gain_au_palier: bool) -> int:
-    """Compte de paliers plats consecutifs, a la SORTIE d un palier.
-
-    Un palier qui a ameliore le meilleur board — ne serait-ce qu une fois, sur
-    un seul de ses tirages — remet le compte a zero. Un palier plat l incremente
-    d UN, quel que soit son nombre de tirages : c est la difference avec
-    l ancien compteur, qui comptait chaque tirage.
-    Garde : `tests/test_escalade_compte_des_paliers.py`.
-    """
-    return 0 if gain_au_palier else sans_gain + 1
+# ⚠️ Plus de regle « deux paliers sans gain » (D-2026-09-25-e, validee) : tant
+# que le meilleur board n est pas livrable, l escalade va jusqu au plafond du
+# plan, et seul le budget l arrete. Banc du 2026-09-25, carte-08 : la regle a
+# coupe a 6 couches, livre un 2 couches a 85 %, et empeche l agrandissement.
 
 
 def _tirage_de_preuve() -> bool:
@@ -1978,21 +1959,10 @@ def _escalade_peut_aider(percent_livre: int, erreurs: int,
     le moteur ignore les nets confies au plan, et c est exactement ce qui
     laissait une masse orpheline passer pour « le routeur a fini ».
 
-    L arret reste borne par `_escalade_epuisee` et par le plafond du plan.
+    L arret reste borne par le plafond du plan et par le budget (D-2026-09-25-e).
     Garde : tests/test_escalade_toute_connexion_manquante.py.
     """
     return erreurs > 0 or bool(manquants) or percent_livre < 100
-
-
-def _escalade_epuisee(sans_gain: int) -> bool:
-    """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
-
-    Ne change JAMAIS le resultat rendu : `route_auto` garde le meilleur palier,
-    pas le dernier. Seul le nombre d essais diminue.
-
-    Garde : tests/test_escalade_sans_gain.py.
-    """
-    return sans_gain > _TOLERANCE_SANS_GAIN
 
 
 # Capacite d echappement : signaux qu un COTE de boitier peut sortir, par couche.
@@ -6313,10 +6283,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # recalculer sur la sortie fausserait le pourcentage.
     nets_routables = _count_routable_nets(pcb_bytes)
 
-    # Paliers PLATS consecutifs (voir `_TOLERANCE_SANS_GAIN`), et : le palier
-    # en cours a-t-il ameliore le meilleur board, sur l un de ses tirages ?
-    sans_gain = 0
-    gain_au_palier = False
+    # Le plus haut palier ou un tirage a REELLEMENT tourne : l agrandissement
+    # de la carte (D-2026-09-11-b) se juge sur lui, pas sur les couches du board
+    # livre — le meilleur board peut etre un 2 couches apres un essai a 8.
+    palier_max_essaye = 0
     meilleur_note = (-1, 10 ** 6)
     # ⚠️ Le palier de DEPART se deduit du board, il n est plus toujours 2.
     # `stm32-100` a brule 45 minutes a 2 couches — un palier qu aucun tirage
@@ -6515,9 +6485,6 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
             # On QUITTE le palier precedent : c est maintenant, et seulement
             # maintenant, qu on sait s il a ete plat. Un palier compte UNE fois.
-            if palier_courant is not None:
-                sans_gain = _paliers_sans_gain_apres(sans_gain, gain_au_palier)
-            gain_au_palier = False
             palier_courant, meilleur_du_palier = palier, 0
             rang_au_palier = 0
         # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
@@ -6530,12 +6497,6 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 "(ecart mesure : 26 points au plus)",
                 palier, meilleur_du_palier)
             continue
-        if _escalade_epuisee(sans_gain):
-            logger.info(
-                "route_auto: escalade arretee avant %d couches — %d palier(s) "
-                "consecutif(s) sans gain, le meilleur est deja acquis",
-                palier, sans_gain)
-            break
         restant = _remaining_budget_s(deadline)
         if meilleur is not None and not _budget_suffisant(restant):
             logger.info(
@@ -6543,6 +6504,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 palier,
             )
             break
+        palier_max_essaye = max(palier_max_essaye, palier)
 
         # ⚠️ TIRAGE LIBRE. Au-dela du premier tirage du palier, on ne protege
         # RIEN : le tirage repart du board place, avec toutes les couches du
@@ -6956,7 +6918,6 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         if meilleur is None or _palier_meilleur(
                 (res.routed_percent, erreurs), meilleur_note):
             meilleur, meilleur_note = res, (res.routed_percent, erreurs)
-            gain_au_palier = True
 
     # Aucun palier n'a atteint 100 % : on rend le MEILLEUR, jamais le dernier.
     # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
@@ -7021,6 +6982,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     routed_percent=_percent_verifie(partiel, pct, nets_routables),
                     layers=_count_copper_layers(partiel),
                     engine="freerouting-cli-partiel",
+                    layers_tried=palier_max_essaye or None,
                     via_count=_count_vias(partiel),
                     track_length_mm=_track_length_mm(partiel),
                     warning="tous les tirages ont stagne — board PARTIEL rejoue en "
@@ -7034,6 +6996,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 routed_percent=_percent_verifie(recupere, pct, nets_routables),
                 layers=_count_copper_layers(recupere),
                 engine="freerouting-recupere",
+                layers_tried=palier_max_essaye or None,
                 via_count=_count_vias(recupere),
                 track_length_mm=_track_length_mm(recupere),
                 warning="tous les tirages ont stagne — board recupere d un job "
@@ -7044,12 +7007,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # tirage fige (aucun moteur), il reste 0 et `verdict` None.
         return RouteAutoResponse(
             routed_percent=(fige_max if meilleur_fige is not None else 0),
-            layers=req.layers, skipped=True,
+            layers=req.layers, skipped=True, layers_tried=palier_max_essaye or None,
             verdict="tirages_figes" if meilleur_fige is not None else None,
             warning=("tous les tirages ont fige — ce placement ne se route pas, "
                      "en re-tirer un autre" if meilleur_fige is not None
                      else "tous les tirages ont stagne ou echoue — aucun routage"))
-    return meilleur
+    return meilleur.model_copy(update={"layers_tried": palier_max_essaye or None})
 
 
 class RouteProgressResponse(BaseModel):
