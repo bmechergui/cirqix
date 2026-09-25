@@ -6,99 +6,15 @@ version: 0.1.0
 
 # Cirqix — Agent Footprint
 
-## Cascade 8 étapes (dans l'ordre strict)
+## Cascade (`packages/agents/src/engines/footprint-service.ts::findFootprint`, arrêt à la première réussite)
 
-```
-1. Librairies KiCad officielles (locale, gratuit, instantané)
-2. SnapMagic API (millions de composants, gratuit avec clé)
-3. Octopart API (Digi-Key, Mouser, LCSC, Arrow)
-4. Téléchargement datasheet PDF depuis le web
-5. Claude Vision — lit les dimensions du package (base64)
-6. Génère fichier .kicad_mod complet
-7. Valide dimensions vs datasheet
-8. Sauvegarde dans librairie privée user → Supabase
-```
+1. Bibliothèque KiCad standard (locale, instantanée)
+1.5. Cache communautaire pgvector (`footprint-cache.ts`)
+2. SnapMagic (si `SNAPMAGIC_API_KEY`)
+3. LCSC / EasyEDA (HTTP public)
+4. Génération du `.kicad_mod` par Haiku 4.5 (3 crédits)
 
-Arrêter à la première étape qui retourne un résultat valide.
-Étapes 5–7 = **3 crédits** (plan Pro+ uniquement).
-
-## Agent Footprint (Haiku 4.5)
-
-```typescript
-// packages/agents/src/footprint-agent.ts
-import Anthropic from "@anthropic-ai/sdk";
-import { searchKicadLibs } from "./tools/kicad-libs";
-import { searchSnapMagic } from "./tools/snapmagic";
-import { searchOctopart } from "./tools/octopart";
-import { fetchDatasheet, extractDimensions } from "./tools/vision";
-import { generateKicadMod } from "./tools/generator";
-import { saveFootprint, searchFootprintEmbedding } from "./tools/db";
-
-const client = new Anthropic();
-
-export async function findOrGenerateFootprint(
-  partNumber: string,
-  description: string,
-  userId: string
-): Promise<FootprintResult> {
-
-  // Étape 0 : chercher dans la librairie communautaire (pgvector)
-  const cached = await searchFootprintEmbedding(description);
-  if (cached) return { source: "community", footprint: cached };
-
-  // Étape 1 : KiCad officiel
-  const kicad = await searchKicadLibs(partNumber);
-  if (kicad) return save(userId, "kicad_official", kicad);
-
-  // Étape 2 : SnapMagic
-  const snapmagic = await searchSnapMagic(partNumber);
-  if (snapmagic) return save(userId, "snapmagic", snapmagic);
-
-  // Étape 3 : Octopart
-  const octopart = await searchOctopart(partNumber);
-  if (octopart) return save(userId, "octopart", octopart);
-
-  // Étapes 4–7 : génération IA depuis datasheet (3 crédits)
-  await checkCredits(userId, "footprint"); // 3 crédits
-  const datasheetUrl = await fetchDatasheetUrl(partNumber);
-  const pdfBase64 = await downloadPDF(datasheetUrl);
-
-  // Claude Vision lit les dimensions
-  const dimensions = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    messages: [{
-      role: "user",
-      content: [
-        {
-          type: "document",
-          source: { type: "base64", media_type: "application/pdf", data: pdfBase64 }
-        },
-        {
-          type: "text",
-          text: `Extrais les dimensions du package pour ${partNumber} en JSON strict:
-                 { "package_type": "", "pitch_mm": 0, "pad_width_mm": 0, "pad_height_mm": 0,
-                   "n_pads": 0, "courtyard_margin_mm": 0.25 }`
-        }
-      ]
-    }]
-  });
-
-  const dims = JSON.parse((dimensions.content[0] as Anthropic.TextBlock).text);
-
-  // Génération .kicad_mod
-  const kicadMod = generateKicadMod(partNumber, dims);
-
-  // Validation + sauvegarde
-  const validated = await validateDimensions(kicadMod, dims);
-  return save(userId, "ai_generated", validated);
-}
-
-async function save(userId: string, source: FootprintSource, kicadMod: string) {
-  await saveFootprint({ userId, source, kicadMod, validated: source !== "ai_generated" });
-  return { source, footprint: kicadMod };
-}
-```
+Repli final : empreinte générique (celle du package fourni, sinon `Resistor_SMD:R_0402`).
 
 ## Génération .kicad_mod
 
@@ -140,33 +56,9 @@ create table footprints (
 create index on footprints using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 ```
 
-## Recherche sémantique pgvector
+## Cache pgvector
 
-```typescript
-export async function searchFootprintEmbedding(query: string) {
-  const embedding = await getEmbedding(query); // OpenAI ou Anthropic embeddings
-  const { data } = await supabase.rpc("match_footprints", {
-    query_embedding: embedding,
-    match_threshold: 0.85,
-    match_count: 1,
-  });
-  return data?.[0]?.kicad_mod ?? null;
-}
-```
-
-```sql
--- Fonction RPC Supabase
-create function match_footprints(query_embedding vector, match_threshold float, match_count int)
-returns table (id uuid, kicad_mod text, similarity float)
-language sql as $$
-  select id, kicad_mod, 1 - (embedding <=> query_embedding) as similarity
-  from footprints
-  where is_community = true
-    and 1 - (embedding <=> query_embedding) > match_threshold
-  order by similarity desc
-  limit match_count;
-$$;
-```
+Embeddings : API embeddings OpenAI, 1536 dimensions (`packages/agents/src/engines/footprint-cache.ts`). RPC : `search_footprint_by_part_number`, `search_footprint_by_embedding`, `upsert_community_footprint` (migrations 005 et 011). Sources admises : kicad_official, snapmagic, octopart, lcsc, ai_generated.
 
 ## Dashboard footprints — badges source
 

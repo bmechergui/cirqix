@@ -1,6 +1,7 @@
+import type Anthropic from '@anthropic-ai/sdk';
 import type { SchemaJson } from '../../engines/engine-router';
 import { log, getAnthropicClient } from '../shared';
-import { SCHEMA_SYSTEM_PROMPT, parseSchemaText, messageUtilisateur } from './schema-prompt';
+import { SCHEMA_SYSTEM_PROMPT, SCHEMA_JSON_SCHEMA, parseSchemaText, messageUtilisateur } from './schema-prompt';
 
 // --- Haiku schema generator ----------------------------------------------
 
@@ -15,21 +16,26 @@ export async function generateSchemaWithHaiku(description: string, retour?: stri
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 16000,
       system: SCHEMA_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: messageUtilisateur(description, retour) }],
+      // Sorties structurees : l API garantit un JSON conforme au contrat.
+      output_config: { format: { type: 'json_schema', schema: SCHEMA_JSON_SCHEMA } },
     });
+    log.info({ surface: 'schema', usage: response.usage }, 'llm usage');
 
-    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+    // max_tokens ou refusal : le JSON peut etre partiel ou hors schema. On ne s en
+    // sert pas ; le handler refuse alors le run, rien n est fabrique.
+    if (response.stop_reason !== 'end_turn') {
+      log.warn({ stop_reason: response.stop_reason }, 'Path B: Haiku stopped before end_turn — schema not used');
+      return null;
+    }
+    const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text.trim() ?? '';
     if (!text) {
       log.warn({ stop_reason: response.stop_reason }, 'Path B: Haiku returned empty text');
       return null;
     }
-    if (response.stop_reason === 'max_tokens') {
-      log.warn({ len: text.length }, 'Path B: Haiku hit max_tokens — JSON likely truncated');
-    }
 
-    // Strip accidental markdown fences if model adds them
     return parseSchemaText(text);
   } catch (err) {
     // Graceful fallback — never let a Haiku failure block the pipeline.

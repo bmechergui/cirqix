@@ -11,7 +11,7 @@ version: 0.2.0
 ```
 Schéma (.kicad_sch) → KiCanvas web component → onglet Schematic
 PCB    (.kicad_pcb) → KiCanvas web component → onglet Routing
-STEP               → Three.js + occt-import-js → onglet 3D (plan Pro+)
+PCB    (.kicad_pcb) → service POST /export/glb → GET /api/projects/[id]/model → Board3DView (mode 3d)
 PCB    (.kicad_pcb) → service POST /render/auto (kicad-cli pcb render)
                      → GET /api/projects/[id]/render?view=&quality=&yaw=
                      → modes `png` (top/bottom) et `3d` (iso/front/back/left/right)
@@ -23,159 +23,19 @@ couches / nets / objets / empreintes / propriétés comme dans KiCad ; l'événe
 `describeSelection()` dans `KiCanvasViewer.tsx` le nomme. Presets et bornes des
 rendus : `apps/web/src/shared/lib/render-presets.ts` (partagé route ↔ viewer).
 
-Les fichiers `.kicad_sch` et `.kicad_pcb` sont stockés dans Supabase Storage :
-```
-storage/{userId}/{projectId}/schema.kicad_sch
-storage/{userId}/{projectId}/board.kicad_pcb
-```
-
 ---
 
 ## Viewer Schéma + PCB — KiCanvas
 
-### Installation
+### KiCanvas
 
-```bash
-pnpm --filter @cirqix/web add @kicanvas/kicanvas
-```
-
-### Wrapper React
-
-```typescript
-// apps/web/src/widgets/viewer/ui/KiCanvasViewer.tsx
-'use client';
-import { useEffect } from 'react';
-
-interface KiCanvasViewerProps {
-  /** URL signée Supabase Storage vers .kicad_sch ou .kicad_pcb */
-  src: string | null;
-  type: 'schematic' | 'board';
-  className?: string;
-}
-
-export function KiCanvasViewer({ src, type, className }: KiCanvasViewerProps) {
-  useEffect(() => {
-    // Import web components KiCanvas (browser-only)
-    void import('@kicanvas/kicanvas');
-  }, []);
-
-  if (!src) {
-    return (
-      <div className={`flex items-center justify-center bg-[#090909] ${className ?? ''}`}>
-        <p className="text-[#3D3D3D] text-xs font-mono">
-          {type === 'schematic' ? 'Schéma non encore généré' : 'PCB non encore généré'}
-        </p>
-      </div>
-    );
-  }
-
-  if (type === 'schematic') {
-    return (
-      // @ts-expect-error — web component KiCanvas
-      <kicanvas-schematic
-        src={src}
-        class={`block w-full h-full ${className ?? ''}`}
-      />
-    );
-  }
-
-  return (
-    // @ts-expect-error — web component KiCanvas
-    <kicanvas-board
-      src={src}
-      class={`block w-full h-full ${className ?? ''}`}
-    />
-  );
-}
-```
-
-### Déclaration TypeScript web components
-
-```typescript
-// apps/web/src/shared/types/kicanvas.d.ts
-declare namespace JSX {
-  interface IntrinsicElements {
-    'kicanvas-schematic': React.DetailedHTMLProps<
-      React.HTMLAttributes<HTMLElement> & { src?: string },
-      HTMLElement
-    >;
-    'kicanvas-board': React.DetailedHTMLProps<
-      React.HTMLAttributes<HTMLElement> & { src?: string },
-      HTMLElement
-    >;
-  }
-}
-```
-
-### Intégration ViewerPanel
-
-```typescript
-// apps/web/src/widgets/viewer/ui/ViewerPanel.tsx
-// Import conditionnel (SSR off)
-const KiCanvasViewer = dynamic(
-  () => import('./KiCanvasViewer').then((m) => m.KiCanvasViewer),
-  { ssr: false, loading: () => <PCBPlaceholder /> }
-);
-
-// Dans le render :
-{mode === 'schematic' && (
-  <KiCanvasViewer
-    src={pcbState?.kicad_sch_url ?? null}
-    type="schematic"
-    className="h-full"
-  />
-)}
-{mode === 'routing' && (
-  <KiCanvasViewer
-    src={pcbState?.kicad_pcb_url ?? null}
-    type="board"
-    className="h-full"
-  />
-)}
-```
+`apps/web/src/widgets/viewer/ui/KiCanvasViewer.tsx` charge le script par `loadKiCanvas()` (`apps/web/src/widgets/viewer/lib/kicanvas-loader.ts`), qui pose le thème dans `localStorage` (`kc:prefs:theme`) avant le chargement, et monte `<kicanvas-embed controls="full">`. L'événement `kicanvas:select` est émis sur l'objet viewer : un écouteur posé seulement sur l'élément DOM ne le reçoit pas. Composant client uniquement (`ssr: false`).
 
 ---
 
-## Supabase Storage — Upload fichiers KiCad
+## Stockage
 
-```typescript
-// apps/web/src/app/api/agent/route.ts — dans le handler pcb_state
-if (event.type === 'pcb_state' && event.state['kicad_sch_content']) {
-  const schContent = event.state['kicad_sch_content'] as string;
-  const pcbContent = event.state['kicad_pcb_content'] as string | undefined;
-
-  // Upload .kicad_sch
-  await supabase.storage
-    .from('kicad-files')
-    .upload(`${user.id}/${body.projectId}/schema.kicad_sch`, schContent, {
-      contentType: 'text/plain',
-      upsert: true,
-    });
-
-  // Signed URL (1h)
-  const { data: schUrl } = await supabase.storage
-    .from('kicad-files')
-    .createSignedUrl(`${user.id}/${body.projectId}/schema.kicad_sch`, 3600);
-
-  if (schUrl) {
-    event.state['kicad_sch_url'] = schUrl.signedUrl;
-  }
-
-  // Idem pour .kicad_pcb si présent
-  if (pcbContent) {
-    await supabase.storage
-      .from('kicad-files')
-      .upload(`${user.id}/${body.projectId}/board.kicad_pcb`, pcbContent, {
-        contentType: 'text/plain',
-        upsert: true,
-      });
-    const { data: pcbUrl } = await supabase.storage
-      .from('kicad-files')
-      .createSignedUrl(`${user.id}/${body.projectId}/board.kicad_pcb`, 3600);
-    if (pcbUrl) event.state['kicad_pcb_url'] = pcbUrl.signedUrl;
-  }
-}
-```
+Bucket privé `kicad-files`, chemins `{userId}/{projectId}/schematic.kicad_sch` et `pcb.kicad_pcb`. Dépôt : `store.uploadArtifact` (`packages/agents/src/pipeline/store.ts`) ou `apps/web/src/app/api/agent/lib/kicad-storage.ts`. URL signées (1 h) réémises par `GET /api/projects/[id]/pcb-state`.
 
 ### Migration Supabase — Bucket kicad-files
 
@@ -191,77 +51,9 @@ CREATE POLICY "kicad files owner only"
 
 ---
 
-## Viewer 3D — Three.js (fichier STEP)
+## Viewer 3D
 
-```typescript
-// apps/web/src/widgets/viewer/ui/PCBViewer3D.tsx
-'use client';
-import { useEffect, useRef } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-
-export function PCBViewer3D({ stepUrl }: { stepUrl: string }) {
-  const mountRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!mountRef.current) return;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0A0A0A);
-
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
-      0.1, 1000
-    );
-    camera.position.set(0, 80, 100);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    mountRef.current.appendChild(renderer.domElement);
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(50, 100, 50);
-    scene.add(sun);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-
-    // Charger STEP via occt-import-js (WebAssembly)
-    // loadSTEP(stepUrl, scene, PCB_MATERIALS);
-
-    let rafId: number;
-    const animate = () => {
-      rafId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      renderer.dispose();
-    };
-  }, [stepUrl]);
-
-  return <div ref={mountRef} className="w-full h-full" />;
-}
-```
-
-### Matériaux PCB réalistes
-
-```typescript
-import * as THREE from 'three';
-
-export const PCB_MATERIALS = {
-  fr4:        new THREE.MeshPhysicalMaterial({ color: 0x2d7a2d, roughness: 0.8, metalness: 0.0 }),
-  copper:     new THREE.MeshPhysicalMaterial({ color: 0xd4a017, roughness: 0.3, metalness: 0.9 }),
-  silkscreen: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 }),
-  soldermask: new THREE.MeshPhysicalMaterial({ color: 0x1a5c1a, roughness: 0.5, metalness: 0.0, transparent: true, opacity: 0.85 }),
-};
-```
+`apps/web/src/widgets/viewer/ui/Board3DView.tsx` affiche le GLB exporté par `POST /export/glb` (`kicad-cli pcb export glb`), servi par `GET /api/projects/[id]/model` (cache `renders/<clé>.glb`), avec @react-three/fiber ≥ 9 et drei 10 : Next 15 embarque React 19 pour l'App Router. Pas de `<Environment>` de drei : la CSP bloque son HDR. Le rendu raytracé passe par `RenderView.tsx` (« Photo »).
 
 ---
 

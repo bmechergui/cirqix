@@ -1,14 +1,11 @@
 ---
 name: cirqix-circuit-synth
 description: >
-  Use this skill whenever the user mentions "circuit-synth", "générer un schéma KiCad",
-  "netlist Python", "schéma KiCad depuis JSON", "@circuit decorator", "Device:R", "Timer:NE555P",
-  "KICAD_SYMBOL_DIR", "kicad_sch depuis Python", "mapping symbol", "router /circuit-synth/generate",
-  or asks to "générer un circuit", "créer un schéma", "définir des composants et nets en Python".
-  Also invoke when the user modifies services/kicad/routers/circuit_synth.py or
-  services/kicad/test_ne555_circuit_synth.py, or when circuit-synth generation fails.
-  This skill encodes all production experience from integrating the circuit-synth Python library
-  into the Cirqix KiCad microservice — use it proactively before writing any circuit-synth code.
+  Génération de schémas KiCad par circuit_synth dans le service Cirqix : création ou modification de
+  composants, nets et symboles, correspondance valeur → symbole KiCad, noms de broches, erreurs de
+  génération. Utiliser avant de modifier services/kicad/tools/schematic.py ou
+  services/kicad/routers/schematic.py (/schematic/generate, /schematic/validate-symbols), ou quand
+  une génération circuit_synth échoue.
 version: 1.0.0
 ---
 
@@ -18,53 +15,18 @@ version: 1.0.0
 
 Circuit-synth est la bibliothèque Python qui génère des fichiers `.kicad_sch` et `.kicad_pcb`
 **natifs** à partir de code Python déclaratif. Elle est utilisée comme moteur primaire de
-génération de schématiques dans `services/kicad/routers/circuit_synth.py`.
+génération de schématiques dans `services/kicad/tools/schematic.py` (route `POST /schematic/generate`).
 
 **Flux :** Haiku génère JSON schema → FastAPI router → circuit_synth Python → `.kicad_sch`
 → Supabase Storage → KiCanvas viewer.
 
 ---
 
-## 1. Setup requis
+## 1. Environnement
 
-### Variables d'environnement (obligatoires)
-
-```bash
-# services/kicad/.env
-KICAD_SYMBOL_DIR=services/kicad/kicad-symbols   # chemin absolu en prod
-PYTHONUTF8=1                                     # CRITIQUE sur Windows — évite erreur charmap emoji
-```
-
-Le code doit setter `PYTHONUTF8=1` **avant** d'importer circuit_synth :
-
-```python
-import os
-os.environ.setdefault("PYTHONUTF8", "1")   # en haut du fichier, avant tout import circuit_synth
-```
-
-### Bibliothèques KiCad requises
-
-Télécharger depuis GitLab tag `7.0.11` (`.kicad_sym` format KiCad 7) :
-
-```bash
-for lib in Device Timer Connector_Generic power Analog; do
-  curl -L -o "services/kicad/kicad-symbols/${lib}.kicad_sym" \
-    "https://gitlab.com/kicad/libraries/kicad-symbols/-/raw/7.0.11/${lib}.kicad_sym"
-done
-```
-
-> **Attention :** `HEAD` du repo kicad-symbols utilise `.kicad_symdir` (KiCad 8/9 format) — inutilisable.
-> Toujours cibler le tag `7.0.11` pour `.kicad_sym`.
-> URL GitLab raw : `/-/raw/7.0.11/` (pas `/raw/master/` qui retourne 404).
-
-### Installation Python
-
-```bash
-cd services/kicad
-.venv/Scripts/pip install circuit-synth   # Windows
-# ou
-pip install circuit-synth
-```
+- circuit_synth vient du sous-module épinglé `services/kicad/circuit_synth/` (`pip install ./circuit_synth` dans l'image, `pip install -e services/kicad/circuit_synth` en local) ; ne jamais l'installer depuis PyPI, qui n'a pas les correctifs Cirqix (`services/kicad/DEPENDENCIES.md`).
+- `KICAD_SYMBOL_DIR` pointe vers les symboles de la version de KiCad installée (`/usr/share/kicad/symbols` dans l'image ; recherche locale dans `services/kicad/tests/conftest.py`).
+- `PYTHONUTF8=1` avant d'importer circuit_synth, déjà posé en tête de `services/kicad/tools/schematic.py` : ses journaux contiennent des emojis que la console Windows ne sait pas encoder.
 
 ---
 
@@ -98,37 +60,9 @@ vcc = Net("VCC")              # Net en dehors du contexte = crash
 
 ---
 
-## 3. Mapping symbol KiCad
+## 3. Correspondance valeur → symbole
 
-### Règle de mapping (par priorité)
-
-| Valeur (value) contient | Footprint contient | Symbol KiCad |
-|------------------------|-------------------|--------------|
-| NE555, LM555, NA555, SA555, TLC555, ICM7555 | — | `Timer:NE555P` |
-| LM7805 / L7805 | — | `Regulator_Linear:L7805` |
-| LM7812 | — | `Regulator_Linear:L7812` |
-| LM317 | — | `Regulator_Linear:LM317_TO-220` |
-| LM1117 (3.3V) | — | `Regulator_Linear:LM1117T-3.3` |
-| LM1117 (5V) | — | `Regulator_Linear:LM1117T-5.0` |
-| LM358 | — | `Amplifier_Operational:LM358` |
-| BC547 / BC337 | — | `Transistor_BJT:BC547` |
-| BC557 | — | `Transistor_BJT:BC557` |
-| 2N3904 | — | `Transistor_BJT:2N3904` |
-| 1N4148 | — | `Diode:1N4148` |
-| 1N4007 | — | `Diode:1N4007` |
-| — | CONN_01X01 | `Connector_Generic:Conn_01x01` |
-| — | CONN_01X02, PINHEADER_1X02 | `Connector_Generic:Conn_01x02` |
-| — | CONN_01X03, PINHEADER_1X03 | `Connector_Generic:Conn_01x03` |
-| LED | — | `Device:LED` |
-| — | LED_THT, LED_SMD | `Device:LED` |
-| 1N4148, 1N4001 | — | `Device:D` |
-| BC547, 2N3904 | — | `Device:Q_NPN_BCE` |
-| BC557, 2N3906 | — | `Device:Q_PNP_BCE` |
-| — | C_POLARIZED, CP_, CPOL | `Device:C_Polarized` |
-| — | C_0402, C_0603, C_0805, C_1206 | `Device:C` |
-| — | R_0402, R_0603, R_0805, R_1206, R_AXIAL | `Device:R` |
-
-Fallback universel : `Device:R`
+La table fait foi dans `services/kicad/tools/schematic.py` : `_SYMBOL_RULES` (ordre = priorité, première correspondance) et `_SYMBOL_FALLBACKS` (repli par bibliothèque). La lire plutôt que la recopier.
 
 ### Vérifier que le symbol existe
 
@@ -232,46 +166,9 @@ sch_content = sch_files[0].read_text(encoding="utf-8") if sch_files else None
 
 ---
 
-## 7. Router FastAPI — pattern primary/fallback
+## 7. Chemins de génération
 
-**Fichier :** `services/kicad/routers/circuit_synth.py`
-
-```python
-import os
-os.environ.setdefault("PYTHONUTF8", "1")
-
-def _circuit_synth_available() -> bool:
-    """Vérifie si circuit_synth ET KICAD_SYMBOL_DIR sont disponibles."""
-    if not os.environ.get("KICAD_SYMBOL_DIR"):
-        return False
-    try:
-        import circuit_synth  # noqa
-        return True
-    except ImportError:
-        return False
-
-@router.post("/generate")
-def generate(req: CircuitSynthRequest):
-    sch_content = None
-
-    # Chemin primaire : circuit_synth (schémas avec vrais corps de composants)
-    if _circuit_synth_available():
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                sch_content, _ = _generate_with_circuit_synth(req, Path(tmp_dir))
-        except Exception as e:
-            logger.warning(f"circuit_synth failed, fallback: {e}")
-            sch_content = None
-
-    # Fallback : S-expression hand-written (pas de corps composant, mais toujours valide KiCad)
-    if not sch_content:
-        sch_content = _generate_schematic_fallback(req.components, req.connections)
-
-    # PCB toujours via S-expression (circuit_synth PCB non activé)
-    pcb_content = _generate_pcb_sexpr(req.components, req.connections,
-                                       req.board_width_mm, req.board_height_mm)
-    ...
-```
+Routeur : `services/kicad/routers/schematic.py` (`POST /schematic/generate`). Logique : `services/kicad/tools/schematic.py`. Ordre : circuit_synth → kicad-tools Schematic → S-expression TypeScript en dernier recours. Le PCB est produit à part par `POST /pcb/generate` (`services/kicad/tools/pcb.py`, kicad-tools `PCBFromSchematic`).
 
 ---
 
@@ -291,32 +188,14 @@ def generate(req: CircuitSynthRequest):
 
 ---
 
-## 9. Test standalone sans API Anthropic
+## 9. Tester
 
-```bash
-# Fichier : services/kicad/test_ne555_circuit_synth.py
-cd services/kicad
-KICAD_SYMBOL_DIR="$(pwd)/kicad-symbols" PYTHONUTF8=1 .venv/Scripts/python test_ne555_circuit_synth.py
-
-# Résultat attendu :
-# [OK]  circuit-synth importe
-# [OK]  Circuit instancie: 9 composants
-# [OK]  Projet genere dans: services/kicad/output_ne555
-#       ne555_blinker/NE555_Blinker_1Hz.kicad_sch  (48,454 bytes)
-# [F]   Copie -> apps/web/public/test-cs-ne555.kicad_sch
-# [W]   Ouvre: http://localhost:3333/test-cs.html
-```
-
-La page `test-cs.html` utilise KiCanvas pour rendre le schéma — doit montrer le NE555P
-avec corps du composant (boîte avec 8 pins étiquetées), résistances, condensateurs, LED.
+Tests dans `services/kicad/tests/` (`test_*.py`), jamais à la racine du service.
 
 ---
 
-## 10. Checklist ajout d'un nouveau composant
+## 10. Ajouter un composant
 
-1. Identifier la librairie KiCad : `Timer`, `Device`, `Connector_Generic`, `Analog`, etc.
-2. Télécharger la lib si absente : `curl .../kicad-symbols/-/raw/7.0.11/<LibName>.kicad_sym`
-3. Vérifier le symbol exact : `grep -oP '\(symbol "\K[^"]+' <lib>.kicad_sym | grep -v '_[0-9]'`
-4. Vérifier les noms de pins : `grep -A5 '"<SymbolName>"' <lib>.kicad_sym | grep 'pin'`
-5. Ajouter à `_SYMBOL_RULES` dans le router si besoin de mapping automatique
-6. Tester dans `test_ne555_circuit_synth.py` ou un script Python dédié
+1. Vérifier le symbole et ses broches dans la bibliothèque KiCad installée (`KICAD_SYMBOL_DIR`).
+2. Ajouter la règle à `_SYMBOL_RULES` dans `services/kicad/tools/schematic.py` (ordre = priorité).
+3. Ajouter un test dans `services/kicad/tests/`.

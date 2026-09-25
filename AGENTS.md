@@ -41,8 +41,10 @@ assouplir une règle de sécurité ou une quality gate.
 
 - Avant toute tâche, appliquer `cirqix-prompt-improver` : l’invoquer réellement
   s’il est exposé dans la session ; sinon appliquer le fallback ci-dessous.
-- Utiliser en priorité les skills exposés dans la session ou présents sous
-  `.agents/skills/`.
+- Utiliser en priorité les skills exposés dans la session. Les skills Cirqix font
+  foi dans `.claude/skills/<skill>/SKILL.md` (versionnés) ; une copie locale sous
+  `.agents/skills/` n’est utilisable que si elle est identique à la version
+  versionnée — en cas d’écart, lire `.claude/skills/`.
 - Si un skill Cirqix obligatoire n’est pas exposé mais existe dans
   `.claude/skills/<skill>/SKILL.md`, lire ce fichier en entier et annoncer
   explicitement le fallback d’instructions du dépôt. Ne jamais prétendre qu’un
@@ -115,16 +117,13 @@ Après un commit ou une PR, terminer la réponse avec l’unique bloc
 
 ## graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
-
-Rules:
-- Before the first codebase question in a session, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/graphify-refresh.ps1 -Mode Ensure`; it rebuilds only stale graphs and refreshes the aggregate when needed.
-- Use Graphify by default before source browsing. Select `graphify-out/graph.json` for Cirqix SaaS, `graphify-out/scopes/kicad-tools/graphify-out/graph.json` for `kicad-tools`, `graphify-out/scopes/circuit-synth/graphify-out/graph.json` for `circuit_synth`, and `graphify-out/full-graph.json` for a search spanning all three corpora. Pass non-default graphs with `--graph`.
-- Run `graphify query "<question>"` first. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run the refresh script with `-Mode Root`, `-Mode KicadTools`, `-Mode CircuitSynth`, or `-Mode All` according to the owned paths. It updates the affected graph and regenerates the aggregate.
-- `full-graph.json` is an aggregate of three disconnected components: it supports common search but does not invent cross-repository edges for `graphify path`.
+Un graphe de connaissance existe dans `graphify-out/` (Cirqix : `graph.json` ;
+kicad-tools et circuit_synth sous `graphify-out/scopes/<nom>/graphify-out/graph.json` ;
+`full-graph.json` pour les trois, sans arêtes inter-dépôts). Quand l’utilisateur tape
+`/graphify`, utiliser le skill graphify. Pour une question d’architecture ou de
+relations entre fichiers, utiliser `graphify query|path|explain` après
+`scripts/graphify-refresh.ps1 -Mode Ensure` (ne reconstruit que les graphes périmés) ;
+pour une lecture ciblée, lire directement le fichier. Une requête coûte environ 1 Go de
+mémoire : jamais pendant un banc ou une mesure en cours, jamais plusieurs en parallèle.
+Après modification du code, rafraîchir avec `-Mode Root|KicadTools|CircuitSynth|All`
+selon les chemins touchés.

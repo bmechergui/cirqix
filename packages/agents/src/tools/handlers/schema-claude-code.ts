@@ -111,7 +111,8 @@ export async function generateSchemaWithClaudeCode(
   const timeoutMs = options.timeoutMs ?? DELAI_PAR_DEFAUT_MS;
   const executer = options.executer ?? executerClaudeCode;
   const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : [])];
-  const stdin = `${SCHEMA_SYSTEM_PROMPT}\n\n${messageUtilisateur(description, retour)}`;
+  // `claude -p` ne peut pas passer output_config : le JSON nu se demande ici, en prose.
+  const stdin = `${SCHEMA_SYSTEM_PROMPT}\n\nReturn only the JSON object, without markdown fences or explanation.\n\n${messageUtilisateur(description, retour)}`;
   try {
     const debut = Date.now();
     const { stdout } = await executer(bin, args, stdin, timeoutMs);

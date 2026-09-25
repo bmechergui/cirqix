@@ -14,6 +14,35 @@
 
 ## En attente de validation
 
+### D-2026-09-25-b — Audit des prompts : six points qui touchaient une règle de l'utilisateur
+
+- **Statut : validée pour F08, F52, F70, F79 et F99 — consigne de l'utilisateur**
+  le 2026-09-25 : « corrige le tout », sur le rapport d'audit qui les listait
+  comme « à faire valider avant d'appliquer ». **F81 : en attente** — c'est une
+  proposition d'architecture, sans aucune ligne de code ; rien n'est implémenté.
+- **F08** — `docs/agentdescription.md` n'est chargé par aucun code et décrivait
+  des prompts périmés (Claude 3.x, TSCircuit, outils absents), alors que ce
+  fichier le présentait comme la source « exacte ». Il devient un index vers
+  les prompts du code (`prompts.ts`, `tools/definitions.ts`, `schema-prompt.ts`,
+  `tools/reasoning.py`). La règle « ne pas réécrire » tombe avec lui.
+- **F52** — graphify n'est plus l'outil « par défaut avant toute lecture » :
+  ~1 Go par requête, et des bancs faussés (leçon du 2026-09-22). Usage ciblé,
+  jamais pendant un banc.
+- **F70** — le plafond « ≤ 20 composants » du prompt Schéma est retiré. Il
+  datait d'un `max_tokens` de 1024 ; une carte MCU avec son découplage le
+  dépasse. `max_tokens` passe à 16000, et un arrêt `max_tokens`/`refusal` fait
+  échouer la génération au lieu de parser un JSON partiel.
+- **F79** — `call_agent_simulation` n'est plus proposé à l'orchestrateur quand
+  le plan n'a pas `canSimulate`. Le contrôle du HANDLER reste la frontière de
+  sécurité ; le filtre évite seulement un appel voué au refus.
+- **F99** — les « RÈGLES ABSOLUES » de CLAUDE.md sont réécrites sans le
+  langage de pression, en cohérence avec `planning.md` (une tâche simple se code
+  sans plan). Le prompt-improver et l'attente de confirmation sont gardés.
+- **F81 (en attente)** — faire séquencer le pipeline par le code, avec un appel
+  Sonnet en tête et un en fin, au lieu de jusqu'à 15 appels qui déroulent un
+  ordre fixe (`run-driver.ts` le fait déjà sans modèle). À proposer par
+  l'agent `architect` ; **ne pas implémenter** sans validation.
+
 ### D-2026-09-25-a — Routage PRIORITAIRE des liaisons critiques, avant le routage général
 
 - **Statut : validée — consigne de l'utilisateur** le 2026-09-25 : « propose

@@ -75,69 +75,38 @@ Tagline : "AI PCB Design Agent — From idea to manufacturable PCB, autonomously
 
 ## graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-- Before the first codebase question in a session, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/graphify-refresh.ps1 -Mode Ensure`; it rebuilds only stale graphs and refreshes the aggregate when needed.
-- Use Graphify by default before source browsing. Select `graphify-out/graph.json` for Cirqix SaaS, `graphify-out/scopes/kicad-tools/graphify-out/graph.json` for `kicad-tools`, `graphify-out/scopes/circuit-synth/graphify-out/graph.json` for `circuit_synth`, and `graphify-out/full-graph.json` for a search spanning all three corpora. Pass non-default graphs with `--graph`.
-- Run `graphify query "<question>"` first. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run the refresh script with `-Mode Root`, `-Mode KicadTools`, `-Mode CircuitSynth`, or `-Mode All` according to the owned paths. It updates the affected graph and regenerates the aggregate.
-- `full-graph.json` is an aggregate of three disconnected components: it supports common search but does not invent cross-repository edges for `graphify path`.
+Pour une question d'architecture ou « qui appelle quoi », `graphify query|path|explain`
+coûte souvent moins cher que le grep. Graphes disponibles : `graphify-out/graph.json`
+pour Cirqix ; `kicad-tools`, `circuit_synth` et l'agrégat sont décrits dans
+`docs/graphify.md`. Une requête consomme environ 1 Go de mémoire : ne pas en lancer
+pendant un banc ou une mesure de routage, ni en parallèle depuis un agent externe. Le
+hook SessionStart rafraîchit déjà les graphes périmés. Après une modification de code,
+lancer `scripts/graphify-refresh.ps1` avec `-Mode Root`, `KicadTools`, `CircuitSynth` ou
+`All` selon les chemins touchés.
 
 ---
 
-## ⚠️ RÈGLES ABSOLUES — NE JAMAIS VIOLER
+## Règles de travail
 
-### 1. Workflow obligatoire — chaque tâche
+### 1. Chaîne de travail
 
-```
-Chaîne : cirqix-prompt-improver → plan → TDD → code →
-         code-reviewer → security-scan → type-check → verify → commit+PR
-```
+Chaque tâche commence par `cirqix-prompt-improver`, y compris une tâche courte
+(préférence de l'utilisateur) : afficher le prompt reçu et le prompt amélioré, puis
+attendre la confirmation de l'utilisateur avant de coder. En exécution non interactive
+(workflow, sous-agent), exécuter directement. Un skill cité (« [Skill : X] — raison »,
+annoncé avant l'appel) est réellement invoqué par le Skill tool. Le niveau de plan suit
+`.claude/rules/planning.md` : une tâche simple se code directement.
 
-```
-ÉTAPE 1  → cirqix-prompt-improver                      (TOUJOURS — améliore le prompt + contexte Cirqix + skill)
-ÉTAPE 3  → Sélectionner le skill technique
-ÉTAPE 3b → everything-claude-code:plan                 (feature complexe ≥ 2 fichiers)
-ÉTAPE 3c → everything-claude-code:tdd                  (tests AVANT le code)
-ÉTAPE 4  → Annoncer AVANT chaque appel : "[Skill : X] — raison"
-ÉTAPE 5  → Coder / implémenter
-ÉTAPE 5b → code-reviewer agent                         (APRÈS chaque implémentation)
-ÉTAPE 5c → everything-claude-code:security-scan        (si auth / paiement / API keys)
-ÉTAPE 6  → pnpm type-check → 0 erreurs
-ÉTAPE 7  → git commit + push + PR (automatiquement)
-```
-
-**NEVER** coder sans avoir invoqué un skill.
-**NEVER** laisser l'utilisateur faire le git commit ou le PR — Claude le fait.
-**NEVER** sauter une étape de la chaîne ci-dessus.
-**NEVER** sauter `cirqix-prompt-improver`, même pour une tâche courte ou simple.
-**NEVER** sauter `code-reviewer` après une implémentation.
-**NEVER** committer sans que `pnpm type-check` retourne 0 erreurs.
-**NEVER** écrire `[Skill : X]` en texte sans appeler le `Skill` tool réellement.
-**NEVER** progresser d'une étape pipeline (Schema→ERC→Place→Route→DRC→Export) sans valider avec `cirqix-quality-gate`.
-**NEVER** accepter ERC skipped, composants non connectés, DRC violations comme "OK" — corriger ou documenter explicitement.
-
-### 5. Prochaine étape — obligatoire après chaque tâche terminée
-
-**TOUJOURS** terminer chaque réponse de fin de tâche par un bloc `## Prochaine étape recommandée` :
-
-```
-## Prochaine étape recommandée
-
-**[Numéro Phase] — [Nom de la tâche]**
-[Description courte de ce qu'il faut faire ensuite, pourquoi c'est la priorité, et les fichiers concernés]
-
-Confirme pour que je démarre.
-```
-
-- Baser la recommandation sur `PLAN.md` (phase en cours) + ce qui vient d'être livré
-- Toujours proposer **1 seule prochaine étape** — pas une liste de 5
-- Si plusieurs candidats : choisir celle qui débloque le plus de valeur
-- **NEVER** terminer sans ce bloc après un commit/PR
+Avant un commit :
+- `pnpm type-check` rend 0 erreur ;
+- pour un bug fix ou une feature, les tests sont écrits avant le code ou avec lui ;
+- une revue `code-reviewer` a suivi l'implémentation, et
+  `everything-claude-code:security-scan` a tourné si auth, paiement, secrets, RPC ou
+  RLS sont touchés ;
+- une étape du pipeline PCB (Schema→ERC→Place→Route→DRC→Export) n'avance que validée
+  par `cirqix-quality-gate` : ERC sauté, composant non connecté ou violation DRC ne
+  sont jamais « OK » sans correction ou documentation explicite ;
+- Claude fait commit, push et PR (`.claude/rules/git.md`).
 
 ### 2. Niveau de planification — voir `.claude/rules/planning.md`
 
@@ -165,33 +134,43 @@ Une mesure peut étayer une proposition ; elle ne la valide pas.
 
 ### 4. Git workflow — voir `.claude/rules/git.md`
 
+### 5. Prochaine étape — obligatoire après chaque tâche terminée
+
+**TOUJOURS** terminer chaque réponse de fin de tâche par un bloc `## Prochaine étape recommandée` :
+
+```
+## Prochaine étape recommandée
+
+**[Numéro Phase] — [Nom de la tâche]**
+[Description courte de ce qu'il faut faire ensuite, pourquoi c'est la priorité, et les fichiers concernés]
+
+Confirme pour que je démarre.
+```
+
+- Baser la recommandation sur `PLAN.md` (phase en cours) + ce qui vient d'être livré
+- Toujours proposer **1 seule prochaine étape** — pas une liste de 5
+- Si plusieurs candidats : choisir celle qui débloque le plus de valeur
+- **NEVER** terminer sans ce bloc après un commit/PR
+
 ---
 
 ## Fichiers de référence
 
 - `.claude/SKILLS.md` — registre de tous les skills (description + quand invoquer)
 - `docs/cirqix-full-resume.md` — vision produit complète, business model, stack
-- `docs/agentdescription.md` — system prompts exacts des 8 agents Claude
+- `docs/agentdescription.md` — index des prompts des agents (chaque prompt vit dans le code)
 - `PLAN.md` — plan d'implémentation complet par phases
 - `docs/pipeline-placement-routage.md` — **le pipeline placement → routage, étape par étape, pour tout type de carte** (critères de livraison, règles générales, ce qui reste ouvert). À lire avant toute modification de `tools/placement*.py` ou `routers/routing.py`.
 - `docs/design/design-system.md` — tokens, couleurs, typographie, composants
 - `docs/graphify.md` — graphes séparés Cirqix, `kicad-tools`, `circuit_synth` et agrégat multi-repo.
-  Question d'architecture / « qui appelle quoi » → interroger le graphe d'abord
-  (`graphify query|path|explain`, skill `graphify`) au lieu de grepper.
+  Question d'architecture / « qui appelle quoi » → le graphe coûte souvent moins
+  cher que le grep (`graphify query|path|explain`, skill `graphify`) ; jamais pendant
+  un banc (~1 Go par requête).
   Le hook SessionStart appelle `scripts/graphify-refresh.ps1 -Mode Ensure`; le
   watcher PID-géré utilise `-Mode Watcher`. Après modification, choisir `-Mode Root`,
   `-Mode KicadTools`, `-Mode CircuitSynth` ou `-Mode All` selon les chemins touchés.
 
 **Mettre à jour `.claude/SKILLS.md` + `CLAUDE.md` après chaque installation ou création de skill**
-
----
-
-## Règle prioritaire — Prompt Improver
-
-**TOUJOURS** invoquer `cirqix-prompt-improver` avant d'exécuter une tâche :
-1. Afficher le prompt reçu
-2. Afficher le prompt amélioré
-3. Attendre confirmation (ou exécuter si l'utilisateur approuve)
 
 ---
 
@@ -224,10 +203,10 @@ packages/
 ├── @cirqix/types   ← SOURCE DE VÉRITÉ unique (PCBStatus, Plan, AgentAction…)
 ├── @cirqix/logger  ← Pino logger
 ├── @cirqix/utils   ← cn() utility
-├── @cirqix/db      ← Supabase client + migrations (migrations/001_initial.sql, 002_kicad_files_bucket.sql)
+├── @cirqix/db      ← client Supabase + migrations (packages/db/supabase/migrations/)
 ├── @cirqix/agents  ← Orchestrateur + agents Claude SDK
 │   ├── engines/    ← schematic-engine.ts (seul moteur actif) | engine-router.ts
-│   └── tools/      ← definitions.ts + index.ts + handlers/* (12 handlers : schema, erc, footprint, gen-pcb, placement, routing, reason, drc, export, simulation, misc, schema-haiku) — ex-tools.ts refactoré
+│   └── tools/      ← definitions.ts + index.ts + handlers/* (un handler par outil call_agent_*, plus les modules du schéma)
 └── @cirqix/ui      ← Design system composants partagés
 
 services/
@@ -260,13 +239,13 @@ services/
 - Frontend : Next.js 15 + Tailwind + shadcn/ui + Zustand
 - Backend MVP : Next.js API Routes dans `apps/web/src/app/api/` (⚠️ `apps/api/` est une coquille vide héritée — ne rien y créer)
 - Microservice KiCad : Python + FastAPI + pcbnew — Docker headless (`services/kicad/`)
-- Agents : Claude SDK — Orchestrateur Sonnet 4.6 + 8 agents Haiku 4.5
+- Agents : orchestrateur Sonnet 4.6 et trois appels Haiku 4.5 — schéma (`schema-haiku.ts`), étape IA de la cascade footprint (`footprint-service.ts`), reasoner de routage (`tools/reasoning.py`). Les autres « agents » (ERC, gen_pcb, placement, routage, DRC, export) sont des handlers déterministes qui appellent le service KiCad.
 - DB : PostgreSQL + Supabase + pgvector (uuid-ossp, pgvector)
-- Queue : Redis + BullMQ (10 PCBs simultanés)
+- Queue : Redis + BullMQ, worker à `concurrency: 1` (le service KiCad est le goulot)
 - Auth : Supabase Auth (email + Google OAuth)
 - Paiement : Lemon Squeezy (MVP)
 - Viewer Schéma + PCB : KiCanvas (rendu natif .kicad_sch / .kicad_pcb depuis Supabase Storage)
-- Viewer 3D : Three.js + STEP via occt-import-js
+- Viewer 3D : Three.js — `Board3DView` sur le GLB de `POST /export/glb` pour le mode `3d` du viewer (voir « 3D INTERACTIVE ») ; `View3D` dessine des boîtes à partir du `PCBState` dans l'onglet 3D d'ExportView
 - Rendu PNG / 3D « comme KiCad » (2026-09-13) : `POST /render/auto` du service
   (`kicad-cli pcb render`, fail closed, `routers/render.py`) → route web
   `GET /api/projects/[id]/render?view=top|bottom|iso|front|…&quality=&yaw=`
@@ -319,9 +298,9 @@ services/
 ## Règles agents Claude
 
 - Orchestrateur = Sonnet 4.6 — max 15 itérations par PCB
-- Agents spécialisés = Haiku 4.5
+- Agents spécialisés qui appellent un modèle = Haiku 4.5
 - Coût cible : ~0.12€ par PCB complet
-- System prompts dans `docs/agentdescription.md` — ne pas réécrire
+- Prompts des agents : dans le code ; index dans `docs/agentdescription.md`
 - **JAMAIS** de commande JLCPCB automatique — confirmation "OUI JE CONFIRME" obligatoire
 
 ## Stratégie moteur PCB (état actuel — Phase 4)
@@ -454,11 +433,12 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
         **NEVER** réparer un défaut de format chez un lecteur : on en oublie
         toujours un, et sa cécité passe pour un verdict favorable.
         Gardes : `tests/test_keepout_a_la_source.py`, `tests/test_drc_ne_ment_jamais.py`.
-  ⑥ call_agent_routing    → Ingénieur Routage   [workflow OFFICIEL kicad-tools]
-     POST /route/auto
-     ① kct route --strategy negotiated --auto-layers --auto-fix --seed (officiel,
-        pour les power nets en zones + route les signaux + escalade couches)
-     ② Freerouting REST API / subprocess — fallback historique (port 37864)
+  ⑥ call_agent_routing    → Ingénieur Routage
+     POST /route/auto — cascade de routers/routing.py::route_auto :
+     Niveau 1 API Freerouting (JVM persistante, port 37864) · Niveau 2 Freerouting
+     en sous-processus · Niveau 3 kct route A* (≤ 30 nets/composants) · Niveau 4
+     kct route negotiated sans limite · Niveau 5 skipped. À chaque palier, les
+     couches sont escaladées par `_expand_stackup`, quel que soit le routeur.
      → renvoie routed_percent RÉEL (tools/handlers/routing.ts : plus jamais hardcodé 100)
 
      **SÉQUENCE À L'INTÉRIEUR D'UN PALIER** (demandée par l'utilisateur, livrée
@@ -506,69 +486,18 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      routeur au point de lui faire perdre les dogbones eux-mêmes. Retirée ; la
      réfutation vit à son site dans `_escape_pads`.
 
-     ### Banc du 2026-09-03 — les huit cartes à 100 %
+     ### Résultats de banc
 
-     ```
-     carte             comp  couches    %    manq   err     témoin
-     arduino-uno         35     2      100     0     0        —
-     esp32-baseline      20     2      100     0     0        —
-     led-blinker          8     2      100     0     0        —
-     nucleo-f401         55     2      100     0     0    98 % · 2 manq
-     stm32-30            30     2      100     0     0    96 % · 3 manq
-     stm32-60            60     2      100     0     0    98 % · 3 manq
-     stm32-baseline      17     2      100     0     0        —
-     stm32-100          100     2      100     0     0    99 % · 8 manq
-     ```
+     À jour : `examples/BANC_DRIVER_LLM.md` et le `mesures.json` de chaque carte.
+     Les huit cartes historiques portent `expected/3_route.kicad_pcb`, rejouable
+     par `scripts/router_les_placements.py`. Un résultat ne fait foi que si son
+     board est versionné.
 
-     **Huit sur huit, zéro erreur, sur DEUX couches** — et trois à six fois plus
-     vite (`stm32-60` 2795 → 444 s, `stm32-100` 3907 → 901 s). Donner au routeur
-     ses vias de masse d'avance lui épargne le travail qu'il refaisait ensuite
-     en pure perte. **Aucune escalade de couches n'a servi.**
-
-     ⚠️ **CE TABLEAU A ÉTÉ ÉCRIT SANS QUE SES BOARDS EXISTENT** (relevé le
-     2026-09-07, par l'utilisateur : « je n'ai trouvé l'output d'aucune carte de
-     routage »). Comptage du cuivre des boards VERSIONNÉS, ce jour-là :
-
-         arduino-uno · esp32-baseline · nucleo-f401 · stm32-30
-         stm32-60 · stm32-100 · stm32-baseline · stm32-validation
-             expected/2_placement_valide.kicad_pcb  →  0 segment, 0 via
-
-     Les huit cartes annoncées ici à 100 % ne portaient que leur PLACEMENT. Les
-     boards routés étaient restés dans le conteneur et sont partis au premier
-     redémarrage — la faute que ce fichier s'interdit pourtant en toutes lettres
-     (« `examples/` n'y est pas monté »). Un lecteur ne pouvait ni le vérifier ni
-     s'en apercevoir : le tableau se lisait comme une preuve.
-
-     **Réparé** : chaque carte porte désormais `expected/3_route.kicad_pcb`, routé
-     depuis son placement déjà versionné, par la voie HTTP réelle — 100 %,
-     0 erreur, de 42 à 808 segments. Rejouable par
-     `scripts/router_les_placements.py`.
-
-     ⚠️ **NEVER annoncer un résultat dont l'artefact n'est pas dans le dépôt.**
-     Un tableau sans board est une affirmation, pas une mesure.
-
-     ### L'escalade de couches fonctionne — prouvé le 2026-09-07
-
-     Toutes les cartes du dépôt sortent sur DEUX couches, ce qui posait la
-     question : l'échelle 2 → 4 → 6 → 8 sert-elle jamais ? Aucune trace
-     d'exécution n'existait, et **l'absence de besoin n'est pas une preuve de
-     bon fonctionnement**.
-
-     `examples/carte-11-croisements` a été construite pour la mettre à
-     l'épreuve : deux connecteurs 2×20 face à face, 32 signaux câblés en ordre
-     INVERSE. Ce n'est pas la densité qui force l'échec — `stm32-100` porte cent
-     composants et route à 100 % sur deux couches — mais la NON-PLANARITÉ : un
-     faisceau inversé impose ~N²/2 croisements, et sur deux couches la face
-     arrière porte le plan de masse, donc il ne reste qu'UNE face de signal.
-
-     ```
-     palier 2 couches  → figé
-     palier 4 couches  → figé      « la carte n'en déclare que 4 »
-     palier 6 couches  → figé      « la carte n'en déclare que 6 »
-     escalade arrêtée — 7 paliers sans gain, le meilleur est déjà acquis
-     ```
-
-     L'échelle monte, garde le meilleur palier, et s'arrête au bon moment.
+     `examples/carte-11-croisements` éprouve l'escalade 2 → 4 → 6 → 8 : son
+     faisceau inversé n'est pas planaire, et sur 2 couches la face arrière porte
+     le plan, ce qui ne laisse qu'une face de signal. L'escalade s'arrête après
+     deux PALIERS entiers sans gain (`_paliers_sans_gain_apres`), jamais sur un
+     compte de tirages.
 
      ⚠️ **Le PLANCHER reste un simple message de journal, et c'est voulu.**
      `_couches_pour_echapper` rend 4 pour `stm32-100` ; le service tente quand
@@ -668,9 +597,11 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
      pas un verdict de routage mais une panne. Monter d'une couche là-dessus
      reviendrait à payer du cuivre pour un défaut d'infrastructure.
 
-     ⚠️ **LE PALIER DE DÉPART SE DÉDUIT DU BOARD** (`_couches_pour_echapper`,
-     2026-08-29). L'échelle ne commence plus toujours à 2. `stm32-100` brûlait
-     45 minutes sur un palier qu'aucun tirage ne pouvait réussir.
+     ⚠️ Le plancher d'échappement (`_couches_pour_echapper`) est calculé et
+     journalisé, mais il ne fixe pas le palier de départ : on part toujours de
+     2 couches (décision utilisateur du 2026-08-29 : on escalade sur preuve, pas
+     sur prévision). Sous le plancher, un seul tirage de preuve par palier
+     (D-2026-09-11-a).
 
      La cause est **LOCALE, pas globale** — et le journal Freerouting la
      désigne sans ambiguïté. Sur trois jobs, **un seul composant porte 20 à
@@ -815,8 +746,16 @@ User → Sonnet 4.6 (orchestrateur, max 15 itérations, SSE)
   - Fallback final : `schematic-engine.ts generateSchematic()` (TypeScript S-expr, 0 Docker)
 - **Orchestrateur optimisé :** blobs KiCad (`kicad_sch_content`, `kicad_pcb_content`, `gerber_zip_b64`) strippés des `tool_result` Sonnet → économie ~70% tokens input
 
-**Placement actuel (100% natif, 5 étapes — snap ajouté le 2026-08-29) :**
-gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` enchaîne :
+**Placement (`tools/placement.py::auto_place`). L'ordre fait partie du contrat : le revérifier dans le code avant de s'y fier.**
+gen_pcb fournit une grille de départ. Chaque tirage enchaîne : `place_unplaced` si besoin
+→ connecteurs J*/P* clampés puis collés au bord → ① Architecte (OptimizationWorkflow
+hybrid, `write_to_pcb()` obligatoire) → ③ Inspecteur → ② Géomètre CMA-ES (processus
+enfant, filets) → ③ Inspecteur → ④ halo d'escape → ⑤ snap bypass → alignement sur la
+grille (dernier déplacement) → réparation des chevauchements vus par kicad-cli.
+Plusieurs tirages sont faits et le meilleur est gardé (moins de conflits, puis moins de
+croisements, puis moins de fil). Ensuite, ⑥ le contour est resserré sur le tirage gardé
+si la taille n'est pas imposée. Toute étape qui déplace des composants après le snap ou
+l'alignement les défait. Détail et gardes de chaque étape :
   ① **Architecte** — `OptimizationWorkflow(pcb, WorkflowConfig(strategy="hybrid",
      enable_clustering=True, fixed_refs=<J*/P*>, generations=100, population=50,
      iterations=1000)).run()` **puis `.write_to_pcb()`** (OBLIGATOIRE — `run()` calcule
@@ -937,10 +876,10 @@ gen_pcb fournit une grille de départ ; `tools/placement.py::auto_place()` encha
   zéro régression sur l'invariant 0-ERROR par 11/11 tests (`test_placement.py`).
   Routage rapide (gros boards) = backend C++ `kct build-native` (Docker).
   ⚠️ **CE BACKEND N'EST PAS LE CHEMIN EMPRUNTÉ** (mesuré le 2026-08-30). Il
-  appartient à `kct route`, c'est-à-dire au Niveau 1 de la cascade — et la
-  cascade bascule sur Freerouting dès que le Niveau 1 rend moins de
-  `_MIN_ROUTED_PCT`. Comptage sur trois journaux (remesure en cours, run qui a
-  livré `stm32-100` à 100 %, banc des 7 cartes) :
+  appartient à `kct route`, c'est-à-dire aux Niveaux 3-4 de la cascade, qui ne
+  servent que si Freerouting (Niveaux 1-2) est absent, échoue ou n'a plus de
+  budget. Comptage sur trois journaux (run qui a livré `stm32-100` à 100 %, banc
+  des 7 cartes) :
 
       16 routages effectués :  16 × (freerouting-api)  ·  0 × (kicad-tools)
 
@@ -1114,17 +1053,14 @@ généré. Hors localhost/réseau Docker privé, le transport doit être HTTPS.
 
 **Routing — nets routables :** `_count_routable_nets` compte uniquement les nets avec ≥3 occurrences dans le PCB (1 déclaration globale + ≥2 pads). Les nets mono-pad `Net-(U1-X)` ne comptent pas.
 
-## Pipeline asynchrone — le plafond de 300 s (migration en cours)
+## Pipeline asynchrone — pourquoi la file existe
 
-**Mesure fondatrice (2026-08-19, board STM32 de `examples/stm32-validation`,
-chaîne réelle dans le conteneur) :** génération 3 s · placement 175 s ·
-**routage 861 s** — soit ~17 min. `apps/web/src/app/api/agent/route.ts` déclare
-`maxDuration = 300`.
-
-**Le routage seul dure presque trois fois le budget entier de l'invocation.**
-Aucun PCB complet ne peut donc aboutir pour un utilisateur réel : la chaîne ne
-fonctionne aujourd'hui qu'exécutée à la main dans le conteneur, où rien ne la
-chronomètre.
+Une invocation web est plafonnée à `maxDuration = 300` s
+(`apps/web/src/app/api/agent/route.ts`), alors qu'un routage réel dure de quelques
+minutes à plus de 40 (mesure fondatrice du 2026-08-19, board STM32 : génération 3 s,
+placement 175 s, routage 861 s). Le pipeline passe donc par BullMQ et un worker sans
+plafond (`CIRQIX_ASYNC_PIPELINE`, fail-closed dans le code, allumé là où Redis et le
+worker tournent).
 
 ⚠️ `async` n'y change RIEN. `await` libère la boucle d'événements de Node, il ne
 rend pas la main à la plateforme : la fonction reste ouverte tant qu'elle tient
@@ -1302,10 +1238,10 @@ routage des défauts qui préexistent.
 Constance remarquable des deux côtés — contrairement au PLACEMENT, qui reste
 stochastique (6, 8 et 12 connexions manquantes selon le tirage).
 
-`kicad-tools` rend exactement **91 %**, le plancher documenté. C'est SOUS
-`_MIN_ROUTED_PCT` (95 %), donc la cascade bascule d'elle-même sur Freerouting :
-l'ordre actuel produit déjà le bon résultat, mais paie ~10 min de Niveau 1 dont
-le produit est ensuite jeté.
+`kicad-tools` rend exactement **91 %**, le plancher documenté, sous `_MIN_ROUTED_PCT`
+(95 %) : à l'époque de cette mesure, il passait en Niveau 1 et payait ~10 min dont
+le produit était ensuite jeté — l'une des raisons pour lesquelles Freerouting passe
+désormais en premier.
 
 ⚠️ **Les 198 violations de kicad-tools ne sont pas cosmétiques.** Ventilation
 face au témoin (25 violations, toutes des `warning` préexistants) :
@@ -1328,64 +1264,20 @@ incomplète à 9 %, c'est une carte **non fabricable**. Et c'est ce qui explique
 les six cycles place → route → DRC du run complet — le board ne passait pas le
 DRC, donc la chaîne re-tirait le placement.
 
-### ⚠️ PÉRIMÉ — kicad-tools n'est PLUS devant (constat 2026-09-01)
+### Ordre de la cascade de routage
 
-**Le code dit l'inverse de cette section**, et ce depuis un moment :
+Freerouting (API, puis sous-processus) passe en premier, kicad-tools sert de repli
+(Niveaux 3-4) : décision utilisateur du 2026-09-01, garde
+`tests/test_ordre_des_niveaux.py`. L'escalade de couches est faite par
+`_expand_stackup` dans `route_auto`, quel que soit le routeur. Pourquoi Freerouting
+d'abord : sur le banc STM32 du 2026-08-21, il laisse 0 connexion manquante en
+4-5 s ; kicad-tools en laisse 7, avec 69 vias et 58 erreurs de fabricabilité. Le
+routage incrémental (`--preserve-existing`) a été mesuré et écarté : il perdait la
+moitié du cuivre reçu.
 
-```
-routers/routing.py:4027   # --- Niveau 1 : Freerouting REST API server ---
-routers/routing.py:4124   # --- Niveau 3 : kicad-tools A* (≤30 nets/comps) ---
-routers/routing.py:4167   logger.info("kicad-tools A* (no limit): ...")   ← Niveau 4
-```
-
-Freerouting est **Niveau 1**, conformément à la décision de l'utilisateur du
-2026-09-01 (« toujours par défaut niveau 1 est Freerouting »), et l'argument
-qui gardait `kicad-tools` devant est **caduc** : l'escalade pose elle-même
-l'empilage (`_expand_stackup(pcb_bytes, palier)`, `routing.py:4409`), donc
-`kicad-tools --auto-layers` n'est plus le seul chemin vers 4 ou 8 couches.
-
-⚠️ Cette section périmée a réellement induit en erreur : l'utilisateur a lu un
-journal où `kicad-tools A* (no limit)` tournait et en a conclu que la cascade
-était mal ordonnée. La vraie cause était le **budget à zéro** — le Niveau 1
-est sauté quand `_budget_suffisant` est faux, et la chaîne tombe au Niveau 4.
-**NEVER** laisser dans CLAUDE.md une description d'ordre d'exécution sans
-l'avoir revérifiée dans le code : un lecteur l'utilise comme un diagnostic.
-
-Mesures conservées ci-dessous — elles restent vraies et expliquent POURQUOI
-Freerouting doit passer en premier.
-
-Décision produit du 2026-08-21, avec sa vraie justification, mesurée :
-
-```
-board placé (entrée) : 2 couches   F.Cu, B.Cu
-sortie kicad-tools   : 4 couches   F.Cu, B.Cu, In1.Cu, In2.Cu   ← il en AJOUTE
-sortie Freerouting   : 2 couches   F.Cu, B.Cu                    ← inchangé
-```
-
-**Freerouting n'ajoute aucune couche** : il route dans l'empilage reçu.
-**kicad-tools escalade** (`kct route --auto-layers`).
-
-Or `tools/pcb.py` (ligne ~778) code en dur `(0 "F.Cu") (31 "B.Cu")` : le
-générateur produit **toujours** 2 couches cuivre. **kicad-tools est donc le seul
-chemin par lequel une carte Cirqix devient 4 ou 8 couches** — c'est-à-dire le
-seul qui puisse honorer les plans Pro (4) et Pro Max (8).
-
-Sur une carte que 2 couches suffisent à router, Freerouting gagne sur tous les
-critères. Sur une carte qui en exige davantage, Freerouting seul **ne peut pas
-y arriver**, faute du levier.
-
-**NEVER** conclure de la comparaison de qualité qu'il faut inverser les niveaux :
-les deux routeurs ne résolvent pas le même problème.
-
-⚠️ Enchaîner Freerouting **sur** la sortie de kicad-tools ne se produit jamais :
-le Niveau 2 reçoit le board PLACÉ, pas le résultat du Niveau 1. Tenté à la main,
-l'export Specctra du board kicad-tools fait d'ailleurs échouer le processus
-pcbnew. Le routage incrémental avait déjà été mesuré et écarté
-(`--preserve-existing` perdait la moitié du cuivre reçu).
-
-Artefacts d'inspection (non versionnés, `output/` est gitignoré) :
-`examples/stm32-validation/output/freerouting/` — les deux boards, leurs rendus
-et le tableau complet.
+Si le journal montre kicad-tools en tête, vérifier d'abord le budget : quand
+`_budget_suffisant` est faux, le Niveau 1 est sauté. Pour se repérer, chercher
+« Niveau 1 : Freerouting » dans `routers/routing.py` plutôt qu'un numéro de ligne.
 
 ### Pipeline complet par la file — validé de bout en bout (2026-08-21)
 
@@ -1411,11 +1303,6 @@ compteur de nets, le requotage ERC, et le worker sans plafond d'invocation.
 lieu de 600-2500 s : c'est ce qui rend six re-tirages de placement tenables dans
 un run de 19 minutes. Le temps du run est aujourd'hui dominé par le PLACEMENT
 (~2,5 min par tirage), plus par le routage.
-
-⚠️ Non couvert : la persistance Supabase, testée avec `SUPABASE_URL` bidon —
-tous les `dépôt de l artefact échoué` et `persistance intermédiaire échouée` du
-journal sont attendus. La moitié « journal + Realtime » reste à valider avec une
-vraie `SUPABASE_SERVICE_KEY`.
 
 ### Validation du 2026-09-03 — ce qui manquait vraiment
 
@@ -1505,10 +1392,11 @@ ce qu'il a supprimé, et le DIT quand il n'y arrive pas.
 effet de bord silencieux sur une vraie base coûte plus cher qu'un test raté.
 ### La chaîne du driver — un PCB complet sans le moindre appel au modèle (2026-09-07)
 
-Le solde de l'API Anthropic est épuisé. L'orchestrateur étant la première
-étape, plus aucun PCB ne pouvait aboutir. Or **`call_agent_schema` est le SEUL
-maillon de la chaîne qui appelle un modèle** : le banc des dix cartes a mesuré
-que tout le reste va jusqu'aux Gerbers sans lui.
+Le 2026-09-07, le solde de l'API Anthropic était épuisé. L'orchestrateur étant la
+première étape, plus aucun PCB ne pouvait aboutir. Or **`call_agent_schema` est le seul maillon
+INDISPENSABLE qui appelle un modèle** (le footprint IA et le reasoner sont des
+replis) : le banc des dix cartes a mesuré que tout le reste va jusqu'aux Gerbers
+sans lui.
 
 `handleSchema` accepte donc un `schema_json` écrit par le driver, et
 `pipeline/run-driver.ts` enchaîne les VRAIS handlers. Mesuré de bout en bout,
@@ -1570,79 +1458,26 @@ Gardes : `services/worker/src/tests/provenance-et-finalisation.test.ts`.
 
 Rejouer : `node services/worker/scripts/enfiler-driver.mjs <schema.json>`.
 
-**Reste à prouver** : qu'un utilisateur CONNECTÉ reçoit bien l'événement — la
-combinaison RLS + Realtime. Cela exige une vraie session ; tout le reste de la
-chaîne est vérifié.
+### État (vérifié le 2026-09-07)
 
-### État
+Livré : migrations `019` et `020` appliquées ; worker (image dédiée) ; budgets ;
+annulation ; Realtime avec repli par sondage HTTP (RLS prouvée pour un utilisateur
+connecté : `packages/db/scripts/preuve-realtime.mjs`) ; `via_count` et
+`track_length_mm` mesurés sur le board final.
 
-Livré : migration `019` **appliquée** (`20260820095437 pcb_runs`), conteneurs, `RunSink`/`PgSink`, budgets, contrat de job,
-annulation (bloque reasoner et re-tirages), worker (image dédiée, vérifié en
-conteneur : consomme la file, valide par Zod, ne rejoue pas un job échoué),
-branche asynchrone de la route derrière drapeau, suivi de run côté client.
+Progression du routage : `route_auto` → fichier `/tmp/cirqix-progres/<clé>.json` →
+`GET /route/progress/{clé}` → worker → `pcb_run_events` → Realtime. On passe par un
+fichier et non par une variable de module, parce que les 4 workers uvicorn sont des
+processus séparés. La clé vient du client et est validée des deux côtés ; le client
+renonce à l'affichage plutôt que d'envoyer une clé refusée, car un 422 ferait échouer
+le routage. Toute panne de progression est avalée : une mesure absente est
+acceptable, un résultat fabriqué est interdit. Gardes : `tests/test_progres_routage.py`,
+`tests/test_progres_expose.py`, `tests/routing-progress.test.ts`,
+`tests/routing-progress-cablage.test.ts`.
 
-Reste :
-- **Progression pendant le routage.** `kct_route.py` utilise
-  `subprocess.run(capture_output=True)` : la sortie du routeur n'est lue qu'à la
-  FIN. Sur 20 minutes, l'utilisateur ne voit donc rien. Le passage en `Popen`
-  avec lecture incrémentale servirait deux fins — l'affichage, et la détection
-  de blocage par ABSENCE DE PROGRESSION plutôt que par temps écoulé, qui est la
-  bonne mesure. ⚠️ Refactor à faire à froid : chemin critique de 1692 lignes,
-  non testable sans un routage réel de ~14 min.
-- ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
-  s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
-  le catch-up. Publication : migration `020`. Le drapeau
-  `CIRQIX_ASYNC_PIPELINE` reste à allumer là où Redis + worker tournent.
-
-- ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03**, et pas
-  du tout là où cette entrée l'annonçait.
-
-  Elle prescrivait de passer `kct_route.py` en `Popen` pour lire la sortie du
-  routeur au fil de l'eau. ⚠️ **`kct_route.py` appartient au Niveau 4, que
-  PERSONNE n'emprunte** : le comptage du 2026-08-30 donne 16 routages sur 16
-  par l'API Freerouting, zéro par `kicad-tools`. Le refactor aurait amélioré un
-  chemin mort. C'est le même piège que `kct build-native`, deux fois proposé
-  comme correctif prioritaire sur la foi d'une ligne de ce fichier.
-
-  Le chemin réel MESURAIT déjà son avancement : `_route_with_freerouting_api`
-  relit le journal de la JVM toutes les deux secondes pour en tirer le numéro
-  de passe et le nombre de nets non routés — c'est ce qui lui sert à couper
-  l'attente d'un job figé. Cette mesure ne SORTAIT pas du service.
-
-      route_auto  →  fichier /tmp/cirqix-progres/<clé>.json
-                  →  GET /route/progress/{clé}
-                  →  worker (sondage pendant l'étape ROUTING)
-                  →  pcb_run_events  →  Realtime  →  Timeline
-
-  Un FICHIER, pas une variable de module : les 4 workers uvicorn sont des
-  processus séparés, et la requête qui route n'est pas celle qui répond au
-  sondage. Écriture atomique, publication seulement sur changement, purge à
-  une heure.
-
-  ⚠️ La clé vient du CLIENT et nomme un fichier : elle est validée des deux
-  côtés, et le client RENONCE à l'affichage plutôt que d'envoyer une clé que le
-  service refuserait en 422 — un 422 ferait échouer le routage lui-même.
-
-  ⚠️ Toute panne de la progression est avalée, à chaque frontière. C'est le
-  pendant exact du fail-fast des handlers, dans l'autre sens : un résultat
-  FABRIQUÉ est interdit, une mesure ABSENTE est acceptable.
-
-  Limite connue : la clé nomme le PROJET, pas le run. Deux runs simultanés sur
-  le même projet mélangeraient leur affichage. Aucun routage n'en échoue.
-  Gardes : `tests/test_progres_routage.py`, `tests/test_progres_expose.py`,
-  `tests/routing-progress.test.ts`, `tests/routing-progress-cablage.test.ts`.
-- ~~**Supabase Realtime** en transport principal~~ — **livré.** `followRun`
-  s'abonne aux INSERT de `pcb_run_events` ; le sondage HTTP reste le repli et
-  le catch-up. Publication : migration `020`. Le drapeau
-  `CIRQIX_ASYNC_PIPELINE` est **allumé** depuis le 2026-09-07, et la
-  combinaison RLS + Realtime est prouvée pour un utilisateur connecté.
-- ~~Freerouting perd la netlist~~ — **FAUX, corrigé le 2026-08-20.** Voir
-  ci-dessous : c'était notre compteur qui était aveugle.
-- **Budget par niveau** — voir l'avertissement ci-dessus.
-- ~~`via_count`/`track_length_mm` à 0~~ — **corrigé.** Les deux mesures sont
-  recalculées sur le board FINAL avant de répondre (`routers/routing.py`, fin de
-  `route_auto`), après le fanout, la coulée et les replis. Garde :
-  `tests/test_routing_metrics.py`.
+Ouvert : la clé de progression nomme le projet, pas le run (deux runs simultanés du
+même projet mélangent leur affichage) ; le budget est compté par niveau, donc un
+appel peut valoir plusieurs fois `timeout_s`.
 
 ## Système de crédits
 
@@ -1658,7 +1493,7 @@ Reste :
 
 ## Types source de vérité — `@cirqix/types`
 
-- `PCBStatus` = `'INITIAL' | 'SCHEMA_DONE' | 'PLACEMENT_DONE' | 'ROUTING_DONE' | 'DRC_CLEAN' | 'PCB_LIVRÉ'`
+- `PCBStatus` = `'INITIAL' | 'SCHEMA_DONE' | 'ERC_CLEAN' | 'PLACEMENT_DONE' | 'ROUTING_DONE' | 'DRC_CLEAN' | 'PCB_LIVRÉ'`
 - `Message.role` = `'user' | 'assistant'` (jamais `'agent'`)
 - `Credits` = `{ balance, plan, daily_limit }` (pas `remaining`/`total`)
 - `Project` = snake_case : `updated_at`, `iteration_count`
@@ -1696,12 +1531,12 @@ md:hidden        // hamburger
 hidden md:block shrink-0
 ```
 
-**NEVER** taille texte fixe sur heading visible.
-**ALWAYS** tester mentalement mobile 375px avant de valider.
+Pas de taille de texte fixe sur un titre visible ; vérifier le rendu à 375 px (mobile)
+avant de valider.
 
 ## Organisation des tests
 
-**TOUJOURS** placer les scripts de test dans le dossier `tests/` du package concerné :
+Les scripts de test vont dans le dossier `tests/` du package concerné :
 
 ```
 packages/agents/src/engines/     ← code source
@@ -1715,10 +1550,10 @@ racine du projet                 ← INTERDIT — jamais de scripts de test à l
 services/kicad/kicad-tools/      ← INTERDIT — jamais ajouter de tests ici (lib upstream)
 ```
 
-**NEVER** créer un script de test à la racine du projet, dans `scratch/`, ou en dehors du dossier `tests/`.
-**NEVER** créer ou modifier des fichiers dans `services/kicad/kicad-tools/tests/` — c'est le sous-module du fork upstream, pas notre code.
-**NEVER** committer des fichiers `test_out*.kicad_pcb`, `output_*/`, ou screenshots de test.
-**ALWAYS** nommer les fichiers de test : `*.test.ts` (TS) ou `test_*.py` (Python).
+Pas de script de test à la racine du projet, dans `scratch/` ni hors d'un dossier `tests/`.
+Rien à créer ni modifier dans `services/kicad/kicad-tools/tests/` : c'est le sous-module
+du fork upstream, pas notre code. Ne pas committer `test_out*.kicad_pcb`, `output_*/` ni
+de captures de test. Nommer les tests `*.test.ts` (TS) ou `test_*.py` (Python).
 
 ## Scripts de validation manuelle (services/kicad/scripts/)
 
@@ -1757,7 +1592,7 @@ Référence d'usage de `driver_llm.py` : `services/kicad/examples/stm32-validati
   deux couches ne peuvent pas router). Ne pas la « réparer ».
 
 ⚠️ Les huit cartes historiques portent désormais `expected/3_route.kicad_pcb` en
-plus de leur placement — voir l'avertissement du « Banc du 2026-09-03 ».
+plus de leur placement, rejouables par `scripts/router_les_placements.py`.
 
 ⚠️ **`output/` est gitignoré, et les Gerbers n'y sont donc PAS versionnés.** Ils
 se régénèrent depuis le board livré par `scripts/exporter_les_cartes.py` — 20
@@ -1776,122 +1611,28 @@ fichiers de fabrication se refont à la demande.
 
 ## Phase actuelle
 
-**Phase 4 — 3D + JLCPCB + Paiement** (en cours). Voir `PLAN.md`.
+**Phase 4 — 3D + JLCPCB + Paiement** : sous-phases 4.1 à 4.4 livrées ; état de la phase et suite : `PLAN.md`.
 
-Phases complétées : Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · Phase 4.1 ✓ · **Phase 4.2 ✓ · Phase 4.3 ✓ · Phase 4.4 ✓**
+Le détail des livraisons des phases 2 à 4 est suivi dans `PLAN.md` et dans l'historique git.
 
-### Phase 2 — Réalisations ✅
-- ✅ Auth Supabase + middleware JWT (`/dashboard/*`)
-- ✅ Chat + Viewer split layout (ChatPanel + ViewerPanel)
-- ✅ Orchestrateur Sonnet 4.6 + SSE streaming
-- ✅ Haiku 4.5 → JSON schema avec pin names KiCad
-- ✅ `validateAndCorrectSchema()` + `/circuit-synth/validate-symbols`
-- ✅ Circuit-Synth Python → `.kicad_sch` + `.kicad_pcb` natifs
-- ✅ `_safe_symbol()` — 2ème filet sécurité symboles inconnus
-- ✅ Bucket `kicad-files` Supabase Storage + signed URLs
-- ✅ KiCanvas viewer — auto-switch tab Schematic/Routing à l'arrivée SSE
-- ✅ Crédits déduction atomique Supabase RPC
+### Règles vivantes issues des phases 2 à 4
 
-### Phase 3 — Réalisations ✅
-- ✅ FastAPI `POST /place/auto` → pcbnew `SetPosition()` / `SetOrientationDegrees()` (base64 I/O)
-- ✅ FastAPI `POST /route/auto` → Freerouting `.kicad_pcb → .dsn → .ses → .kicad_pcb` (base64 I/O)
-- ✅ FastAPI `POST /drc/auto` → kicad-cli DRC natif, boucle auto-fix max 3× (base64 I/O)
-- ✅ FastAPI `POST /export/all` → Gerbers + drill + CPL, zip base64
-- ✅ FastAPI `POST /erc` → kicad-cli ERC schéma, auto-fix loop
-- ✅ Client TS : `placement-service.ts` | `routing-service.ts` | `drc-service.ts` | `export-service.ts`
-- ✅ Fallbacks : `erc-fallback.ts` (placement-fallback.ts supprimé — fail fast)
-- ✅ Auto-placement : kicad-tools CMA-ES → fallback pcbnew grille
-- ✅ Agent Footprint cascade pgvector community cache (étape 1.5) + 4 étapes KiCad/SnapMagic/LCSC/AI
-- ✅ Tests unitaires : `placement-service.test.ts` | `drc-service.test.ts` | `routing-service.test.ts` | etc.
-
-### Phase 4 — Réalisations ✅
-- ✅ **4.1** Viewer 3D Three.js (composants colorisés par type, board FR4, OrbitControls, 1 crédit Pro+)
-  - ⚠️ **`canView3D` est appliqué CÔTÉ CLIENT seulement (2026-08-11)**, et c'est
-    assumé. `View3D` ne consomme AUCUN artefact serveur : il dessine à partir du
-    `PCBState` que le client possède déjà (reçu par SSE, nécessaire au reste du
-    viewer). Il n'y a donc rien à ne pas lui envoyer, et aucune route ne rendrait
-    ce droit exécutoire — un contrôle serveur ici serait du théâtre.
-    C'est un **différenciateur produit, pas une frontière de sécurité**.
-    Le rendre exécutoire supposerait d'en faire un vrai artefact serveur (export
-    STEP/GLB par le service KiCad) : décision produit, pas refactor.
-    Contraste utile : `maxLayers` (handleRouting) et `canSimulate`
-    (handleSimulation) sont, eux, appliqués côté serveur.
-    Garde : `apps/web/src/test/view3d-plan-gate.test.tsx`.
-- ✅ **4.2** Simulation ngspice : `POST /simulate/auto` + `call_agent_simulation` + `SimulationView` Recharts
-  - kicad-cli SPICE export → ngspice batch → parsing tabular → vecteurs V/A
-  - ⚠️ **FAIL FAST côté SERVICE PYTHON (2026-08-12)** — le correctif du 11/08
-    ci-dessous ne couvrait que la couche TypeScript. `tools/simulation.py`
-    renvoyait `status: "ok"` sur ses QUATRE chemins dégradés : kicad-cli absent
-    (netlist **stub** — un circuit RC sans rapport avec le schéma reçu),
-    ngspice absent, ngspice en échec, sortie non parsable. Le client TS
-    n'échouant que si `status != 'ok'`, les mesures inventées traversaient toute
-    la chaîne et s'affichaient comme réelles.
-    Le cas du stub est le pire : avec ngspice fonctionnel, le service simulait
-    **correctement un autre circuit** — sortie authentique, chiffres plausibles,
-    aucun rapport avec le produit du client.
-    Pourquoi c'était invisible : **aucun test ne touchait `simulation.py`**, et
-    le test TypeScript mockait entièrement `runSimulation` — la fabrication
-    vivait sous le mock. `_stub_netlist` supprimé (code mort après correction).
-    Garde : `services/kicad/tests/test_simulation_fail_closed.py`.
-  - ⚠️ **FAIL FAST (2026-08-11, issue #129)** : ngspice indisponible → `status:'error'`,
-    AUCUNE donnée. Le handler renvoyait auparavant `status:'success'` avec des
-    waveformes RC **synthétiques** — plausibles, jamais calculées à partir du
-    circuit — sous les seuls indices `engine:'demo'` et `warning`, précisément
-    ceux qu'une interface graphique n'affiche pas. Un compte Pro pouvait donc
-    décider sur une mesure inventée. `handleSimulation` était le DERNIER handler
-    du pipeline à fabriquer un succès, après l'assainissement de l'ERC, du DRC,
-    du routage et de l'export. Le mode démo survit en **opt-in explicite**
-    (`CIRQIX_SIMULATION_DEMO=1`), utile en local, jamais un repli sur erreur.
-    Garde : `tests/simulation-fail-closed.test.ts`.
-  - ⚠️ **Droit lié au plan (2026-08-11)** : la simulation exige `canSimulate`
-    (`PLAN_ENTITLEMENTS`, plans payants). Le contrôle est dans le HANDLER, pas
-    dans le prompt — un modèle à qui l'on demande de ne pas appeler un outil
-    finit par l'appeler — et AVANT le repli démo, sinon un compte gratuit
-    refusé recevrait quand même une courbe. Un plan absent refuse aussi.
-    Garde : `tests/simulation-plan-gate.test.ts`.
-  - Onglet "Simulate" dans Timeline (FlaskConical), 3 crédits, plan Pro+
-- ✅ **4.3** Export réel + JLCPCB :
-  - `call_agent_export` dans `pcbStateTools` → SSE → frontend reçoit `gerberZipB64` + `bomCsv` + `quoteUsd`
-  - Téléchargements Gerbers (blob base64) et BOM CSV réels dans ExportView
-  - `POST /api/jlcpcb/order` : guard `z.literal(true)` + validation DRC_CLEAN + orderRef
-  - Footprints professionnels dans `kicad_gen.py` : géométrie réelle par type (DIP-8, SOT-23, 0402…)
-  - Net assignments sur chaque pad → Freerouting route correctement
-  - placement : kicad-tools CMA-ES → fallback pcbnew grille
-- ✅ **4.x — Refactor nommage + optimisation tokens** (session 2026-05-26) :
-  - `circuit-synth-engine.ts` → `schematic-engine.ts` (évite confusion avec pip package)
-  - `CircuitSynthRequest/Response` → `SchematicRequest/Response` dans le router Python
-  - `schematic_gen.py` → `kicad_gen.py` (le fichier gère sch + pcb, pas que le schéma)
-  - `circuit_synth` pip installé dans Docker via `pip install ./circuit_synth` + PYTHONPATH fix
-  - `orchestrator.ts` : strip blobs KiCad des `tool_result` → économie ~70% tokens Sonnet (≈ $0.86 → ~$0.25/run)
-- ✅ **4.x — Pipeline 8 agents experts** (session 2026-05-26) :
-  - `call_agent_gen_pcb` créé — sépare génération PCB `.kicad_pcb` de la génération schéma `.kicad_sch`
-  - `call_agent_erc` intégré dans le pipeline obligatoire (entre schéma et footprint)
-  - `call_agent_footprint` met à jour `_pcbStateCache` avec footprint résolu par ref
-  - `prompts.ts` entièrement réécrit : Orchestrateur = "Chef de Projet PCB Senior 15 ans d'expérience"
-  - `tools.ts` (depuis refactoré en `tools/definitions.ts` + `tools/handlers/*`) : descriptions expertes pour chaque agent (Ingénieur Schéma, ERC, Composants, Layout…)
-  - `orchestrator.ts` : `stepMap` mis à jour (`call_agent_gen_pcb → 'KICAD'`), `pcbStateTools` étendu
-  - Bug `_resolve_pin` Python 3 corrigé (`UnboundLocalError` scope exception variable)
-  - Stratégie connecteurs Path B : ESP32 → `Conn_02x19_Odd_Even`, Arduino → `Conn_02x15_Odd_Even`
-  - Ancienne Path A Python (supprimée en Phase 4) : rejet silencieux si Haiku retournait du texte
-  - kicad_gen.py → split : `routers/schematic.py` + `routers/pcb.py` + `tools/schematic.py` + `tools/pcb.py`
-  - `placement_layout.py` supprimé → kicad-tools CMA-ES primaire + pcbnew grille fallback
-  - `placement-fallback.ts` supprimé → fail fast si service Docker down
-  - `call_agent_kicad` renommé `call_agent_gen_pcb` + appelle POST /pcb/generate
-- ✅ **4.x — Fix génération schéma** (session 2026-05-29) :
-  - `generateSchemaWithHaiku` : `max_tokens 2048 → 4096` — JSON tronqué pour circuits complexes causait fallback sur faux schéma hardcodé
-  - Ancienne Path A Python (supprimée en Phase 4) : prompt Haiku corrigé à l'époque
-  - `call_agent_schema` Path C : pour `complexity='complex'`, retourne maintenant une `{status:'error'}` au lieu du faux schéma "2 IC · 15 passives · 11 nets"
-  - Logs améliorés : ancienne Path A + génération JSON `stop_reason=max_tokens`
-  - **Cause racine** : les 3 chemins échouaient en cascade → `parseSchemaFromDescription('complex')` retournait `ESP32 + LDO + 15×100nF` hardcodé
-- ✅ **4.x — Migration workflow OFFICIEL kicad-tools + Reasoner IA** (session 2026-06-02→03) :
-  - Fork kicad-tools complet en sous-module (`services/kicad/kicad-tools/`) — code placement/routage custom supprimé
-  - Placement = `PlacementOptimizer.from_pcb(pcb, fixed_refs=<J*/P*>, enable_clustering=True)` ; routage = `kct route --auto-layers --auto-fix`
-  - Patch Windows `route_cmd.py` `_write_routed_pcb` (`os.fsync` sur handle read-only → `OSError [Errno 9]` cassait tout build/route)
-  - **Routage 0% → RÉSOLU** : le writer CMA-ES collapsait tous les pads sur 1 point (PR #34)
-  - `call_agent_reason` = **8e agent SÉPARÉ** visible orchestrateur (sauvetage routage si <100%) — PCBReasoningAgent + Claude Haiku ou `kct reason --auto-route`
-  - `reasoning_steps` → event SSE `reasoning` (orchestrator.ts → bridge) → ChatRail affiche les actions IA EN TEMPS RÉEL (commit d7a0f07)
-  - **Fix `route_with_llm`** (TDD, commit 34be8ae) : `_refresh_agent` resync l'état (PCBReasoningAgent ne remet pas à jour `PCBState` en session → sinon pct=0% sur board routé à 100% + boucle jusqu'à max_steps). Bug trouvé en testant le reasoner « moi = le LLM »
-  - Docs : `notefinal.md` (entrées 2026-06-02 + 2026-06-03), `PLAN.md`, `CLAUDE.md`, `cirqix-full-resume.md` (commits 32027cd, a7f7b21)
+- **Simulation fail-closed**, dans le service Python comme dans le handler
+  TypeScript : aucune donnée sur un chemin dégradé ; le mode démo n'existe qu'en
+  opt-in (`CIRQIX_SIMULATION_DEMO=1`), jamais comme repli sur erreur. Gardes :
+  `services/kicad/tests/test_simulation_fail_closed.py`, `tests/simulation-fail-closed.test.ts`.
+- **`canSimulate` est vérifié dans le handler**, avant le repli démo, et pas dans le
+  prompt : un modèle à qui l'on demande de ne pas appeler un outil finit par
+  l'appeler. Garde : `tests/simulation-plan-gate.test.ts`.
+- ⚠️ **`canView3D` ne protège que l'onglet 3D d'ExportView** (`View3D`, qui dessine des
+  boîtes à partir du `PCBState`). Depuis le 2026-09-14, le mode `3d` du viewer
+  (`Board3DView`, dans `PcbView`) consomme un artefact serveur,
+  `GET /api/projects/[id]/model` (GLB), et n'est contrôlé ni côté client ni côté
+  serveur. Le droit peut donc désormais être appliqué côté serveur : décision
+  produit en attente (droits liés au plan, §3), à ne pas implémenter sans
+  validation de l'utilisateur. Par contraste, `maxLayers` (handleRouting) et
+  `canSimulate` (handleSimulation) sont appliqués côté serveur.
+  Garde actuelle : `apps/web/src/test/view3d-plan-gate.test.tsx`.
 
 ### Phase 4.4 — Paiement Lemon Squeezy ✅ (vérifié le 2026-09-03)
 
@@ -1913,52 +1654,16 @@ fait — c'est le pendant de la section d'ordre d'exécution périmée du routag
 - Tests : `lemon-squeezy-webhook` (23) · `lemon-squeezy-subscription-end` (8) ·
   `checkout-signature` (8) — **39 passed**
 
-### Prochaine étape Phase 4
+### Prochaine étape
 
-⚠️ L'ancienne entrée citait `kct build-native` comme validation attendue. Elle
-est **caduque** : le comptage du 2026-08-30 montre 16 routages, **0 par
-kicad-tools**. Compiler ce backend ne changerait rien au chemin réel.
-
-- ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **allumé depuis le 2026-09-05**
-  (`apps/web/.env.local`, D-2026-09-05 sur la retenue de crédits en témoigne).
-  Il n'existe pas de déploiement distant (Vercel non lié) : « production » est
-  la machine de développement, Redis + worker en conteneurs. ⚠️ Relevé le
-  2026-09-12 : l'image `cirqix-worker` datait du 26/08 — trois semaines de
-  correctifs worker/agents jamais déployés. Reconstruire l'image après tout
-  commit dans `packages/agents` ou `services/worker` (voir
-  `build-long-conteneur-detache`).
-- **Valider la moitié « journal + Realtime »** avec une vraie
-  `SUPABASE_SERVICE_KEY` : tous les essais ont tourné avec une URL bidon, donc
-  les `dépôt de l artefact échoué` du journal sont attendus et ne prouvent rien.
-- **Progression pendant le routage** — `kct_route.py` utilise
-  `subprocess.run(capture_output=True)` : rien ne s'affiche pendant 20 minutes.
-  Le passage en `Popen` servirait aussi à détecter un blocage par ABSENCE DE
-  PROGRESSION plutôt que par temps écoulé.
-
-- ~~**Allumer `CIRQIX_ASYNC_PIPELINE`**~~ — **fait le 2026-09-07.** Le drapeau
-  reste fail-closed dans le code ; il est allumé dans `apps/web/.env.local`, où
-  Redis et le worker tournent, et le worker a consommé un job pour de bon.
-- **Le solde de l'API du modèle** reste épuisé : un run enfilé par la voie
-  NORMALE échoue en 5 s sur `Your credit balance is too low`, l'orchestrateur
-  étant la première étape. Ce n'est pas un défaut de code.
-  ⚠️ Mais ce n'est **plus un blocage total** depuis le 2026-09-07 : la chaîne du
-  driver (`pipeline/run-driver.ts`) livre un PCB complet par la file, sans
-  appeler le moindre modèle — `call_agent_schema` était le seul maillon qui en
-  appelait un. Ces boards sont réels et fabricables, mais **non commandables**
-  (provenance `driver`, le gate JLCPCB exige `orchestrator`) et non facturés.
-- **Faire relire les onze cartes du banc par un œil humain.** Elles sont
-  mesurées 100 % routées et 0 erreur, mais aucune n'a été ouverte dans KiCad ni
-  envoyée à un fabricant. « DRC-clean » n'est pas « bien conçu ».
-- ~~**Valider la moitié « journal + Realtime »**~~ — **faite le 2026-09-07.**
-  Voir « Le parcours asynchrone est prouvé de bout en bout ». Les essais
-  précédents tournaient avec une URL Supabase bidon et ne prouvaient rien ;
-  celui-ci tourne contre le vrai projet, avec de vrais comptes, et distingue une
-  isolation réussie d'une erreur de lecture.
-- ~~**Progression pendant le routage**~~ — **livrée le 2026-09-03.** Voir la
-  section « Pipeline asynchrone » : la mesure existait déjà dans le chemin
-  Freerouting, elle ne sortait pas du service. **NEVER** prescrire un refactor
-  sur `kct_route.py` sans avoir compté qui route : 16 routages sur 16 passent
-  par Freerouting.
+- Environnement : pas de déploiement distant (Vercel non lié). La « production » est
+  la machine de développement, avec Redis et le worker en conteneurs. Reconstruire
+  l'image `cirqix-worker` après tout commit dans `packages/agents` ou `services/worker`.
+- Si un run échoue sur `credit balance is too low`, vérifier le solde par un appel
+  réel avant de conclure. Sans solde, la chaîne du driver (`pipeline/run-driver.ts`)
+  livre des boards réels, mais non commandables (provenance `driver`) et non facturés.
+- Faire relire les onze cartes du banc par un œil humain : DRC-clean ne veut pas
+  dire « bien conçu ».
 
 ⚠️ **`TEXT-FLOW PLACEMENT FAILED` n'est PAS un blocage** (vérifié le
 2026-09-03). Le message apparaît sur toute carte d'environ 55 composants ou
@@ -1977,7 +1682,7 @@ d'une garde comme un diagnostic** — et lire la ligne suivante avant de conclur
 ## Skills — sélection et création
 
 **Ordre de priorité :**
-1. `everything-claude-code:xxx` — priorité absolue
+1. `everything-claude-code:xxx` en premier
 2. Skills installés → voir `.claude/SKILLS.md`
 3. `npx skills find "query"` → skills.sh
 4. `/skill-creator:skill-creator` → créer si rien n'existe
@@ -2002,7 +1707,8 @@ d'une garde comme un diagnostic** — et lire la ligne suivante avant de conclur
 
 ## Règle kicad-tools — usage natif obligatoire
 
-**TOUJOURS** vérifier ce que kicad-tools offre nativement AVANT d'écrire du code custom.
+Avant d'écrire du code custom de placement, routage ou DRC, vérifier ce que kicad-tools
+offre nativement : plusieurs leviers natifs ont déjà été trouvés écrits et jamais appelés.
 
 ### Processus obligatoire avant tout algo de placement/routage/DRC custom :
 1. **Chercher dans la doc** : `kicad-tools/src/kicad_tools/` + `kicad-tools/README.md`
@@ -2023,905 +1729,45 @@ d'une garde comme un diagnostic** — et lire la ligne suivante avant de conclur
 **NEVER** écrire une heuristique de détection (bypass cap, power net, IC) sans avoir vérifié si kicad-tools l'expose.
 **NEVER** implémenter un algo de placement sans avoir testé `kct placement optimize --cluster` d'abord.
 
-### Leçons inscrites le 2026-08-29 — chacune payée par une mesure
-
-**NEVER** conclure qu'un levier natif n'existe pas sans avoir lu les CHAMPS des
-objets rendus. `FunctionalCluster.max_distance_mm` et `anchor_pin` étaient
-publics, calculés à chaque appel, jamais lus — et leur absence supposée a fondé
-deux mois de renoncement (« adjacence serrée = Phase 6 »). Lire la signature
-d'une fonction ne suffit pas : ce qu'elle REND porte souvent la réponse.
-
-**NEVER** ajouter un correctif qui déplace des composants sans vérifier ce que
-font ceux qui l'entourent. Le snap posé avant le Géomètre est défait par le
-CMA-ES ; posé avant le halo d'escape, défait par le halo. Deux correctifs
-justes peuvent s'annuler — c'était déjà arrivé le 2026-08-27 entre le clamp et
-le centrage des dominants. L'ordre fait partie du correctif, pas de son emballage.
-
-**NEVER** mesurer une distance entre footprints depuis leurs ORIGINES. L'origine
-d'un module est sur sa pastille 1 : le courtyard de l'ESP32-WROOM va de -30,74 à
-+10,51 en y. « À 3 mm de l'origine » place le voisin DANS le module.
-`_boite_locale_fp` porte ce décalage — s'en servir, toujours.
-
-**NEVER** livrer une règle sans une garde qui prouve qu'elle est APPELÉE. Une
-règle correcte jamais invoquée est indistinguable d'une règle absente : c'est
-exactement ce qui a masqué pendant des semaines le fait que le Géomètre ne
-tournait jamais en production. Tester le comportement ET le câblage.
-
-**NEVER** lire un `0 %` comme un verdict de routage. « 0 % (aucun moteur) » est
-une panne — moteur injoignable, budget épuisé avant le repli. Escalader
-là-dessus revient à payer une couche de cuivre pour un défaut d'infrastructure.
-Distinguer toujours « mesuré à zéro » de « jamais mesuré ».
-
-**NEVER** conclure qu'un processus est bloqué en comparant l'horloge à la date
-d'un journal. La machine de développement se met en veille : le 2026-08-29,
-deux fois, un banc a paru muet pendant 39 minutes alors qu'il avait 8 minutes
-de temps d'exécution réel. La seule mesure fiable est `etime` du processus, ou
-sa consommation CPU — jamais l'écart entre deux horodatages.
-
-**NEVER** faire tourner une mesure longue dans un conteneur qu'une autre session
-peut redémarrer. Deux mesures de `stm32-100` ont été perdues ainsi (redémarrages
-à 07:10 et 07:17, `restarts=0` — donc voulus, pas des plantages). Un banc se
-lance dans SON conteneur, monté sur les mêmes sources.
-
-**NEVER** faire confiance aux tests présents dans l'image Docker : ils datent du
-build. Huit « régressions » lues le 2026-08-29 n'étaient que des tests périmés ;
-après copie de ceux du disque, 31/31 vert. Copier `tests/` avant de conclure.
-
-**NEVER** calibrer une règle sur une source VOISINE de celle qu'elle mesure. Le
-plancher d'échappement a été calibré sur `circuit.json` alors que le code lit le
-board : 43 signaux contre 36, et la règle laissait passer exactement le cas
-qu'elle devait attraper — tests unitaires verts des deux côtés.
-
-**NEVER** confondre une pastille avec une liaison. Sur un board, CHAQUE pastille
-porte un net, y compris celles qui ne vont nulle part (`Net-(U1-Pad3)`). Un net
-présent sur un seul boîtier n'a personne à rejoindre. Sans ce filtre, tout
-LQFP-48 comptait ~45 signaux quel que soit son circuit.
-
-**NEVER** livrer une règle numérique sans l'avoir passée sur les DONNÉES RÉELLES
-du projet. Les deux défauts ci-dessus ont franchi une suite complète de tests
-unitaires ; l'un et l'autre sont tombés au premier passage sur les sept boards
-du banc. Une fixture dit ce qu'on a imaginé, un board dit ce qui est.
-
-### Leçons inscrites le 2026-08-31 — la réservation d'échappement
-
-**NEVER** insérer une fonction entre un décorateur et sa cible. `@router.post(
-"/route/auto")` a décoré `_armer_abandon` pendant toute sa vie : FastAPI
-exposait cette fonction et `route_auto` était injoignable par HTTP. Le banc ne
-pouvait pas le voir — il importe `route_auto` directement en Python. Une garde
-qui interroge la TABLE DE ROUTES (`router.routes`) répond à la vraie question ;
-une garde qui lit le fichier source, non.
-
-**NEVER** écrire une regex qui suppose que deux champs se suivent dans un
-board. KiCad intercale `(uuid "…")` entre `(layer)` et `(net)` d'un segment :
-231 segments d'un board réel, **0 reconnu**. C'est le dixième piège de forme du
-projet. Chercher chaque champ dans son bloc, jamais en une seule expression.
-
-**NEVER** faire confiance à une branche de code qu'aucun appelant de production
-n'atteint. La branche qui portait le net de chaque via existait, son commentaire
-avertissait du court-circuit, et seule une **fixture de test** y allait — une
-fixture qui mettait d'ailleurs un NOM là où le runner met un entier. Compter les
-appelants réels fait partie de la revue.
-
-**NEVER** annoncer dans un fichier une référence que le fichier ne déclare pas.
-`_confier_au_plan` retire `(net GND …)` du DSN ; on écrivait `(net GND)` dans le
-`(wiring)` deux lignes plus bas. Écarter et le DIRE ; et ne jamais transformer
-une lecture ratée en verdict — une section `(network)` illisible n'écarte rien.
-
-**NEVER** recalculer ce qui a déjà été mesuré au bon moment. La sortie
-d'échappement était calculée avant le routage, quand la place existait, puis
-**jetée** : seuls `ref` et `pad` traversaient, et la recherche repartait de zéro
-sur le board routé. Rejouer la position — après l'avoir vérifiée — au lieu de la
-rechercher. Gardes : `tests/test_wiring_reservation_resoluble.py`,
-`tests/test_reprise_des_sorties_reservees.py`.
-
-**NEVER** laisser un échec rendre la même valeur que son cas normal. Le dernier
-recours du routage (`_recuperer_jobs_abandonnes`) appelait `_api`, définie
-**à l'intérieur** d'une autre fonction : chaque appel levait `NameError`, avalé
-par un `except Exception`, et rendait `None` — exactement ce que rend son cas
-légitime. Il n'a jamais fonctionné, et `stm32-100` est sortie à zéro alors qu'un
-board à 81 % l'attendait dans la JVM. Le défaut est apparu **la minute** où le
-diagnostic a été ajouté. Compter les raisons d'un échec n'est pas du confort.
-
-**NEVER** concaténer deux listes calculées séparément sans se demander si elles
-se recouvrent. `_vias_a_reserver` (pastilles vues isolées par le DRC) et
-`_vias_gnd_preventifs` (toutes les pastilles GND fine-pitch) partagent leurs
-cas les plus critiques ; le doublon posait deux vias au même point, donc une
-violation `hole_to_hole`, donc le rejet TOUT-OU-RIEN des vingt et un vias.
-
-**NEVER** ancrer une garde sur le NOM de l'appelant. Deux gardes cherchaient
-`_api("PUT", …` et se sont mises à lever `ValueError` dès que cette fonction a
-été renommée — elles ne mesuraient plus rien, mais leur intention était intacte.
-S'ancrer sur ce qui ne bouge pas : ici l'URL du départ de job.
-
-### Leçons inscrites le 2026-09-01 — la mesure qui dormait à côté du code
-
-Les cinq défauts corrigés ce jour-là ont **la même forme** : la mesure juste
-existait, au bon endroit, calculée à chaque appel, et personne ne s'en servait.
-C'est la famille de `FunctionalCluster.max_distance_mm`.
-
-**NEVER** traiter un TROU comme du CUIVRE. `_obstacles_d_un_autre_net` écarte
-volontairement les objets du net courant : correct pour du cuivre — deux pistes
-GND peuvent se toucher — et faux pour un perçage. La couture reposait donc à
-chaque passe un via au même point : `nucleo-f401` portait **131 vias pour
-94 positions**, 7 positions percées ×5, une ×10, et **116 avertissements
-`holes_co_located`** — la TOTALITÉ des violations ajoutées par le routage.
-Garde : `tests/test_couture_sans_trou_double.py`.
-
-**NEVER** classer deux défauts par ordre lexicographique sans se demander ce
-qu'on échange. `_secours_est_meilleur` rendait `apres < avant` sur
-`(erreurs, manquantes)` : `(0, 73) < (3, 11)` est VRAI parce que `0 < 3`. Trois
-erreurs ont été achetées avec **soixante-deux connexions manquantes**, par un
-repli dont le site d'appel dit qu'il existe parce qu'« une carte non connectée
-ne part pas en fabrication ». Interdire toute augmentation aurait sur-corrigé —
-un test antérieur documente que `(2, 0) → (0, 1)` doit rester accepté. La règle
-retenue ne porte aucun seuil : **un échange ne doit pas empirer le total**.
-
-**NEVER** faire taire un DRC en annulant une décision de l'utilisateur. Les
-4 `starved_thermal` disparaissaient en passant tout le plan en connexion pleine
-— mais le relief thermique de KiCad avait été choisi la veille, capture à
-l'appui, et un 0402 noyé dans le cuivre se dresse à la refusion. On promeut
-donc les **seules** pastilles mesurées comme affamées. Mesuré :
-`4 erreurs → 0`, `75 violations → 71`.
-
-**NEVER** viser une population PROXY quand la population RÉELLE est mesurable.
-L'étape ③ ne ciblait que les broches GND des boîtiers fine-pitch. `D3.2` (LED
-0603) et `J10.1` (connecteur traversant) finissaient orphelines sans avoir
-jamais été visées — et `_pads_isolees_du_plan` les désignait, **une ligne plus
-haut dans la même fonction**, pour la seule vérification d'après-coup. La cible
-préventive reste (les broches deviennent orphelines PENDANT le routage) ; on lui
-AJOUTE la cible mesurée. Union strictement additive.
-
-**NEVER** lire deux compteurs voisins comme s'ils mesuraient la même chose.
-« 1 reliée sur **3 visées**, 0 renoncée » à côté de « **1** l'étaient avant la
-pose » ressemble à une incohérence comptable : ce sont deux populations
-différentes (préventive et mesurée), toutes deux légitimes. J'ai failli
-« corriger » une comptabilité saine. Lire les DEUX définitions avant de conclure.
-
-**NEVER** conclure d'un `budget épuisé` que la cascade est mal ordonnée. Après
-une veille de la machine, le budget se voyait consommé et le Niveau 1 était
-**sauté** (`_budget_suffisant` faux) — la chaîne tombait au Niveau 4,
-`kicad-tools`. Le journal montrait donc `kicad-tools A*` en tête alors que
-Freerouting est bien Niveau 1. Symptôme d'infrastructure, pas de conception.
-
-**NEVER** laisser un faux `pcbnew` de test plus pauvre que le vrai `BOARD`. Le
-faux n'exposait que `Footprints()`, pas `GetFootprints()` — que la production
-utilisait déjà ailleurs. Compléter le faux, jamais affaiblir le code pour lui.
-
-**NEVER** ancrer une garde sur une phrase qu'on vient d'écrire ailleurs. Ma
-propre garde cherchait `"repli GND retenu"` par `index()` et tombait sur la
-docstring de la règle, en amont du site d'appel. `rindex()`, ou un ancrage sur
-ce qui ne bouge pas.
-
-### Leçons inscrites le 2026-09-09 — quand l'INSTRUMENT ment
-
-L'utilisateur juge les placements le 2026-09-08, captures à l'appui : « le
-placement, c'est un placement d'amateur ». Il avait raison, et la journée a
-produit deux familles de leçons — sur le produit, puis sur les outils de mesure
-eux-mêmes.
-
-**NEVER corriger un piège de forme sans chercher SES SŒURS.** `_NET_DECL_RE` a
-été corrigé le 2026-08-20 pour la double écriture `(net 3 "GND")` /
-`(net "GND")`. Trois expressions de `_patch_floating_nets` portaient la même
-hypothèse et sont restées fausses **vingt jours de plus**. Or tous nos boards
-sortent de pcbnew 10 (`numérotés=0, nus=93..988`) : la réparation ne touchait
-RIEN, en silence, et six cartes sur onze livraient des broches
-d'**alimentation** sur des nets orphelins — dont la sortie d'un régulateur.
-Le DRC ne pouvait pas le voir : un net orphelin n'a aucune connexion manquante.
-
-**NEVER se satisfaire du premier défaut trouvé.** Sous celui-là s'en cachait un
-second : le découpage des pastilles s'arrêtait sur UNE tabulation, quand pcbnew
-10 en écrit deux — la **dernière pastille de chaque empreinte** n'était jamais
-réparée. Et ma première correction fut pire que le mal : s'arrêter au premier
-`(` coupait le bloc AVANT le champ `(net …)`. **Une expression trop large et une
-trop étroite échouent identiquement, en silence.** On compte les parenthèses.
-
-**NEVER supposer qu'un levier natif est appelé parce qu'il existe.** Quatre de
-plus trouvés ce jour-là, publics, documentés, jamais invoqués :
-`WorkflowConfig.grid`, `OptimizationWorkflow(constraints=…)`,
-`PCB.move_reference()`, `optim/bottom_up_placement.py`. Cela porte à **six** avec
-`FunctionalCluster.max_distance_mm` et `anchor_pin`. Mesure : `grid` non passé
-donnait **2 composants alignés sur 62**.
-
-**NEVER poser un alignement AVANT les étapes qui déplacent.** `grid=0.5`
-correctement transmis n'a rien changé — `2/62` avant, `2/62` après : le natif
-aligne en fin d'optimisation, puis le Géomètre, le halo, le snap et l'Inspecteur
-défont tout. Reposé EN DERNIER : **2/62 → 62/62, zéro erreur ajoutée**.
-« L'ordre fait partie du correctif » vaut aussi pour ce qui ne déplace que de
-0,25 mm.
-
-**NEVER ignorer ce que dit une référence EXTERNE.** `astra_piNas` (six couches,
-176 empreintes, routée à la main) a révélé une loi qu'aucune mesure interne ne
-pouvait montrer : **notre qualité se dégrade avec la TAILLE, la sienne non** —
-3,0 mm de serrage à 5 composants, 55,3 mm à 62, quand elle tient 9,8 mm à 176.
-Un banc qui ne compare que nos cartes entre elles mesure une dérive, pas un
-écart à l'état de l'art. ⚠️ Le dépôt source n'a **aucune licence** : la carte
-n'est pas versionnée, un script la récupère.
-
-#### Et trois fois, c'est l'INSTRUMENT qui a menti
-
-Chaque fois en rendant **« aucun effet »** — c'est-à-dire la réponse qu'on
-attendait peut-être. C'est la forme la plus coûteuse de la famille que ce dépôt
-traque, parce qu'elle est indiscernable d'un résultat légitime.
-
-**NEVER piloter le SERVICE par une variable d'environnement du pipeline.**
-`run_pipeline.py` est un client HTTP ; le placement tourne dans le service
-FastAPI, un processus séparé. Une campagne A/B entière a comparé deux bras
-identiques — `98 %` contre `98 %`. Le remède suit le motif du verrou de routage :
-un **fichier** (`tools/reglages_banc.py`), seule ressource que des processus
-séparés partagent, **relu à chaque appel** — un réglage figé à l'import ferait
-hériter le second bras du premier.
-
-**NEVER mesurer après avoir édité un module que le service a déjà importé.**
-Deuxième campagne, échec différent : le service tournait depuis **neuf heures**
-avec un `tools/placement.py` antérieur à la règle. `tools/` est monté à chaud —
-le FICHIER change, le MODULE importé non. Le dépôt connaissait l'exception (« le
-runner ENFANT relit à chaque appel ») ; le workflow de placement, lui, tourne
-DANS le worker. **Redémarrer le service avant toute mesure**, et vérifier que le
-`mtime` du module précède le démarrage du processus.
-
-**NEVER ancrer une garde sur une phrase de sa propre documentation.** Ma garde
-« on ne pousse jamais la référence en `F.Fab` » cherchait `F.Fab` dans le source
-et le trouvait… dans la docstring qui l'interdit. Piège déjà inscrit le
-2026-09-08 ; `_code_seul()` retire commentaires **et** docstrings.
-
-**NEVER relancer après une mise à mort sans nettoyer le conteneur.** Un pipeline
-tué côté Windows **continue** côté conteneur : quatre orphelins accumulés, deux
-encore à 380 % de CPU vingt minutes plus tard, consommant la mémoire qui faisait
-tuer la suivante. Une spirale alimentée par chaque relance. Lancer **détaché
-dans** le conteneur (`docker exec -d`, journal redirigé), et vérifier les
-orphelins avant de repartir.
-
-**NEVER généraliser depuis un journal de mise au point.** J'ai lu « les seize
-paires refusées, sans exception » et bâti une décision produit dessus. La mesure
-l'a réfutée : la garde ne gèle rien — sur les mêmes boards elle déplace déjà 19
-à 36 composants. `D-2026-09-08-c` retirée. Une mesure étaye une proposition ;
-elle peut aussi la tuer, et c'est son travail.
-
-### Leçons inscrites le 2026-09-20 — la mesure qui rendait « pas de mesure »
-
-**NEVER laisser une mesure rendre la même valeur qu'une mesure impossible
-sans l'avoir lue sur un vrai board.** `_longueur_de_fil_mm` — le « second
-critère » qui départage deux placements propres depuis le 2026-08-29 — rendait
-`None` à CHAQUE appel : `PCB` n'était pas importé dans `tools/placement.py`,
-et le `NameError` était avalé par un `except Exception: return None`. Pendant
-trois semaines, on a gardé « le premier tirage arrivé » en croyant choisir le
-plus court. Trouvé le 2026-09-20 en ajoutant le critère des CROISEMENTS
-(`crossing_count`, natif), qui échouait de la même manière — et seulement
-parce que je l'ai mesuré sur carte-10 avant de livrer. Garde : les deux
-mesures sont lues sur un vrai board du banc
-(`tests/test_placement_classe_par_croisements.py`).
-
-**Ce que le classement des placements compare, désormais :** conflits, puis
-croisements du chevelu (relatif entre tirages d'une même carte, jamais un
-seuil — demande de l'utilisateur : « une solution qui marche sur tout type
-de carte »), puis fil. Mesuré : 0,15 s sur stm32-100.
-
-**« Tous les tirages ont figé » est un VERDICT sur le placement, pas une
-panne.** Il sortait `skipped` comme un service éteint, et l'orchestrateur
-abandonnait au lieu de re-tirer le placement — le seul remède. La réponse
-porte `verdict="tirages_figes"` et le pourcentage MESURÉ (jamais un board) ;
-`shouldRetryPlacement` s'arme, `shouldRescueRouting` refuse tout échec (le
-reasoner aurait écrasé le cache avec le board placé). Gardes :
-`tests/test_tirages_figes_verdict.py`, `routing-tirages-figes-verdict.test.ts`.
-
-**NEVER re-placer un board DÉJÀ placé sans avoir DRC-é le board placé, sans
-piste.** `restore_pad_angles` recompose `rotation du boîtier + angle RELATIF
-de la source`, mais `_pad_angles` rendait l'angle DÉCLARÉ — absolu dans un
-`.kicad_pcb`. Source sortie de gen_pcb (boîtier à 0°) : aucun écart. Source
-déjà placée, boîtier à 90/270° : rotation comptée DEUX FOIS, pads du LQFP
-couchés sur leurs voisins — **205 erreurs sur un board sans une piste**, dont
-168 items sur U1. Motif mesuré le 2026-09-20 : 05, 07, 09, 10 (90/270°)
-échouent, 04, 06, 08 (0/180°) passent. Et le RE-TIRAGE de l'orchestrateur
-renvoie justement au placement le board du cache, déjà placé : la boucle de
-sauvetage empoisonnait une carte sur deux. Le symptôme, « ~120 conflits de
-placement non résolus », m'a fait chercher dans le génétique pendant deux
-jours — le compte vient du DRC kicad-cli, `PlacementAnalyzer` n'en voyait
-que 2. Corrigé : relatif = (déclaré − rotation du boîtier source) mod 360 ;
-205 → 1. Garde : `tests/test_pad_angles_source_deja_pivotee.py`.
-
-### Leçons inscrites le 2026-09-21 — la boîte qui ne tournait pas
-
-**NEVER ajouter `_boite_locale_fp` à `fp.position` sans la TOURNER.** Elle rend
-le courtyard dans le repère du footprint. `_repair_off_board` la posait telle
-quelle : un SOT-223 à 90° (8,8 × 7,2) était testé COUCHÉ, la case « libre »
-tombait dans son vrai courtyard, et carte-05 comme carte-09 sortaient à UNE
-erreur `courtyards_overlap` (U2 ↔ passif). `PlacementAnalyzer`, qui approxime
-les courtyards par « pastilles + 0,5 mm », répondait « 0 ERROR ». La règle vit
-à UN endroit, `placement._boite_orientee_fp`, et un filet
-(`_reparer_chevauchements_du_drc`) répare avec l'instrument qui JUGE —
-kicad-cli — sans jamais garder un résultat qui n'améliore pas.
-
-**NEVER supposer le SENS de rotation de KiCad : le lire dans pcbnew.** L'axe y
-descend : (x, y) → (x cos a + y sin a, −x sin a + y cos a). Le sens opposé est
-INVISIBLE sur un boîtier centré et faux dès que la boîte est décentrée.
-`_pastille_partagee` le portait : sur le banc, 312 pastilles de boîtiers
-tournés étaient calculées à **7,1 mm** en moyenne de leur vraie place
-(0,08 mm dans le bon sens) — la capa de découplage visait une broche absente.
-Restent non convertis, à boîte non tournée : `_clamp_fixed_refs_to_outline`,
-`_position_libre_pour_ancrage`, `_ecarter_des_dominants`, `contour_et_bords`,
-`carte_compacte` (aires seulement). Sans effet tant que les ancrages sont à 0°.
-
-**Un ancrage n'était collé au bord QUE s'il débordait.**
-`_clamp_fixed_refs_to_outline` ramène ce qui sort du contour ; un connecteur
-que le générateur pose DANS la carte y restait pour toujours (carte-09
-compacte : J2 à 15,7 mm de tout bord, les six autres à 2-3 mm). Règle de
-l'utilisateur — « toujours les connecteurs à l'extrémité » —
-`_coller_les_ancrages_au_bord`, juste après le clamp : glissement vers le bord
-LE PLUS PROCHE du corps, puis le long de ce bord s'il est occupé ; dominants
-exempts. ⚠️ Ce n'est PAS D-2026-09-13-c (B), réfutée : on ne centre rien.
-Mesuré : 08 et 09 compactes, 7 connecteurs sur 7 à 2,0 mm, 0 erreur DRC.
-Garde : `tests/test_ancrages_colles_au_bord.py`.
-
-**NEVER mesurer « connecteur au bord » depuis l'ORIGINE.** L'origine d'un
-en-tête est sur sa pastille 1 : « J2 à 11,4 mm du bord » était un artefact,
-son CORPS était à 2 mm. Gardes : `tests/test_boite_orientee_sens_de_kicad.py`,
-`tests/test_chevauchements_vus_par_le_drc.py`.
-
-### Leçons inscrites le 2026-09-22 (soir) — le board propre qui se prêtait à tout
-
-**NEVER mesurer un défaut sans avoir vérifié que l'artefact le PORTE.** J'ai
-diagnostiqué la dernière rupture de plan de `carte-10` sur
-`expected/final.kicad_pcb`, board VERSIONNÉ du 2026-09-21 dont le propre
-`mesures.json` annonce `non_connectes: 0` — et mon DRC le confirmait. Le
-défaut du banc du 22 vivait dans `/tmp/livr/…/route.kicad_pcb`, **resté dans
-le conteneur**, faute que ce fichier s'interdit pourtant depuis le 2026-09-03.
-Sur le board propre, tout marchait : 92 points sur 93 de l'îlot orphelin
-faisaient face au plan principal, un via y tenait avec 0,29 mm de marge, et la
-couture de production le posait en annonçant `stitched: 1`. J'ai failli
-annoncer une solution pour un board qui n'a jamais eu le problème. Sur le VRAI
-board, la même sonde rend **zéro** vis-à-vis avec le plan principal.
-Un board sain se prête à toutes les démonstrations : vérifier d'abord que
-l'instrument voit le défaut.
-
-**NEVER laisser une sonde raisonner ZONE PAR ZONE sur un plan.** Ma première
-sonde ne regardait que les îlots d'UNE zone : or `carte-10` porte **deux zones
-GND**, une par face, et le vis-à-vis d'un îlot F.Cu vit dans l'AUTRE zone.
-Elle rendait donc « aucun cuivre en face » pour la totalité des points, sur une
-carte qui porte un plan arrière de 2656 mm². Détectée par l'invraisemblance du
-résultat, jamais par le code — c'est la quatrième sonde de ce projet sauvée de
-cette façon.
-
-**NEVER reprendre une mesure faite sur une AUTRE carte comme si elle décrivait
-le cas courant.** Le brief décrivait l'amas « cerné par un faisceau, jusqu'à
-18 segments `+3V3` » : c'était `carte-07`. Sur `carte-10`, la mesure donne
-**un seul segment par face** (`EXT2_1` à 0,862 mm sur F.Cu, `EXT4_1` à
-0,781 mm sur B.Cu). Le défaut paraissait coûteux à refermer ; il ne l'est pas.
-
-**Consulter les agents coûte de la MÉMOIRE, et cette charge fausse les
-mesures.** Codex lit ce fichier, y trouve « Use Graphify by default before
-source browsing », et lance `graphify query` — **1,04 Go par requête**. Deux en
-parallèle ont fait tomber la mémoire libre à 2,8 Go et tuer mes propres tâches
-de fond ; c'est la même charge qui avait faussé un banc entier la veille.
-Tout prompt d'agent externe commence désormais par l'interdiction explicite
-d'exécuter graphify, et `codex exec` reçoit `< /dev/null` (sans quoi il attend
-une saisie au clavier et ne rend jamais la main).
-
-### Leçons inscrites le 2026-09-22 (nuit) — l'arrachage borné, et ses deux sœurs
-
-**NEVER juger un plan ZONE PAR ZONE.** Notre générateur écrit UNE ZONE PAR
-FACE. `_relier_les_amas_orphelins` calculait ses orphelins sur la zone
-courante : tout îlot de F.Cu qui rejoint le plan par B.Cu passait pour orphelin.
-Mesuré sur `carte-10` : **21 amas orphelins annoncés, UN seul en vérité** — et
-les vingt autres recevaient du cuivre pour rien. `_stitch_zones` jugeait déjà
-sur le net entier (`_ilots_relies_au_principal_du_net`) : deux jumelles, deux
-réponses, et c'est la plus permissive qui posait le cuivre. Ma propre sonde
-d'analyse avait fait exactement la même faute une heure plus tôt.
-
-**NEVER échantillonner un trajet au pas de sa propre marge.** `_couloir_libre`
-prenait `pas = marge` : un bond plus court que la marge n'était jugé que par ses
-DEUX BOUTS. Or la distance à un cuivre est convexe le long d'un segment — son
-minimum tombe à l'INTÉRIEUR, jamais aux extrémités. Mesuré : **426 violations de
-dégagement**, toutes à 0,1993 mm pour 0,2000 exigés. Sept dixièmes de
-micromètre, c'est-à-dire précisément ce qu'un échantillonnage à deux points
-laisse passer. Pas ramené à `marge / 8`.
-
-**Un remède tout-ou-rien se PROUVE par l'égalité, pas par l'absence de
-plainte.** `_degager_le_couloir` arrache, pose, reroute, et remet tout en place
-si un seul reroutage échoue. La preuve qu'il ne casse rien n'est pas « aucune
-erreur nouvelle » : c'est le board rendu **strictement identique** au board reçu
-— 33 violations, 0 erreur, 1 manquante, avant comme après.
-
-**Une impossibilité peut se CALCULER, et elle DÉSIGNE alors le remède.** Le
-couloir de `carte-10` fait 0,862 mm ; le raccord de masse le barre sur toute sa
-largeur (0,25 de cuivre + 0,2 de dégagement de chaque côté = 0,65). Un signal de
-0,25 mm en réclame 0,65 à son tour : il faudrait 1,30 mm. Aucune finesse ne
-rattrape 0,44 mm manquants — donc la recherche sur la même face est vaine, et
-la seule issue est de CHANGER DE FACE. Le calcul n'a pas dit « abandonne », il a
-dit où chercher. Livré (`_detour_par_l_autre_face`) : **1 connexion manquante →
-0**, à violations et erreurs inchangées.
-
-**NEVER juger un board qui vient de recevoir du cuivre SANS avoir recoulé ses
-plans.** Le détour par l'autre face traverse le plan coulé : le board
-intermédiaire porte **51 erreurs** de dégagement, parfaitement réelles, que la
-coulée efface en découpant le cuivre autour de la piste neuve. Juger avant de
-recouler ferait rejeter un board qui, recoulé, est PARFAIT — 33 violations,
-0 erreur, 0 connexion manquante. C'est la famille que ce dépôt traque, prise
-dans l'autre sens : non plus un instrument qui absout un board fautif, mais un
-instrument qui condamne un board sain.
-
-### Leçons inscrites le 2026-09-24 — l'escalade qui ne pouvait pas monter
-
-Question de l'utilisateur : « si on escalade le nombre de couches, on doit
-atteindre 100 % ». Il avait raison en principe ; le code l'en empêchait, de
-trois façons indépendantes. Et « je veux une solution générale, tu es en train
-de bricoler la carte nucleo » — il avait raison là aussi.
-
-**NEVER laisser une protection s'appliquer au-delà du tirage pour lequel elle a
-été posée.** L'escalade incrémentale (D-2026-09-10-b) protège les pistes du
-meilleur board au changement de palier. La protection restait posée pour TOUS
-les tirages du palier ; comme le premier palier n'a droit qu'à un tirage de
-preuve, **après le tout premier tirage, plus aucun n'était libre** — on ne
-donnait pas plus de couches à la carte, on en donnait au premier tirage pour
-qu'il se rapièce. Mesure sur `nucleo-f401` : 6 couches PIRES que 4. Désormais le
-premier tirage d'un palier reste incrémental, les suivants sont libres
-(`_tirage_libre`, D-2026-09-24-a). Preuve au banc du même jour, même placement
-gelé : **palier 4, tirage protégé → 0 %, tirage libre → 100 %**.
-
-**NEVER compter dans une autre unité que celle que la règle annonce.** « Arrêt
-après deux paliers sans gain » comptait des TIRAGES (tolérance `2 × 3`). Le
-palier 4 de `nucleo-f401` avait PROGRESSÉ, mais ses tirages bonus et figés ont
-rempli le compteur : **8 couches jamais essayées**, et un journal qui disait
-« 7 paliers » pour 7 tirages. Les bonus, faits pour aider, fermaient la porte
-au palier suivant (`_paliers_sans_gain_apres`, D-2026-09-24-b).
-
-**NEVER mesurer la distance d'une piste depuis ses EXTRÉMITÉS.** La libération
-autour d'une pastille non reliée testait les deux bouts de chaque segment. Une
-diagonale de 13,7 mm passant à **0,533 mm** de la pastille restait protégée —
-ses bouts étaient à 1,9 et 13 mm. Le défaut est structurel : une piste LONGUE a
-presque toujours ses bouts loin de la zone, et c'est précisément elle qui la
-traverse. Les trois segments gagnés sur `nucleo-f401` font 13, 43 et 44 mm
-(`_segment_pres_d_une_zone`).
-
-**NEVER confier un verdict de fabrication à la SÉVÉRITÉ que KiCad attribue.**
-`hole_to_hole` et `holes_co_located` sortent en avertissement par défaut ;
-tous nos juges ne comptaient que les `error`. `carte-11` a donc été livrée
-`drc_clean: true` avec deux vias dont le perçage RECOUPE celui d'une broche de
-connecteur (−0,050 mm) — et `drc_clean` ouvre le gate JLCPCB. Le docstring du
-juge portait la prémisse fausse en toutes lettres : « une erreur de
-fabricabilité fait refuser la carte, un avertissement non ». UNE liste,
-`TYPES_BLOQUANTS_FABRICATION`, UN prédicat, `est_bloquante`, lus par le juge de
-la commande ET celui du routage (D-2026-09-24-c).
-
-**NEVER oublier de porter un filtre chez les SŒURS — quatrième fois.**
-`_pads_plan_a_degager` excluait les pastilles traversantes depuis le
-2026-09-02, en toutes lettres. `_pads_gnd_fine_pitch` et
-`_pads_signal_fine_pitch` ne l'ont jamais reçu : un connecteur 2×20 au pas de
-2,54 mm passait pour un boîtier « fine-pitch » (40 pastilles), et sa broche GND
-recevait un via d'échappement **dans son propre perçage**. Le correctif
-général a réparé aussi `nucleo-f401`, dont les connecteurs Morpho portaient le
-même défaut latent — une carte que personne ne regardait sous cet angle.
-
-**Une escalade qui marche n'est pas un tirage libre qui marche.** Sur
-`carte-11`, le banc a sorti 100 % à 4 couches — mais le palier 2 avait figé
-sans rendre de board, donc il n'y avait rien à protéger ni à libérer : le
-mécanisme corrigé n'a pas joué. Et un 100 % de `nucleo-f401` obtenu DÈS LE
-PREMIER PALIER a failli être annoncé comme la preuve du correctif de
-libération, qui n'avait pas tourné. **Lire dans le journal QUEL mécanisme a
-produit le résultat**, jamais seulement le résultat.
-
-**NEVER écrire « ✅ résolu » sur une preuve qui ne couvre qu'un des cas.**
-J'ai annoncé l'escalade « résolue » sur `nucleo-f401`, `carte-10` et `carte-08`,
-trois cartes où il manquait un SIGNAL. Quand seule la MASSE manquait, une règle
-du 2026-08-31 interdisait toujours de monter — et le BANC plafonnait dix
-cartes sur quinze à 2 couches (D-2026-09-24-f). J'ai même « corrigé » à tort
-`carte-07` en « escaladée à 4 et 6 » : ces lignes du journal étaient celles
-de `carte-08`, démarrée la même minute. **Un journal partagé ne dit pas de
-quelle carte parle une ligne : l'attribuer par l'heure, jamais par la
-proximité.** L'utilisateur l'a relevé en une question : « si
-98 %, il manque 2 %, j'escalade ? ». Toute connexion manquante fait désormais
-monter d'un palier (D-2026-09-24-e).
-
-**NEVER arrondir un pourcentage de complétude.** `_percent_verifie` rendait
-`round(99,6) = 100` pour un net manquant sur 250 : le cas de SUCCÈS, rendu sur
-une carte incomplète, et `route_auto` s'arrêtait là. Plafonné à 99 dès qu'un
-net manque — encore un échec qui rendait la valeur du cas normal.
-
-### Leçons inscrites le 2026-09-23 (ter) — l'ERC, et deux réfutations utiles
-
-**NEVER analyser un fichier de plusieurs centaines de kilo-octets DANS le
-worker uvicorn.** `run_kicad_tools_erc` appelait `Schematic.load`, du Python
-pur, qui tient le GIL pendant toute l'analyse. Deux cartes du banc perdues le
-même jour sur un **HTTP 500 de `/erc`** — `carte-08` (190 ko) et `carte-10`
-(141 ko) — parce qu'uvicorn tue par SIGKILL tout worker muet plus de 5 s.
-C'est la **sœur** du défaut corrigé le 2026-09-10 sur le journal Freerouting :
-le journal avait été traité, le schéma non, alors que ce fichier l'interdisait
-déjà en toutes lettres. `tools/erc_runner.py` rejoint les quatre autres
-runners. **Corriger un défaut dans une fonction sans chercher ses sœurs coûte
-toujours une deuxième fois.**
-
-**NEVER laisser une EXPIRATION tuer un run quand un verdict réel existe
-déjà.** Le budget de `kicad-cli sch erc` valait 30 s à plat, et son dépassement
-remontait en 500 : le routage entier perdu, alors que kicad-tools avait rendu
-son verdict quelques lignes plus haut. Le budget se déduit désormais de la
-taille du schéma (plancher 120 s, quatre fois le point d'échec), et une
-expiration conserve le verdict acquis en le DISANT. Famille « le plafond n'était
-pas UN endroit, mais QUATRE ».
-
-**NEVER conclure d'un écart de DURÉE entre deux bancs qu'un changement a
-ralenti la chaîne.** `carte-06` a mis 468 s, puis 3204, puis 1140, sans que rien
-ne change dans son circuit : Freerouting est stochastique et tourne jusqu'à
-mille passes sans gain. J'ai failli annuler un correctif sain sur cette seule
-observation. Deux tirages ne prouvent rien — la règle vaut aussi pour le temps.
-
-**Deux propositions mesurées et RÉFUTÉES le même jour, et c'est le travail de
-la mesure.** Resserrer le CADRE des connecteurs sur la frontière du circuit :
-aucun gain de taille, connecteurs entassés sur un seul bord, deux se
-chevauchant — annulé. Et le choix du bord par la DIRECTION, qui le remplace,
-ne dégrade rien mais ne transforme pas le rendu : le gain visible est faible,
-et il faut le dire plutôt que de le vendre.
-
-### Leçon inscrite le 2026-09-23 (bis) — j'ai faussé mon propre banc, DEUX JOURS après l'avoir écrit
-
-**NEVER lancer QUOI QUE CE SOIT pendant un banc — y compris une revue en
-lecture seule.** Le 2026-09-22, ce fichier a reçu « la qualité du routage dépend
-de la CHARGE » après qu'une consultation d'agent eut fait échouer 3 tirages sur
-3. Le lendemain, j'ai lancé une revue multi-agents pendant le banc, en me disant
-qu'elle ne touchait à rien. `carte-08` est sortie `abouti=False` sur un **HTTP
-500 de `/erc`** : `kicad_tools/sexp/parser.py` a tenu le GIL **plus de 4,5 s**
-sur un schéma de 190 ko pendant que cinq agents se disputaient le processeur, et
-uvicorn tue tout worker qui ne répond pas à son ping en 5 s (leçon du
-2026-09-10). Relancée seule : **193 s, 0 erreur, 0 manquante.**
-
-Le placement n'était pas en cause. La charge l'était, et c'est moi qui l'avais
-mise. Une règle écrite n'est pas une règle appliquée — c'est vrai du code, et
-c'est vrai de moi.
-
-**NEVER répartir des composants en déplaçant ce qui est déjà posé.** Le remède
-au tas de périphériques ne change QUE l'angle de départ de la recherche : le
-premier de chaque groupe garde exactement la direction que la graine a
-calculée, les suivants s'en écartent en éventail, et `le_long_du_rayon` reste
-seul juge de ce qui est libre. Une répartition qui déplacerait les directs
-perdrait la topologie — la broche que chaque périphérique doit viser.
-
-### Leçon inscrite le 2026-09-23 — le banc mesurait ce que le produit ne fait pas
-
-**NEVER laisser le BANC appeler le service autrement que la PRODUCTION.**
-`run_pipeline.py` n'envoyait pas `auto_size_board` à `/place/auto` : le
-resserrement du contour sur le placement, écrit le 2026-09-13, n'a donc JAMAIS
-tourné dans le banc — alors que `handlePlacement`, en production, le passe
-depuis toujours. Le banc mesurait un comportement que le produit n'a pas, ce
-qui est l'inverse exact de ce à quoi il sert. Mesuré sur `carte-10` : carte de
-140 × 105 mm pour un circuit de 51 × 66, **23 % d'occupation**, connecteurs à
-56-75 mm, `VIN` long de 112 mm. Une ligne de correctif donne 61,0 × 45,8 mm,
-56 % d'occupation, `VIN` à 45,5 mm, et **le routage reste à 100 %, 0 erreur,
-0 manquante** sur les dix cartes.
-
-C'est le **septième** levier natif que ce projet trouve écrit et jamais appelé,
-après `max_distance_mm`, `anchor_pin`, `WorkflowConfig.grid`, `constraints`,
-`move_reference`, `bottom_up_placement` et `LocalRerouter`. Le motif est
-toujours le même : la règle existe, elle est juste, et rien ne prouve qu'elle
-est INVOQUÉE.
-
-**Une carte trop grande coûte du TEMPS, pas seulement de la place.**
-`carte-08` passe de 2002 s à 347 s, six fois plus vite, pour le même circuit.
-Ce fichier portait déjà la mesure — « l'espace de recherche d'un routeur croît
-avec la SURFACE × le nombre de nets » — sans jamais en tirer la conséquence.
-
-**NEVER rapporter une taille de carte prise dans le SCHÉMA.** Le banc écrivait
-`board_mm` d'après ce que la description demandait, pas d'après `Edge.Cuts` :
-`carte-10` était annoncée 140 × 105 quand son board mesurait 61,0 × 45,8, cinq
-fois faux en surface, et rien ne permettait de s'en apercevoir. La règle de ce
-dépôt — un compteur ment, un board non — vaut aussi pour la taille.
-`mesures.json` porte désormais les DEUX : `board_mm` mesuré et
-`board_mm_demande`.
-
-### Leçon inscrite le 2026-09-22 — la qualité du routage dépend de la CHARGE
-
-**NEVER mesurer un routage pendant qu'autre chose tourne sur la machine.**
-Même placement gelé de `carte-10` : machine libre, **4 tirages sur 4 propres**
-(139-392 s) ; machine chargée par une consultation d'agent lancée par mes soins,
-**3 échecs sur 3** (603-1838 s). J'en avais tiré « défaut intermittent du plan
-de masse, 1 tirage sur 8 » — c'était l'artefact de ma propre charge.
-
-**Et c'est un vrai défaut, pas seulement une erreur de mesure** :
-`_PLAFOND_ATTENTE_S = 300` est une horloge MURALE. Processeur disputé → moins de
-passes par seconde → le plafond tire alors que le routeur progresse encore → le
-tirage est déclaré figé et la chaîne garde un board moins bon. Ce fichier
-interdit pourtant, depuis le 2026-08-29, de « conclure qu'un processus est
-bloqué en comparant l'horloge » : la faute est ici DANS le code, pas dans une
-lecture de journal.
-
-**Corrigé le jour même, et c'était une SŒUR OUBLIÉE.** `_faut_couper` a trois
-coupures ; `_routeur_muet` suivait déjà la cadence mesurée
-(`max(300 s, 3 × cadence)`), le temps sans progrès comparait à 300 s en dur.
-Le même fichier savait donc la règle et ne l'appliquait qu'à moitié. L'horloge
-ne peut plus couper avant la fenêtre de passes. Preuve sous charge délibérée :
-3 échecs sur 3 (603-1838 s) → **2 propres sur 2 (233 et 255 s)**.
-Garde : `tests/test_coupure_suit_la_cadence.py`.
-
-### Leçons inscrites le 2026-09-21 (soir) — les jumeaux qui se portent garants
-
-**NEVER laisser DEUX remèdes se valider l'un l'autre sur le même objet.** Un
-amas orphelin du plan GND (un îlot par face, cousus entre eux par un via) était
-invisible aux deux filets à la fois : `_stitch_zones` comptait ce via comme un
-succès — un site avait été trouvé — et `_retirer_ilots_flottants` voyait ce
-MÊME via « toucher du cuivre du net en face », donc ne retirait rien. Les
-jumeaux se portaient garants l'un de l'autre, et carte-07 sortait à une
-connexion manquante GND, une fois sur huit. Diagnostic convergent de Codex, GLM
-et OpenCode le même jour, sur un brief qui listait les pistes déjà réfutées.
-La couture ORDONNE désormais ses candidats vers le cuivre du PLAN PRINCIPAL
-(`_cuivre_principal_en_face`) — on ordonne, on ne filtre pas, « exiger » ayant
-été réfuté le 2026-09-01.
-
-**NEVER relayer le message d'un DRC comme une description de la géométrie.**
-« Zone [GND] on B.Cu <-> Zone [GND] on F.Cu » se lit « les deux faces ne sont
-pas reliées » ; le board portait pourtant 23 vias reliant les deux plans. Le
-DRC nomme la ZONE, pas l'îlot. J'ai bâti là-dessus une explication fausse, que
-l'utilisateur a relevée en une phrase : « tu comptes faux ? ».
-
-**NEVER raccorder un îlot de plan par une LIGNE DROITE.** Un îlot est isolé PAR
-une piste qui le coupe : toute droite vers le plan la retraverse. Mesuré —
-« 5 amas vus, AUCUN raccordé ». Et **NEVER partir du BORD de l'îlot** : ce bord
-est exactement à la distance de dégagement de la piste fautive, donc il n'y a
-jamais la place d'y poser une piste. On part de la PASTILLE (avis de GLM : le
-sujet est la connectivité du pad, pas le cuivre de l'îlot), et on contourne
-avec `_chemin_de_contournement` (A* borné en distance ET en nombre de nœuds).
-
-**NEVER borner une recherche par la seule géométrie.** Une portée en
-millimètres ne borne pas le TRAVAIL : chaque nœud interroge tous les obstacles
-du board. `_NOEUDS_MAX_CONTOURNEMENT` plafonne les nœuds visités — sans lui,
-`(portée/pas)² × obstacles` fait geler `route_auto`.
-
-**NEVER porter un diagnostic dans un état de MODULE.** `_ILOTS_PERDUS` était
-global ; `route_auto` étant un `def` sync, FastAPI l'exécute dans son pool de
-threads et deux routages du même worker auraient mélangé leurs diagnostics.
-Le constat voyage par la pile.
-
-⚠️ **Ce qui reste OUVERT** : sur carte-07, les îlots orphelins sont
-PHYSIQUEMENT ENCERCLÉS — aucun via ne les rejoint, aucun chemin ne les
-contourne, et un budget quatre fois plus large ne change rien. Le remède
-général est écrit ; ce cas-là ne se referme pas après coup. La suite est en
-amont : ne pas laisser le routage enfermer une pastille de masse.
-
-### Leçons inscrites le 2026-09-03 — la garde qui ment sur ce qu'elle couvre
-
-**NEVER laisser une DISPENSE valoir au-delà de ce qu'elle a mesuré.** Le via
-posé dans une pastille était exempté de dégagement, au motif juste qu'il
-« hérite de l'isolement de sa pastille ». Vrai **sur la couche de la
-pastille** : une pastille CMS n'existe que sur une face, le via traverse
-jusqu'à l'autre, et y pose du cuivre que rien ne vouche. Mesuré à **0,048 mm**
-d'une piste GPIO46 sur B.Cu, pour 0,2 mm exigés. La dispense est désormais
-bornée à la couche de la pastille ; les autres sont vérifiées.
-Garde : `tests/test_via_in_pad_traverse_les_couches.py`.
-
-**NEVER faire confiance à une docstring qui promet de suivre une autre
-fonction.** `_poser_via_dans_pastille` affirmait « réutilise exactement les
-règles du fanout ». La phrase était vraie quand elle a été écrite ; le
-renforcement du fanout, le matin même, l'a rendue fausse **sans que rien ne le
-signale**, et le défaut ci-dessus a survécu une demi-journée de plus dans la
-sœur. Quand deux fonctions doivent appliquer la même règle, **extraire la
-règle** et poser une garde qui compare les deux — `_via_gene_par` existe pour
-ça. Un prédicat inline dans deux fonctions ne peut être testé que par leurs
-effets, et c'est ainsi qu'elles divergent.
-
-**NEVER calibrer une règle sur `expected/` quand le code lit `output/`.** Ma
-règle de dogbone trouvait 3 à 57 cibles sous Windows et **zéro** dans le
-conteneur : `/app/examples` est CUIT DANS L'IMAGE, pas monté, et le banc
-accepte une racine explicite (`banc_exemples.py /tmp/ex`) précisément pour ça.
-Un banc entier perdu, sept cartes sur huit jamais mesurées. C'est la deuxième
-fois que ce dépôt paie « calibrer sur une source voisine de celle que le code
-lit » — la première était le plancher d'échappement.
-
-**NEVER bâtir un diagnostic sur une sonde qu'on vient d'écrire sans la
-confronter à une vérité connue.** Ma sonde d'îlots annonçait « tous les îlots
-non reliés » sur un board que le DRC déclarait à une seule connexion près :
-absurde, donc la sonde était fausse — `_touche_le_net_en_face` attend un NOM de
-couche, je lui passais un identifiant. Trois sondes fausses dans la même
-session, toutes détectées par l'invraisemblance de leur résultat, jamais par
-leur code.
-
-**NEVER conclure qu'un défaut de routage est STRUCTUREL sans plusieurs
-tirages.** Voir la section routage : 23 points d'écart sur la même carte au même
-placement, et deux tirages concordants qui ne prouvaient rien.
-
-**ALWAYS sortir du conteneur ce qu'on veut garder.** `examples/` n'y est pas
-monté : un board produit par le banc n'existe QUE dans le conteneur et part au
-premier redémarrage — la leçon des worktrees vidés, transposée.
-
-### Leçons inscrites le 2026-09-14 — la broche que personne ne nommait
-
-Question de l'utilisateur : « pourquoi carte-10 n'escalade pas les couches si
-elle ne route pas ». Elle escaladait (2 → 4 → 6, arrêt motivé) ; ce qui
-manquait était UNE broche GND, U1.8, orpheline du plan à tous les paliers —
-et du cuivre en plus ne relie pas une broche que rien ne désigne. Quatre
-défauts génériques, chacun vérifié sur le vrai board :
-
-**NEVER prendre les obstacles d'un TRAJET sur toutes les couches.** La piste
-d'échappement ne vit que sur la couche de sa pastille ; seul le via traverse.
-Une piste IO_L14 sur B.Cu, SOUS la pastille, faisait renoncer le fanout
-(« aucune sortie dégagée ») alors que le couloir F.Cu était libre et qu'un via
-GND attendait à 1,2 mm. Deux listes désormais (`obstacles` pour la piste,
-`obstacles_via` pour le via). Preuve : 7 → 6 manquantes, U1.8 reliée.
-
-**NEVER libérer, à l'escalade, le cuivre d'un net que le routeur ne route
-pas.** Les tronçons et vias GND libérés autour d'une pastille non reliée
-n'étaient pas rendus au routeur — GND est absent du DSN — ils étaient PERDUS
-(« 51 LIBÉRÉ(S) » à chaque palier, puis « Pad 8 [GND] <-> Via [GND] » au DRC
-final). Les nets de `_NETS_CONFIES_AU_PLAN` restent protégés.
-
-**NEVER attendre du DRC qu'il NOMME la pastille en cause.** Il décrit une
-coupure par ses deux items les plus proches — « Zone [GND] <-> Zone [GND] »,
-« Track [GND] 1,2 mm <-> Track [GND] 1,2 mm » — et U1.8 n'apparaissait dans
-aucune. Ni le fanout ni le repli GND ciblé ne visaient une broche sans nom.
-`_pads_hors_du_cluster_principal` demande à pcbnew, zones coulées, quelles
-pastilles du net sont hors de son amas principal : c'est la connectivité qui
-désigne l'orpheline. Preuve : « pastilles visées : [] » → « [('U1', '8')] »,
-et « repli GND CIBLE : … U1-8 » apparaît enfin dans le journal.
-
-**NEVER laisser un souvenir pris à un palier interdire le suivant.** Le repli
-GND ciblé refusé à 2 couches (une seule face de signal) était « DÉJÀ tenté »
-à 4, où deux couches internes lui auraient donné un chemin. La signature d'un
-échec porte le nombre de couches. (Mesure en cours au moment de l'écriture.)
-
-**NEVER reposer un tronçon par-dessus son jumeau.** Neuf tronçons identiques
-de 1,2 mm sur un même via, un par repose. `_troncon_deja_la` avant la pose.
-
-Gardes : `test_sortie_ne_voit_que_sa_couche.py`,
-`test_liberation_epargne_les_nets_du_plan.py`, `test_orphelines_par_cluster.py`,
-`test_repli_gnd_memo_par_palier.py`, `test_via_deja_la_troncon_seul.py`.
-
-### Leçon inscrite le 2026-09-14 — le service tournait sur une image de juillet
-
-**NEVER mesurer sans avoir vérifié que le SERVICE porte le code qu'on croit.**
-Trois bancs de carte-10 ont été perdus le 2026-09-14 avant de comprendre :
-l'image `cirqix-kicad:latest` datait du **19 juillet**, et
-`docker-compose.yml` ne monte à chaud que `routers/`, `tools/`, `main.py`,
-`security.py` et `observability.py`. Tout le reste — entrypoint compris —
-vient de l'image.
-
-Ce qui manquait, dans le dépôt depuis le 2026-09-12 :
-
-    superviseur qui RELANCE la JVM Freerouting   absent  -> « JVM tuee mais pas revenue en 60 s »
-    lancer_service.py (ping uvicorn 5 s)         absent  -> PID 1 = uvicorn nu
-
-Conséquence mesurée : dès qu'un job figé faisait tuer la JVM, elle ne revenait
-jamais et TOUT le routage basculait sur `freerouting-cli` — une JVM par job.
-carte-10 : **5474 s** au lieu de 2686 s, paliers abandonnés à 86 %.
-
-Le symptôme se lisait dans le journal (`freerouting-cli` au lieu de
-`freerouting-api`) et j'ai mis trois bancs à le voir. Le diagnostic tient en
-une commande :
-
-    docker exec cirqix-kicad ps -eo pid,args --no-headers | head -1
-    #  attendu : python3 /app/lancer_service.py …
-    #  trouvé  : /opt/venv/bin/uvicorn …        <- image perimee
-
-**ALWAYS** reconstruire l'image du service après tout commit touchant
-`docker-entrypoint.sh`, `lancer_service.py`, le `Dockerfile` ou les
-sous-modules — exactement la règle déjà inscrite pour `cirqix-worker` le
-2026-09-12, jamais appliquée à `cirqix-kicad`. Vérification après
-reconstruction : tuer la JVM et confirmer qu'elle revient.
-
-### Leçon inscrite le 2026-09-10 — le worker que son propre superviseur abat
-
-**NEVER lire deux lignes voisines d'un journal comme une cause et son effet
-sans vérifier leur ORDRE.** Les `RemoteDisconnected` (« Child process died »)
-ont reçu TROIS diagnostics faux en une journée — mémoire, JVM, plantage natif
-`pcbnew` — le dernier parce que l'assert `PROPERTY_ENUM` apparaissait « à côté »
-de la mort. Il apparaît 3 à 5 s **après**, imprimé par le worker SUIVANT qui
-importe `pcbnew` au démarrage.
-
-La cause, mesurée par une sonde (`faulthandler.dump_traceback_later`, thread C,
-sans GIL) : **uvicorn 0.30 tue par SIGKILL tout worker qui ne répond pas à son
-ping en 5 s** (`supervisors/multiprocess.py:170 process is hung, kill it`), donc
-tout worker dont un appel C tient le GIL 5 s. Ici `read_text()` du journal
-Freerouting — **564 Mo**, relu en entier deux fois par tour de sondage —
-tenait le GIL 6 à 9 s. Rien de « dense » là-dedans : le symptôme suivait la
-taille du journal, `carte-05` (26 composants) perdait 3 essais sur 4.
-
-Correctif : `tools/journal_freerouting.py::LecteurIncremental` — lu par
-incréments depuis le départ du job. Mesuré : 0 famine, routage 165 → 77 s.
-Garde : `tests/test_journal_lu_par_increments.py`.
-
-**NEVER** tenir le GIL plus de quelques secondes dans un worker uvicorn — un
-gros `read_text`, `json.loads`, `re` sur des mégaoctets — ou le faire dans un
-processus enfant. Le superviseur ne distingue pas « occupé » de « pendu ».
-
-**NEVER** proposer un correctif sans instrument : « isoler pcbnew dans un
-enfant » était en place depuis des semaines et n'aurait rien changé.
-
-### Leçons inscrites le 2026-09-07 — cinq compteurs qui inventaient un succès
-
-Une même faute, trouvée cinq fois en la cherchant volontairement : **un échec
-rend la même valeur que son cas normal.** Elle était déjà inscrite ici, corrigée
-au cas par cas ; c'est la première fois qu'elle est traquée comme une FAMILLE.
-
-| où | ce qui était rendu | conséquence |
-|---|---|---|
-| `parse_routed_pct`, sortie illisible | `100` | « 100 % routé » sur 4 segments |
-| `parse_routed_pct`, dénominateur nul | `100` | idem |
-| `tools/reasoning.py`, `nets_total = 0` | `100` | idem |
-| `_rapport_drc` indisponible | `{}` → 0 erreur | **5 gardes acceptaient tout** |
-| escalade, palier illisible | 0 erreur | un palier faux gagnait |
-| `handleReason`, pas de board | `success` + `ROUTING_DONE` | statut fantôme persisté |
-
-**NEVER laisser un défaut corrigé dans une fonction sans chercher ses SŒURS.**
-`_measured_routed_percent` portait déjà, mot pour mot, « un dénominateur nul
-n'est pas une victoire — on renvoyait 100 ici ». Deux jumelles vivaient à côté,
-intactes. Ce dépôt l'avait déjà payé avec `livrer_boards.py`, puis avec le
-`_poser_via_dans_pastille` qui promettait de suivre le fanout.
-
-**NEVER se contenter de JOURNALISER un défaut qu'on a compris.** `_rapport_drc`
-avouait le sien en commentaire : « les appelants lisent le dict vide comme "rien
-à signaler" — TANT QU'ILS LE FONT, ce journal est le seul endroit où l'absence
-de verdict est visible ». Le journal a tenu la place du correctif pendant des
-semaines, et cinq gardes « ne peut qu'améliorer » acceptaient n'importe quoi dès
-que le DRC était muet — c'est-à-dire quand le board est justement suspect.
-
-**NEVER écrire cinq fois la même comparaison.** Elles étaient identiques, donc
-fausses identiquement. Une règle vit à UN endroit : `_aggrave_le_board`, qui
-échoue fermé. Corollaire mesuré le jour même : **centraliser une règle ne doit
-pas multiplier son coût** — ma première version re-jugeait le board de référence
-à chaque tour de boucle, et c'est un test existant qui l'a attrapé.
-
-**NEVER laisser une phrase rassurante tenir lieu d'audit.** L'en-tête de
-`handler-reason.test.ts` affirmait que ce handler « n'a PAS été modifié » et
-qu'il était « sûr par construction ». C'est exactement ce qui l'a soustrait à
-l'examen, alors qu'il était le seul des huit sans garde fail-fast.
-
-**Fermer une branche inatteignable vaut la peine.** Celle de `handleReason` ne
-l'était que par une coïncidence entre deux fonctions qui ne se connaissent pas —
-`shouldRescueRouting` exige un routage réussi, lequel écrit le cache. « Pas
-atteignable aujourd'hui » n'est pas une garantie.
-
-Trois candidats vérifiés SAINS, à ne pas ré-auditer : `_collect_violations`
-refuse déjà de lire un rapport inconnu comme zéro violation ; les `return 0` de
-`placement.py` comptent des composants DÉPLACÉS (« rien n'a bougé », pas « tout
-va bien ») ; `reasoning-service.ts` échoue honnêtement à 0 % avec un warning.
-
-### Limite de detect_functional_clusters — ACCEPTÉE 2026-06-18, **LEVÉE 2026-08-29** :
-Le clustering natif regroupe les grappes mais ne colle PAS les bypass caps/quartz à
-l'IC (springs molles ~50 dominées par les rails GND ~75) → caps à 13-28mm du MCU.
-
-Décision d'alors : accepté tel quel (routable), adjacence serrée → Phase 6 RL_PCB.
-
-⚠️ **Cette décision reposait sur une prémisse fausse : qu'il n'existait pas de
-levier natif.** Il en existait un, et le clustering le calculait déjà à chaque
-appel — `FunctionalCluster.max_distance_mm`, un plafond PAR TYPE de cluster
-(POWER 3 mm · TIMING 5 · DRIVER 6 · INTERFACE 8). Personne ne le lisait. On a
-donc attendu deux mois d'un GA qu'il produise spontanément un résultat que sa
-fonction de coût lui interdit, alors que la règle était posée à côté.
-
-Le snap (`tools/placement_bypass.py`) ne réintroduit AUCUNE heuristique : la
-détection reste `detect_functional_clusters`, le seuil est celui du cluster.
-Ce n'est pas un optimiseur de placement — c'est l'application d'une règle que la
-lib exprime et n'applique pas. La règle de CLAUDE.md est respectée.
-
-
-
-### Non-déterminisme hybrid+cluster → fix natif chaîné (2026-06-18) :
-`OptimizationWorkflow` n'a pas de seed fixe : benchmark 5 runs sur le board STM32
-réel = 8/0/3/0/5 conflits selon le tirage, dont des erreurs ERROR (pad clearance
-≤0 — court-circuit réel). Un best-of-N (relancer le GA jusqu'à 0 conflit) est
-**inutilisable en synchrone** — 1 run mesuré = 97-105s, donc N=6-8 essais = 10-13min.
-**Fix livré (`tools/placement.py::_resolve_remaining_conflicts`)** : après l'optimisation,
-chaîner `PlacementAnalyzer.find_conflicts()` puis si erreurs ERROR détectées,
-`PlacementFixer.iterative_fix()` (réparation locale ~0.05-0.1s, PAS de ré-exécution GA).
-Validé : 3 runs complets sur le board STM32 réel = 0 conflit / 0 erreur (vs 8/0/3/0/5
-sans le fix). 100% natif (PlacementAnalyzer + PlacementFixer), zéro algo custom.
-
-### Phase 3 — Géomètre CMA-ES + filet de sécurité (2026-06-18) :
-Réintroduction du CMA-ES (`kct optimize-placement --strategy cmaes --seed-method
-current`) comme **3e étape optionnelle** après Architecte+Inspecteur, pour répondre
-à la limite ci-dessus (adjacence 13-28mm) — raffinement best-effort, jamais une
-garantie. Depuis le 2026-08-29, c'est le SNAP qui garantit l'adjacence ; le
-Géomètre reste ce qu'il a toujours été, un micro-raffinement qui le précède.
-**Ablation contrôlée** (CMA-ES seul sur un board STM32 déjà placé+fixé, 0 erreur) :
-9.4s, 8/10 paires d'adjacence resserrées (Y1-U2 16.73→7.50mm, C11-Y1 17.47→13.34mm,
-C1-U1 8.37→4.51mm…), 2 légèrement dégradées (C13-U2, C3-U1, +1.1/+1.4mm). Le CMA-ES
-brut introduit 1 ERROR + 6 WARNING (son modèle de faisabilité interne ≠ DesignRules
-de PlacementAnalyzer) — l'Inspecteur les nettoie à 0 ERROR / 2 WARNING.
-**Benchmark pipeline complet** (GA aléatoire + CMA-ES enchaînés, board STM32 réel,
-17 composants) : un run a produit 17 conflits post-CMA-ES que l'Inspecteur (10 passes)
-n'a pas pu résorber (oscillation, 3 ERROR résiduels) — **régression détectée avant
-livraison**, jamais en prod grâce au filet de sécurité ci-dessous.
-**Filet de sécurité obligatoire** (`auto_place`) : snapshot du board juste après
-Architecte+Inspecteur (déjà garanti 0 ERROR) ; si après le Géomètre+Inspecteur il
-reste des erreurs ERROR, le snapshot est restauré — le board livré est TOUJOURS
-0 ERROR, que le CMA-ES ait réussi ou non. Test de régression :
-`test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain`. 11/11 tests
-`test_placement.py` verts. 100% natif (`run_optimize_placement` + `PlacementAnalyzer`
-+ `PlacementFixer`), zéro algo de placement custom.
+### Principes de mesure et de correction
+
+Les récits datés qui fondent ces principes, avec leurs mesures et leurs gardes de
+test, sont dans `docs/lecons-cirqix.md`.
+
+- Un échec ne rend jamais la valeur de son cas normal (rapport DRC vide, `None`, 0 %,
+  arrondi à 100). Distinguer « mesuré à zéro » de « jamais mesuré », et échouer fermé.
+- Un défaut de forme corrigé a des sœurs : chercher la même hypothèse dans les
+  fonctions voisines avant de clore (nets KiCad 10, filtres de pastilles, lectures
+  lourdes dans un worker).
+- Le message d'une garde ou d'un DRC dit ce qu'elle a mesuré, pas la cause. Lire la
+  ligne suivante et la géométrie avant de conclure ; dans un journal partagé,
+  attribuer une ligne par l'heure.
+- Freerouting et le placement sont stochastiques : conclure sur au moins trois
+  tirages, pour le résultat comme pour la durée.
+- Mesurer ce que le code lit et ce que la production exécute : le board réel (ni
+  `circuit.json`, ni `expected/` quand le code lit `output/`), un service redémarré sur
+  le bon code, et un banc qui appelle le service comme `handlePlacement`.
+- Aucune mesure de routage pendant une autre charge (agents, revues, graphify) :
+  lancer le banc détaché (`docker exec -d`, journal redirigé) et nettoyer les
+  pipelines orphelins avant de relancer.
+- Une règle livrée a une garde qui prouve qu'elle est APPELÉE, vérifiée sur les boards
+  du banc et pas seulement sur une fixture.
+- Les distances se mesurent entre corps (courtyard orienté, `_boite_orientee_fp`),
+  jamais entre origines.
+- Pas de travail CPU de plus de quelques secondes sous le GIL dans un worker uvicorn
+  (SIGKILL après 5 s sans réponse au ping) : utiliser un processus enfant.
+- Un résultat annoncé a son artefact versionné ; ce qui reste dans le conteneur
+  n'existe pas.
+
+Faits d'environnement :
+- Service KiCad : le PID 1 attendu est `lancer_service.py`
+  (`docker exec cirqix-kicad ps -eo pid,args --no-headers | head -1`). Reconstruire
+  l'image après tout changement de `docker-entrypoint.sh`, `lancer_service.py`, du
+  `Dockerfile` ou d'un sous-module, puis tuer la JVM et vérifier qu'elle revient.
+- Réglages de banc : passer par le fichier `tools/reglages_banc.py` (relu à chaque
+  appel), jamais par une variable d'environnement du pipeline.
+- Agents externes : interdire graphify dans leur prompt, et lancer
+  `codex exec … < /dev/null`.
 
 ---
 
@@ -2954,24 +1800,19 @@ dans `DEPENDENCIES.md`.
 - **Garde CI :** `services/kicad/tests/test_docker_build_context.py` + build Docker bloquant
 
 ### kicad-tools (fork privé complet — sous-module)
-- **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink
-  `839a5b96f7b8da130d6d97add95c215484373668` (vérifié le 2026-09-11 : c'est
-  le gitlink réel, 4 commits après `16aa431` — 3 CI + une retouche du patch
-  #1 ; 5 patches réellement portés : #1, #2, #3, #4, #7 ; upstream a 331
-  commits d'avance, rebase recommandé, 2 conflits triviaux) (rebasé le 2026-08-10 sur
-  `upstream/main` @ `627f3e44`, 221 commits rattrapés) ; upstream
-  github.com/rjwalters/kicad-tools.
+- **Fork :** github.com/bmechergui/kicad-tools, branche `cirqix`, gitlink épinglé
+  (`git ls-tree HEAD services/kicad/kicad-tools`) ; upstream github.com/rjwalters/kicad-tools.
+  Patches portés, écart avec upstream et procédure de rebase : `services/kicad/DEPENDENCIES.md`,
+  source unique.
 - **Chemin :** `services/kicad/kicad-tools/` (tiret ; package Python `kicad_tools`).
 - **Import :** `kicad-tools/src` sur le sys.path → `import kicad_tools`.
 - **Install Docker :** `pip install -e "/opt/kicad-tools[placement,drc,geometry,native]"`
   puis `kct build-native` (backend C++ A*, 10-100× ; besoin cmake+g++).
 - **Workflow utilisé :** placement = 1 appel natif `OptimizationWorkflow(strategy="hybrid",
   enable_clustering=True, fixed_refs=<J*/P*>).run()` + **`.write_to_pcb()`** (GA + physique
-  force-directed en interne) · routage `kct route --auto-layers --auto-fix` + `kct reason`
-  (LLM/heuristique).
-- **Patches Cirqix #1 à #8** suivis dans la branche privée `cirqix`, y compris les
-  correctifs CMA-ES writer/seed et rotation de pads. Inventaire, tests et procédure
-  de rebase : `services/kicad/DEPENDENCIES.md`.
+  force-directed en interne) · routage : cascade Freerouting → kct route
+  (`routers/routing.py::route_auto`) + `kct reason` (reasoner, sous-étape déclenchée par code).
+- **Patches Cirqix :** inventaire à jour dans `services/kicad/DEPENDENCIES.md`.
 
 **Règle :** ne mettre à jour un gitlink qu'après rebase du fork, tests et double revue.
 
@@ -2983,4 +1824,4 @@ Architecte logiciel senior full-stack, 15 ans d'expérience, spécialisé agents
 Maîtrise : Next.js 15 · TypeScript strict · Turborepo · Supabase · Claude SDK · Lemon Squeezy · Circuit-Synth · KiCanvas · KiCad/FastAPI · Docker.
 Principes : FSD · clean architecture · atomic design · tests · sécurité · coût agentique <0.12€/PCB.
 
-Tu penses étape par étape. Tu annonces les skills avant chaque action. Tu contredis les mauvaises pratiques. Tu proposes des solutions modernes même si non demandées.
+Tu annonces les skills avant chaque action. Tu contredis les mauvaises pratiques. Tu livres ce qui est demandé, au périmètre voulu ; si une meilleure approche existe, tu le dis en une phrase et tu poursuis la tâche telle que demandée. Un changement de stratégie, de seuil ou d'architecture passe par une proposition (§3).
