@@ -2346,6 +2346,19 @@ def _crossing_count(features) -> float:
     return float(crossing_count(features))
 
 
+def _rangement_degrade(err_avant: int, err_apres: int,
+                       x_avant: Optional[float], x_apres: Optional[float]) -> bool:
+    """Le rangement des familles (phase C) empire-t-il le placement ?
+    Plus d erreurs, ou plus de croisements du chevelu. Une mesure de
+    croisements INCONNUE apres le rangement le condamne : on ne garde pas un
+    changement qu on n a pas su juger."""
+    if err_apres > err_avant:
+        return True
+    if x_avant is None:
+        return False
+    return x_apres is None or x_apres > x_avant
+
+
 def _croisements_du_placement(pcb_path) -> Optional[float]:
     """Croisements inter-nets du chevelu, nets de plan exclus — critere NATIF.
 
@@ -3333,30 +3346,41 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # le long d un bord DEFAIT le rayon sur lequel la graine vient de les
         # poser, et laissait un conflit contre le centre. Deux mises en forme
         # qui se combattent — comme le clamp et le centrage le 2026-08-27.
+        #
+        # ⚠️ D-2026-09-26-a, phase C : les paires sont rangees en MATRICE la ou
+        # l optimiseur les a mises (`placement_familles`), plus contre le bord
+        # le plus libre — depuis la phase A chaque bord porte un connecteur, et
+        # `ranger_les_paires` repondait « aucun bord assez libre » sur 22
+        # tirages de la campagne du 2026-09-26. Garde-fou elargi : annule si
+        # les erreurs OU les croisements du chevelu augmentent.
         try:
-            n_rang = 0
+            deplaces_fam = []
             if not centres_etoile:
-                from tools.placement_contraintes import paires_du_board as _paires_du_board
-                from tools.placement_rangees import ranger_les_paires
+                from tools.placement_familles import ranger_les_familles
                 _rendre_lisible(out)
                 pcb_rang = PCB.load(str(out))
-                n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
-                                           board_width_mm, board_height_mm)
-            if n_rang:
+                deplaces_fam = ranger_les_familles(pcb_rang, conn)
+            if deplaces_fam:
                 avant_rangees = out.read_bytes()
                 err_avant_rangees = _compter_conflits_erreur(out)
+                x_avant_rangees = _croisements_du_placement(out)
                 pcb_rang.save(str(out))
                 _normalize_to_board_frame(out)
                 _resolve_remaining_conflicts(out, fixes_snap)
                 _rendre_lisible(out)
-                if _compter_conflits_erreur(out) > err_avant_rangees:
+                err_apres = _compter_conflits_erreur(out)
+                x_apres = _croisements_du_placement(out)
+                if _rangement_degrade(err_avant_rangees, err_apres, x_avant_rangees, x_apres):
                     out.write_bytes(avant_rangees)
-                    logger.info("auto_place: rangees de paires annulees (%d -> %d erreurs)",
-                                err_avant_rangees, _compter_conflits_erreur(out))
+                    logger.info("auto_place: familles annulees (erreurs %d -> %d, "
+                                "croisements %s -> %s)", err_avant_rangees, err_apres,
+                                x_avant_rangees, x_apres)
                 else:
-                    logger.info("auto_place: rangees de paires — %d footprint(s) poses", n_rang)
+                    logger.info("auto_place: familles rangees — %d footprint(s) poses "
+                                "(croisements %s -> %s)", len(deplaces_fam),
+                                x_avant_rangees, x_apres)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("auto_place: rangees de paires impossibles (%s) — placement conserve", exc)
+            logger.warning("auto_place: familles non rangees (%s) — placement conserve", exc)
 
         _pas = _grille_mm()
         if _pas > 0:

@@ -120,7 +120,9 @@ class TestCablage:
         from tools import placement as P
         code = "\n".join(l.split("#")[0] for l in inspect.getsource(P._auto_place_une_fois).splitlines())
         i_snap = code.find("snap_cluster_members(")
-        i_rang = code.find("ranger_les_paires(")
+        # Depuis D-2026-09-26-a (phase C), l etape s appelle `ranger_les_familles`
+        # (tools/placement_familles.py) ; `ranger_les_paires` n est plus appelee.
+        i_rang = code.find("ranger_les_familles(")
         i_grille = code.find("aligner_sur_grille(")
         assert i_snap != -1 and i_rang != -1 and i_grille != -1
         assert i_snap < i_rang < i_grille, "les rangees viennent apres le snap et avant la grille"
