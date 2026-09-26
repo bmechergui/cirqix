@@ -828,7 +828,7 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         # 2x19 mesure 50 mm, et clamper sa position a 2 mm du bord laissait
         # 48 mm de corps DEHORS — le defaut meme que ce clamp doit empecher,
         # puisqu un ancrage n est plus jamais deplace ensuite.
-        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        fx0, fy0, fx1, fy1 = _boite_orientee_fp(fp)
         cx = _clamp_axe(x, fx0, fx1, min_x, max_x)
         cy = _clamp_axe(y, fy0, fy1, min_y, max_y)
         # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
@@ -1018,7 +1018,7 @@ def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
     for fp in pcb.footprints:
         if fp.reference in refs:
             x, y = fp.position
-            b = _boite_locale_fp(fp)
+            b = _boite_orientee_fp(fp)
             out[fp.reference] = (x + b[0] - marge, y + b[1] - marge,
                                  x + b[2] + marge, y + b[3] + marge)
     return out
@@ -1026,7 +1026,7 @@ def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
 
 def _corps_dans_le_contour(fp, x: float, y: float,
                            min_x: float, max_x: float, min_y: float, max_y: float) -> bool:
-    b = _boite_locale_fp(fp)
+    b = _boite_orientee_fp(fp)
     return (min_x <= x + b[0] and x + b[2] <= max_x
             and min_y <= y + b[1] and y + b[3] <= max_y)
 
@@ -1073,7 +1073,7 @@ def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
         autres = _boites_absolues(pcb, set(ancres) - {ref})
 
         def libre(x, y):
-            b = _boite_locale_fp(fp)
+            b = _boite_orientee_fp(fp)
             bx0, by0, bx1, by1 = x + b[0], y + b[1], x + b[2], y + b[3]
             return not any(bx0 < ox1 and bx1 > ox0 and by0 < oy1 and by1 > oy0
                            for ox0, oy0, ox1, oy1 in autres.values())
@@ -1750,7 +1750,7 @@ def _encombrement_fp(fp) -> tuple:
     Sans courtyard declare, on retombe sur les pastilles — rendre 0 ferait
     perdre toute protection.
     """
-    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    x0, y0, x1, y1 = _boite_orientee_fp(fp)
     return x1 - x0, y1 - y0
 
 
@@ -1893,7 +1893,7 @@ def _placer_en_couronne(pcb, dominants: list) -> int:
     principal = modules[0]
     # ⚠️ On centre le CORPS, pas l ORIGINE. L origine d un module est sur sa
     # pastille 1 ; la poser au milieu de la carte y decale le corps d autant.
-    bx0, by0, bx1, by1 = _boite_locale_fp(principal)
+    bx0, by0, bx1, by1 = _boite_orientee_fp(principal)
     principal.position = (cx - (bx0 + bx1) / 2.0, cy - (by0 + by1) / 2.0)
     px, py = principal.position
     # Boite ABSOLUE du corps : c est elle que la couronne doit contourner.
@@ -1924,7 +1924,7 @@ def _placer_en_couronne(pcb, dominants: list) -> int:
         for x, y in cases:
             if not restants:
                 break
-            fx0, fy0, fx1, fy1 = _boite_locale_fp(restants[0])
+            fx0, fy0, fx1, fy1 = _boite_orientee_fp(restants[0])
             # Hors contour : un passif dehors est inroutable. La boite du
             # passif, pas sa demi-taille — meme raison que pour le module.
             if not (0.0 <= x + fx0 and x + fx1 <= l_carte
@@ -1997,7 +1997,7 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
         fp = next((f for f in pcb.footprints if f.reference == ref), None)
         if fp is None:
             continue
-        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
         px, py = fp.position
         boites.append((px + bx0, py + by0, px + bx1, py + by1))
     if not boites:
@@ -2009,7 +2009,7 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
             continue
         x, y = fp.position
         # Le mobile n est pas un POINT non plus : sa propre boite compte.
-        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        fx0, fy0, fx1, fy1 = _boite_orientee_fp(fp)
         for mx0, my0, mx1, my1 in boites:
             if (x + fx1 <= mx0 or mx1 <= x + fx0
                     or y + fy1 <= my0 or my1 <= y + fy0):
@@ -2059,7 +2059,7 @@ def _centrer(pcb, refs: list) -> None:
         # ⚠️ Le CORPS au centre, pas l ORIGINE. L origine d un module est sur
         # sa pastille 1 : centrer l origine decale le corps de tout le
         # decalage du courtyard — 10 mm sur l ESP32-WROOM.
-        x0, y0, x1, y1 = _boite_locale_fp(fp)
+        x0, y0, x1, y1 = _boite_orientee_fp(fp)
         l = x1 - x0
         # Plusieurs dominants : on les decale de leur propre largeur.
         fp.position = (cx + i * (l + 5.0) - (x0 + x1) / 2.0, cy - (y0 + y1) / 2.0)

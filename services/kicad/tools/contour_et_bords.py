@@ -77,8 +77,17 @@ def _contour_repere_board(pcb: Any) -> Optional[tuple[float, float, float, float
 
 
 def _boite_locale(fp: Any) -> tuple[float, float, float, float]:
-    from tools.placement import _boite_locale_fp  # import paresseux : placement importe ce module
-    return _boite_locale_fp(fp)
+    """Le corps de `fp` relatif à sa position, TOURNÉ avec lui.
+
+    ⚠️ Campagne du 2026-09-26, carte-11 : cette fonction rendait la boîte du
+    repère du footprint, NON tournée (`_boite_locale_fp`), ajoutée telle quelle
+    à `fp.position`. Tant que les connecteurs n'étaient jamais tournés, l'écart
+    tenait dans la marge de 3 mm ; depuis qu'ils sont couchés (D-2026-09-26-a),
+    le contour resserré passait à 27 x 108 mm à travers deux en-têtes de
+    52 mm — routage à 0 % à tous les paliers, trois tirages sur trois.
+    """
+    from tools.placement import _boite_orientee_fp  # import paresseux : placement importe ce module
+    return _boite_orientee_fp(fp)
 
 
 def _bord_le_plus_proche(fp: Any, contour: tuple[float, float, float, float]) -> str:

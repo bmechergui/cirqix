@@ -85,7 +85,7 @@ def compacter_la_carte_de_depart(kicad_pcb_b64: str, largeur: float, hauteur: fl
     cas de panne (on le DIT : la carte est seulement restée grande).
     """
     from kicad_tools.schema.pcb import PCB
-    from tools.placement import (_boite_locale_fp, _connector_refs,
+    from tools.placement import (_boite_orientee_fp, _connector_refs,
                                  _redimensionner_contour)
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -94,7 +94,7 @@ def compacter_la_carte_de_depart(kicad_pcb_b64: str, largeur: float, hauteur: fl
             pcb = PCB.load(str(f))
             surface = 0.0
             for fp in pcb.footprints:
-                x0, y0, x1, y1 = _boite_locale_fp(fp)
+                x0, y0, x1, y1 = _boite_orientee_fp(fp)
                 surface += (x1 - x0) * (y1 - y0)
             taille = taille_compacte(surface, largeur, hauteur, occupation)
             if taille is None:
