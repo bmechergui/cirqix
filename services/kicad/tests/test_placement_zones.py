@@ -154,3 +154,32 @@ class TestCablage:
         zones = self.SOURCE.index("respecter_les_zones(out, conn)", garde)
         drc = self.SOURCE.index("_reparer_chevauchements_du_drc(out, conn)", zones)
         assert grille < garde < zones < drc
+
+
+class TestTirages:
+    """carte-02, tirage 2 du 2026-09-26 : « U2 touche connecteur J2, aucune place
+    libre à 40 mm » — le tirage était pourtant retenu, car la boucle s'arrêtait
+    au premier tirage sans conflit. Une violation de zone départage désormais
+    les tirages, et un tirage qui en porte ne clôt pas la boucle."""
+
+    def test_moins_de_violations_de_zone_l_emporte_avant_le_fil(self):
+        propre = {"conflits_restants": 0, "violations_zones": 0, "croisements": 9, "fil_mm": 900}
+        viole = {"conflits_restants": 0, "violations_zones": 1, "croisements": 1, "fil_mm": 100}
+        assert P._placement_meilleur(propre, viole)
+        assert not P._placement_meilleur(viole, propre)
+
+    def test_les_conflits_passent_avant_les_zones(self):
+        conflit = {"conflits_restants": 1, "violations_zones": 0}
+        zone = {"conflits_restants": 0, "violations_zones": 3}
+        assert P._placement_meilleur(zone, conflit)
+
+    def test_un_tirage_mesure_bat_un_tirage_sans_mesure_de_zone(self):
+        mesure = {"conflits_restants": 0, "violations_zones": 2}
+        inconnu = {"conflits_restants": 0}
+        assert P._placement_meilleur(mesure, inconnu)
+        assert not P._placement_meilleur(inconnu, mesure)
+
+    def test_la_boucle_ne_s_arrete_que_sur_un_tirage_sans_violation(self):
+        src = (RACINE / "tools" / "placement.py").read_text(encoding="utf-8")
+        assert '"violations_zones": len(violations_de_zones(' in src
+        assert "if n_conflits == 0 and n_zones == 0 and essai + 1 >= _TIRAGES_MINIMUM:" in src
