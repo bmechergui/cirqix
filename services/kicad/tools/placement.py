@@ -873,8 +873,12 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
+_CARRE_ALLONGE_MM = 0.5   # en dessous, un corps n a pas de grand axe
+
+
 def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
-                      direction: Optional[float] = None) -> tuple:
+                      direction: Optional[float] = None,
+                      parallele_d_abord: bool = False) -> tuple:
     """Position d un ancrage glisse contre un bord : celui que vise la
     ``direction``, ou a defaut le plus proche de son corps.
 
@@ -901,6 +905,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
 
     Sans ``direction``, rien ne change : `_coller_les_ancrages_au_bord` glisse
     toujours par le plus court chemin, et c est sa regle propre.
+
+    ``parallele_d_abord`` (D-2026-09-26-a) : un corps ALLONGE essaie d abord
+    les bords que son grand axe longe, le plus court chemin ne departageant
+    qu ensuite. Campagne du 2026-09-26 : un en-tete vertical dans un coin, a
+    3,2 mm du bord gauche, etait colle au bord BAS, plus proche de 1 mm — et
+    finissait debout, perpendiculaire a son bord, sur 5 cartes sur 6.
     """
     x, y = pos
     bx0, by0, bx1, by1 = boite
@@ -922,7 +932,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
         (abs((min_y - by0) - y), (cx, min_y - by0), "x", (0.0, -1.0)),
         (abs((max_y - by1) - y), (cx, max_y - by1), "x", (0.0, 1.0)),
     ]
-    if direction is None:
+    allonge = abs((bx1 - bx0) - (by1 - by0)) >= _CARRE_ALLONGE_MM
+    if direction is None and parallele_d_abord and allonge:
+        # axe libre "y" = bord vertical : il longe un corps plus haut que large.
+        vertical = (by1 - by0) > (bx1 - bx0)
+        bords.sort(key=lambda b: ((b[2] == "y") != vertical, b[0]))
+    elif direction is None:
         bords.sort(key=lambda b: b[0])
     else:
         # Le bord vers lequel le rayon POINTE le plus franchement vient en
@@ -983,7 +998,7 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             (o.position[0] + ob[0], o.position[1] + ob[1], o.position[0] + ob[2], o.position[1] + ob[3])
             for o in ancres if o.reference not in poses and o is not fp
             for ob in (_boite_orientee_fp(o),)]
-        nx, ny = _position_au_bord((x, y), b, bornes, autres)
+        nx, ny = _position_au_bord((x, y), b, bornes, autres, parallele_d_abord=True)
         if abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6:
             logger.warning("ancrage %s (%.2f,%.2f) -> colle au bord (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)

@@ -16,6 +16,8 @@ Gardes sur de VRAIS boards du banc, pas seulement sur des fixtures.
 from __future__ import annotations
 
 import shutil
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -183,3 +185,25 @@ class TestTirages:
         src = (RACINE / "tools" / "placement.py").read_text(encoding="utf-8")
         assert '"violations_zones": len(violations_de_zones(' in src
         assert "if n_conflits == 0 and n_zones == 0 and essai + 1 >= _TIRAGES_MINIMUM:" in src
+
+
+class TestCollageParallele:
+    """Campagne du 2026-09-26 : un en-tête vertical dans un coin, à 3,2 mm du
+    bord gauche et 3,8 mm du bas, était collé au BAS et finissait debout."""
+
+    BORNES = (2.0, 48.0, 2.0, 33.0)          # contour 50 x 35, marge 2
+    VERTICAL = (-1.75, -1.0, 1.75, 10.2)     # 3,5 x 11,2, origine sur la broche 1
+
+    def test_un_corps_allonge_colle_au_bord_qu_il_longe(self):
+        x, y = P._position_au_bord((5.0, 22.5), self.VERTICAL, self.BORNES, [],
+                                   parallele_d_abord=True)
+        assert x == pytest.approx(2.0 + 1.75)      # bord gauche
+        assert y == pytest.approx(22.5)
+
+    def test_sans_l_option_le_plus_court_chemin_gagne(self):
+        x, y = P._position_au_bord((5.0, 22.5), self.VERTICAL, self.BORNES, [])
+        assert y == pytest.approx(33.0 - 10.2)     # bord bas, comportement historique
+
+    def test_le_collage_des_ancrages_passe_l_option(self):
+        src = (RACINE / "tools" / "placement.py").read_text(encoding="utf-8")
+        assert "_position_au_bord((x, y), b, bornes, autres, parallele_d_abord=True)" in src
