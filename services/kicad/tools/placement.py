@@ -39,6 +39,8 @@ from typing import Optional
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
 from tools.placement_bypass import snap_cluster_members
+from tools.placement_zones import (MARGE_CONNECTEUR_BORD_MM, coucher_les_connecteurs,
+                                   redresser_les_conflits, respecter_les_zones)
 from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
@@ -2842,7 +2844,14 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
         _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
-        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants)
+        # D-2026-09-26-a (validee) : un connecteur est COUCHE le long de son bord
+        # avant d y etre colle — 35 sur 48 etaient debout (2026-09-26).
+        couches = coucher_les_connecteurs(pcb, conn, exempts=dominants)
+        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+                                    margin_mm=MARGE_CONNECTEUR_BORD_MM)
+        if redresser_les_conflits(pcb, couches):
+            _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+                                        margin_mm=MARGE_CONNECTEUR_BORD_MM)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
@@ -3326,6 +3335,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # deplace (2026-09-15) : l Inspecteur de la grille n ancre que les
         # connecteurs et a ressorti R1 que le premier filet venait de rentrer.
         _garder_dans_le_contour(out, conn, fixes_snap)
+
+        # D-2026-09-26-a (validee) : rien sous ni autour d un connecteur, rien
+        # contre le bord — apres le dernier deplacement, avant la reparation DRC.
+        respecter_les_zones(out, conn)
 
         # ⚠️ PUIS LES CHEVAUCHEMENTS QUE SEUL LE DRC VOIT (2026-09-20), apres
         # la derniere etape qui deplace : l Inspecteur approxime les

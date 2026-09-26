@@ -14,6 +14,61 @@
 
 ## En attente de validation
 
+### D-2026-09-26-a — Placement « pro » : connecteurs tangents au bord, familles en rangées, sérigraphie dégagée
+
+- **Statut : validée** — l'utilisateur, le 2026-09-26 : « oui », sur les six
+  règles et la marge corps–bord de 1,5 mm. Repère réduit ou masqué : NON
+  autorisé (la variante « oui + taille » n'a pas été choisie).
+- Proposée le 2026-09-26 après la campagne de preuve
+  (45/45 livrables) et trois analyses des 15 boards retenus
+  (`scratchpad/rb`). Le routage est acquis ; ce qui sépare ces cartes d'un
+  rendu professionnel est le placement.
+- **Connecteurs — mesuré** : 48 connecteurs sur 48 ont leur corps à 2,0 mm d'un
+  bord, mais 35 sont **perpendiculaires** à ce bord (en-têtes 1×N verticaux à 0°
+  contre le bord haut ou bas) : ils plongent de 6 à 11 mm dans la carte, 52 mm
+  pour les 2×20 de carte-11. `_position_au_bord` translate, ne tourne jamais.
+  **Règle** : tourner chaque connecteur par pas de 90° pour que son grand axe
+  soit parallèle au bord choisi, puis le coller à 1 mm. Même place dans
+  `auto_place` que `_coller_les_ancrages_au_bord` (avant l'optimiseur). Point de
+  vigilance : `restore_pad_angles` sur un boîtier tourné.
+- **Familles identiques — mesuré** : écart d'alignement des LED de 11 à 14 mm
+  sur carte-08 à 10, 2 à 4 rotations différentes par famille, LED à 20-27 mm de
+  leur résistance série (4-5 mm sur carte-06 et driver-stm32, où c'est réussi).
+  `ranger_les_paires` n'a pas pris effet sur 07-10. **Règle** : une famille
+  (≥ 3 composants, même préfixe, même empreinte, même cible) posée en rangée ou
+  en matrice, pas = courtyard + 0,5 mm sur la grille, orientation commune,
+  chaque LED suivie de sa résistance, du côté des broches cibles. Étape ⑤b
+  (après halo et snap, avant la grille) ; retour au board précédent si erreurs,
+  croisements ou découplage se dégradent.
+- **Sérigraphie — mesuré** : 67 avertissements sur les 15 boards (le « 749 » de
+  la campagne est à revérifier, compte probablement doublé). 30 viennent de
+  0603 tournées à 90° dont le repère reste horizontal sur leurs propres
+  pastilles ; 34 d'un voisin, sur les cartes denses. `degager_references` ne
+  tourne jamais le texte et passe avant le routage. **Règle** : texte aligné
+  sur le grand axe du boîtier, 8 positions essayées autour du corps, obstacles
+  = pastilles, vias, contours, autres repères, bord ; seconde passe après le
+  routage. Réduire la hauteur (1,0 → 0,8 mm, minimum JLCPCB) ou masquer un
+  repère en dernier recours contredit la règle actuelle : à valider à part.
+- **Ajouts de l'utilisateur (2026-09-26, sur l'image de nucleo-f401)** :
+  « il ne faut pas dans les cartes arduino, nucleo… faire des composants en
+  dessous ou dans le bord » — précisé par lui : connecteurs AU BORD (un long
+  2×N longe le bord sur toute sa longueur), RIEN sous ni entre les connecteurs
+  (zone interdite = courtyard du connecteur + une bande), RIEN contre le bord
+  pour les autres composants (marge corps–bord proposée : 1,5 mm, à valider).
+  Valable pour toutes les cartes.
+- **Critères** : 0 `silk_overlap`/`silk_over_copper`, tout connecteur tangent à
+  un bord à ≤ 1 mm, familles alignées (écart < 0,5 mm), et **routage toujours
+  100 % / 0 erreur** sur les 15 cartes, 3 tirages (banc en deux phases).
+- **Déjà réfuté, non reproposé** : connecteurs au milieu d'un bord
+  (D-2026-09-13-c B), cadre des connecteurs resserré, grille posée avant les
+  étapes qui déplacent.
+- **Écart mesuré à l'implémentation (phase A, 2026-09-26)** : coller à 1 mm
+  contredit D-2026-09-15-a (validée, corps–bord 2 mm) — `PlacementAnalyzer` compte
+  le connecteur hors carte et `_repair_off_board` le repousse aussitôt. Le
+  connecteur est donc collé à **2 mm**, la marge existante ; la marge des autres
+  composants est la plus stricte des deux, 2 mm. Descendre à 1 mm demanderait de
+  réviser D-2026-09-15-a : à valider à part.
+
 ### D-2026-09-25-e — Le routage ne s'arrête qu'au résultat : escalade jusqu'au plafond, puis agrandissement
 
 - **Statut : validée** — l'utilisateur, le 2026-09-25, après le banc A/B :

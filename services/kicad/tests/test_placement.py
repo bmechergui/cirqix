@@ -293,11 +293,12 @@ def test_auto_place_does_not_move_connector_inside_outline(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    # Bord le plus proche du corps sur 60 x 40 : le bas. La position COLLEE est
-    # deterministe (35,46 = 40 - marge 2 - debord du corps) ; ni le GA ni le
-    # Geometre ne la deplacent ensuite.
+    # D-2026-09-26-a : J2 debout est d'abord COUCHE le long de son bord, puis
+    # colle a 2 mm — le bord le plus proche du corps couche est le haut (y=2).
+    # Deterministe ; ni le GA ni le Geometre ne le deplacent ensuite, et
+    # l'autre coordonnee reste intacte.
     assert j2["x_mm"] == pytest.approx(30.0, abs=1.0)
-    assert j2["y_mm"] == pytest.approx(35.46, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(2.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -554,11 +555,12 @@ def test_auto_place_keeps_connector_anchored_with_cmaes_step(tmp_path):
     result = auto_place(b64, _BOARD_W_MM, _BOARD_H_MM)
 
     j2 = next(p for p in result["positions"] if p["ref"] == "J2")
-    # Bord le plus proche du corps sur 60 x 40 : le bas. La position COLLEE est
-    # deterministe (35,46 = 40 - marge 2 - debord du corps) ; ni le GA ni le
-    # Geometre ne la deplacent ensuite.
+    # D-2026-09-26-a : J2 debout est d'abord COUCHE le long de son bord, puis
+    # colle a 2 mm — le bord le plus proche du corps couche est le haut (y=2).
+    # Deterministe ; ni le GA ni le Geometre ne le deplacent ensuite, et
+    # l'autre coordonnee reste intacte.
     assert j2["x_mm"] == pytest.approx(30.0, abs=1.0)
-    assert j2["y_mm"] == pytest.approx(35.46, abs=0.5)
+    assert j2["y_mm"] == pytest.approx(2.0, abs=0.5)
 
 
 def test_auto_place_reverts_cmaes_if_unresolved_conflicts_remain(tmp_path, monkeypatch):
