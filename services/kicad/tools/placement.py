@@ -252,9 +252,13 @@ def _degager_la_serigraphie(pcb_path: Path) -> int:
     """
     try:
         from kicad_tools.schema.pcb import PCB
-        from tools.serigraphie import degager_references
+        from tools.serigraphie import degager_references, reorienter_et_degager
         pcb = PCB.load(str(pcb_path))
-        n = degager_references(pcb)
+        # D-2026-09-26-a, phase B : ce que la recherche a plat ne place pas,
+        # un repere tourne dans l axe du boitier et pose contre son corps le
+        # place souvent (campagne du 2026-09-26 : 70 -> 16 avertissements sur
+        # quatre cartes, carte-05 et carte-06 a zero).
+        n = degager_references(pcb) + reorienter_et_degager(pcb)
         if n:
             pcb.save(str(pcb_path))
         return n
@@ -2600,6 +2604,10 @@ def _resserrer_le_contour(resultat: dict) -> dict:
             taille = ajuster_contour_au_placement(f)
             if taille is None:
                 return resultat
+            # Le contour resserre (courtyards + 3 mm) peut couper un repere
+            # pose contre son corps, jusqu a 1,4 mm plus loin (phase B) :
+            # le degagement se rejoue sur le NOUVEAU bord.
+            _degager_la_serigraphie(f)
             return {
                 **resultat,
                 "kicad_pcb_b64": _b64.b64encode(f.read_bytes()).decode(),
