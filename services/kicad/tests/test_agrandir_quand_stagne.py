@@ -44,6 +44,12 @@ class TestTailleSuivante:
         """0 % = panne ou placement condamne, pas un manque d espace (carte-09, 2026-09-12)."""
         assert RP.taille_suivante(130, 100, 0, 240, couches=6, plafond=6, agrandissements=0) == (130, 100, 0)
 
+    def test_la_boucle_juge_le_plafond_sur_le_palier_essaye(self):
+        """D-2026-09-25-e : le board livre peut n avoir que 2 couches apres un
+        essai a 8 (carte-08, banc du 2026-09-25). La chaine lit `layers_tried`."""
+        code = inspect.getsource(RP)
+        assert 'res_r.get("layers_tried") or res_r.get("layers")' in code
+
     def test_la_boucle_de_la_chaine_l_appelle(self):
         code = "\n".join(l.split("#")[0] for l in inspect.getsource(RP.main).splitlines())
         assert "taille_suivante(" in code and "board_w, board_h, agrandissements = " in code

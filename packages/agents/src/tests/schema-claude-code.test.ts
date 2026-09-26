@@ -41,8 +41,10 @@ describe('le fournisseur de schéma', () => {
 });
 
 describe('le contrat partagé', () => {
-  it('le prompt système est unique et exige du JSON nu', () => {
-    expect(SCHEMA_SYSTEM_PROMPT).toContain('Return ONLY valid JSON');
+  it('le chemin CLI exige du JSON nu (output_config y est impossible)', async () => {
+    const executer = vi.fn().mockResolvedValue({ stdout: enveloppe(JSON.stringify(SCHEMA)), code: 0 });
+    await generateSchemaWithClaudeCode('x', { executer });
+    expect(executer.mock.calls[0]![2]).toContain('Return only the JSON object');
   });
   it('parseSchemaText retire les clôtures markdown et les broches impossibles', () => {
     const s = parseSchemaText('```json\n' + JSON.stringify(SCHEMA) + '\n```');

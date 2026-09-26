@@ -30,7 +30,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-__all__ = ["poser_pwr_flags", "definition_pwr_flag", "rails_sans_drapeau"]
+__all__ = ["poser_pwr_flags", "definition_pwr_flag", "rails_sans_drapeau",
+           "positions_des_rails"]
 
 _LIB_ID_PWR_FLAG = "power:PWR_FLAG"
 # Les symboles d'alimentation de KiCad : `power:VCC`, `power:GND`, `power:+3V3`…
@@ -127,6 +128,43 @@ def rails_sans_drapeau(sch_content: str) -> dict[str, tuple[float, float]]:
             continue
         rails.setdefault(rail, (float(m_at.group(1)), float(m_at.group(2))))
     return {r: p for r, p in rails.items() if r not in deja}
+
+
+def positions_des_rails(sch_content: str) -> set[tuple[float, float]]:
+    """Les points ou un symbole d alimentation — hors `PWR_FLAG` — nomme un rail.
+
+    Seuls endroits ou poser un drapeau sans risque : le nom du rail y l emporte,
+    et le net garde son identite. Sur une broche NUE, rien ne l emporte : le net
+    prend le nom `PWR_FLAG`, et ce nom etant GLOBAL, tous les drapeaux ainsi
+    poses fusionnent en un seul net. Mesure sur `carte-10` (2026-09-24) :
+    +3V3, VIN et un GPIO relies en cuivre. Voir `erc_autofix.corriger_erc`.
+
+    Un `PWR_FLAG` deja pose n est PAS un rail : sinon un drapeau fautif
+    legitimerait le suivant au meme point. Rend un ensemble vide au moindre
+    doute — sans rail connu, aucun drapeau.
+    """
+    if not sch_content:
+        return set()
+    debut = sch_content.find("(lib_symbols")
+    apres_lib = 0
+    if debut != -1:
+        fin = _fin_de_bloc(sch_content, debut)
+        if fin == -1:
+            return set()
+        apres_lib = fin + 1
+    positions: set[tuple[float, float]] = set()
+    for i, f in _blocs_symboles(sch_content, apres_lib):
+        bloc = sch_content[i:f]
+        m_lib = _LIB_ID_ALIM_RE.search(bloc)
+        if not m_lib or m_lib.group(1) == "PWR_FLAG":
+            continue
+        m_val = _VALEUR_RE.search(bloc)
+        if m_val and m_val.group(1) == "PWR_FLAG":
+            continue
+        m_at = _AT_RE.search(bloc)
+        if m_at:
+            positions.add((float(m_at.group(1)), float(m_at.group(2))))
+    return positions
 
 
 def _fin_de_bloc(texte: str, debut: int) -> int:

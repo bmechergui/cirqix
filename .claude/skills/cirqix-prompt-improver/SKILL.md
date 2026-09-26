@@ -1,69 +1,43 @@
 ---
 name: cirqix-prompt-improver
 version: 3.0.0
-description: Améliore tout prompt avant exécution — détecte phase active, ajoute contexte Cirqix Phase 4, détecte le skill à invoquer. Mettre à jour quand la phase change.
+description: Améliore tout prompt avant exécution — ajoute le contexte Cirqix de la phase en cours et choisit le skill à invoquer. À invoquer avant chaque tâche.
 ---
 
-## Quand invoquer
+## Phase active
 
-**TOUJOURS — avant chaque tâche, quelle que soit la complexité.**
+Lire la phase en cours et les phases terminées dans la section « Phase actuelle » de `CLAUDE.md` et dans `PLAN.md` au moment de la tâche ; ne pas les recopier ici.
 
----
-
-## Phase active : Phase 4 — Agent Footprint + Pipeline KiCad complet
-
-> Pour les autres phases, lire `PLAN.md`. Mettre à jour ce skill quand la phase change.
-
-**Phases complétées :** Phase 0 ✓ · Phase 1 ✓ · Phase 2 ✓ · Phase 3 ✓ · Phase 4.1 ✓
-
-**Focus :** footprint cascade (KiCad → SnapMagic → LCSC → AI Haiku), pcbnew placement/routing réels, DRC natif, export Gerbers/BOM/STEP, viewer KiCanvas dual-mode, JLCPCB commande
+**Focus :** cascade footprint (KiCad → cache pgvector → SnapMagic → LCSC → Haiku), placement kicad-tools et routage Freerouting réels, DRC kicad-cli, export Gerbers/BOM/CPL et modèle 3D GLB, viewer KiCanvas, préparation de commande JLCPCB
 **Fichiers :** `packages/agents/src/engines/`, `services/kicad/routers/`, `apps/web/src/widgets/viewer/`
 **Contraintes à toujours mentionner :**
-- Skill `cirqix-footprint` : cascade 4 étapes — s'arrêter à la 1ère réussite
-- Skill `cirqix-kicad-service` : FastAPI pcbnew (`/place/auto`, `/route`, `/drc`, `/export`)
-- Skill `cirqix-drc` : boucle DRC max 3×, corrections pcbnew automatiques
-- Skill `cirqix-credits` : vérifier solde AVANT, déduire APRÈS succès
-- Skill `cirqix-viewer` : KiCanvas dual-mode (native `.kicad_pcb` / spec SVG custom)
-- Moteur PCB : **Circuit-Synth** (Python) — JAMAIS TSCircuit en nouveau code
+- Skill `cirqix-footprint` : cascade en 5 étapes (cache pgvector compris), arrêt à la première réussite
+- Skill `cirqix-kicad-service` : service FastAPI (`/schematic/generate`, `/pcb/generate`, `/place/auto`, `/erc`, `/route/auto`, `/drc/auto`, `/export/all`, `/render/auto`, `/export/glb`), jeton Bearer requis sauf sur `/health`
+- Skill `cirqix-drc` : boucle DRC max 3× dans le service ; kicad-cli fait foi ; corrections limitées (via vers le plan, remplissage des zones par pcbnew en processus enfant)
+- Skill `cirqix-credits` : réserver avant le run, libérer sur échec, débiter après un succès prouvé (RPC atomiques)
+- Skill `cirqix-viewer` : modes `native` (KiCanvas `controls="full"`), `spec` (vue Cirqix SVG), `png` et `3d` (rendus KiCad : `RenderView.tsx`, `Board3DView.tsx`)
+- Moteurs : circuit_synth pour le schéma, kicad-tools pour le board ; pas de TSCircuit en nouveau code (déprécié depuis v0.3.0)
 - JLCPCB : confirmation **"OUI JE CONFIRME"** obligatoire — jamais automatique
-- Streaming SSE : `Content-Type: text/event-stream`, event `[DONE]` en fin
-- Orchestrateur = Sonnet 4.6, agents spécialisés = Haiku 4.5, max 15 itérations
+- Événements d'un run : `RunEvent` JSON (SSE en synchrone ; `pcb_run_events` + Realtime en asynchrone), sans marqueur `[DONE]`
+- Orchestrateur = Sonnet 4.6, max 15 itérations ; seuls le schéma, l'empreinte IA et le reasoner appellent Haiku 4.5, les autres étapes sont des handlers déterministes
 - Middleware auth : `apps/web/src/middleware.ts` → `/dashboard/*`
 - Zustand store : `apps/web/src/shared/store/app-store.ts`
 
 ---
 
-## Pipeline
+## Processus en 3 étapes
 
-```
-1. prompt-master-cirqix  → optimise pour Claude Code (9D matrix, XML, signal words)
-2. cirqix-prompt-improver → ajoute contexte Phase 4 + détecte skill
-   ↓
-prompt final XML + skill sélectionné
-```
-
----
-
-## Processus en 4 étapes
-
-### Étape 1 — Détecter la phase
-
-Mots-clés Phase 4 : `footprint`, `kicad_mod`, `snapmagic`, `lcsc`, `gerber`, `bom`, `step`, `jlcpcb`, `drc`, `commande`, `placement réel`, `pcbnew`, `freerouting`
-Mots-clés Phase 3 (encore actifs) : `placement`, `routage`, `drc`, `export`, `pcbnew`, `docker`
-Mots-clés Phase 2 (toujours valides) : `dashboard`, `auth`, `chat`, `viewer`, `crédits`, `SSE`
-Afficher : `[Phase 4 — Agent Footprint + Pipeline KiCad complet]`
-
-### Étape 2 — Analyser
+### Étape 1 — Analyser
 
 - Intention réelle de l'utilisateur
 - Fichier exact dans la structure FSD
 - Contraintes manquantes (crédits ? RLS ? streaming ?)
 - Ambiguïtés à lever
 
-### Étape 3 — Réécrire en XML
+### Étape 2 — Réécrire en XML
 
 ```
-[Phase 4 — Agent Footprint + Pipeline KiCad complet]
+[Phase en cours]
 [Skill détecté : cirqix-xxx ou /skill-name]
 
 📝 Prompt reçu :
@@ -71,15 +45,14 @@ Afficher : `[Phase 4 — Agent Footprint + Pipeline KiCad complet]`
 
 ✨ Prompt amélioré :
 <context>
-Phase 4. Fichier : [chemin exact]. État actuel : [ce que fait le fichier maintenant].
+[Phase en cours]. Fichier : [chemin exact]. État actuel : [ce que fait le fichier maintenant].
 </context>
 <task>
 [Verbe fort] [opération précise].
 </task>
 <constraints>
-MUST : [contraintes obligatoires + Phase 2 spécifiques]
-NEVER : [interdictions absolues]
-Stop when : [condition binaire]
+Contraintes réelles de la tâche, chacune avec sa raison (ex. : « réserver les crédits avant le run, débiter après succès — sinon un run échoué est facturé, ou deux runs partent sur le même solde »).
+Critère d'arrêt : [condition vérifiable]
 </constraints>
 <output_format>
 [type exact + interface TypeScript ou signature Python]
@@ -89,7 +62,7 @@ Fais uniquement ce qui est demandé. Aucune feature supplémentaire.
 ▶️ J'invoque [skill] avec ce prompt — confirme ou modifie.
 ```
 
-### Étape 4 — Attendre confirmation
+### Étape 3 — Attendre confirmation
 
 Confirme → exécuter. Modifie → reprendre sans redemander.
 
@@ -103,10 +76,10 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 | "agent" sans précision | Orchestrateur / Schéma / DRC / Footprint ? |
 | "base de données" | Table + RLS + migration Supabase |
 | "affiche X" | Composant + classes design system + états loading/empty/error |
-| Touche aux crédits | Vérifier AVANT, déduire APRÈS (skill `cirqix-credits`) |
-| Touche aux agents | Modèle (Sonnet ou Haiku), max 15 itérations, streaming SSE |
+| Touche aux crédits | Réserver avant, libérer sur échec, débiter après succès (skill `cirqix-credits`) |
+| Touche aux agents | Modèle (Sonnet ; Haiku pour schéma, empreinte IA, reasoner), max 15 itérations, `RunEvent` (SSE ou `pcb_run_events`) |
 | Touche à la DB | RLS + uuid-ossp + pgvector si embeddings |
-| Touche au viewer | `LAYER_COLORS`, `mmToPx`, design system |
+| Touche au viewer | `widgets/viewer/ui/KiCanvasViewer.tsx`, `shared/lib/render-presets.ts`, `docs/design/design-system.md` |
 | Touche à JLCPCB | Confirmation "OUI JE CONFIRME" obligatoire, jamais automatique |
 
 ## Correction linguistique
@@ -117,27 +90,6 @@ Confirme → exécuter. Modifie → reprendre sans redemander.
 
 ---
 
-## Détection automatique du skill
+## Choix du skill
 
-```
-├── agent / orchestrateur / boucle / SSE / itération  → cirqix-pcb-agent
-├── footprint / kicad_mod / snapmagic / octopart       → cirqix-footprint
-├── placement / routage / freerouting / gerber         → cirqix-kicad-service
-├── viewer / kicanvas / kicad_sch / kicad_pcb / schéma  → cirqix-viewer
-├── circuit-synth / @circuit / Net() / Component() / symbol mapping / KICAD_SYMBOL_DIR → cirqix-circuit-synth
-├── génération kicad / python kicad / kicad_sch depuis python   → cirqix-circuit-synth + cirqix-kicad-service
-├── crédit / balance / plan / lemon squeezy / top-up   → cirqix-credits
-├── DRC / violation / clearance / track width          → cirqix-drc
-├── dashboard / composant React / UI / tailwind        → /everything-claude-code:frontend-patterns
-├── supabase / migration / RLS / pgvector / SQL        → /everything-claude-code:postgres-patterns
-├── FastAPI / Python / pcbnew / docker                 → cirqix-kicad-service + python-patterns
-├── test / playwright / e2e / vitest                   → /everything-claude-code:e2e
-├── Claude API / SDK / tool_use / streaming            → /everything-claude-code:claude-api
-├── architecture / plan / refactoring                  → /everything-claude-code:plan
-└── autre → exécuter directement
-```
-
-- Plusieurs skills → invoquer skill Cirqix d'abord, skill global ensuite
-- Aucun skill → exécuter directement
-- 2 domaines → mentionner les deux, invoquer le plus central
-- **Ne jamais demander** quel skill — décider et expliquer en une ligne
+Choisir le skill Cirqix dont la description couvre la tâche. Pour un domaine technique qu'aucun skill Cirqix ne couvre, ajouter le skill global correspondant, dans l'ordre de priorité de la section « Skills — sélection et création » de `CLAUDE.md`. S'il y a plusieurs candidats, invoquer le plus central et nommer l'autre. Décider sans demander, avec une ligne de justification ; si aucun skill ne convient, exécuter directement.

@@ -1,14 +1,10 @@
 ---
 name: cirqix-frontend-verify
 description: >
-  Vérifie visuellement le frontend Cirqix (apps/web) pour détecter les chevauchements d'éléments,
-  overlaps, problèmes de layout, textes superposés, et bugs visuels dans les composants marketing
-  et dashboard. Utilise Chrome DevTools MCP pour capturer des screenshots et inspecter chaque section.
-  Invoquer OBLIGATOIREMENT quand : l'utilisateur signale un chevauchement, un overlap, un problème
-  visuel, des éléments qui se superposent, du texte coupé, un layout cassé, ou quand il dit
-  "quelque chose ne s'affiche pas bien", "il y a un bug visuel", "les éléments se chevauchent",
-  "ça se superpose". Aussi invoquer après chaque modification de composant marketing ou dashboard
-  pour valider qu'il n'y a pas de régression visuelle.
+  Diagnostic visuel du frontend Cirqix (apps/web) par captures Chrome DevTools : chevauchements,
+  débordements, texte coupé, mise en page cassée ou régressions responsive sur les pages marketing et
+  dashboard. À invoquer quand l'utilisateur signale un défaut d'affichage, et après une modification de
+  mise en page d'un composant marketing ou dashboard.
 ---
 
 # Cirqix — Frontend Verify
@@ -28,13 +24,7 @@ rien sans confirmation explicite.
 curl -s -o /dev/null -w "%{http_code}" http://localhost:3333
 ```
 
-Si le code retourné n'est pas `200` :
-```bash
-# Démarrer depuis la racine du monorepo
-cd C:/Users/Mechegui/Desktop/dev/cirqix
-pnpm dev
-# Attendre ~10s que le serveur démarre
-```
+Si le code retourné n'est pas `200`, lancer `pnpm dev` depuis la racine du dépôt ou du worktree courant (port 3333), puis attendre que le serveur réponde.
 
 ---
 
@@ -46,7 +36,7 @@ Pour chaque page et chaque breakpoint, capturer un screenshot complet.
 | Page | URL | Sections |
 |------|-----|---------|
 | Marketing | `http://localhost:3333` | Hero, Features, HowItWorks, Comparison, Pricing, Footer |
-| Dashboard | `http://localhost:3333/dashboard` | Sidebar, Header, ChatPanel, ViewerPanel, CreditsBadge |
+| Dashboard | `http://localhost:3333/dashboard` | Sidebar, Header, ChatRail, viewer, CreditsBadge |
 
 ### Breakpoints
 | Nom | Largeur | Hauteur |
@@ -73,35 +63,7 @@ Utiliser les outils Chrome DevTools MCP :
 
 ## Étape 3 — Analyse visuelle des screenshots
 
-Pour chaque screenshot, inspecter les catégories suivantes.
-
-### Catégories de problèmes à détecter
-
-#### A. Chevauchements texte/éléments
-- Texte qui déborde de son conteneur
-- Deux éléments occupant la même zone (z-index conflict)
-- Badge ou label superposé sur du contenu
-- Image recouvrant du texte de façon non intentionnelle
-
-#### B. Overflow et débordements
-- Scroll horizontal non attendu (largeur > viewport)
-- Élément sortant du bounding box de son parent
-- Contenu coupé par `overflow: hidden` involontaire
-
-#### C. Problèmes responsive
-- Layout cassé sur mobile (colonnes trop larges, texte trop grand)
-- Éléments qui disparaissent ou se superposent quand l'écran est petit
-- Navigation ou header qui déborde sur le contenu
-
-#### D. Espacement et alignement
-- Marges/paddings incorrects créant un décalage
-- Éléments mal centrés ou non alignés avec la grille
-- Sections sans séparation visuelle claire
-
-#### E. Typographie
-- Texte tronqué avec `text-overflow: ellipsis` non voulu
-- Line-height insuffisant causant des lignes qui se collent
-- Font-size trop grand pour le conteneur mobile
+Inspecter chaque capture pour les défauts que nomme la description du skill : chevauchements, débordements (dont un scroll horizontal), texte coupé, alignement et espacement, régressions responsive.
 
 ---
 
@@ -109,41 +71,14 @@ Pour chaque screenshot, inspecter les catégories suivantes.
 
 Pour chaque problème détecté à l'étape 3, inspecter le code source pour confirmer la cause.
 
-### Fichiers à lire selon la section
+### Où chercher le code d'une section
 
-| Section | Fichier |
-|---------|---------|
-| Hero | `apps/web/src/components/marketing/Hero.tsx` |
-| Features | `apps/web/src/components/marketing/Features.tsx` |
-| HowItWorks | `apps/web/src/components/marketing/HowItWorks.tsx` |
-| Comparison | `apps/web/src/components/marketing/Comparison.tsx` |
-| Pricing | `apps/web/src/components/marketing/Pricing.tsx` |
-| Footer | `apps/web/src/components/marketing/Footer.tsx` |
-| Sidebar | `apps/web/src/components/dashboard/Sidebar.tsx` |
-| Header | `apps/web/src/components/dashboard/Header.tsx` |
-| ChatPanel | `apps/web/src/components/dashboard/ChatPanel.tsx` |
-| ViewerPanel | `apps/web/src/components/dashboard/ViewerPanel.tsx` |
-| CreditsBadge | `apps/web/src/components/dashboard/CreditsBadge.tsx` |
-| StatusBadge | `apps/web/src/components/dashboard/StatusBadge.tsx` |
+- Marketing : `apps/web/src/features/marketing/ui/` (Hero, Features, HowItWorks, Comparison, Pricing, Footer, Navbar)
+- Dashboard : `apps/web/src/features/dashboard/ui/` (Sidebar, Header, CreditsBadge, StatusBadge…)
+- Espace de travail : `apps/web/src/features/workspace/ui/` (ChatRail…)
+- Viewer : `apps/web/src/widgets/viewer/ui/`
 
-### Causes fréquentes à chercher dans le code
-
-```
-position: absolute / fixed sans z-index explicite
-→ Chercher : className="...absolute..." ou className="...fixed..."
-
-overflow: hidden coupant du contenu mobile
-→ Chercher : className="...overflow-hidden..." sur des conteneurs parent
-
-Largeur fixe sur mobile
-→ Chercher : className="...w-[Xpx]..." ou style={{ width: 'Xpx' }}
-
-z-index implicite (stacking context non géré)
-→ Chercher : className="...z-..." ou transform/opacity sur des parents
-
-Flexbox sans flex-wrap sur mobile
-→ Chercher : className="...flex..." sans "flex-wrap" ou "flex-col"
-```
+En cas de doute, chercher le composant par son nom plutôt que de supposer un chemin.
 
 ---
 
@@ -165,7 +100,7 @@ Breakpoints testés : Mobile 375px | Tablet 768px | Desktop 1440px
 
 | # | Composant | Fichier | Breakpoint | Description | Cause probable |
 |---|-----------|---------|------------|-------------|----------------|
-| 1 | Hero | Hero.tsx | Mobile 375px | Titre H1 déborde hors du viewport | `text-7xl` sans responsive → ajouter `text-4xl md:text-7xl` |
+| 1 | Hero | Hero.tsx | Mobile 375px | Titre H1 déborde hors du viewport | taille fixe `text-7xl` → `text-[1.8rem] sm:text-[2.4rem] md:text-[3rem]` |
 
 #### MOYEN (dégradation visible)
 
@@ -186,7 +121,7 @@ Pour chaque problème CRITIQUE ou MOYEN, proposer le diff exact :
 **Problème #1 — Hero.tsx titre trop grand mobile**
 ```diff
 - className="text-7xl font-extrabold"
-+ className="text-4xl md:text-6xl xl:text-7xl font-extrabold"
++ className="text-[1.8rem] sm:text-[2.4rem] md:text-[3rem] font-extrabold"
 ```
 
 ---
@@ -221,48 +156,12 @@ Si l'utilisateur choisit A, B ou C → appliquer les corrections en respectant :
 
 ---
 
-## Contexte design system Cirqix
+## Contexte design system
 
-Références obligatoires avant de proposer des corrections :
-
-**Couleurs principales**
-```
-Background : #080808 (page) / #111111 (cards)
-Borders : #2E2E2E (normal) / #3D3D3D (hover)
-Text : #FFFFFF (primary) / #A1A1AA (secondary) / #71717A (muted)
-Accent : #00C2FF (cyan) / #E07B39 (copper)
-```
-
-**Breakpoints Tailwind**
-```
-sm : 640px
-md : 768px
-lg : 1024px
-xl : 1280px
-2xl : 1536px
-```
-
-**Patterns responsive corrects pour Cirqix**
-```tsx
-// Texte responsive
-className="text-3xl md:text-5xl xl:text-7xl"
-
-// Grid responsive
-className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
-
-// Flex responsive
-className="flex flex-col md:flex-row"
-
-// Padding responsive
-className="px-4 md:px-8 xl:px-16"
-```
+Avant de proposer une correction, lire `docs/design/design-system.md` (couleurs, espacements) et la section « Responsive — Règles obligatoires » de `CLAUDE.md` (tailles de titres, grilles). Ne pas recopier de valeurs ici. Dans le rapport, les exemples de diff sont illustratifs : la correction réelle suit ces deux sources.
 
 ---
 
-## Règles du skill
+## En résumé
 
-- **NEVER** modifier des fichiers sans confirmation explicite de l'utilisateur
-- **NEVER** changer la logique ou les props — seulement les classes CSS/layout
-- **ALWAYS** tester les 3 breakpoints même si l'utilisateur mentionne seulement un problème
-- **ALWAYS** vérifier le dashboard ET le marketing, les problèmes se propagent souvent
-- **ALWAYS** proposer des corrections Tailwind natives — pas de styles inline
+Lecture seule jusqu'à confirmation ; les corrections ne touchent qu'aux classes Tailwind de mise en page, jamais à la logique ni aux props ; un défaut signalé sur un breakpoint ou une page se vérifie sur les trois breakpoints et les deux pages, car ils partagent des composants.

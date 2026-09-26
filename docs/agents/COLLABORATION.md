@@ -13,7 +13,7 @@ par le produit dans `packages/agents`.
 | Phase et priorités produit | [`PLAN.md`](../../PLAN.md) |
 | Protocole de collaboration | Ce document |
 | État d’une tâche transférée | `docs/agents/handoffs/<task-id>.md` |
-| Prompts des agents PCB du produit | [`docs/agentdescription.md`](../agentdescription.md) |
+| Prompts des agents PCB du produit | Dans le code — index : [`docs/agentdescription.md`](../agentdescription.md) |
 | État réel de l’implémentation | Code, migrations et tests du commit référencé |
 
 Un handoff périmé ou une note historique ne surclasse jamais le code du SHA

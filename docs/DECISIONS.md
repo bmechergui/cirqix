@@ -14,6 +14,365 @@
 
 ## En attente de validation
 
+### D-2026-09-26-a — Placement « pro » : connecteurs tangents au bord, familles en rangées, sérigraphie dégagée
+
+- **Statut : validée** — l'utilisateur, le 2026-09-26 : « oui », sur les six
+  règles et la marge corps–bord de 1,5 mm. Repère réduit ou masqué : NON
+  autorisé (la variante « oui + taille » n'a pas été choisie).
+- Proposée le 2026-09-26 après la campagne de preuve
+  (45/45 livrables) et trois analyses des 15 boards retenus
+  (`scratchpad/rb`). Le routage est acquis ; ce qui sépare ces cartes d'un
+  rendu professionnel est le placement.
+- **Connecteurs — mesuré** : 48 connecteurs sur 48 ont leur corps à 2,0 mm d'un
+  bord, mais 35 sont **perpendiculaires** à ce bord (en-têtes 1×N verticaux à 0°
+  contre le bord haut ou bas) : ils plongent de 6 à 11 mm dans la carte, 52 mm
+  pour les 2×20 de carte-11. `_position_au_bord` translate, ne tourne jamais.
+  **Règle** : tourner chaque connecteur par pas de 90° pour que son grand axe
+  soit parallèle au bord choisi, puis le coller à 1 mm. Même place dans
+  `auto_place` que `_coller_les_ancrages_au_bord` (avant l'optimiseur). Point de
+  vigilance : `restore_pad_angles` sur un boîtier tourné.
+- **Familles identiques — mesuré** : écart d'alignement des LED de 11 à 14 mm
+  sur carte-08 à 10, 2 à 4 rotations différentes par famille, LED à 20-27 mm de
+  leur résistance série (4-5 mm sur carte-06 et driver-stm32, où c'est réussi).
+  `ranger_les_paires` n'a pas pris effet sur 07-10. **Règle** : une famille
+  (≥ 3 composants, même préfixe, même empreinte, même cible) posée en rangée ou
+  en matrice, pas = courtyard + 0,5 mm sur la grille, orientation commune,
+  chaque LED suivie de sa résistance, du côté des broches cibles. Étape ⑤b
+  (après halo et snap, avant la grille) ; retour au board précédent si erreurs,
+  croisements ou découplage se dégradent.
+- **Sérigraphie — mesuré** : 67 avertissements sur les 15 boards (le « 749 » de
+  la campagne est à revérifier, compte probablement doublé). 30 viennent de
+  0603 tournées à 90° dont le repère reste horizontal sur leurs propres
+  pastilles ; 34 d'un voisin, sur les cartes denses. `degager_references` ne
+  tourne jamais le texte et passe avant le routage. **Règle** : texte aligné
+  sur le grand axe du boîtier, 8 positions essayées autour du corps, obstacles
+  = pastilles, vias, contours, autres repères, bord ; seconde passe après le
+  routage. Réduire la hauteur (1,0 → 0,8 mm, minimum JLCPCB) ou masquer un
+  repère en dernier recours contredit la règle actuelle : à valider à part.
+- **Ajouts de l'utilisateur (2026-09-26, sur l'image de nucleo-f401)** :
+  « il ne faut pas dans les cartes arduino, nucleo… faire des composants en
+  dessous ou dans le bord » — précisé par lui : connecteurs AU BORD (un long
+  2×N longe le bord sur toute sa longueur), RIEN sous ni entre les connecteurs
+  (zone interdite = courtyard du connecteur + une bande), RIEN contre le bord
+  pour les autres composants (marge corps–bord proposée : 1,5 mm, à valider).
+  Valable pour toutes les cartes.
+- **Critères** : 0 `silk_overlap`/`silk_over_copper`, tout connecteur tangent à
+  un bord à ≤ 1 mm, familles alignées (écart < 0,5 mm), et **routage toujours
+  100 % / 0 erreur** sur les 15 cartes, 3 tirages (banc en deux phases).
+- **Déjà réfuté, non reproposé** : connecteurs au milieu d'un bord
+  (D-2026-09-13-c B), cadre des connecteurs resserré, grille posée avant les
+  étapes qui déplacent.
+- **Écart mesuré à l'implémentation (phase A, 2026-09-26)** : coller à 1 mm
+  contredit D-2026-09-15-a (validée, corps–bord 2 mm) — `PlacementAnalyzer` compte
+  le connecteur hors carte et `_repair_off_board` le repousse aussitôt. Le
+  connecteur est donc collé à **2 mm**, la marge existante ; la marge des autres
+  composants est la plus stricte des deux, 2 mm. Descendre à 1 mm demanderait de
+  réviser D-2026-09-15-a : à valider à part.
+
+### D-2026-09-25-e — Le routage ne s'arrête qu'au résultat : escalade jusqu'au plafond, puis agrandissement
+
+- **Statut : validée** — l'utilisateur, le 2026-09-25, après le banc A/B :
+  « Je veux solution générale », puis, sur la boucle proposée : « contunue
+  quellee la sotluon » et « tou les crates dsont dans exmepeles » (preuve sur
+  toutes les cartes de `examples/`). Interprété comme un accord ; à corriger
+  ici s'il ne l'était pas.
+- **Constat qui la motive** (banc du 2026-09-25, `docs/mesures/`) : carte-08,
+  même placement, livrée 100 % à 4 couches trois fois et **85 %, 7 connexions
+  manquantes, 7 erreurs** une fois. Ce dernier appel a monté 2 → 4 (77 %) → 6
+  (62 %) puis s'est ARRÊTÉ (« 2 paliers sans gain ») sans essayer 8 couches, et
+  a livré son meilleur board : un 2 couches. L'agrandissement de D-2026-09-11-b
+  ne s'est pas déclenché, parce qu'il regarde les couches du board LIVRÉ (2),
+  pas le plus haut palier ESSAYÉ.
+- **Règle** :
+  1. Critère de livraison unique : 100 % routé, 0 connexion manquante, 0 erreur
+     bloquante (`est_bloquante`). Rien d'autre n'est un succès.
+  2. Tant que le meilleur board n'est pas livrable, l'escalade continue jusqu'au
+     plafond du plan ; seul le budget de temps l'arrête. La règle « deux
+     paliers sans gain » ne s'applique plus qu'à un board déjà livrable (elle
+     n'a alors plus de raison d'être).
+  3. Le service rend le plus haut palier essayé ; l'agrandissement (+20 %,
+     deux fois au plus, D-2026-09-11-b) se déclenche sur ce palier, dans
+     l'orchestrateur comme dans le banc.
+  4. Sinon, échec explicite, avec les nets manquants.
+- Inchangés : `_SEUIL_REDRAW_PCT` (80) — il accélère la montée vers le plafond,
+  il ne l'empêche pas ; facteur et nombre d'agrandissements.
+
+### D-2026-09-25-c — Critère pour activer `routage_prioritaire` par défaut (fixé AVANT la mesure)
+
+- **Statut : en attente** — proposé le 2026-09-25, avant toute mesure, sur les
+  recommandations de la contre-vérification du banc A/B (55 agents). Fixer le
+  critère après avoir vu les chiffres ferait choisir le seuil qui arrange.
+- **Banc** : `scripts/ab_routage_prioritaire.py`, placements gelés, voie HTTP,
+  ordre ABBA, 3 paires par carte sur carte-03, carte-05, carte-08, carte-10.
+  Toutes les liaisons détectées sont des DÉCOUPLAGES (aucun quartz à moins de
+  6 mm sur le banc) : la décision ne vaudra que pour eux.
+- **Conditions de validité**, sinon la campagne ne compte pas : service démarré
+  après le code de la passe (vérifié par le script) ; aucun agent, banc ni
+  graphify pendant la mesure ; au moins 90 % des essais B avec la signature de
+  la passe dans le board rendu (pistes à 0,4 mm), 0 % des essais A ; au plus un
+  essai sans verdict ou en erreur par bras, rejoué par paire.
+- **Qualité (critère principal)**, apparié par liaison : une liaison est
+  « courte » si son chemin de cuivre mesure au plus max(1,5 × d ; d + 1 mm),
+  d = distance détectée. Activer exige les trois : taux de liaisons courtes de B
+  supérieur à celui de A d'au moins 20 points ; baisse médiane de la longueur
+  d'au moins 25 % ; amélioration sur au moins 3 cartes sur 4.
+- **Non-régression** (board livré, alternance comprise) : un essai est
+  « livrable » à 100 %, 0 erreur bloquante, 0 connexion manquante. B au plus un
+  livrable sous A sur 12 ; couches médianes de B au plus égales à A par carte ;
+  durée médiane de B au plus 1,3 × A ; vias de B au plus 1,1 × A ; pas plus de
+  `tirages_figes` en B.
+- **Sinon** : pas d'activation par défaut. Trois paires ne suffisent jamais à
+  conclure « aucun effet » sur la routabilité (23 points d'écart mesurés entre
+  tirages d'un même placement).
+- **Résultat (banc du 2026-09-25, `docs/mesures/ab-routage-prioritaire-2026-09-25.jsonl`)** :
+  la campagne est INVALIDE pour juger la passe. Sa signature n'est présente que
+  dans 5 essais B sur 12 (carte-03 3/3, carte-05 0/3, carte-08 0/3, carte-10
+  2/3) : ailleurs, `_relier_liaisons_critiques` pose ses liaisons puis les
+  rejette EN BLOC (« erreurs ajoutees »). Là où elle passe, le gain est faible
+  (carte-03, médiane 3,51 → 3,41 mm). **`routage_prioritaire` reste désactivé.**
+  Suite possible : juger chaque liaison seule au lieu du tout-ou-rien.
+- **Question ouverte** : carte-07 et carte-09 sont écartées parce qu'elles
+  figent souvent — ce sont justement celles où une piste protégée pourrait
+  ajouter des blocages. Les inclure en non-régression seule coûterait environ
+  deux heures de plus.
+
+### D-2026-09-25-b — Audit des prompts : six points qui touchaient une règle de l'utilisateur
+
+- **Statut : validée pour F08, F52, F70, F79 et F99 — consigne de l'utilisateur**
+  le 2026-09-25 : « corrige le tout », sur le rapport d'audit qui les listait
+  comme « à faire valider avant d'appliquer ». **F81 : en attente** — c'est une
+  proposition d'architecture, sans aucune ligne de code ; rien n'est implémenté.
+- **F08** — `docs/agentdescription.md` n'est chargé par aucun code et décrivait
+  des prompts périmés (Claude 3.x, TSCircuit, outils absents), alors que ce
+  fichier le présentait comme la source « exacte ». Il devient un index vers
+  les prompts du code (`prompts.ts`, `tools/definitions.ts`, `schema-prompt.ts`,
+  `tools/reasoning.py`). La règle « ne pas réécrire » tombe avec lui.
+- **F52** — graphify n'est plus l'outil « par défaut avant toute lecture » :
+  ~1 Go par requête, et des bancs faussés (leçon du 2026-09-22). Usage ciblé,
+  jamais pendant un banc.
+- **F70** — le plafond « ≤ 20 composants » du prompt Schéma est retiré. Il
+  datait d'un `max_tokens` de 1024 ; une carte MCU avec son découplage le
+  dépasse. `max_tokens` passe à 16000, et un arrêt `max_tokens`/`refusal` fait
+  échouer la génération au lieu de parser un JSON partiel.
+- **F79** — `call_agent_simulation` n'est plus proposé à l'orchestrateur quand
+  le plan n'a pas `canSimulate`. Le contrôle du HANDLER reste la frontière de
+  sécurité ; le filtre évite seulement un appel voué au refus.
+- **F99** — les « RÈGLES ABSOLUES » de CLAUDE.md sont réécrites sans le
+  langage de pression, en cohérence avec `planning.md` (une tâche simple se code
+  sans plan). Le prompt-improver et l'attente de confirmation sont gardés.
+- **F81 (en attente)** — faire séquencer le pipeline par le code, avec un appel
+  Sonnet en tête et un en fin, au lieu de jusqu'à 15 appels qui déroulent un
+  ordre fixe (`run-driver.ts` le fait déjà sans modèle). À proposer par
+  l'agent `architect` ; **ne pas implémenter** sans validation.
+
+### D-2026-09-25-a — Routage PRIORITAIRE des liaisons critiques, avant le routage général
+
+- **Statut : validée — consigne de l'utilisateur** le 2026-09-25 : « propose
+  toi et fais tout selon votre recommandation », sur le plan présenté (étape 0,
+  étape 1, quatre choix).
+- **La règle.** Avant Freerouting, `tools/nets_critiques.py` détecte les
+  liaisons critiques par la TOPOLOGIE (quartz → broche du circuit, charge →
+  quartz, condensateur entre un net et la masse → broche d'alimentation), et
+  l'opération runner `relier_liaisons` les pose par des pistes courtes, sur une
+  face, sans via, en évitant les vias réservés. Elles sont ensuite PROTÉGÉES
+  avec la liaison GND ; Freerouting route autour. Une pastille reliée perd sa
+  réservation d'échappement (une pastille, un propriétaire).
+- **Les quatre choix.**
+  1. Limite : écart entre CORPS ≤ 3 mm (comme le cluster natif) **et** piste
+     ≤ 6 mm centre à centre — une piste protégée longue deviendrait un obstacle
+     à chaque tirage.
+  2. Largeur des liaisons d'alimentation : 0,4 mm (0,25 mm pour le quartz).
+  3. Paires différentielles : détectées et signalées, jamais routées.
+  4. Alternance : la passe tourne un tirage sur deux ; `_palier_meilleur`
+     garde le meilleur des deux familles.
+- **Désactivée par défaut** (réglage de banc `routage_prioritaire`) jusqu'à la
+  mesure A/B sur placements gelés.
+- **Mesure de détection** (placements versionnés) : 2 à 9 liaisons de
+  découplage par carte ; AUCUN quartz retenu — ceux de `stm32-validation` et
+  `driver-stm32-minimal` sont à 9-27 mm des broches OSC. Pour les nets
+  critiques, le défaut dominant est le PLACEMENT, pas le routage.
+- Gardes : `test_detection_liaisons_critiques.py`,
+  `test_passe_prioritaire_cablee.py`, `test_une_pastille_un_proprietaire.py`.
+
+### D-2026-09-24-g — Chaque palier d'escalade repart LIBRE, le premier tirage compris
+
+- **Statut : validée — consigne explicite de l'utilisateur** le 2026-09-24 :
+  « fais le tirage libre, s'il fait 100 % et rapide ».
+- **Remplace par défaut D-2026-09-10-b** (escalade incrémentale : le premier
+  tirage d'un nouveau palier protégeait les pistes du meilleur board précédent).
+  Ce tirage protégé échouait à CHAQUE fois : des dizaines de « Multiple vias
+  skipped », HTTP 500 de l'API Freerouting, repli CLI à 0 %. Mesuré sur
+  `carte-07` (2 → 4 couches) : protégé 0 %, puis tirage libre **100 % en 11 s
+  de routeur** ; même motif la veille sur `nucleo-f401`.
+- **La règle.** `_escalade_incrementale()` rend `False` par défaut : tous les
+  tirages d'un palier repartent du board placé. Le mécanisme est conservé,
+  réarmable par le réglage de banc `escalade_incrementale`, pour le comparer
+  une fois la cause de l'échec réparée (hypothèse en cours : pistes et vias
+  écrits en double dans le DSN, par le meilleur board ET la liaison GND ET les
+  vias réservés).
+- Garde : `services/kicad/tests/test_escalade_incrementale.py`.
+
+### D-2026-09-24-f — Le banc appelle le routage comme la production : plafond 8, budget du client
+
+- **Statut : validée — consigne explicite de l'utilisateur** (objectif du
+  2026-09-24 : « si tu n'atteins pas 100 % routage tu dois escalader le numéro
+  de couche »), et précédent du 2026-09-10 où le plafond de `carte-08/09/10`
+  avait été porté à 6 **à sa demande**.
+- **Le défaut.** `run_pipeline.py` prenait `max_layers` = 2 par DÉFAUT et
+  1800 s de budget ; `carte-07` écrivait 2 en dur. Dix cartes sur quinze ne
+  pouvaient donc JAMAIS escalader, et D-2026-09-24-e était inerte dans le banc.
+  Mesuré le soir même : `carte-07` à 97 %, masse seule manquante, le service
+  annonce « le palier suivant sera tenté »… et rend la main à 2 couches.
+- **La règle.** Plafond par défaut 8 (client Pro Max) ; budget par défaut
+  `min(600 + 300 × plafond, 3600)`, la formule de `routingSearchBudgetS` côté
+  client. Le plafond n'est pas une consigne : le routeur part de 2 et ne monte
+  que sur preuve d'échec. En PRODUCTION, rien ne change : le plafond reste
+  celui du plan du client (Free 2, Pro 4, Pro Max 8).
+- Garde : `services/kicad/tests/test_banc_plafond_de_production.py`.
+
+### D-2026-09-24-e — Toute connexion manquante fait monter d'un palier, masse comprise
+
+- **Statut : validée — consigne explicite de l'utilisateur** dans l'objectif du
+  2026-09-24 : « si tu n'atteins pas 100 % routage tu dois escalader le numéro
+  de couche », puis « si par exemple 98 %, il manque 2 %, j'escalade le numéro
+  de couche ? ».
+- **Lève une limite acceptée** : la règle du 2026-08-31 (`_escalade_peut_aider`)
+  refusait d'escalader quand seul un net confié au PLAN manquait (GND), sur la
+  foi d'`arduino-uno` (93 % à 2, 4 et 6 couches). Ce jour-là, les paliers
+  supérieurs repartaient du routage précédent, pistes protégées ; depuis
+  D-2026-09-24-a ils routent librement. Mesure du 2026-09-24 : `carte-08` 98 %
+  à 2 couches (GND seul) puis **100 % à 4**. `carte-07`, placement gelé de la
+  campagne du jour : 97 % (GND seul) à 2 couches, jamais escaladée — son
+  schéma plafonnait à 2 couches (voir D-2026-09-24-f). Rejouée avec la règle et les tirages
+  libres : **100 % à 4 couches, 0 erreur, 0 connexion manquante, aucun court
+  vs schéma** (vérifié par `kicad-cli`, 26 min). ⚠️ Dans ce run, l'escalade a
+  été déclenchée par des SIGNAUX manquants et des erreurs DRC à 2 couches —
+  l'ancienne règle l'aurait aussi permise : ce 100 % prouve le palier libre,
+  pas encore l'escalade « masse seule ».
+- **La règle.** Le palier suivant est tenté dès que le board LIVRÉ n'est pas
+  complet ou pas propre, quel que soit le net qui manque. La décision lit le
+  pourcentage LIVRÉ (`_percent_verifie`), plus celui du moteur, qui ignore les
+  nets confiés au plan. Arrêt inchangé : `_escalade_epuisee` (un palier sans
+  gain toléré) et plafond du plan. D-2026-09-14-b (un palier de plus pour une
+  orpheline nommée) est absorbée par la règle générale.
+- **Défaut trouvé en chemin, corrigé.** `_percent_verifie` ARRONDISSAIT : un net
+  manquant sur 250 donnait `round(99,6) = 100`, et `route_auto` s'arrêtait sur
+  un « 100 %, 0 erreur » incomplet. Plafonné à 99 dès qu'un net manque, et le
+  succès exige désormais qu'aucun net ne soit nommé incomplet.
+- **Coût connu.** Une carte dont la masse ne se relie à aucun palier monte
+  jusqu'à deux paliers plats avant l'arrêt (≈ 12 min sur `arduino-uno` le
+  2026-08-31). Le meilleur palier est gardé, jamais le dernier.
+- **Suite proposée par l'utilisateur** (« les GND liés d'abord, et on escalade
+  seulement pour router les autres signaux ») : relier et PROTÉGER toute la
+  masse avant les signaux — à mesurer, puis à journaliser.
+- Garde : `services/kicad/tests/test_escalade_toute_connexion_manquante.py`.
+
+### D-2026-09-24-d — Un board qui court-circuite deux nets du schéma est refusé à la génération
+
+- **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 % pro ».
+  Gate plus STRICT : il refuse davantage, n'autorise rien de plus.
+- **Le défaut.** Aucun juge ne comparait le board à son SCHÉMA. Le DRC le
+  compare à son propre netlist. Sur `carte-05`, le net `PWR_FLAG` reliait en
+  cuivre (22 pistes/vias) +3V3, GND, SDA et VIN — un court-circuit des rails —
+  sur un board « 100 % routé, 0 erreur, fabricable », présent comme référence.
+- **La règle.** `_courts_circuits` : un net du BOARD qui réunit des broches de
+  PLUSIEURS nets du SCHÉMA est un court, jamais légitime (une liaison voulue
+  passe par un composant). Traitement identique à `_composants_perdus` : le
+  niveau de génération fautif est refusé, on tente le suivant. Aucun seuil.
+  Ne juge que le certain : une COUPURE peut venir d'un écart de numérotation,
+  un MÉLANGE non.
+- **Mesuré sur les 22 boards du banc** : les 7 courts `PWR_FLAG` sont refusés ;
+  les 12 cartes saines acceptées, sans faux positif ; et **trois courts
+  inconnus découverts** dans des boards versionnés — `esp32-baseline` (GPIO7 sur
+  +3,3 V), `nucleo-f401` (MORPHO_L_9 sur GND), `stm32-100` (GPIO33 sur VIN, et
+  GPIO18/34/50 réunis). Leur cause — générateur ou `circuit.json`
+  contradictoire — reste à établir.
+- **Effet attendu** : ces trois cartes, et toute carte future dont la chaîne
+  corrompt le netlist, ÉCHOUENT à la génération au lieu de livrer un court.
+- **Garde** : `services/kicad/tests/test_board_court_circuite_refuse.py`.
+
+### D-2026-09-24-c — Un perçage trop proche BLOQUE la fabrication, même en avertissement
+
+- **Statut : validée — objectif utilisateur du 2026-09-24**, « 100 %
+  fabricable ». Touche le gate de commande JLCPCB, dans le sens STRICT : il
+  refuse davantage, il n'autorise rien de plus.
+- **Le défaut.** KiCad classe `hole_to_hole` et `holes_co_located` en
+  AVERTISSEMENT par défaut ; tous nos juges ne comptaient que les `error`.
+  `carte-11-croisements` est sortie `drc_clean: true` avec deux vias dont le
+  perçage RECOUPE celui d'une broche de connecteur (−0,050 mm bord à bord).
+  Or `drc_clean` ouvre le gate JLCPCB — par `DRC_CLEAN` comme par
+  `PCB_LIVRÉ`.
+- **La règle.** `tools/drc.py` porte UNE liste nommée,
+  `TYPES_BLOQUANTS_FABRICATION`, et UN prédicat, `est_bloquante`. Le juge de
+  la commande (`parse_drc_report` → `/drc/auto`) promeut ces types en erreur ;
+  le juge du routage (`_compte_erreurs`, `_erreurs_ajoutees`) lit le même
+  prédicat — une réparation qui ajoute un perçage recoupé est désormais
+  refusée ET nommée.
+- ⚠️ **Ce qui n'est PAS décidé — à te soumettre** : le SEUIL. KiCad juge
+  `hole_to_hole` à **0,25 mm** ; nos poseurs de vias visent **0,50 mm**
+  (`_ECART_TROUS_MM`, « règle JLCPCB »). Aligner le juge sur 0,50 rejetterait
+  des cartes aujourd'hui acceptées : c'est un chiffre qui change le
+  comportement livré. La promotion seule attrape les perçages qui se
+  recoupent et tout ce qui est sous 0,25 mm.
+- **Garde** : `services/kicad/tests/test_percages_bloquent_la_fabrication.py`.
+
+### D-2026-09-24-b — L'escalade s'arrête après deux PALIERS plats, pas après N tirages
+
+- **Statut : validée — même objectif utilisateur que D-2026-09-24-a**
+  (« si tu n'atteins pas 100 %, tu dois escalader le nombre de couches »).
+- **Le défaut.** La règle écrite était « arrêt après deux paliers entiers sans
+  gain », mais le code comptait des TIRAGES (tolérance `2 × 3 = 6`). Sur
+  `nucleo-f401` (2026-09-23), le palier 4 a PROGRESSÉ (96 → 98 %), puis ses deux
+  tirages bonus et ses deux tirages figés ont rempli le compteur ; un seul
+  palier plat ensuite (6 couches), et **8 couches n'ont jamais été essayées**.
+  Le journal disait « 7 paliers sans gain » : c'étaient 7 tirages.
+- **La règle.** Un palier n'est plat que si AUCUN de ses tirages n'a amélioré
+  le meilleur board ; il compte alors UNE fois. Arrêt après deux paliers plats
+  consécutifs. `_TOLERANCE_SANS_GAIN` passe de 6 (tirages) à 1 (palier) —
+  **le seuil décrit ne change pas, seule l'unité devient celle qu'il annonce**.
+- **Ce qui continue de jouer** : l'arrêt protège toujours de l'escalade
+  inutile (ESP32 du 2026-08-27 : 2 → 80 %, 4 → 80 %, 6 → 40 %, 8 → 73 % —
+  deux paliers plats, arrêt). Le plafond de couches du PLAN et le budget de
+  temps restent maîtres ; le meilleur board est toujours rendu, jamais le dernier.
+- **Garde** : `services/kicad/tests/test_escalade_compte_des_paliers.py`, qui
+  rejoue la séquence réelle de `nucleo-f401`. Deux gardes existantes réécrites
+  pour tester leur INTENTION plutôt que le nombre qui la traduisait
+  (`test_escalade_sans_gain.py`, `test_tirages_par_palier.py`).
+
+### D-2026-09-24-a — Chaque palier d'escalade reçoit au moins UN tirage LIBRE
+
+- **Statut : validée — objectif énoncé par l'utilisateur le 2026-09-24**, mot
+  pour mot : « si tu n'atteins pas 100 % de routage, tu dois escalader le
+  nombre de couches, et normalement on doit l'atteindre si on escalade le
+  nombre de couches » ; et « je veux une solution générale, tu es en train de
+  bricoler la carte nucleo ». Le MÉCANISME ci-dessous est celui que la mesure
+  désigne ; son effet sur une escalade réelle reste à prouver (voir plus bas).
+- **Le défaut.** L'escalade incrémentale (D-2026-09-10-b) protège les pistes du
+  meilleur board au changement de palier — et cette protection restait posée
+  pour TOUS les tirages du palier. Après le tout premier tirage, plus aucun
+  n'était libre : on ne donnait pas plus de couches à la carte, on en donnait
+  au PREMIER tirage pour qu'il se rapièce.
+- **Mesuré sur `nucleo-f401`** (campagne de production du 2026-09-23) :
+
+      2 couches -> 96 %      4 couches (protégés) -> 98 %
+      6 couches (protégés) -> 96 %      arrêt : 7 paliers sans gain
+
+  **Six couches PIRES que quatre.** Le même jour, au même placement, un tirage
+  LIBRE a rendu **100 % sur DEUX couches en 98 s**.
+- **La règle.** Le premier tirage d'un palier reste incrémental —
+  D-2026-09-10-b n'est pas remise en cause. Les suivants du même palier
+  repartent du board placé. `_palier_meilleur` garde déjà le meilleur de tous :
+  un tirage libre ne peut rien dégrader. **Aucun seuil touché, aucun tirage
+  ajouté** — seule la nature des tirages déjà prévus change.
+- **Réglage** : `tirages_libres_par_palier` (défaut : actif), pour l'A/B.
+- **Garde** : `services/kicad/tests/test_tirage_libre_par_palier.py`
+  (la décision, le rang remis à zéro à chaque palier, la protection vidée,
+  la décision prise AVANT le routage).
+- ⚠️ **Ce qui n'est PAS prouvé** : qu'une vraie escalade atteigne désormais
+  100 %. `nucleo-f401` a réussi du premier coup au tirage suivant, donc sans
+  escalader : le mécanisme n'y a pas été exercé. La preuve demande une carte
+  dont le premier palier échoue réellement.
+
 ### D-2026-09-22-a — Refermer une rupture de plan en DÉPLAÇANT le segment qui l'enferme
 
 - **Statut : LIVRÉ sur demande explicite de l'utilisateur, et le défaut est
@@ -900,6 +1259,9 @@ qu un nombre COMPTE avant d en tirer une decision.**
 ---
 
 ## D-2026-09-14-b — ne pas arrêter l'escalade sur un manque GND tant qu'une orpheline NOMMÉE n'a pas eu son repli au palier suivant
+
+> **Absorbée le 2026-09-24 par D-2026-09-24-e** : toute connexion manquante,
+> masse comprise, fait désormais monter d'un palier.
 
 **Statut : validée** par l'utilisateur le 2026-09-14 (« ok »). Implémentée :
 `_escalade_peut_aider(..., orpheline_sans_issue=)`, drapeau

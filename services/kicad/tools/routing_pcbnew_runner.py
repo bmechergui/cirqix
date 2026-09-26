@@ -2279,7 +2279,7 @@ def _poser_via(pcbnew, board, point, via_d: float, perc_d: float,
 
 
 def _chemin_sur_couche(board, depart, arrivee, netcode: int, couche,
-                       larg: float, clearance: float, exempts):
+                       larg: float, clearance: float, exempts, extra_obstacles=()):
     """Le trajet de `depart` a `arrivee` sur UNE couche, ou None.
 
     `exempts` : les cases de grille dont la legalite est HERITEE du board (les
@@ -2287,6 +2287,9 @@ def _chemin_sur_couche(board, depart, arrivee, netcode: int, couche,
     Sans elles, l arrondi de grille de l A* fait renoncer des le premier point.
     """
     obstacles = _obstacles_d_un_autre_net(board, int(netcode), couches=[couche])
+    # Des obstacles que le board ne porte pas encore — les vias RESERVES, qui ne
+    # vivent que dans le DSN (routage prioritaire, 2026-09-25).
+    obstacles = obstacles + list(extra_obstacles)
     marge = float(larg) / 2.0 + clearance
     pas = max(float(larg) / 2.0, 1.0)
     cases = {(round(x / pas), round(y / pas)) for x, y in exempts}
@@ -2774,6 +2777,79 @@ def _pads_hors_cluster_principal(pcbnew, args: dict[str, str]) -> None:
         json.dumps({"pads": [[r, p] for r, p in resultat]}), encoding="utf-8")
 
 
+def _pastille_par_nom(board, ref, nom):
+    fp = board.FindFootprintByReference(str(ref))
+    if fp is None:
+        return None
+    return next((p for p in fp.Pads() if str(p.GetPadName()) == str(nom)), None)
+
+
+def _relier_liaisons(pcbnew, args: dict[str, str]) -> None:
+    """ROUTAGE PRIORITAIRE (D-2026-09-25-a) : relie les liaisons critiques par
+    des pistes courtes, sur UNE face, sans via, AVANT le routage general.
+
+    `liaisons` : [{"a": [ref, pad], "b": [ref, pad], "largeur_mm": ..}], dans
+    l ordre de pose (quartz, charges, decouplages) : chaque piste posee devient
+    un obstacle pour les suivantes.
+
+    ⚠️ Jamais un court-circuit : les deux pastilles doivent porter le MEME net,
+    sinon la liaison est renoncee. ⚠️ Jamais forcee : sans chemin degage, on
+    renonce — le routeur general la reliera. ⚠️ Les vias RESERVES, qui ne vivent
+    que dans le DSN, sont des obstacles, sauf ceux des deux pastilles reliees.
+    """
+    board = _charger_board(pcbnew, args["pcb"])
+    liaisons = json.loads(args["liaisons"])
+    clearance = float(args.get("clearance_mm", "0.2")) * 1_000_000
+    via_r = float(args.get("via_mm", "0.6")) * 1_000_000 / 2.0
+    reserves = json.loads(args.get("vias_reserves", "[]"))
+    poses, renonces, reliees, raisons = 0, 0, [], {}
+
+    def _renoncer(raison):
+        raisons[raison] = raisons.get(raison, 0) + 1
+
+    for liaison in liaisons:
+        pa = _pastille_par_nom(board, *liaison["a"])
+        pb = _pastille_par_nom(board, *liaison["b"])
+        if pa is None or pb is None:
+            renonces += 1
+            _renoncer("pastille_introuvable")
+            continue
+        netcode = int(pa.GetNetCode())
+        if netcode <= 0 or netcode != int(pb.GetNetCode()):
+            renonces += 1
+            _renoncer("nets_differents")
+            continue
+        couche = next((c for c in (pcbnew.F_Cu, pcbnew.B_Cu)
+                       if pa.IsOnLayer(c) and pb.IsOnLayer(c)), None)
+        if couche is None:
+            renonces += 1
+            _renoncer("pas_de_face_commune")
+            continue
+        extremites = {tuple(liaison["a"]), tuple(liaison["b"])}
+        extra = [(float(v["x"]) - via_r, float(v["y"]) - via_r,
+                  float(v["x"]) + via_r, float(v["y"]) + via_r)
+                 for v in reserves if (str(v.get("ref")), str(v.get("pad"))) not in
+                 {(str(r), str(n)) for r, n in extremites}]
+        a = (float(pa.GetPosition().x), float(pa.GetPosition().y))
+        b = (float(pb.GetPosition().x), float(pb.GetPosition().y))
+        larg = float(liaison.get("largeur_mm", 0.25)) * 1_000_000
+        chemin = _chemin_sur_couche(board, a, b, netcode, couche, larg, clearance,
+                                    exempts=[a, b], extra_obstacles=extra)
+        if not chemin:
+            renonces += 1
+            _renoncer("aucun_chemin_degage")
+            continue
+        for p1, p2 in zip(chemin, chemin[1:]):
+            _poser_piste(pcbnew, board, p1, p2, int(larg), couche, netcode)
+        poses += 1
+        reliees.append([list(liaison["a"]), list(liaison["b"])])
+
+    pcbnew.SaveBoard(args["output"], board)
+    Path(args["result"]).write_text(json.dumps(
+        {"poses": poses, "renonces": renonces, "reliees": reliees, "raisons": raisons}),
+        encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: routing_pcbnew_runner.py '<json>'", file=sys.stderr)
@@ -2805,6 +2881,8 @@ def main(argv: list[str]) -> int:
         _measure_connectivity(pcbnew, args)
     elif operation == "pads_hors_cluster_principal":
         _pads_hors_cluster_principal(pcbnew, args)
+    elif operation == "relier_liaisons":
+        _relier_liaisons(pcbnew, args)
     else:
         raise ValueError(f"unsupported operation: {operation!r}")
     return 0

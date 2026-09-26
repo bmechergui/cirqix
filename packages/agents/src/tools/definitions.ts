@@ -10,9 +10,14 @@ export const PCB_TOOLS: Tool[] = [
       'Ingénieur Schéma — Expert circuit_synth et KiCad. ' +
       'Génère un schéma JSON typé adapté à la description, puis le rend via circuit_synth/KiCad ' +
       'pour produire un .kicad_sch natif + netlist + JSON composants. ' +
-      'Décide seul les composants optimaux (MCU, capteurs, passifs, connecteurs) — NE PAS passer schema_json. ' +
+      'Décide seul les composants optimaux (MCU, capteurs, passifs, connecteurs). ' +
       'Utilise la stratégie connecteur générique pour tous les modules complexes (ESP32, Arduino, capteurs). ' +
-      'Retourne : kicad_sch_content, composants avec footprints, unresolved_footprints à résoudre.',
+      'Renvoie components (avec footprints), nets, connections et unresolved_footprints — les refs à ' +
+      'passer à call_agent_footprint. Le .kicad_sch est conservé côté serveur et tronqué dans ce résultat. ' +
+      'Un schéma incohérent est régénéré une fois avec ses problèmes nommés ; s’il reste invalide, ou si la ' +
+      'génération échoue, status:"error" et aucun schéma n’est fabriqué : lis error. Un schéma rejeté se ' +
+      'corrige en précisant la description ; un défaut de configuration (clé absente, service) ne se corrige ' +
+      'pas en rappelant l’outil.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -20,23 +25,22 @@ export const PCB_TOOLS: Tool[] = [
           type: 'string',
           description: 'Description complète du circuit à concevoir — tous les détails fonctionnels',
         },
-        complexity: {
-          type: 'string',
-          enum: ['simple', 'medium', 'complex'],
-          description: 'Complexité estimée : simple (<5 composants), medium (5-15), complex (>15)',
-        },
       },
       required: ['user_description'],
+      additionalProperties: false,
     },
   },
   {
     name: 'call_agent_erc',
     description:
-      'Ingénieur ERC — Expert validation électrique KiCad. ' +
-      'Vérifie toutes les règles électriques du .kicad_sch : alimentations, connexions manquantes, pins flottants. ' +
-      'Auto-corrige pin_not_connected avec no_connect markers. ' +
-      'N\'accepte aucune erreur d\'alimentation. Rejette tout schéma avec erreur de court-circuit. ' +
-      'OBLIGATOIRE après call_agent_schema, avant call_agent_gen_pcb.',
+      'Ingénieur ERC — contrôle électrique du .kicad_sch en cache, écrit par call_agent_schema ' +
+      '(absent : status:"error"). kicad-cli sch erc fait foi, avec un auto-fix : marqueurs no_connect sur ' +
+      'les broches flottantes, corrections hors grille. S’il est indisponible, un ERC TypeScript prend le ' +
+      'relais (références dupliquées, nets flottants, GND manquant, composants non connectés) et son verdict ' +
+      'compte. Une violation de sévérité error restante donne status:"error" : le schéma est invalide et le ' +
+      'pipeline s’arrête avant le PCB ; les avertissements n’arrêtent rien. ERC propre : pcb_status ERC_CLEAN. ' +
+      'Se place entre call_agent_schema et call_agent_gen_pcb, parce qu’un schéma non validé produit un PCB ' +
+      'non routable.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -51,14 +55,16 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_footprint',
     description:
-      'Ingénieur Composants — Expert librairies KiCad, LCSC et SnapMagic. ' +
-      'Résout le footprint KiCad pour UN composant via cascade 4 étapes : ' +
-      '(1) librairies KiCad officielles (instant, 0 crédit), ' +
-      '(2) pgvector community cache (instant), ' +
-      '(3) LCSC/EasyEDA API (référence LCSC), ' +
-      '(4) génération .kicad_mod par Haiku (fallback IA, 3 crédits). ' +
-      'Mettre component_ref pour que l\'agent mette à jour le cache avant call_agent_gen_pcb. ' +
-      'Appeler UNE FOIS par ref listée dans unresolved_footprints.',
+      'Ingénieur Composants — résout le footprint KiCad d’un composant et l’écrit dans le schéma en cache, ' +
+      'pour call_agent_gen_pcb. Cascade arrêtée au premier résultat : (1) librairies KiCad officielles ' +
+      '(instantané), (2) cache communautaire pgvector, (3) SnapMagic (si la clé est configurée), ' +
+      '(4) LCSC/EasyEDA, (5) génération .kicad_mod par IA (3 crédits). Si tout échoue, il renvoie un ' +
+      'footprint générique — celui du package fourni, sinon Resistor_SMD:R_0402 — avec la source ' +
+      '"kicad_official" : seule la note le signale, lis-la avant de continuer. call_agent_gen_pcb ne pose ' +
+      'que des footprints « Bibliothèque:Nom » présents dans les bibliothèques KiCad installées : un nom ' +
+      'venu de SnapMagic, de LCSC ou de l’IA (source ai_generated, kicad_mod non installé) ne se charge pas ' +
+      'tel quel sur la carte. Appelle-le une fois par ref ' +
+      'de unresolved_footprints (renvoyé par call_agent_schema) ; une ref absente du schéma ne met rien à jour.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -81,11 +87,12 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_gen_pcb',
     description:
-      'Ingénieur Layout — Expert génération PCB KiCad. ' +
-      'Prend le .kicad_sch validé par ERC + les footprints résolus par call_agent_footprint, ' +
-      'et génère un .kicad_pcb avec les dimensions optimales et les règles DRC adaptées au type de circuit. ' +
-      'Aucun paramètre requis — lit tout depuis le cache interne. ' +
-      'OBLIGATOIRE après call_agent_erc + call_agent_footprint, avant call_agent_placement.',
+      'Ingénieur Layout — génère le .kicad_pcb (vrais footprints, nets du schéma) à partir du schéma en ' +
+      'cache, enrichi par call_agent_footprint ; à appeler une fois tous les unresolved_footprints résolus. ' +
+      'Taille de départ : celle du schéma, sinon 30×25, 40×35 ou 50×40 mm selon le nombre de composants ; ' +
+      'call_agent_placement la resserrera, sauf taille imposée. Service KiCad indisponible : générateur ' +
+      'TypeScript de repli. Aucun schéma en cache, ou aucun board produit : status:"error". N’émet aucun ' +
+      'pcb_status (ne valide rien). Aucun paramètre.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -95,12 +102,14 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_placement',
     description:
-      'Ingénieur Placement — Expert pcbnew et stratégies de layout. ' +
-      'Positionne chaque composant via pcbnew SetPosition()/SetOrientationDegrees(). ' +
-      'Applique les règles : composants critiques proches du connecteur, ' +
-      'bypass caps à <2 mm des ICs, regroupement fonctionnel (MCU, power, analog séparés). ' +
-      'Aucun paramètre requis — lit .kicad_pcb et netlist depuis le cache. ' +
-      'Décide les dimensions du board selon le nombre et la densité des composants.',
+      'Ingénieur Placement — place les composants du .kicad_pcb produit par call_agent_gen_pcb ' +
+      '(lu en cache ; régénéré depuis le schéma si le cache est froid). Le service enchaîne optimisation ' +
+      'génétique et raffinement physique avec regroupement fonctionnel, ancre les connecteurs J*/P* au bord ' +
+      'et répare les chevauchements, puis rapproche chaque condensateur de découplage et chaque quartz de ' +
+      'son circuit intégré (≤ 3 mm pour l’alimentation, ≤ 5 mm pour l’horloge). Le contour de carte est ' +
+      'resserré sur le placement, sauf si la description imposait une taille. Le placement est stochastique : ' +
+      'deux appels donnent deux tirages. Aucun paramètre. Renvoie placements (ref, x_mm, y_mm), ' +
+      'board_width_mm et board_height_mm. Service injoignable : status:"error", rien n’est placé.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -110,13 +119,17 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_routing',
     description:
-      'Ingénieur Routage — Expert kicad-tools A* et Freerouting. ' +
-      'Pipeline : (1) kicad-tools A* négocié si ≤30 nets ET ≤30 composants (60s), ' +
-      '(2) Freerouting Java pour circuits complexes ou si kicad-tools échoue, ' +
-      '(3) GND plane seulement si Java absent. Ajoute ground planes B.Cu. ' +
-      'Décide seul le nombre de couches (2/4/8) selon densité nette, fréquences et plan utilisateur ' +
-      '(Free=2 max · Pro=4 max · Pro Max=8 max · Enterprise=illimité). ' +
-      'Aucun paramètre requis — lit depuis le cache.',
+      'Ingénieur Routage — route le .kicad_pcb placé en cache (schéma vide : status:"error"). ' +
+      'Cascade du service : Freerouting (API, puis sous-processus), puis kicad-tools A* en repli ; ' +
+      'GND est confié au plan de masse. Le nombre de couches n’est pas un paramètre : le service part de 2 ' +
+      'et monte par paliers pairs (4, 6, 8) tant que des connexions manquent, s’arrête après deux paliers ' +
+      'sans gain et ne dépasse jamais le plafond du plan (Free 2 · Pro 4 · Pro Max et Enterprise 8). ' +
+      'Renvoie routed_percent et layers (mesurés sur le board livré), engine, et via_count/track_length_mm ' +
+      'quand ils sont disponibles. Si routed_percent < 100, l’orchestrateur lance lui-même le reasoner IA, ' +
+      'puis au plus 2 nouveaux tirages de placement et de routage ; le résultat renvoyé est le meilleur ' +
+      'obtenu, reasoning_steps compris : ne rappelle pas call_agent_placement toi-même. status:"error" : ' +
+      'aucune piste posée — service injoignable, ou verdict "tirages_figes" (ce placement ne se route pas ; ' +
+      'un nouveau tirage est lancé automatiquement). Aucun paramètre.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -142,12 +155,16 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_drc',
     description:
-      'Ingénieur Qualité PCB — Expert DRC JLCPCB. ' +
-      'Pipeline : (1) kicad-tools 27 règles JLCPCB (pur Python, toujours dispo) — ' +
-      '0 erreur → DRC_CLEAN immédiat ; erreurs → (2) kicad-cli pcb drc auto-fix boucle max 3×. ' +
-      'Vérifie : clearance, court-circuits, annular rings, silk overlap, via drill. ' +
-      'N\'accepte aucune violation critique (erreur = bloquant). ' +
-      'OBLIGATOIRE avant call_agent_export.',
+      'Ingénieur Qualité PCB — contrôle DRC du .kicad_pcb en cache, laissé par call_agent_routing ' +
+      '(sans board en cache : status:"error"). kicad-cli pcb drc est le seul juge : il tourne toujours, ' +
+      'avec un auto-fix borné à 3 passes (remplissage des zones, élargissement de pistes). ' +
+      'Le pré-contrôle kicad-tools (27 règles JLCPCB) sert au diagnostic et ne valide jamais seul. ' +
+      'Points vérifiés : clearance, courts-circuits, anneaux, sérigraphie, perçages. ' +
+      'Board réellement propre : drc_clean:true et pcb_status DRC_CLEAN. Sinon : status:"success", ' +
+      'drc_clean:false, pcb_status ROUTING_DONE et la liste drcViolations ; l’orchestrateur re-tire alors ' +
+      'lui-même placement, routage et DRC (3 passages au plus) et garde le meilleur board : ne les relance pas. ' +
+      'kicad-cli indisponible : status:"error", rien n’est validé. ' +
+      'call_agent_export ne livre (PCB_LIVRÉ) qu’un board validé ici avec drc_clean:true.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -162,13 +179,14 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_export',
     description:
-      'Ingénieur Fabrication — Expert JLCPCB et formats Gerber. ' +
-      'Pipeline : (1) kicad-tools kct export --mfr jlcpcb (GTL/GBL/GKO, BOM LCSC, CPL rotation corrections), ' +
-      '(2) kicad-cli pcb export {gerbers,drill,pos} si kicad-tools échoue, ' +
-      '(3) BOM CSV seulement si kicad-cli absent. ' +
-      'Calcule le devis JLCPCB (prix, délai). ' +
-      'JAMAIS déclencher la commande sans "OUI JE CONFIRME" explicite de l\'utilisateur. ' +
-      'Aucun paramètre requis — lit .kicad_pcb DRC-clean depuis le cache.',
+      'Ingénieur Fabrication — exporte pour JLCPCB le .kicad_pcb en cache : Gerbers, perçages, BOM LCSC et ' +
+      'CPL (kicad-tools, kicad-cli en repli). Le board est exporté tel qu’il est en cache ; il n’est promu ' +
+      'PCB_LIVRÉ que si call_agent_drc l’a validé (drc_clean:true), sinon aucun statut n’est émis. ' +
+      'quote_usd et lead_time_days ne sont présents que si le service a obtenu un devis réel : leur absence ' +
+      'signifie « pas de devis ». Aucun Gerber produit : status:"error", avec le BOM CSV quand même fourni. ' +
+      'Ni cet outil ni la conversation ne passent commande : l’utilisateur prépare le dossier JLCPCB ' +
+      'lui-même dans l’onglet Export, en cochant « OUI JE CONFIRME » ; rien n’est envoyé à JLCPCB, la ' +
+      'soumission reste manuelle. Aucun paramètre.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -178,12 +196,12 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'call_agent_simulation',
     description:
-      'Ingénieur Simulation — Expert SPICE et analyse de circuit. ' +
-      'Lance une simulation ngspice sur le schéma KiCad exporté en SPICE. ' +
-      'Retourne vecteurs temporels tension/courant pour les nœuds principaux. ' +
-      'Analyse transient (comportement temporel), DC (point de repos) ou AC (réponse fréquentielle). ' +
-      'Requiert plan Pro ou supérieur. Coût : 3 crédits. ' +
-      'Appeler après call_agent_schema uniquement.',
+      'Ingénieur Simulation — simule le .kicad_sch en cache avec ngspice (export SPICE par kicad-cli). ' +
+      'Hors pipeline de fabrication : à appeler quand l’utilisateur demande une simulation ou une ' +
+      'vérification du comportement du circuit, après call_agent_schema. sim_type choisit l’analyse : ' +
+      'transient (grandeurs en fonction du temps), dc (point de repos) ou ac (réponse en fréquence) ; le ' +
+      'service choisit les nœuds et les plages. Réservé aux plans Pro et supérieurs (sinon status:"error"), ' +
+      'coût 3 crédits. Pas de schéma en cache, ou ngspice indisponible : status:"error", aucune donnée.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -199,9 +217,11 @@ export const PCB_TOOLS: Tool[] = [
   {
     name: 'ask_user',
     description:
-      'Pose une question à l\'utilisateur pour obtenir une information critique manquante. ' +
-      'Utiliser UNIQUEMENT si la donnée est bloquante (tension d\'alimentation, courant max, contrainte mécanique). ' +
-      'NE PAS utiliser pour des choix de composants — décider soi-même en ingénieur senior.',
+      'Transmet une question à l’utilisateur quand une donnée bloquante manque (tension d’alimentation, ' +
+      'courant max, contrainte mécanique). Les choix de composants relèvent de ton jugement d’ingénieur ' +
+      'senior : ne les demande pas. L’outil ne bloque pas et n’affiche pas la question lui-même : il renvoie ' +
+      'status:"waiting". Écris la question dans ta réponse, puis termine ton tour ; la réponse arrivera dans ' +
+      'le message utilisateur suivant.',
     input_schema: {
       type: 'object' as const,
       properties: {

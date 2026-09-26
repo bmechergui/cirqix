@@ -54,7 +54,6 @@ export async function handleSchema(
   projectId: string
 ): Promise<Record<string, unknown>> {
   const desc = String(input['user_description'] ?? '');
-  const complexity = String(input['complexity'] ?? 'simple');
 
   // JSON schema via Haiku. Generated Python is never executed by the shared
   // KiCad service; the typed schema is rendered through /schematic/generate.
@@ -126,7 +125,7 @@ export async function handleSchema(
       ? 'Claude Code CLI failed or returned no valid schema'
       : hasApiKey ? 'invalid or truncated Haiku response' : 'ANTHROPIC_API_KEY not set';
     log.error(
-      { projectId, complexity, hasApiKey },
+      { projectId, hasApiKey },
       'call_agent_schema: schema generation failed — no fabricated fallback'
     );
     return {

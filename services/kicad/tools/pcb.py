@@ -979,6 +979,96 @@ def _composants_perdus(contenu: str, attendus) -> list:
     return sorted(r for r in dict.fromkeys(attendus) if r not in poses)
 
 
+def _courts_circuits(contenu: str, connections) -> list:
+    """Les nets du BOARD qui reunissent des broches de PLUSIEURS nets du SCHEMA.
+
+    ⚠️ MESURE DU 2026-09-24, `carte-05-capteur-i2c`. Le net `PWR_FLAG` du board
+    reliait en cuivre — 22 pistes et vias — des broches que le schema place sur
+    +3V3, GND, SDA et VIN : un court-circuit des rails, sur un board livre
+    « 100 % route, 0 erreur, fabricable ».
+
+    ⚠️ POURQUOI RIEN NE L AVAIT VU. Le DRC compare le board a SON netlist, qui
+    dit que ces pastilles sont le meme net : il ne peut pas savoir qu elles ne
+    devraient pas l etre. Seul le SCHEMA le sait. C est la jumelle exacte de
+    `_composants_perdus` : un defaut que la carte ne peut pas trahir, parce
+    qu il est dans ce qu elle CROIT etre.
+
+    Aucun seuil. Un net du schema est une equipotentielle declaree ; en reunir
+    deux n est jamais legitime — une liaison voulue passe par un composant. On
+    groupe par net du BOARD et on regarde les nets du SCHEMA de ses broches :
+    un renommage (+3.3V au schema, +3V3 au board) n est donc pas un court. Une
+    pastille sans net, ou absente du schema, ne compte pas. On ne juge que ce
+    qui est certain : une COUPURE peut venir d un ecart de numerotation entre
+    broche et pastille, un melange non.
+
+    Rend une description par court, `[]` si le board est conforme.
+    Garde : `tests/test_board_court_circuite_refuse.py`.
+    """
+    voulu: dict[tuple[str, str], str] = {}
+    for conn in connections or []:
+        for broche in conn.pins:
+            voulu[(str(broche.ref), str(broche.pin))] = conn.name
+    if not voulu or not contenu:
+        return []
+    par_net: dict[str, set] = {}
+    for bloc_fp in re.split(r"\(footprint\b", contenu)[1:]:
+        ref = re.search(r'\(property\s+"Reference"\s+"([^"]+)"', bloc_fp)
+        if not ref:
+            continue
+        for pad in _blocs_pads(bloc_fp):
+            num = re.search(r'\(pad\s+"([^"]*)"', pad)
+            net = re.search(r'\(net\s+(?:\d+\s+)?"([^"]*)"\)', pad)
+            if not (num and net and net.group(1)):
+                continue
+            du_schema = voulu.get((ref.group(1), num.group(1)))
+            if du_schema is not None:
+                par_net.setdefault(net.group(1), set()).add(du_schema)
+    return ["%s reunit %s" % (net, " / ".join(sorted(s)))
+            for net, s in sorted(par_net.items()) if len(s) > 1]
+
+
+class _Broche:
+    __slots__ = ("ref", "pin")
+
+    def __init__(self, ref, pin):
+        self.ref, self.pin = str(ref), str(pin)
+
+
+class _Liaison:
+    __slots__ = ("name", "pins")
+
+    def __init__(self, name, pins):
+        self.name, self.pins = name, pins
+
+
+def courts_du_board(board_texte: str, schema: dict) -> list:
+    """`_courts_circuits` depuis un `schema.json` / `circuit.json` BRUT.
+
+    Pour les outils de banc, qui lisent des fichiers et ne construisent pas de
+    requete : les deux formats d entree sont acceptes (`connections` ou
+    `nets` detailles). Une liaison sans broches lisibles est ignoree.
+
+    ⚠️ Pourquoi ces outils en ont besoin : ils classent les boards sur
+    `(perdus, erreurs, -% route)`. Un board COURT-CIRCUITE y obtient
+    « 0 perdu, 0 erreur, 100 % » — et la protection « on ne remplace jamais par
+    moins bon » GARDAIT le court face a un board correct a 98 %. Mesure du
+    2026-09-24 : les boards versionnes de carte-04 a carte-10 portaient tous le
+    court `PWR_FLAG`.
+    """
+    liaisons = schema.get("connections")
+    if not isinstance(liaisons, list):
+        liaisons = schema.get("nets") or []
+    conns = []
+    for c in liaisons:
+        if not isinstance(c, dict) or "name" not in c:
+            continue
+        pins = [_Broche(p["ref"], p["pin"]) for p in c.get("pins", [])
+                if isinstance(p, dict) and "ref" in p and "pin" in p]
+        if pins:
+            conns.append(_Liaison(c["name"], pins))
+    return _courts_circuits(board_texte, conns)
+
+
 def generate_pcb(
     components: list[SchemaComponent],
     connections: list[SchemaNet],
@@ -1039,6 +1129,15 @@ def generate_pcb(
                 # le niveau qui a genere le board : un pave thermique et ses vias sont
                 # un seul noeud, et le cuivre laisse sans nom court-circuite le plan.
                 content = propager_nets_pastilles_homonymes(content)
+                # ⚠️ Les broches ORPHELINES reviennent sur leur net du SCHEMA.
+                # Cette reparation n etait appelee NULLE PART en production
+                # (constat du 2026-09-24) — seuls ses tests l invoquaient. Sur
+                # `carte-10`, la SORTIE du regulateur et deux VDD du MCU
+                # naissaient sur des nets orphelins : la carte n etait pas
+                # alimentee, et aucun DRC ne pouvait le voir. Neuvieme « regle
+                # ecrite et jamais appelee » de ce depot.
+                # Garde : tests/test_nets_flottants_repares_en_production.py.
+                content = _patch_floating_nets(content, connections or [])
                 content, requoted = _quote_bare_property_values(content)
                 if requoted:
                     logger.warning(
@@ -1046,6 +1145,7 @@ def generate_pcb(
                         "sans ce garde KiCad refuse le board entier", requoted,
                     )
                 perdus = _composants_perdus(content, [c.ref for c in components])
+                courts = _courts_circuits(content, connections or [])
                 if perdus:
                     # ⚠️ ON N ACCEPTE PAS UN BOARD AMPUTE. `carte-05` sortait a
                     # « 100 % route, 0 erreur » sans son capteur BME280 : un
@@ -1056,6 +1156,13 @@ def generate_pcb(
                         "generate_pcb: niveau 1 a PERDU %d composant(s) (%s) — "
                         "board refuse, on tente le niveau suivant",
                         len(perdus), ", ".join(perdus[:8]))
+                elif courts:
+                    # ⚠️ NI UN BOARD COURT-CIRCUITE. Meme faute que le board
+                    # ampute — il ne porte pas le circuit du schema — et meme
+                    # cecite du DRC, qui juge le board contre SON netlist.
+                    logger.error(
+                        "generate_pcb: niveau 1 COURT-CIRCUITE — %s — board "
+                        "refuse, on tente le niveau suivant", " ; ".join(courts[:4]))
                 else:
                     logger.info("generate_pcb: niveau 1 kicad-tools OK")
                     return content
@@ -1068,13 +1175,21 @@ def generate_pcb(
             content = _generate_with_pcbnew(kicad_sch_content, board_w, board_h)
             if content:
                 content = propager_nets_pastilles_homonymes(content)
+                # Meme reparation qu au niveau 1 : un niveau oublie serait la
+                # meme faute, un cran plus loin.
+                content = _patch_floating_nets(content, connections or [])
                 content, _ = _quote_bare_property_values(content)
                 perdus = _composants_perdus(content, [c.ref for c in components])
+                courts = _courts_circuits(content, connections or [])
                 if perdus:
                     logger.error(
                         "generate_pcb: niveau 2 a PERDU %d composant(s) (%s) — "
                         "board refuse",
                         len(perdus), ", ".join(perdus[:8]))
+                elif courts:
+                    logger.error(
+                        "generate_pcb: niveau 2 COURT-CIRCUITE — %s — board refuse",
+                        " ; ".join(courts[:4]))
                 else:
                     logger.info("generate_pcb: niveau 2 pcbnew OK")
                     return content

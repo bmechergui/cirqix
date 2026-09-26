@@ -32,7 +32,7 @@ Tu es un ingénieur routage PCB. À chaque tour tu reçois l'état d'une carte K
 et tu réponds par UNE commande JSON pour progresser vers : tous les nets routés, \
 0 violation DRC.
 
-Commandes disponibles (réponds UNIQUEMENT par l'objet JSON, rien d'autre) :
+Commandes disponibles :
 - {"type":"route_net","net":"NOM"[,"avoid_regions":[],"prefer_layer":"F.Cu"]}
 - {"type":"place_component","ref":"R1","near":"U1","offset":[2,0]}  ou  {"ref":"R1","at":[x,y]}
 - {"type":"add_via","net":"NOM","position":[x,y]}
@@ -41,7 +41,7 @@ Commandes disponibles (réponds UNIQUEMENT par l'objet JSON, rien d'autre) :
 
 Stratégie : route d'abord les nets simples ; si un net est bloqué par un \
 composant, déplace ce composant de quelques mm (place_component) pour libérer un \
-canal, puis route. Réponds par le JSON de la commande la plus utile maintenant."""
+canal, puis route. Choisis la commande la plus utile maintenant."""
 
 
 def available() -> bool:
@@ -55,23 +55,45 @@ def available() -> bool:
         return False
 
 
-def _extract_json(text: str) -> dict | None:
-    """Extrait le premier objet JSON d'une réponse LLM (tolère le texte autour)."""
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+# Sorties structurées (Haiku 4.5) : la commande est garantie conforme à ces
+# schémas, sans extraction par regex. `action: null` = plus rien d'utile à faire.
+def _commande(kind: str, props: dict, required: list[str]) -> dict:
+    return {"type": "object", "additionalProperties": False,
+            "required": ["type", *required],
+            "properties": {"type": {"const": kind}, **props}}
 
 
-def _claude_decider(model: str, system: str = _SYSTEM_PROMPT):
+def _schema_action(*variantes: dict) -> dict:
+    return {"type": "object", "additionalProperties": False,
+            "required": ["action"],
+            "properties": {"action": {"anyOf": [{"type": "null"}, *variantes]}}}
+
+
+_S = {"type": "string"}
+_XY = {"type": "array", "items": {"type": "number"}}
+_PLACE_AT = _commande("place_component", {"ref": _S, "at": _XY}, ["ref", "at"])
+_PLACE_NEAR = _commande("place_component", {"ref": _S, "near": _S, "offset": _XY},
+                        ["ref", "near", "offset"])
+_DELETE = _commande("delete_trace", {"net": _S, "delete_all_routing": {"type": "boolean"}},
+                    ["net"])
+_PLACEMENT_SCHEMA = _schema_action(_PLACE_AT, _PLACE_NEAR)
+_ROUTING_SCHEMA = _schema_action(
+    _commande("route_net", {"net": _S, "prefer_layer": _S,
+                            "avoid_regions": {"type": "array", "items": _XY}}, ["net"]),
+    _PLACE_AT, _PLACE_NEAR,
+    _commande("add_via", {"net": _S, "position": _XY}, ["net", "position"]),
+    _DELETE,
+    _commande("define_zone", {"net": _S, "layer": _S}, ["net", "layer"]),
+)
+
+
+def _claude_decider(model: str, system: str = _SYSTEM_PROMPT,
+                    schema: dict = _ROUTING_SCHEMA):
     """Décideur par défaut : un appel Claude (Haiku) → une commande JSON dict.
 
     Isolé pour permettre l'injection d'un décideur déterministe dans les tests
-    (sans ANTHROPIC_API_KEY). ``system`` permet de restreindre le vocabulaire
-    (boucle placement-feedback : place_component/delete_trace uniquement).
+    (sans ANTHROPIC_API_KEY). ``system`` et ``schema`` restreignent le
+    vocabulaire (boucle placement-feedback : place_component seul).
     """
     import anthropic
 
@@ -81,12 +103,17 @@ def _claude_decider(model: str, system: str = _SYSTEM_PROMPT):
         resp = client.messages.create(
             model=model,
             max_tokens=512,
-            system=[{"type": "text", "text": system,
-                     "cache_control": {"type": "ephemeral"}}],
+            system=system,  # < 4096 jetons : Haiku 4.5 ne mettrait pas ce préfixe en cache
             messages=[{"role": "user", "content": prompt}],
+            # `extra_body` : n'exige pas de relever anthropic>=0.40.0.
+            extra_body={"output_config": {"format": {"type": "json_schema",
+                                                     "schema": schema}}},
         )
+        logger.info("llm usage surface=reasoner %s", resp.usage)
+        if resp.stop_reason != "end_turn":  # max_tokens, refusal : pas de commande sûre
+            return None
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-        return _extract_json(text)
+        return json.loads(text)["action"]
 
     return decide
 
@@ -200,29 +227,34 @@ def route_with_llm(pcb_bytes: bytes, max_steps: int = _MAX_STEPS,
 
 _MAX_ITERATIONS = 3
 _MAX_MOVES_PER_ITER = 4
-_ALLOWED_FEEDBACK_COMMANDS = frozenset({"place_component", "delete_trace"})
+# delete_trace n'y figure pas : chaque itération dé-route TOUT le board
+# (_strip_routing) avant de re-router — effacer une piste n'aurait aucun effet
+# et consommerait un des _MAX_MOVES_PER_ITER tours.
+_ALLOWED_FEEDBACK_COMMANDS = frozenset({"place_component"})
 
 _PLACEMENT_SYSTEM_PROMPT = """\
 Tu es un ingénieur placement PCB. Le routeur automatique a échoué sur certains \
 nets : son analyse d'échec t'indique QUELS composants bloquent QUELS chemins.
 
-Ton SEUL levier est le placement. À chaque tour, réponds par UNE commande JSON \
-(rien d'autre) :
+Ton SEUL levier est le placement. À chaque tour, choisis UNE commande :
 - {"type":"place_component","ref":"D1","at":[x,y]}  ou  {"ref":"D1","near":"U1","offset":[3,0]}
-- {"type":"delete_trace","net":"NOM","delete_all_routing":true}
 
-INTERDIT : route_net, add_via, define_zone — le routage appartient au routeur \
-négocié qui repassera après tes déplacements.
+Le routage lui-même appartient au routeur négocié, qui repassera après tes \
+déplacements.
 
-Stratégie — dans CET ordre :
-1. Les « Routing Suggestions » du routeur PRIMENT sur toute intuition : si le \
-routeur écrit « Move U2 north to create routing channel » ou « Move C13, J1, U2 \
-east », applique EXACTEMENT ces déplacements — y compris pour un gros composant \
-(U*, J*) : le routeur sait mieux que toi où est le mur (mesuré 2026-07-12 : \
-déplacer d'autres composants que ceux suggérés DÉGRADE le routage, 91%→73%).
-2. Sans suggestion explicite : déplace les petits composants (R, C, D) hors des \
-couloirs bloqués, de quelques mm seulement.
-3. N'empile jamais deux composants. Si plus rien d'utile à déplacer, réponds null."""
+Stratégie :
+Tu n'es consulté que lorsque le code n'a appliqué aucune « Routing Suggestion » du \
+routeur : soit il n'en a émis aucune, soit toutes ont été écartées (voir « Suggestions \
+écartées » : inverse d'un déplacement déjà fait, déjà appliquée une fois, composant \
+introuvable). Ne rejoue jamais une suggestion écartée : cumuler un même déplacement a \
+fait chuter le routage de 17 % à 0 % (mesuré 2026-07-19).
+1. Si l'analyse désigne un composant bloquant que le code n'a pas déplacé, déplace-le \
+de quelques mm dans une direction non encore essayée. Ne déplace pas de gros \
+composants (U*, J*) que le routeur ne désigne pas (mesuré 2026-07-12 : 91 % → 73 %).
+2. Sans désignation : déplace les petits composants (R, C, D) hors des couloirs \
+bloqués, de quelques mm seulement.
+3. N'empile jamais deux composants. S'il ne reste rien d'utile à déplacer, rends \
+action null."""
 
 
 # --- Suiveur de suggestions déterministe (industrialisation 2026-07-13) -----
@@ -400,7 +432,7 @@ def rescue_with_placement_feedback(
       2. ``route_fn(pcb) -> (routed_bytes, pct, failure_analysis)`` — routeur
          négocié complet (kct route), from scratch ;
       3. si pct = 100 → terminé ; sinon le LLM décide jusqu'à
-         ``max_moves_per_iter`` déplacements (place_component / delete_trace
+         ``max_moves_per_iter`` déplacements (place_component
          uniquement — jamais route_net) à partir de l'analyse d'échec ;
       4. re-route au tour suivant.
 
@@ -412,7 +444,8 @@ def rescue_with_placement_feedback(
 
     steps_log: list[str] = []
     if decide is None:
-        decide = _claude_decider(model, system=_PLACEMENT_SYSTEM_PROMPT)
+        decide = _claude_decider(model, system=_PLACEMENT_SYSTEM_PROMPT,
+                                  schema=_PLACEMENT_SCHEMA)
 
     best_bytes, best_pct = pcb_bytes, -1
     current = pcb_bytes
@@ -484,7 +517,9 @@ def rescue_with_placement_feedback(
             # --- Voie 2 (LLM, fallback) : aucune suggestion applicable -------
             for _ in range(max_moves_per_iter if not moved_refs else 0):
                 prompt = (agent.get_prompt()
-                          + "\n## Analyse d'échec du routeur\n" + analysis)
+                          + "\n## Analyse d'échec du routeur\n" + analysis
+                          + "\n## Suggestions écartées\n"
+                          + ("\n".join(rejected_logs) or "(aucune)"))
                 try:
                     command = decide(prompt)
                 except Exception as exc:

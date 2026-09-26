@@ -1,49 +1,56 @@
-Schéma (driver LLM) : 6 composants, 34 nets, board 140x120mm
+SchÃ©ma (driver LLM) : 6 composants, 34 nets, board 140x120mm
 
 ==============================================================
-[1] call_agent_schema → POST /schematic/generate
+[1] call_agent_schema â†’ POST /schematic/generate
 ==============================================================
-    -> taille=60211o  (14.2s)
+    -> taille=62853o  (5.1s)
 
 ==============================================================
-[2] call_agent_erc → POST /erc
+[2] call_agent_erc â†’ POST /erc
 ==============================================================
-    -> clean=False · violations=176 · fixed=225 · skipped=False · engine=kicad-cli  (3.2s)
+    -> clean=True Â· violations=0 Â· fixed=12 Â· skipped=False Â· engine=kicad-cli  (8.2s)
 
 ==============================================================
-[4] call_agent_gen_pcb → POST /pcb/generate
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
 ==============================================================
-    -> taille=28666o  (0.3s)
+    -> taille=29150o  (0.2s)
 
 ==============================================================
-[5] call_agent_placement → POST /place/auto
+[5] call_agent_placement â†’ POST /place/auto (essai 1/4)
 ==============================================================
-    -> placés=6 · status=None  (37.3s)
+    -> placÃ©s=6 Â· status=None  (26.6s)
 
 ==============================================================
-[6] call_agent_routing → POST /route/auto
+[6] call_agent_routing â†’ POST /route/auto (essai 1/4)
 ==============================================================
-    -> routé=100% · couches=2 · vias=45 · skipped=False · warning=None  (225.5s)
-
-[6b] Reasoner NON déclenché — routage déjà à 100% (comportement attendu).
+    -> routÃ©=100% Â· couches=2 Â· vias=49 Â· warning=None  (108.2s)
 
 ==============================================================
-[7] call_agent_drc → POST /drc/auto
+[7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
 ==============================================================
-    -> clean=True · violations=10 · fixed=0 · skipped=False · warning=kicad-tools DRC indisponible — résultat kicad-cli officiel seul  (2.6s)
-       ! silk_overlap: Silkscreen clearance
-       ! silk_overlap: Silkscreen clearance
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
-       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2495 mm; actual 0.0000
+    -> clean=True Â· violations=8 Â· erreurs=0  (4.8s)
+   essai 1 retenu (100%, 0 erreur(s) DRC)
+   100 % atteint â€” on arrete les essais
+
+[6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
 
 ==============================================================
-[8] call_agent_export → POST /export/all
+[7] call_agent_drc â†’ POST /drc/auto (rapport final)
 ==============================================================
-    -> fichiers=20 · devis=$None · skipped=False · warning=kicad-tools unavailable — kicad-cli export  (5.1s)
+    -> clean=True Â· violations=8 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (3.9s)
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+       ! hole_to_hole: Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000
+
+==============================================================
+[8] call_agent_export â†’ POST /export/all
+==============================================================
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (2.5s)
        + led-blinker-B_Adhesive.gba
        + led-blinker-B_Courtyard.gbr
        + led-blinker-B_Cu.gbl
@@ -66,7 +73,7 @@ Schéma (driver LLM) : 6 composants, 34 nets, board 140x120mm
        + pos.csv
 
 ==============================================================
-SUMMARY routed=100 drc_violations=10 drc_clean=True files=20 types=hole_to_hole:8,silk_overlap:2
-VERDICT : routage 100% · DRC clean=True (skipped=False) · 20 fichiers exportés
+SUMMARY routed=100 drc_violations=8 drc_clean=True files=20 types=hole_to_hole:8
+VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
 PIPELINE COMPLET OK
-Artefacts : /tmp/campagne-1788990172/carte-11-croisements-t3/output
+Artefacts : /tmp/banc-carte-11-croisements-1790202986/output

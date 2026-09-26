@@ -53,6 +53,6 @@ class TestCablage:
 
     def test_appele_juste_apres_le_clamp_avant_l_optimisation(self):
         clamp = self.SOURCE.index("_clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)")
-        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants)")
+        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants")
         optim = self.SOURCE.index("OptimizationWorkflow(", colle)
         assert clamp < colle < optim

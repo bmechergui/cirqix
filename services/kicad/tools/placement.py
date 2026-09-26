@@ -39,6 +39,9 @@ from typing import Optional
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
 from tools.placement_bypass import snap_cluster_members
+from tools.placement_zones import (MARGE_CONNECTEUR_BORD_MM, coucher_les_connecteurs,
+                                   redresser_les_conflits, respecter_les_zones,
+                                   violations_de_zones)
 from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
@@ -870,8 +873,12 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
+_CARRE_ALLONGE_MM = 0.5   # en dessous, un corps n a pas de grand axe
+
+
 def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
-                      direction: Optional[float] = None) -> tuple:
+                      direction: Optional[float] = None,
+                      parallele_d_abord: bool = False) -> tuple:
     """Position d un ancrage glisse contre un bord : celui que vise la
     ``direction``, ou a defaut le plus proche de son corps.
 
@@ -898,6 +905,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
 
     Sans ``direction``, rien ne change : `_coller_les_ancrages_au_bord` glisse
     toujours par le plus court chemin, et c est sa regle propre.
+
+    ``parallele_d_abord`` (D-2026-09-26-a) : un corps ALLONGE essaie d abord
+    les bords que son grand axe longe, le plus court chemin ne departageant
+    qu ensuite. Campagne du 2026-09-26 : un en-tete vertical dans un coin, a
+    3,2 mm du bord gauche, etait colle au bord BAS, plus proche de 1 mm — et
+    finissait debout, perpendiculaire a son bord, sur 5 cartes sur 6.
     """
     x, y = pos
     bx0, by0, bx1, by1 = boite
@@ -919,7 +932,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
         (abs((min_y - by0) - y), (cx, min_y - by0), "x", (0.0, -1.0)),
         (abs((max_y - by1) - y), (cx, max_y - by1), "x", (0.0, 1.0)),
     ]
-    if direction is None:
+    allonge = abs((bx1 - bx0) - (by1 - by0)) >= _CARRE_ALLONGE_MM
+    if direction is None and parallele_d_abord and allonge:
+        # axe libre "y" = bord vertical : il longe un corps plus haut que large.
+        vertical = (by1 - by0) > (bx1 - bx0)
+        bords.sort(key=lambda b: ((b[2] == "y") != vertical, b[0]))
+    elif direction is None:
         bords.sort(key=lambda b: b[0])
     else:
         # Le bord vers lequel le rayon POINTE le plus franchement vient en
@@ -980,7 +998,7 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             (o.position[0] + ob[0], o.position[1] + ob[1], o.position[0] + ob[2], o.position[1] + ob[3])
             for o in ancres if o.reference not in poses and o is not fp
             for ob in (_boite_orientee_fp(o),)]
-        nx, ny = _position_au_bord((x, y), b, bornes, autres)
+        nx, ny = _position_au_bord((x, y), b, bornes, autres, parallele_d_abord=True)
         if abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6:
             logger.warning("ancrage %s (%.2f,%.2f) -> colle au bord (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)
@@ -2393,6 +2411,12 @@ def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
     r_conf = reference.get("conflits_restants", 10 ** 6)
     if c_conf != r_conf:
         return c_conf < r_conf
+    # D-2026-09-26-a : une règle de zone violée (composant contre le bord ou
+    # sous un connecteur) passe avant la routabilité. Mesure inconnue = perd.
+    c_z = candidat.get("violations_zones", 10 ** 6)
+    r_z = reference.get("violations_zones", 10 ** 6)
+    if c_z != r_z:
+        return c_z < r_z
     c_x, r_x = candidat.get("croisements"), reference.get("croisements")
     if c_x is None and r_x is not None:
         return False
@@ -2505,11 +2529,12 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
         r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm,
                                  graine=graine_encore_utile)
         n_conflits = r.get("conflits_restants", 0)
+        n_zones = r.get("violations_zones", 0)
         if _placement_meilleur(r, meilleur):
             meilleur = r
         if r.get("centres_etoile"):
             graine_encore_utile = False
-            if n_conflits == 0:
+            if n_conflits == 0 and n_zones == 0:
                 logger.info("auto_place: placement calcule et propre — un seul tirage")
                 break
         # ⚠️ ON NE S ARRETE PLUS AU PREMIER PLACEMENT PROPRE. Le budget du GA
@@ -2518,7 +2543,10 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
         # de fil contre 372) avec 0 conflit, donc indiscernable sans second
         # tirage. Le filtre EST la contrepartie du budget reduit : deux
         # tirages reduits coutent moins qu un seul complet (246 s contre 342).
-        if n_conflits == 0 and essai + 1 >= _TIRAGES_MINIMUM:
+        # Un tirage qui viole une zone (D-2026-09-26-a) ne clôt pas la boucle :
+        # carte-02 du 2026-09-26, « U2 touche connecteur J2, aucune place
+        # libre » sur un tirage, 0 violation sur les deux autres.
+        if n_conflits == 0 and n_zones == 0 and essai + 1 >= _TIRAGES_MINIMUM:
             logger.info(
                 "auto_place: %d tirage(s) propres — retenu %s",
                 essai + 1,
@@ -2529,6 +2557,15 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
             logger.warning(
                 "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot "
                 "que de router un board casse", n_conflits, essai + 1, tirages)
+        elif n_zones:
+            logger.warning(
+                "auto_place: %d violation(s) de zone au tirage %d/%d — on re-tire",
+                n_zones, essai + 1, tirages)
+    if meilleur.get("violations_zones") and not meilleur.get("conflits_restants"):
+        logger.warning(
+            "auto_place: %d violation(s) de zone sur le MEILLEUR tirage — "
+            "la carte est trop pleine pour D-2026-09-26-a a cette taille",
+            meilleur["violations_zones"])
     if meilleur.get("conflits_restants"):
         # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
         # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
@@ -2842,7 +2879,14 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
         _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
-        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants)
+        # D-2026-09-26-a (validee) : un connecteur est COUCHE le long de son bord
+        # avant d y etre colle — 35 sur 48 etaient debout (2026-09-26).
+        couches = coucher_les_connecteurs(pcb, conn, exempts=dominants)
+        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+                                    margin_mm=MARGE_CONNECTEUR_BORD_MM)
+        if redresser_les_conflits(pcb, couches):
+            _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+                                        margin_mm=MARGE_CONNECTEUR_BORD_MM)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
@@ -3327,6 +3371,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # connecteurs et a ressorti R1 que le premier filet venait de rentrer.
         _garder_dans_le_contour(out, conn, fixes_snap)
 
+        # D-2026-09-26-a (validee) : rien sous ni autour d un connecteur, rien
+        # contre le bord — apres le dernier deplacement, avant la reparation DRC.
+        respecter_les_zones(out, conn)
+
         # ⚠️ PUIS LES CHEVAUCHEMENTS QUE SEUL LE DRC VOIT (2026-09-20), apres
         # la derniere etape qui deplace : l Inspecteur approxime les
         # courtyards, kicad-cli lit la vraie `F.CrtYd` — carte-05 et carte-09
@@ -3348,11 +3396,15 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 conflits_restants)
 
         _journaliser_qualite(out, "livre")
-        footprints = PCB.load(str(out)).footprints
+        board_livre = PCB.load(str(out))
+        footprints = board_livre.footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
             "conflits_restants": conflits_restants,
+            # D-2026-09-26-a : composants contre le bord ou sous un connecteur.
+            # Départage les tirages juste après les conflits.
+            "violations_zones": len(violations_de_zones(board_livre, conn)),
             # Non vide : ce placement est CALCULE (graine en etoile), pas tire.
             "centres_etoile": centres_etoile,
             # Second critere de choix entre tirages LEGAUX — sans lui, deux

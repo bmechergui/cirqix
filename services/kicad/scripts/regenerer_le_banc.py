@@ -15,9 +15,16 @@ transpose ici.
 
 ## Le critère
 
-Classement lexicographique sur `(composants perdus, erreurs, -routed_percent)`,
-lu dans `expected/mesures.json` et dans le board :
+Classement lexicographique sur
+`(courts-circuits, composants perdus, erreurs, -routed_percent)`, lu dans
+`expected/mesures.json`, dans le board et dans le schéma :
 
+  - **un board SANS COURT-CIRCUIT l'emporte toujours** sur un board qui
+    réunit deux nets du schéma, quel que soit son DRC. Mesuré le 2026-09-24 :
+    les boards versionnés de `carte-04` à `carte-10` reliaient VIN, +3V3 et
+    d'autres nets en cuivre, et obtenaient « 100 %, 0 erreur, 0 perdu » — la
+    protection « jamais moins bon » les GARDAIT face à un board correct. Le DRC
+    ne peut pas voir un court : il juge le board contre SON netlist ;
   - **un board COMPLET l'emporte toujours** sur un board amputé, quel que soit
     son DRC. Mesuré le 2026-09-08 : `carte-05` sortait à « 100 %, 0 erreur »
     SANS son capteur BME280, et à « 100 %, 7 erreurs » avec lui. Le premier
@@ -72,6 +79,28 @@ _SCRIPTS = Path(__file__).resolve().parent
 _SERVICE = _SCRIPTS.parent
 _EXEMPLES = _SERVICE / "examples"
 _RACINE = _SERVICE.parents[1]
+sys.path.insert(0, str(_SERVICE))
+
+
+def _courts(board_texte: str, dossier: Path) -> int | None:
+    """Nombre de courts-circuits du board face a son schema — PREMIER critere.
+
+    ⚠️ Un board court-circuite obtient « 0 perdu, 0 erreur, 100 % » : sans ce
+    critere, la protection « on ne remplace jamais par moins bon » GARDAIT le
+    court face a un board correct a 98 %. Mesure du 2026-09-24 : les boards
+    versionnes de carte-04 a carte-10 portaient tous le court `PWR_FLAG`.
+
+    `None` si le schema ou le board est illisible — jamais 0 par defaut : un
+    court qu on n a pas su compter n est pas une absence de court.
+    """
+    s = dossier / "input" / "schema.json"
+    if not s.is_file():
+        s = dossier / "input" / "circuit.json"
+    try:
+        from tools.pcb import courts_du_board
+        return len(courts_du_board(board_texte, json.loads(s.read_text(encoding="utf-8"))))
+    except Exception:
+        return None
 
 
 def _perdus(dossier: Path) -> int:
@@ -94,9 +123,22 @@ def _perdus(dossier: Path) -> int:
     return max(0, len(decl) - len(poses))
 
 
+def _lisible(note: tuple) -> str:
+    """La note en clair, champ par champ, NOMME.
+
+    ⚠️ L affichage lisait la note PAR POSITION (`note[2]` = pourcentage).
+    Ajouter le court en tete a decale chaque champ : sans cette fonction,
+    une carte a 100 % se serait affichee « 0 % routee ». Un compteur qui
+    ment, dans l outil meme qui protege contre eux.
+    """
+    courts, perdus, erreurs, moins_pct = note
+    return "%s%% · %s err · %s perdu(s) · %s court(s)" % (-moins_pct, erreurs, perdus, courts)
+
+
 def _note(dossier: Path) -> tuple | None:
-    """(perdus, erreurs, -pourcentage) — plus petit est meilleur."""
+    """(courts, perdus, erreurs, -pourcentage) — plus petit est meilleur."""
     f = dossier / "expected" / "mesures.json"
+    b = dossier / "expected" / "final.kicad_pcb"
     if not f.is_file():
         return None
     try:
@@ -108,7 +150,10 @@ def _note(dossier: Path) -> tuple | None:
         # ⚠️ Pas de verdict = pas de note. On ne compare pas une mesure a une
         # absence de mesure : c est ainsi qu on finit par preferer le vide.
         return None
-    return (_perdus(dossier), int(v["nb_erreurs"]), -int(m["routed_percent"]))
+    courts = _courts(b.read_text(encoding="utf-8", errors="replace"), dossier) if b.is_file() else None
+    if courts is None:
+        return None   # un NOUVEAU board dont on ne sait pas compter les courts n est pas note
+    return (courts, _perdus(dossier), int(v["nb_erreurs"]), -int(m["routed_percent"]))
 
 
 def _note_versionnee(dossier: Path) -> tuple | None:
@@ -154,7 +199,10 @@ def _note_versionnee(dossier: Path) -> tuple | None:
             perdus = max(0, len(decl) - len(poses))
         except Exception:
             perdus = 0
-    return (perdus, int(v["nb_erreurs"]), -int(m["routed_percent"]))
+    # Le board VERSIONNE : illisible, on le suppose sans court — c est le sens
+    # prudent, puisqu un remplacant devra alors etre lui-meme sans court.
+    courts = _courts(b.stdout, dossier) if b.returncode == 0 else None
+    return (courts or 0, perdus, int(v["nb_erreurs"]), -int(m["routed_percent"]))
 
 
 def _git(args: list[str]) -> subprocess.CompletedProcess:
@@ -193,19 +241,19 @@ def rejouer(dossier: Path, recreer: bool, essais: int,
             vus.append("non mesure")
             _git(["checkout", "--", rel])
             continue
-        vus.append("%s%%/%serr/%sperdu" % (-apres[2], apres[1], apres[0]))
+        vus.append(_lisible(apres))
         if avant is None or apres <= avant:
             mention = ("rien a comparer" if avant is None
                        else ("mieux que" if apres < avant else "a egalite avec")
-                       + " %s%%/%serr/%sperdu" % (-avant[2], avant[1], avant[0]))
-            return "%-24s %s%% · %s err · %s perdu(s) — GARDE apres %d essai(s) (%s)" % (
-                dossier.name, -apres[2], apres[1], apres[0], n + 1, mention)
+                       + " " + _lisible(avant))
+            return "%-24s %s — GARDE apres %d essai(s) (%s)" % (
+                dossier.name, _lisible(apres), n + 1, mention)
         # ⚠️ On restaure AVANT le prochain essai : sinon `avant` serait compare
         # au tirage rate, et la barre baisserait a chaque tour.
         _git(["checkout", "--", rel])
 
-    return "%-24s aucun essai n egale l ancien (%s%%/%serr/%sperdu) — conserve · vus : %s" % (
-        dossier.name, -avant[2], avant[1], avant[0], ", ".join(vus))
+    return "%-24s aucun essai n egale l ancien (%s) — conserve · vus : %s" % (
+        dossier.name, _lisible(avant), ", ".join(vus))
 
 
 def main(argv: list[str]) -> int:

@@ -114,6 +114,53 @@ def _note_versionnee(carte: str) -> tuple | None:
     return (perdus, int(v["nb_erreurs"]), -int(mes["routed_percent"]), couches)
 
 
+def _courts_de_texte(texte: str, carte: str) -> int | None:
+    """Courts-circuits du board face a son schema : `tools.pcb.courts_du_board`.
+
+    ⚠️ PREMIER critere de la comparaison, et hors de la note : la note est lue
+    PAR POSITION a quatre endroits, dont un qui ECRIT les mesures livrees
+    (`meilleur[1]` y est le nombre d erreurs). Y inserer un champ en tete aurait
+    decale chaque chiffre ecrit dans le depot. On compare donc sur la cle
+    `(courts, note)` — voir `_cle`.
+
+    Un board court-circuite obtient « 0 perdu, 0 erreur, 100 % » : sans ce
+    critere, on GARDAIT le court face a un board correct. Mesure du 2026-09-24
+    sur les boards versionnes de carte-04 a carte-10.
+    """
+    for nom in ("schema.json", "circuit.json"):
+        sch = _SERVICE / "examples" / carte / "input" / nom
+        if sch.is_file():
+            break
+    else:
+        return None
+    try:
+        sys.path.insert(0, str(_SERVICE))
+        from tools.pcb import courts_du_board
+        return len(courts_du_board(texte, json.loads(sch.read_text(encoding="utf-8"))))
+    except Exception:
+        return None
+
+
+def _courts_versionne(carte: str) -> int:
+    """Courts du board VERSIONNE. Illisible : 0 — le sens prudent, puisqu un
+    remplacant devra alors etre lui-meme sans court."""
+    b = _git(["show", "HEAD:services/kicad/examples/%s/expected/final.kicad_pcb" % carte])
+    return (_courts_de_texte(b.stdout, carte) or 0) if b.returncode == 0 else 0
+
+
+def _courts_du_tirage(dossier: str, carte: str) -> int | None:
+    """Courts du board d un tirage. Illisible : None — un tirage dont on ne sait
+    pas compter les courts n est pas note, donc jamais livre."""
+    lu = _wsl("docker exec %s cat %s" % (shlex.quote(_CONTENEUR),
+                                         shlex.quote("%s/output/6_routed.kicad_pcb" % dossier)), 300)
+    return _courts_de_texte(lu.stdout, carte) if lu.returncode == 0 else None
+
+
+def _cle(courts, note):
+    """Cle de comparaison : un board SANS COURT l emporte toujours."""
+    return (courts, note)
+
+
 def _note_du_tirage(dossier: str, carte: str) -> tuple | None:
     """La note d'un tirage, mesurée DANS le conteneur sur le board produit."""
     q = shlex.quote
@@ -233,20 +280,23 @@ def main(argv: list[str]) -> int:
     sans_couches = (lambda n: n[:3] if (n is not None and o.placement_pro) else n)
     for carte in sorted(par_carte):
         avant = sans_couches(_note_versionnee(carte))
+        avant_courts = _courts_versionne(carte)
         notes = []
         for d in sorted(par_carte[carte]):
             n = sans_couches(_note_du_tirage(d, carte))
-            notes.append((n, d))
+            c = _courts_du_tirage(d, carte) if n is not None else None
+            # Un tirage dont on ne sait pas compter les courts n est pas note.
+            notes.append((n if c is not None else None, d, c))
 
-        valides = [(n, d) for n, d in notes if n is not None]
-        vus = " · ".join("%s" % ("%d%%/%derr/%dperdu" % (-n[2], n[1], n[0])
-                                 if n else "non mesure") for n, _ in notes)
+        valides = [(n, d, c) for n, d, c in notes if n is not None]
+        vus = " · ".join("%s" % ("%d%%/%derr/%dperdu/%dcourt" % (-n[2], n[1], n[0], c)
+                                 if n else "non mesure") for n, _, c in notes)
         if not valides:
             print("%-24s AUCUN tirage mesurable — conserve · vus : %s" % (carte, vus))
             continue
 
-        valides.sort(key=lambda x: x[0])
-        meilleur, dossier = valides[0]
+        valides.sort(key=lambda x: _cle(x[2], x[0]))
+        meilleur, dossier, meilleur_courts = valides[0]
 
         if avant is None:
             # ⚠️ On ne livre PAS sur une reference introuvable : c est ainsi
@@ -254,12 +304,13 @@ def main(argv: list[str]) -> int:
             print("%-24s reference versionnee ILLISIBLE — conserve · vus : %s"
                   % (carte, vus))
             continue
-        if meilleur > avant:
+        if _cle(meilleur_courts, meilleur) > _cle(avant_courts, avant):
             print("%-24s aucun tirage n egale %d%%/%derr/%dperdu — conserve · vus : %s"
                   % (carte, -avant[2], avant[1], avant[0], vus))
             continue
 
-        etat = "MIEUX que" if meilleur < avant else "a egalite avec"
+        etat = ("MIEUX que" if _cle(meilleur_courts, meilleur) < _cle(avant_courts, avant)
+                else "a egalite avec")
         print("%-24s %d%% · %d err · %d perdu — %s %d%%/%derr%s"
               % (carte, -meilleur[2], meilleur[1], meilleur[0], etat,
                  -avant[2], avant[1], "  [LIVRE]" if o.appliquer else "  [a livrer]"))

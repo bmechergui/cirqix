@@ -1,0 +1,92 @@
+16:35:15  campagne : 3 tirage(s) x 15 carte(s)
+16:35:15  carte-01-diviseur tirage 1  demarre
+16:38:08  carte-01-diviseur tirage 1  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+16:38:08  carte-01-diviseur tirage 2  demarre
+16:40:22  carte-01-diviseur tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+16:40:22  carte-01-diviseur tirage 3  demarre
+16:59:08  carte-01-diviseur tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+16:59:08  carte-02-alimentation tirage 1  demarre
+17:01:49  carte-02-alimentation tirage 1  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+17:01:49  carte-02-alimentation tirage 2  demarre
+17:04:34  carte-02-alimentation tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+17:04:34  carte-02-alimentation tirage 3  demarre
+17:07:17  carte-02-alimentation tirage 3  SUMMARY routed=100 drc_violations=6 drc_clean=True files=20 types=silk_over_copper:4,silk_overlap:2
+17:07:17  driver-clignotant-ne555 tirage 1  demarre
+17:09:42  driver-clignotant-ne555 tirage 1  SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_over_copper:4
+17:09:42  driver-clignotant-ne555 tirage 2  demarre
+17:11:48  driver-clignotant-ne555 tirage 2  SUMMARY routed=100 drc_violations=2 drc_clean=True files=20 types=silk_overlap:2
+17:11:48  driver-clignotant-ne555 tirage 3  demarre
+17:14:08  driver-clignotant-ne555 tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+17:14:08  led-blinker-full-pipeline tirage 1  demarre
+17:16:20  led-blinker-full-pipeline tirage 1  SUMMARY routed=100 drc_violations=2 drc_clean=True files=20 types=silk_overlap:2
+17:16:20  led-blinker-full-pipeline tirage 2  demarre
+17:18:33  led-blinker-full-pipeline tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+17:18:33  led-blinker-full-pipeline tirage 3  demarre
+17:29:09  led-blinker-full-pipeline tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+17:29:09  carte-03-oscillateur tirage 1  demarre
+17:41:59  carte-03-oscillateur tirage 1  SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_overlap:2,silk_over_copper:2
+17:41:59  carte-03-oscillateur tirage 2  demarre
+20:07:13  carte-03-oscillateur tirage 2  SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_overlap:2,silk_over_copper:2
+20:07:13  carte-03-oscillateur tirage 3  demarre
+20:14:22  carte-03-oscillateur tirage 3  SUMMARY routed=100 drc_violations=2 drc_clean=True files=20 types=silk_over_copper:2
+20:14:22  driver-thermometre-i2c tirage 1  demarre
+20:17:29  driver-thermometre-i2c tirage 1  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:17:29  driver-thermometre-i2c tirage 2  demarre
+20:20:19  driver-thermometre-i2c tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:20:19  driver-thermometre-i2c tirage 3  demarre
+20:23:00  driver-thermometre-i2c tirage 3  SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_overlap:4
+20:23:00  carte-04-mcu-minimal tirage 1  demarre
+20:26:18  carte-04-mcu-minimal tirage 1  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:26:18  carte-04-mcu-minimal tirage 2  demarre
+20:30:05  carte-04-mcu-minimal tirage 2  SUMMARY routed=100 drc_violations=6 drc_clean=True files=20 types=silk_over_copper:6
+20:30:05  carte-04-mcu-minimal tirage 3  demarre
+20:33:47  carte-04-mcu-minimal tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:33:47  driver-stm32-minimal tirage 1  demarre
+20:43:46  driver-stm32-minimal tirage 1  SUMMARY routed=100 drc_violations=14 drc_clean=True files=20 types=silk_over_copper:10,silk_overlap:4
+20:43:46  driver-stm32-minimal tirage 2  demarre
+20:51:04  driver-stm32-minimal tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:51:04  driver-stm32-minimal tirage 3  demarre
+20:58:33  driver-stm32-minimal tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+20:58:33  carte-05-capteur-i2c tirage 1  demarre
+21:05:38  carte-05-capteur-i2c tirage 1  SUMMARY routed=100 drc_violations=2 drc_clean=True files=20 types=silk_overlap:2
+21:05:38  carte-05-capteur-i2c tirage 2  demarre
+21:12:49  carte-05-capteur-i2c tirage 2  SUMMARY routed=100 drc_violations=4 drc_clean=True files=20 types=silk_overlap:2,silk_over_copper:2
+21:12:49  carte-05-capteur-i2c tirage 3  demarre
+21:20:30  carte-05-capteur-i2c tirage 3  SUMMARY routed=100 drc_violations=8 drc_clean=True files=20 types=silk_overlap:4,silk_over_copper:4
+21:20:30  carte-06-io-etendu tirage 1  demarre
+22:32:37  carte-06-io-etendu tirage 1  SUMMARY routed=100 drc_violations=62 drc_clean=True files=22 types=silk_over_copper:40,silk_overlap:22
+22:32:37  carte-06-io-etendu tirage 2  demarre
+22:41:44  carte-06-io-etendu tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+22:41:44  carte-06-io-etendu tirage 3  demarre
+22:52:56  carte-06-io-etendu tirage 3  SUMMARY routed=100 drc_violations=2 drc_clean=True files=20 types=silk_over_copper:2
+22:52:56  carte-07-multi-io tirage 1  demarre
+23:21:10  carte-07-multi-io tirage 1  SUMMARY routed=100 drc_violations=66 drc_clean=True files=22 types=silk_over_copper:36,silk_overlap:30
+23:21:10  carte-07-multi-io tirage 2  demarre
+23:37:50  carte-07-multi-io tirage 2  SUMMARY routed=100 drc_violations=57 drc_clean=True files=22 types=silk_over_copper:30,silk_overlap:26,track_dangling:1
+23:37:51  carte-07-multi-io tirage 3  demarre
+00:41:58  carte-07-multi-io tirage 3  SUMMARY routed=100 drc_violations=124 drc_clean=True files=26 types=silk_overlap:64,silk_over_copper:60
+00:41:58  carte-08-dense tirage 1  demarre
+01:06:24  carte-08-dense tirage 1  SUMMARY routed=100 drc_violations=24 drc_clean=True files=22 types=silk_over_copper:14,silk_overlap:8,track_dangling:2
+01:06:24  carte-08-dense tirage 2  demarre
+01:18:30  carte-08-dense tirage 2  SUMMARY routed=100 drc_violations=39 drc_clean=True files=22 types=silk_over_copper:24,silk_overlap:14,track_dangling:1
+01:18:30  carte-08-dense tirage 3  demarre
+01:48:47  carte-08-dense tirage 3  SUMMARY routed=100 drc_violations=12 drc_clean=True files=22 types=silk_over_copper:8,silk_overlap:4
+01:48:47  carte-09-tres-dense tirage 1  demarre
+02:31:31  carte-09-tres-dense tirage 1  SUMMARY routed=100 drc_violations=14 drc_clean=True files=24 types=silk_over_copper:10,silk_overlap:4
+02:31:31  carte-09-tres-dense tirage 2  demarre
+02:47:37  carte-09-tres-dense tirage 2  SUMMARY routed=100 drc_violations=46 drc_clean=True files=24 types=silk_over_copper:24,silk_overlap:22
+02:47:37  carte-09-tres-dense tirage 3  demarre
+03:18:27  carte-09-tres-dense tirage 3  SUMMARY routed=100 drc_violations=71 drc_clean=True files=24 types=silk_over_copper:42,silk_overlap:28,track_dangling:1
+03:18:27  carte-10-maximale tirage 1  demarre
+03:25:32  carte-10-maximale tirage 1  SUMMARY routed=100 drc_violations=56 drc_clean=True files=22 types=silk_over_copper:36,silk_overlap:20
+03:25:32  carte-10-maximale tirage 2  demarre
+04:01:53  carte-10-maximale tirage 2  SUMMARY routed=100 drc_violations=48 drc_clean=True files=22 types=silk_over_copper:34,silk_overlap:14
+04:01:53  carte-10-maximale tirage 3  demarre
+05:17:38  carte-10-maximale tirage 3  SUMMARY routed=100 drc_violations=66 drc_clean=True files=22 types=silk_over_copper:36,silk_overlap:28,track_dangling:2
+05:17:38  carte-11-croisements tirage 1  demarre
+05:20:26  carte-11-croisements tirage 1  SUMMARY routed=100 drc_violations=0 drc_clean=True files=22 types=-
+05:20:26  carte-11-croisements tirage 2  demarre
+05:22:41  carte-11-croisements tirage 2  SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+05:22:41  carte-11-croisements tirage 3  demarre
+05:25:59  carte-11-croisements tirage 3  SUMMARY routed=100 drc_violations=0 drc_clean=True files=22 types=-
+05:25:59  CAMPAGNE TERMINEE

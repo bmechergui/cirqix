@@ -13,7 +13,7 @@
   "duree_s": 155,
   "git": "14413a77",
   "routed_percent": 100,
-  "drc_violations": 0,
+  "drc_violations": 2,
   "drc_clean": true,
   "fichiers_exportes": 20,
   "types_violations": "-",
@@ -25,9 +25,9 @@
     "empreintes": 16
   },
   "drc_du_board": {
-    "violations": 0,
+    "violations": 2,
     "non_connectes": 0,
-    "types": "",
+    "types": "silk_over_copper:2",
     "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
@@ -47,5 +47,7 @@
     ],
     "nb_erreurs": 36,
     "fabricable": false
-  }
+  },
+  "livre_par": "livrer_campagne.py",
+  "tirage": "carte-04-mcu-minimal-t1"
 }

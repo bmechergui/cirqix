@@ -6,13 +6,15 @@ type ToolUseBlock = Anthropic.ToolUseBlock;
 type TextBlock = Anthropic.TextBlock;
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './prompts';
 import { ACTIVE_PCB_TOOLS, executeToolStub } from './tools';
-import { syncPcbCacheFromResult, pcbStateCache, getProjectPlan } from './tools/shared';
-import { maxLayersForPlan } from '@cirqix/types';
+import { syncPcbCacheFromResult, pcbStateCache, getProjectPlan, log } from './tools/shared';
+import { maxLayersForPlan, entitlementsForPlan } from '@cirqix/types';
 import { nextBoardSize, type BoardGrowth } from './engines/board-growth';
 
 export const MAX_ITERATIONS = 15;
 const ORCHESTRATOR_MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 4096;
+// Un tour coupé par max_tokens échoue fermé (plus bas) : le plafond doit rester
+// hors d'atteinte d'un tour normal. Streamé, Sonnet 4.6 accepte bien plus.
+const MAX_TOKENS = 16000;
 
 export interface AgentHistoryMessage {
   role: 'user' | 'assistant';
@@ -182,7 +184,16 @@ export function growBoardIfStalled(
 ): BoardGrowth {
   const ceiling = maxLayersForPlan(getProjectPlan(projectId));
   const pct = typeof routing?.['routed_percent'] === 'number' ? (routing['routed_percent'] as number) : 100;
-  const layers = typeof routing?.['layers'] === 'number' ? (routing['layers'] as number) : ceiling;
+  // Le plafond se juge sur le palier ESSAYÉ (D-2026-09-25-e) : le meilleur
+  // board peut n'avoir que 2 couches après un essai à 8. `layers` ne sert que
+  // si le service ne rend pas `layers_tried`.
+  const tried = routing?.['layers_tried'];
+  const layers =
+    typeof tried === 'number'
+      ? tried
+      : typeof routing?.['layers'] === 'number'
+        ? (routing['layers'] as number)
+        : ceiling;
   const drcClean = typeof drc?.['drc_clean'] === 'boolean' ? (drc['drc_clean'] as boolean) : undefined;
   const next = nextBoardSize(growth, { routedPercent: pct, drcClean, layers, ceiling });
   if (next === growth) return growth;
@@ -227,6 +238,28 @@ export function mergeRescueIntoRouting(
   };
 }
 
+/**
+ * Point de cache sur le dernier bloc du dernier tour, sans muter l'historique.
+ * Outils + système, puis l'historique déjà vu, sont relus à ~0,1× au tour
+ * suivant. TTL 1 h des deux côtés : placement et routage séparent deux tours de
+ * plusieurs minutes, et une entrée 5 min expirerait entre eux.
+ */
+function avecPointDeCache(msgs: MessageParam[]): MessageParam[] {
+  const dernier = msgs[msgs.length - 1];
+  if (!dernier) return msgs;
+  const blocs: Anthropic.ContentBlockParam[] =
+    typeof dernier.content === 'string' ? [{ type: 'text', text: dernier.content }] : dernier.content;
+  const fin = blocs[blocs.length - 1];
+  if (!fin) return msgs;
+  const marque = { ...fin, cache_control: { type: 'ephemeral' as const, ttl: '1h' as const } } as Anthropic.ContentBlockParam;
+  return [...msgs.slice(0, -1), { ...dernier, content: [...blocs.slice(0, -1), marque] }];
+}
+
+/** Retire `schema_json` de l'entrée d'un tool_use du modèle (réservé au driver). */
+function sansSchemaJson(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([cle]) => cle !== 'schema_json'));
+}
+
 export async function* runOrchestrator(
   options: OrchestratorOptions
 ): AsyncGenerator<SSEEvent> {
@@ -245,6 +278,11 @@ export async function* runOrchestrator(
 
   let iterations = 0;
   let fullResponseText = '';
+  // Un outil invalide pour le plan n'invite qu'un appel voué à l'échec. Calculé une
+  // fois : le tableau reste constant d'un tour à l'autre (préfixe de cache stable).
+  const tools = entitlementsForPlan(getProjectPlan(options.projectId)).canSimulate
+    ? ACTIVE_PCB_TOOLS
+    : ACTIVE_PCB_TOOLS.filter((t) => t.name !== 'call_agent_simulation');
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
@@ -253,9 +291,12 @@ export async function* runOrchestrator(
     const stream = await client.messages.create({
       model: ORCHESTRATOR_MODEL,
       max_tokens: MAX_TOKENS,
-      system: ORCHESTRATOR_SYSTEM_PROMPT,
-      tools: ACTIVE_PCB_TOOLS,
-      messages,
+      system: [{ type: 'text', text: ORCHESTRATOR_SYSTEM_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      tools,
+      // Défaut de Sonnet 4.6 : high. medium est le point de départ documenté pour un
+      // workflow riche en outils ; mesurer low contre le coût par PCB.
+      output_config: { effort: 'medium' },
+      messages: avecPointDeCache(messages),
       stream: true,
     });
 
@@ -264,6 +305,7 @@ export async function* runOrchestrator(
     const toolUseBlocks: Array<{ id: string; name: string; inputJson: string }> = [];
     let currentToolUse: { id: string; name: string; inputJson: string } | null = null;
     let stopReason: string | null = null;
+    let usage: Partial<Anthropic.Usage> = {};
 
     for await (const event of stream) {
       if (event.type === 'content_block_start') {
@@ -287,9 +329,21 @@ export async function* runOrchestrator(
           toolUseBlocks.push({ ...currentToolUse });
           currentToolUse = null;
         }
+      } else if (event.type === 'message_start') {
+        usage = { ...event.message.usage };
       } else if (event.type === 'message_delta') {
         stopReason = event.delta.stop_reason ?? null;
+        // La mesure ne doit jamais faire tomber le tour : un delta sans usage garde la valeur connue.
+        usage = { ...usage, output_tokens: event.usage?.output_tokens ?? usage.output_tokens };
       }
+    }
+    log.info({ surface: 'orchestrator', projectId: options.projectId, iteration: iterations, stopReason, usage }, 'llm usage');
+
+    // Tour coupé (max_tokens) : un tool_use peut porter une entrée tronquée. Refus :
+    // ce n'est pas une fin normale. Ni l'un ni l'autre ne sort en `done` (fail closed).
+    if (stopReason === 'max_tokens' || stopReason === 'refusal') {
+      yield { type: 'error', message: `Orchestrateur interrompu (${stopReason}) — aucun outil exécuté sur une entrée tronquée.` };
+      return;
     }
 
     // Build assistant content blocks for history
@@ -299,11 +353,12 @@ export async function* runOrchestrator(
       assistantContent.push(textBlock);
     }
     for (const tool of toolUseBlocks) {
-      let toolInput: Record<string, unknown> = {};
+      let toolInput: Record<string, unknown>;
       try {
         toolInput = JSON.parse(tool.inputJson || '{}') as Record<string, unknown>;
       } catch {
-        toolInput = {};
+        yield { type: 'error', message: `Entrée illisible pour ${tool.name} — aucun outil exécuté.` };
+        return;
       }
       const toolBlock = {
         type: 'tool_use' as const,
@@ -346,14 +401,13 @@ export async function* runOrchestrator(
     }> = [];
 
     for (const tool of toolUseBlocks) {
-      let toolInput: Record<string, unknown> = {};
-      try {
-        toolInput = JSON.parse(tool.inputJson || '{}') as Record<string, unknown>;
-      } catch {
-        toolInput = {};
-      }
+      // Déjà parsée sans erreur dans la boucle précédente.
+      const toolInput = JSON.parse(tool.inputJson || '{}') as Record<string, unknown>;
 
-      let result = await executeToolStub(tool.name, toolInput, options.projectId);
+      // schema_json n'est accepté que du driver (run-driver.ts), jamais d'un tool_use
+      // du modèle : il saute l'Agent Schéma et problemesDuSchema.
+      const entree = tool.name === 'call_agent_schema' ? sansSchemaJson(toolInput) : toolInput;
+      let result = await executeToolStub(tool.name, entree, options.projectId);
 
       // Déclenchement DÉTERMINISTE du reasoner (hybride visible) : si le routage
       // n'est pas complet, l'orchestrateur lance LUI-MÊME call_agent_reason — règle
@@ -471,6 +525,9 @@ export async function* runOrchestrator(
         'zip_b64',
         'bom_csv',
         'simulation_output_raw',
+        // .kicad_mod généré par l'IA (jusqu'à 8192 jetons) : conservé dans le
+        // cache communautaire, sans usage pour le raisonnement de Sonnet.
+        'kicad_mod',
       ] as const;
       const slimResult: Record<string, unknown> = { ...result };
       for (const field of LARGE_FIELDS) {

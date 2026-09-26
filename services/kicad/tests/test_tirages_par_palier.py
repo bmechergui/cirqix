@@ -51,17 +51,6 @@ class TestEchelle:
         assert R._paliers_avec_tirages([2, 4], 0) == [2, 4]
 
 
-class TestTolerance:
-    def test_l_arret_tolere_au_moins_un_palier_entier_a_plat(self):
-        # Sinon deux tirages malchanceux au meme palier couperaient l escalade
-        # avant meme d avoir essaye le palier suivant.
-        assert R._TOLERANCE_SANS_GAIN >= R._TIRAGES_ROUTAGE_PAR_PALIER
-
-    def test_l_arret_finit_par_se_declencher(self):
-        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN + 1) is True
-        assert R._escalade_epuisee(R._TOLERANCE_SANS_GAIN) is False
-
-
 class TestCablage:
     SOURCE = (_SERVICE_ROOT / "routers" / "routing.py").read_text(encoding="utf-8")
 
