@@ -14,6 +14,32 @@
 
 ## En attente de validation
 
+### D-2026-09-27-b — Placer au plus près du composant servi
+
+- **Statut : validée** — l'utilisateur, le 2026-09-27 : « Oui, les deux »
+  (connecteurs face à leurs broches ET familles près de leurs broches cibles).
+- Proposée le 2026-09-27 après les cartes à module
+  (D-2026-09-27-a) : 100 % routées sur 2 couches, mais les LED posées loin des
+  broches du module qui les commandent, et l'entrée d'alimentation J1 isolée
+  dans un coin — Arduino 92 x 85 mm pour un module de 69 x 53.
+- **Cause mesurée** : deux règles visent une position qui ne dit rien des
+  liaisons. Le collage au bord (D-2026-09-26-a) prend le bord le plus proche
+  de la position de DÉPART du connecteur (la grille du générateur) ; le
+  rangement des familles (phase C) vise le centre ACTUEL des paires.
+- **Proposition** :
+  1. un connecteur est collé au bord qui FAIT FACE aux broches qu'il relie :
+     direction = du centre de la carte vers le barycentre des pastilles
+     partenaires (nets de plan exclus). Le levier existe déjà
+     (`_position_au_bord(direction=…)`), seule la graine en étoile s'en sert ;
+  2. une famille est rangée à la place libre la plus proche du barycentre de
+     ses broches CIBLES (celles qui pilotent ses résistances), plus du centre
+     des paires ;
+  3. inchangé : connecteurs couchés, zones, garde-fou des familles (erreurs,
+     croisements), contour resserré en dernier.
+- **Mesure prévue** : les 3 cartes à module et les 15 cartes du banc,
+  3 tirages. Critères : surface et longueur de fil en baisse, toujours 100 % /
+  0 erreur, nombre de couches pas en hausse.
+
 ### D-2026-09-27-a — Arduino, Nucleo, ESP32 : un composant posé sur la carte, dès le schéma
 
 - **Statut : validée** — l'utilisateur, le 2026-09-27, en deux temps. D'abord

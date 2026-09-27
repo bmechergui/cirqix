@@ -109,9 +109,11 @@ def test_le_placement_range_les_familles_avant_la_grille():
     assert fam < corps.index("aligner_sur_grille(out, _pas, figes=conn)")
 
 
-def test_sans_place_pour_la_matrice_rien_ne_bouge(tmp_path):
-    """carte-07 de référence : la matrice (repères compris) ne tient nulle part.
-    Rien n est déplacé, et les rotations tournées pour mesurer sont rendues."""
+def test_sans_place_pour_la_matrice_rien_ne_bouge(tmp_path, monkeypatch):
+    """Aucune place libre (recherche vide) : rien n est déplacé, et les
+    rotations tournées pour mesurer sont rendues."""
+    import tools.placement_familles as PF
+    monkeypatch.setattr(PF, "_anneaux", lambda rayon: iter(()))
     pcb = _charger(tmp_path, CARTE_07)
     avant = {f.reference: (f.position, f.rotation, [p.rotation for p in f.pads])
              for f in pcb.footprints}
@@ -154,3 +156,35 @@ def test_un_reglage_de_banc_desarme_l_etape(tmp_path, monkeypatch):
                         lambda nom, defaut: False if nom == "familles_rangees" else defaut)
     pcb = _charger(tmp_path)
     assert ranger_les_familles(pcb, P._connector_refs(pcb)) == []
+
+
+def test_la_matrice_vise_les_broches_cibles(tmp_path, monkeypatch):
+    """D-2026-09-27-b : visé sur les broches qui pilotent les résistances, le
+    bloc finit plus près d elles qu avec l ancienne visée (centre des paires)."""
+    import math
+    import tools.placement_familles as PF
+    from tools.placement_familles import _cible, _familles
+
+    def distance_du_bloc(pcb):
+        famille = max(_familles(pcb, paires_du_board(pcb)), key=len)
+        cibles = [c for c in (_cible(pcb, d, r, net) for net, d, r in famille) if c is not None]
+        tx = sum(x for x, _ in cibles) / len(cibles)
+        ty = sum(y for _, y in cibles) / len(cibles)
+        fps = {f.reference: f for f in pcb.footprints}
+        bs = [Z.boite_absolue(fps[x]) for _, d, r in famille for x in (d, r)]
+        cx = sum((b[0] + b[2]) / 2 for b in bs) / len(bs)
+        cy = sum((b[1] + b[3]) / 2 for b in bs) / len(bs)
+        return math.dist((cx, cy), (tx, ty)), famille
+
+    nouveau = _charger(tmp_path)
+    avant, _ = distance_du_bloc(nouveau)
+    assert ranger_les_familles(nouveau, P._connector_refs(nouveau))
+    d_nouveau, _ = distance_du_bloc(nouveau)
+
+    ancien = _charger(tmp_path / "a" if (tmp_path / "a").mkdir() is None else tmp_path)
+    vrai_cible = PF._cible
+    monkeypatch.setattr(PF, "_cible", lambda *a, **k: None)       # ancienne visée
+    assert ranger_les_familles(ancien, P._connector_refs(ancien))
+    monkeypatch.setattr(PF, "_cible", vrai_cible)
+    d_ancien, _ = distance_du_bloc(ancien)
+    assert d_nouveau <= d_ancien + 1e-6, (d_nouveau, d_ancien)

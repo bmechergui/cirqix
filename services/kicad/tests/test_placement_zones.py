@@ -206,4 +206,5 @@ class TestCollageParallele:
 
     def test_le_collage_des_ancrages_passe_l_option(self):
         src = (RACINE / "tools" / "placement.py").read_text(encoding="utf-8")
-        assert "_position_au_bord((x, y), b, bornes, autres, parallele_d_abord=True)" in src
+        appel = src[src.index("_position_au_bord((x, y), b, bornes, autres, direction=direction,"):]
+        assert "parallele_d_abord=True)" in appel[:200]

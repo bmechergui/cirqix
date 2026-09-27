@@ -963,6 +963,50 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
     return pos
 
 
+def _est_net_de_masse(nom: str) -> bool:
+    n = (nom or "").upper().lstrip("/")
+    return n.startswith("GND") or n in ("VSS", "AGND", "DGND", "PGND")
+
+
+def _direction_vers_les_fixes(pcb, fp, fixes, centre) -> Optional[float]:
+    """Angle (repère KiCad, y vers le bas) du centre de la carte vers le
+    barycentre des pastilles des composants FIXES reliées à `fp` par un net
+    autre que la masse. None si `fp` n en relie aucun.
+
+    D-2026-09-27-b : sur une carte à module, J1 (VIN, GND) finissait dans le
+    coin le plus proche de sa position de DÉPART, loin de la broche VIN du
+    module qu il alimente — Arduino 92 x 85 mm pour un module de 69 x 53.
+    """
+    from tools.serigraphie import _tourne
+    nets = {p.net_name for p in fp.pads
+            if getattr(p, "net_name", None) and not _est_net_de_masse(p.net_name)}
+    if not nets or not fixes:
+        return None
+    pts = [_tourne(o, *p.position) for o in pcb.footprints
+           if o.reference in fixes and o is not fp
+           for p in o.pads if getattr(p, "net_name", None) in nets]
+    if not pts:
+        return None
+    bx = sum(x for x, _ in pts) / len(pts)
+    by = sum(y for _, y in pts) / len(pts)
+    if abs(bx - centre[0]) < 1e-6 and abs(by - centre[1]) < 1e-6:
+        return None
+    return math.atan2(by - centre[1], bx - centre[0])
+
+
+def _coucher_face_a(fp, direction: float) -> None:
+    """Tourne `fp` de 90° si son grand axe ne longe pas le bord vers lequel
+    `direction` pointe — il y sera collé ensuite."""
+    from tools.placement_zones import _tourner
+    b = _boite_orientee_fp(fp)
+    largeur, hauteur = b[2] - b[0], b[3] - b[1]
+    if abs(largeur - hauteur) < 0.5:
+        return
+    bord_horizontal = abs(math.sin(direction)) >= abs(math.cos(direction))   # haut ou bas
+    if (largeur >= hauteur) != bord_horizontal:
+        _tourner(fp, 90.0)
+
+
 def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
                                  exempts: list = None) -> list:
     """Glisse chaque connecteur ancre contre le bord le plus proche. Rend les refs deplacees.
@@ -992,9 +1036,15 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             poses[fp.reference] = (fp.position[0] + b[0], fp.position[1] + b[1],
                                    fp.position[0] + b[2], fp.position[1] + b[3])
     deplaces = []
+    centre = ((bornes_contour[0] + bornes_contour[1]) / 2, (bornes_contour[2] + bornes_contour[3]) / 2)
     for fp in ancres:
         if fp.reference in ignores:
             continue
+        # D-2026-09-27-b (validee) : face aux broches FIXES qu il relie (module,
+        # empreinte verrouillee) — seules positions fiables avant l optimisation.
+        direction = _direction_vers_les_fixes(pcb, fp, ignores, centre)
+        if direction is not None:
+            _coucher_face_a(fp, direction)
         b = _boite_orientee_fp(fp)
         x, y = fp.position
         # Les ancrages pas encore traites comptent a leur place ACTUELLE.
@@ -1002,7 +1052,8 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             (o.position[0] + ob[0], o.position[1] + ob[1], o.position[0] + ob[2], o.position[1] + ob[3])
             for o in ancres if o.reference not in poses and o is not fp
             for ob in (_boite_orientee_fp(o),)]
-        nx, ny = _position_au_bord((x, y), b, bornes, autres, parallele_d_abord=True)
+        nx, ny = _position_au_bord((x, y), b, bornes, autres, direction=direction,
+                                   parallele_d_abord=True)
         if abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6:
             logger.warning("ancrage %s (%.2f,%.2f) -> colle au bord (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)

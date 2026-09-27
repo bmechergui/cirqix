@@ -203,8 +203,16 @@ def _ranger_une_famille(pcb, fps: dict, paires: list, ctx) -> list:
     ht = h_rep + h_led + _ESPACE_MM + h_res + h_rep + _ESPACE_MM
 
     cibles = {d: _cible(pcb, d, r, net) for net, d, r in paires}
-    cx = sum((b[0] + b[2]) / 2 for b in boites.values()) / len(boites)
-    cy = sum((b[1] + b[3]) / 2 for b in boites.values()) / len(boites)
+    # D-2026-09-27-b (validee) : la matrice vise le barycentre des broches
+    # CIBLES (celles qui pilotent les résistances), plus le centre des paires.
+    # Sur les cartes à module, les LED finissaient loin du module.
+    points = [c for c in cibles.values() if c is not None]
+    if points:
+        cx = sum(x for x, _ in points) / len(points)
+        cy = sum(y for _, y in points) / len(points)
+    else:
+        cx = sum((b[0] + b[2]) / 2 for b in boites.values()) / len(boites)
+        cy = sum((b[1] + b[3]) / 2 for b in boites.values()) / len(boites)
     obstacles = [Z.boite_absolue(f) for ref, f in fps.items() if ref not in membres]
     marge = P._MARGE_ENTRE_COURTYARDS_MM
 
