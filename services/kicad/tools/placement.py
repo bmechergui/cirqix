@@ -1819,6 +1819,12 @@ def _boite_orientee_fp(fp) -> tuple:
             max(c[0] for c in coins), max(c[1] for c in coins))
 
 
+def _refs_verrouillees(pcb) -> list:
+    """Références des empreintes verrouillées (`(locked yes)`), dans l ordre du board."""
+    return [fp.reference for fp in pcb.footprints
+            if getattr(fp, "locked", False) and getattr(fp, "reference", None)]
+
+
 def _boitiers_dominants(pcb) -> list:
     """Refs des boitiers occupant une part notable de la carte.
 
@@ -2889,24 +2895,33 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
 
         # Connecteurs ancrés + clampés dans le contour AVANT l'optimisation
         conn = _connector_refs(pcb)
+        # D-2026-09-27-a (validee) : une empreinte VERROUILLEE (connecteurs et
+        # trous d un gabarit de carte — Arduino Uno, Nucleo-64…) est a la
+        # position du FORMAT. Fixe partout ; jamais centree, couchee ni collee.
+        verrouilles = _refs_verrouillees(pcb)
+        if verrouilles:
+            logger.info("auto_place: %d empreinte(s) verrouillee(s) par le gabarit : %s",
+                        len(verrouilles), ", ".join(verrouilles))
+            conn = conn + [r for r in verrouilles if r not in conn]
         # ⚠️ Les boitiers DOMINANTS rejoignent les ancrages, apres avoir ete
         # centres. Un module qui occupe un quart de la carte ne se place pas
         # par tirage genetique : mesure du 2026-08-26, l ESP32-WROOM recevait
         # 9 chevauchements de courtyard meme avec la place necessaire.
-        dominants = _boitiers_dominants(pcb)
+        dominants = [r for r in _boitiers_dominants(pcb) if r not in verrouilles]
         if dominants:
             logger.info("auto_place: boitier(s) dominant(s) centre(s) et ancre(s) : %s",
                         ", ".join(dominants))
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
-        _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
+        exempts = dominants + verrouilles
+        _clamp_fixed_refs_to_outline(pcb, conn, exempts=exempts)
         # D-2026-09-26-a (validee) : un connecteur est COUCHE le long de son bord
         # avant d y etre colle — 35 sur 48 etaient debout (2026-09-26).
-        couches = coucher_les_connecteurs(pcb, conn, exempts=dominants)
-        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+        couches = coucher_les_connecteurs(pcb, conn, exempts=exempts)
+        _coller_les_ancrages_au_bord(pcb, conn, exempts=exempts,
                                     margin_mm=MARGE_CONNECTEUR_BORD_MM)
         if redresser_les_conflits(pcb, couches):
-            _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,
+            _coller_les_ancrages_au_bord(pcb, conn, exempts=exempts,
                                         margin_mm=MARGE_CONNECTEUR_BORD_MM)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──

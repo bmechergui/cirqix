@@ -1,0 +1,334 @@
+{
+  "components": [
+    {
+      "ref": "A1",
+      "value": "ESP32-C3-DevKitM-1",
+      "symbol": "RF_Module:ESP32-C3-DevKitM-1",
+      "footprint": "RF_Module:ESP32-C3-DevKitM-1"
+    },
+    {
+      "ref": "J1",
+      "value": "5V",
+      "symbol": "Connector_Generic:Conn_01x02",
+      "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+    },
+    {
+      "ref": "R1",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D1",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    },
+    {
+      "ref": "R2",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D2",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    },
+    {
+      "ref": "R3",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D3",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    },
+    {
+      "ref": "R4",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D4",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    },
+    {
+      "ref": "R5",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D5",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    },
+    {
+      "ref": "R6",
+      "value": "330",
+      "symbol": "Device:R",
+      "footprint": "Resistor_SMD:R_0603_1608Metric"
+    },
+    {
+      "ref": "D6",
+      "value": "LED",
+      "symbol": "Device:LED",
+      "footprint": "LED_SMD:LED_0603_1608Metric"
+    }
+  ],
+  "nets": [
+    {
+      "name": "GND",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 1
+        },
+        {
+          "ref": "A1",
+          "pin": 6
+        },
+        {
+          "ref": "A1",
+          "pin": 8
+        },
+        {
+          "ref": "A1",
+          "pin": 12
+        },
+        {
+          "ref": "A1",
+          "pin": 15
+        },
+        {
+          "ref": "A1",
+          "pin": 16
+        },
+        {
+          "ref": "A1",
+          "pin": 19
+        },
+        {
+          "ref": "A1",
+          "pin": 24
+        },
+        {
+          "ref": "A1",
+          "pin": 27
+        },
+        {
+          "ref": "A1",
+          "pin": 30
+        },
+        {
+          "ref": "J1",
+          "pin": 2
+        },
+        {
+          "ref": "D1",
+          "pin": 1
+        },
+        {
+          "ref": "D2",
+          "pin": 1
+        },
+        {
+          "ref": "D3",
+          "pin": 1
+        },
+        {
+          "ref": "D4",
+          "pin": 1
+        },
+        {
+          "ref": "D5",
+          "pin": 1
+        },
+        {
+          "ref": "D6",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "5V",
+      "pins": [
+        {
+          "ref": "J1",
+          "pin": 1
+        },
+        {
+          "ref": "A1",
+          "pin": 13
+        }
+      ]
+    },
+    {
+      "name": "IO4",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 20
+        },
+        {
+          "ref": "R1",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED1_A",
+      "pins": [
+        {
+          "ref": "R1",
+          "pin": 2
+        },
+        {
+          "ref": "D1",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "IO5",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 21
+        },
+        {
+          "ref": "R2",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED2_A",
+      "pins": [
+        {
+          "ref": "R2",
+          "pin": 2
+        },
+        {
+          "ref": "D2",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "IO6",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 22
+        },
+        {
+          "ref": "R3",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED3_A",
+      "pins": [
+        {
+          "ref": "R3",
+          "pin": 2
+        },
+        {
+          "ref": "D3",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "IO7",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 23
+        },
+        {
+          "ref": "R4",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED4_A",
+      "pins": [
+        {
+          "ref": "R4",
+          "pin": 2
+        },
+        {
+          "ref": "D4",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "IO10",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 11
+        },
+        {
+          "ref": "R5",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED5_A",
+      "pins": [
+        {
+          "ref": "R5",
+          "pin": 2
+        },
+        {
+          "ref": "D5",
+          "pin": 2
+        }
+      ]
+    },
+    {
+      "name": "IO1",
+      "pins": [
+        {
+          "ref": "A1",
+          "pin": 10
+        },
+        {
+          "ref": "R6",
+          "pin": 1
+        }
+      ]
+    },
+    {
+      "name": "LED6_A",
+      "pins": [
+        {
+          "ref": "R6",
+          "pin": 2
+        },
+        {
+          "ref": "D6",
+          "pin": 2
+        }
+      ]
+    }
+  ],
+  "board_width_mm": 90,
+  "board_height_mm": 60
+}

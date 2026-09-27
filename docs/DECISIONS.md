@@ -14,6 +14,28 @@
 
 ## En attente de validation
 
+### D-2026-09-27-a — Arduino, Nucleo, ESP32 : un composant posé sur la carte, dès le schéma
+
+- **Statut : validée** — l'utilisateur, le 2026-09-27, en deux temps. D'abord
+  « le bord existe déjà […] c'est comme un composant » devant les rendus
+  d'Arduino, Nucleo et ESP32 ; puis, à la question « notre carte doit-elle
+  être un shield ou une carte qui porte le module ? » : **« une carte qui
+  porte le module »**, et « tu l'utilises comme tu appelles un composant dès la
+  fabrication du schéma ».
+- **Règle** : quand un circuit utilise une Arduino, une Nucleo ou un ESP32, le
+  schéma appelle directement le MODULE KiCad (`MCU_Module:Arduino_UNO_R3`,
+  `MCU_Module:NUCLEO64-F411RE`, `RF_Module:ESP32-C3-DevKitM-1`…), câblé sur
+  ses broches nommées. On ne reconstruit ni la carte du module ni ses
+  connecteurs. Notre contour reste LIBRE autour du module.
+- **Abandonné le jour même** : reprendre le contour d'un gabarit KiCad
+  (shield). C'était l'autre lecture de « le bord existe déjà » ; l'utilisateur
+  l'a écartée.
+- **Reste à faire** : réécrire les trois circuits de référence sur ces modules,
+  vérifier que la chaîne (schéma, empreinte, placement d'un gros module,
+  contour resserré) les traite, puis les mesurer.
+- Le placement respecte désormais les empreintes verrouillées
+  (`_refs_verrouillees`) : utile pour un module qu'on voudrait figer.
+
 ### D-2026-09-26-a — Placement « pro » : connecteurs tangents au bord, familles en rangées, sérigraphie dégagée
 
 - **Statut : validée** — l'utilisateur, le 2026-09-26 : « oui », sur les six

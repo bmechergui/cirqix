@@ -135,19 +135,19 @@ class TestCablage:
     SOURCE = (RACINE / "tools" / "placement.py").read_text(encoding="utf-8")
 
     def test_couche_avant_de_coller_puis_optimise(self):
-        couche = self.SOURCE.index("couches = coucher_les_connecteurs(pcb, conn, exempts=dominants)")
-        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants")
+        couche = self.SOURCE.index("couches = coucher_les_connecteurs(pcb, conn, exempts=exempts)")
+        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=exempts")
         optim = self.SOURCE.index("OptimizationWorkflow(", colle)
         assert couche < colle < optim
 
     def test_redresse_apres_le_collage_puis_recolle(self):
-        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants")
+        colle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=exempts")
         redresse = self.SOURCE.index("if redresser_les_conflits(pcb, couches):", colle)
-        recolle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants", redresse)
+        recolle = self.SOURCE.index("_coller_les_ancrages_au_bord(pcb, conn, exempts=exempts", redresse)
         assert colle < redresse < recolle < self.SOURCE.index("OptimizationWorkflow(", recolle)
 
     def test_colle_a_la_marge_validee(self):
-        assert ("_coller_les_ancrages_au_bord(pcb, conn, exempts=dominants,\n"
+        assert ("_coller_les_ancrages_au_bord(pcb, conn, exempts=exempts,\n"
                 "                                    margin_mm=MARGE_CONNECTEUR_BORD_MM)") in self.SOURCE
 
     def test_zones_apres_le_dernier_deplacement_avant_la_reparation_drc(self):
