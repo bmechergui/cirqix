@@ -176,8 +176,16 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
             print("  (placement fige demande mais ABSENT (%s) — on en calcule "
                   "un ; la mesure n est PAS a placement constant)" % fige,
                   file=sys.stderr, flush=True)
+        # ⚠️ COMME LA PRODUCTION : le contour se resserre quand la taille
+        # n est pas imposee (`handlePlacement`, `run_pipeline.py`). Ce banc ne
+        # l envoyait pas — meme defaut que `run_pipeline.py` corrige le
+        # 2026-09-23, reste chez son voisin. Mesure du 2026-09-27 : Arduino et
+        # ESP32 livres entasses dans un coin de cartes de 100 x 80 mm vides.
         board = base64.b64decode(place_auto(
-            AutoPlacementRequest(kicad_pcb_b64=_b64(board))).kicad_pcb_b64)
+            AutoPlacementRequest(
+                kicad_pcb_b64=_b64(board),
+                auto_size_board=not bool(circuit.get("board_size_imposed", False)),
+            )).kicad_pcb_b64)
 
     # ⚠️ CONSERVER le board PLACE, pas seulement le route. Sans lui, toute
     # experience comparant deux facons de router compare en realite deux
