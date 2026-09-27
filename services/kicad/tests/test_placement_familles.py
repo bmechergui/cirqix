@@ -146,3 +146,11 @@ def test_la_recherche_va_du_plus_proche_au_plus_loin():
     import math
     d = [math.hypot(*x) for x in _anneaux(10.0)]
     assert d == sorted(d) and d[0] == 0.0
+
+
+def test_un_reglage_de_banc_desarme_l_etape(tmp_path, monkeypatch):
+    """Témoin d'A/B : `familles_rangees` à faux, rien ne bouge. Défaut : armé."""
+    monkeypatch.setattr("tools.reglages_banc.reglage",
+                        lambda nom, defaut: False if nom == "familles_rangees" else defaut)
+    pcb = _charger(tmp_path)
+    assert ranger_les_familles(pcb, P._connector_refs(pcb)) == []

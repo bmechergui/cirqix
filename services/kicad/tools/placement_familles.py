@@ -158,6 +158,13 @@ def ranger_les_familles(pcb, figes=()) -> list:
     actuel. Modifie `pcb` en place ; rend les références déplacées (vide si
     aucune famille ne tient)."""
     from tools.placement_contraintes import paires_du_board
+    from tools.reglages_banc import reglage
+    if not reglage("familles_rangees", True):
+        # Réglage de BANC (A/B), jamais produit : désarme l'étape pour
+        # produire un témoin. Nucleo, 2026-09-27 : 6, 6 et 8 couches avec
+        # les familles, 2 avant — il faut le bras sans pour conclure.
+        logger.info("familles : desarmees par le reglage de banc `familles_rangees`")
+        return []
     Z = _Z()
     figes = set(figes or ())
     fps = {f.reference: f for f in pcb.footprints if f.reference}
