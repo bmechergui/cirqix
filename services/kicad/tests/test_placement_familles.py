@@ -129,9 +129,25 @@ def test_un_composant_n_appartient_qu_a_une_famille_et_une_paire(tmp_path):
     assert len(vus) == len(set(vus))
 
 
-def test_deux_groupes_eloignes_font_deux_familles(tmp_path):
+def test_les_familles_se_groupent_par_broches_cibles(tmp_path):
+    """D-2026-09-27-b : deux paires posées loin l une de l autre mais pilotées
+    par des broches voisines forment UNE famille (Arduino, 2026-09-28 : D1
+    isolée en haut, onze LED en bas)."""
+    pcb = _charger(tmp_path)
+    fam = max(_familles(pcb, paires_du_board(pcb)), key=len)
+    fps = {f.reference: f for f in pcb.footprints}
+    _, d, r = fam[0]
+    fps[d].position = (fps[d].position[0] + 200.0, fps[d].position[1])
+    fps[r].position = (fps[r].position[0] + 200.0, fps[r].position[1])
+    assert max(len(g) for g in _familles(pcb, paires_du_board(pcb))) == len(fam)
+
+
+def test_deux_groupes_eloignes_font_deux_familles(tmp_path, monkeypatch):
     """Revue du 2026-09-26 : une matrice unique pour tout le board rassemblait au
-    centre global deux groupes posés loin l un de l autre."""
+    centre global deux groupes posés loin l un de l autre. Sans broche cible
+    identifiée, le regroupement se fait sur les positions."""
+    import tools.placement_familles as PF
+    monkeypatch.setattr(PF, "_cible", lambda *a, **k: None)
     pcb = _charger(tmp_path)
     fps = {f.reference: f for f in pcb.footprints}
     paires = [p for g in _familles(pcb, paires_du_board(pcb)) for p in g][:6]
@@ -165,26 +181,30 @@ def test_la_matrice_vise_les_broches_cibles(tmp_path, monkeypatch):
     import tools.placement_familles as PF
     from tools.placement_familles import _cible, _familles
 
-    def distance_du_bloc(pcb):
-        famille = max(_familles(pcb, paires_du_board(pcb)), key=len)
+    def ranger(pcb, famille, sans_cible):
+        """Range UNE famille donnée — même regroupement dans les deux bras,
+        seule la visée change."""
+        ctx = Z._contexte(pcb, P._connector_refs(pcb))
+        fps = {f.reference: f for f in pcb.footprints if f.reference}
+        if sans_cible:
+            monkeypatch.setattr(PF, "_cible", lambda *a, **k: None)     # ancienne visée
+        try:
+            assert PF._ranger_une_famille(pcb, fps, famille, ctx)
+        finally:
+            monkeypatch.setattr(PF, "_cible", vrai_cible)
         cibles = [c for c in (_cible(pcb, d, r, net) for net, d, r in famille) if c is not None]
         tx = sum(x for x, _ in cibles) / len(cibles)
         ty = sum(y for _, y in cibles) / len(cibles)
-        fps = {f.reference: f for f in pcb.footprints}
         bs = [Z.boite_absolue(fps[x]) for _, d, r in famille for x in (d, r)]
         cx = sum((b[0] + b[2]) / 2 for b in bs) / len(bs)
         cy = sum((b[1] + b[3]) / 2 for b in bs) / len(bs)
-        return math.dist((cx, cy), (tx, ty)), famille
+        return math.dist((cx, cy), (tx, ty))
 
-    nouveau = _charger(tmp_path)
-    avant, _ = distance_du_bloc(nouveau)
-    assert ranger_les_familles(nouveau, P._connector_refs(nouveau))
-    d_nouveau, _ = distance_du_bloc(nouveau)
-
-    ancien = _charger(tmp_path / "a" if (tmp_path / "a").mkdir() is None else tmp_path)
     vrai_cible = PF._cible
-    monkeypatch.setattr(PF, "_cible", lambda *a, **k: None)       # ancienne visée
-    assert ranger_les_familles(ancien, P._connector_refs(ancien))
-    monkeypatch.setattr(PF, "_cible", vrai_cible)
-    d_ancien, _ = distance_du_bloc(ancien)
+    nouveau = _charger(tmp_path)
+    famille = max(_familles(nouveau, paires_du_board(nouveau)), key=len)
+    d_nouveau = ranger(nouveau, famille, sans_cible=False)
+    (tmp_path / "a").mkdir()
+    ancien = _charger(tmp_path / "a")
+    d_ancien = ranger(ancien, famille, sans_cible=True)
     assert d_nouveau <= d_ancien + 1e-6, (d_nouveau, d_ancien)

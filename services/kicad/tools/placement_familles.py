@@ -112,7 +112,14 @@ def _familles(pcb, paires: list) -> list:
         uniques.append((net, d, r))
 
     def centre(p):
-        b = Z.boite_absolue(fps[p[1]])
+        # D-2026-09-27-b : deux paires pilotées par des broches voisines sont
+        # une même famille, même si l optimiseur les a posées loin l une de
+        # l autre (Arduino, 2026-09-28 : D1 seule en haut, onze LED en bas).
+        net, d, r = p
+        c = _cible(pcb, d, r, net)
+        if c is not None:
+            return c
+        b = Z.boite_absolue(fps[d])
         return ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
 
     groupes = []

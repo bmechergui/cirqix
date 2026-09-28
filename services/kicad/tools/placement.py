@@ -968,15 +968,9 @@ def _est_net_de_masse(nom: str) -> bool:
     return n.startswith("GND") or n in ("VSS", "AGND", "DGND", "PGND")
 
 
-def _direction_vers_les_fixes(pcb, fp, fixes, centre) -> Optional[float]:
-    """Angle (repère KiCad, y vers le bas) du centre de la carte vers le
-    barycentre des pastilles des composants FIXES reliées à `fp` par un net
-    autre que la masse. None si `fp` n en relie aucun.
-
-    D-2026-09-27-b : sur une carte à module, J1 (VIN, GND) finissait dans le
-    coin le plus proche de sa position de DÉPART, loin de la broche VIN du
-    module qu il alimente — Arduino 92 x 85 mm pour un module de 69 x 53.
-    """
+def _barycentre_des_fixes(pcb, fp, fixes) -> Optional[tuple]:
+    """Barycentre des pastilles des composants FIXES reliées à `fp` par un net
+    autre que la masse, ou None."""
     from tools.serigraphie import _tourne
     nets = {p.net_name for p in fp.pads
             if getattr(p, "net_name", None) and not _est_net_de_masse(p.net_name)}
@@ -987,8 +981,38 @@ def _direction_vers_les_fixes(pcb, fp, fixes, centre) -> Optional[float]:
            for p in o.pads if getattr(p, "net_name", None) in nets]
     if not pts:
         return None
-    bx = sum(x for x, _ in pts) / len(pts)
-    by = sum(y for _, y in pts) / len(pts)
+    return (sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts))
+
+
+def _aligner_en_face(fp, direction: float, cible: tuple) -> None:
+    """Glisse `fp` pour que son corps soit EN FACE de `cible` le long du bord
+    que `direction` désigne (le collage fixe ensuite l autre axe).
+
+    D-2026-09-27-b, campagne du 2026-09-28 : le bord était bien choisi, mais le
+    connecteur gardait sa position de DÉPART le long de ce bord — Arduino : J1
+    collé au bord gauche tout en haut, la broche VIN du module en bas.
+    """
+    b = _boite_orientee_fp(fp)
+    x, y = fp.position
+    if abs(math.cos(direction)) >= abs(math.sin(direction)):     # gauche ou droite
+        fp.position = (x, cible[1] - (b[1] + b[3]) / 2)
+    else:                                                        # haut ou bas
+        fp.position = (cible[0] - (b[0] + b[2]) / 2, y)
+
+
+def _direction_vers_les_fixes(pcb, fp, fixes, centre) -> Optional[float]:
+    """Angle (repère KiCad, y vers le bas) du centre de la carte vers le
+    barycentre des pastilles des composants FIXES reliées à `fp` par un net
+    autre que la masse. None si `fp` n en relie aucun.
+
+    D-2026-09-27-b : sur une carte à module, J1 (VIN, GND) finissait dans le
+    coin le plus proche de sa position de DÉPART, loin de la broche VIN du
+    module qu il alimente — Arduino 92 x 85 mm pour un module de 69 x 53.
+    """
+    cible = _barycentre_des_fixes(pcb, fp, fixes)
+    if cible is None:
+        return None
+    bx, by = cible
     if abs(bx - centre[0]) < 1e-6 and abs(by - centre[1]) < 1e-6:
         return None
     return math.atan2(by - centre[1], bx - centre[0])
@@ -1045,6 +1069,7 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
         direction = _direction_vers_les_fixes(pcb, fp, ignores, centre)
         if direction is not None:
             _coucher_face_a(fp, direction)
+            _aligner_en_face(fp, direction, _barycentre_des_fixes(pcb, fp, ignores))
         b = _boite_orientee_fp(fp)
         x, y = fp.position
         # Les ancrages pas encore traites comptent a leur place ACTUELLE.

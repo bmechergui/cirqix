@@ -57,3 +57,18 @@ def test_le_collage_utilise_la_direction():
     corps = src[src.index("def _coller_les_ancrages_au_bord"):]
     assert "direction = _direction_vers_les_fixes(pcb, fp, ignores, centre)" in corps
     assert "_coucher_face_a(fp, direction)" in corps
+    assert "_aligner_en_face(fp, direction, _barycentre_des_fixes(pcb, fp, ignores))" in corps
+
+
+def test_le_connecteur_se_pose_en_face_de_la_broche_visee():
+    """Campagne du 2026-09-28 : J1 collé au bon bord mais loin de VIN."""
+    from kicad_tools.schema.pcb import PCB
+    source = RACINE / "examples" / "carte-07-multi-io" / "expected" / "placement.kicad_pcb"
+    pcb = PCB.load(str(source))
+    j = next(f for f in pcb.footprints if f.reference in P._connector_refs(pcb))
+    P._aligner_en_face(j, math.pi, (0.0, 70.0))            # bord gauche, broche à y = 70
+    b = P._boite_orientee_fp(j)
+    assert abs(j.position[1] + (b[1] + b[3]) / 2 - 70.0) < 1e-6
+    P._aligner_en_face(j, math.pi / 2, (33.0, 99.0))       # bord bas, broche à x = 33
+    b = P._boite_orientee_fp(j)
+    assert abs(j.position[0] + (b[0] + b[2]) / 2 - 33.0) < 1e-6
