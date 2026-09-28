@@ -14,6 +14,22 @@
 
 ## En attente de validation
 
+### D-2026-09-28-a — Un composant ancré réserve son corps, pas deux fois sa portée
+
+- **Statut : validée** — l'utilisateur, le 2026-09-28 : « Oui, corps réel ».
+- **Constat** (campagne du 2026-09-28, cartes à module) : `taille_carte`
+  réservait `2 × (portée + marge)` par dimension pour le plus gros composant,
+  la portée étant mesurée depuis son ORIGINE. Un module a son origine sur un
+  coin : Arduino Uno (69 x 53 mm) → 102 mm réservés par dimension, Nucleo →
+  184 mm. Cartes livrées à 81 x 90 et 134 x 144 mm.
+- **Règle** : pour un composant ANCRÉ (connecteur, boîtier dominant, empreinte
+  verrouillée), la plus grande dimension de son CORPS + 2 x marge. Les
+  composants mobiles gardent la portée : la réparation hors carte les déplace
+  en rayon — cause de la règle d'origine (carte-11, 2026-09-09).
+- carte-11 : minimum 110 → 60 mm, sans effet (elle demande 140 x 120 ; la
+  règle n'agrandit que). Garde : `tests/test_taille_carte_corps_des_ancres.py`.
+- **Mesure** : cartes à module et carte-11, 3 tirages.
+
 ### D-2026-09-27-b — Placer au plus près du composant servi
 
 - **Statut : validée** — l'utilisateur, le 2026-09-27 : « Oui, les deux »

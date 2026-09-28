@@ -115,6 +115,38 @@ def _encombrement(fp) -> float:
         return math.hypot(l, h)
 
 
+def _ancres(pcb) -> set:
+    """Composants que le placement ANCRE : connecteurs, boîtiers dominants,
+    empreintes verrouillées. Ils ne sont jamais réparés « en rayon »."""
+    try:
+        from tools.placement import (_boitiers_dominants, _connector_refs,
+                                     _refs_verrouillees)
+        return set(_connector_refs(pcb)) | set(_boitiers_dominants(pcb)) | set(_refs_verrouillees(pcb))
+    except Exception:  # noqa: BLE001 — sans lecture fiable, la règle d origine
+        return set()
+
+
+def _exigence_demi(fp, ancre: bool) -> float:
+    """Demi-côté de carte qu exige `fp` (le côté vaut `2 × (demi + marge)`).
+
+    ⚠️ D-2026-09-28-a (validée par l'utilisateur) : pour un composant ANCRÉ, le
+    corps réel — sa plus grande dimension — et plus deux fois sa portée depuis
+    l origine. La portée reste la mesure des composants mobiles, que la
+    réparation hors carte déplace en rayon (`_repair_off_board`, cause de la
+    règle, carte-11). Un module a son origine sur un coin : l Arduino Uno
+    (69 x 53 mm) se voyait réserver 102 mm par dimension, la Nucleo 184 —
+    cartes à module de 81 x 90 et 134 x 144 mm (campagne du 2026-09-28).
+    """
+    if ancre:
+        try:
+            from tools.placement import _boite_orientee_fp
+            b = _boite_orientee_fp(fp)
+            return max(b[2] - b[0], b[3] - b[1]) / 2.0
+        except Exception:  # noqa: BLE001
+            pass
+    return _encombrement(fp)
+
+
 def taille_minimale(pcb) -> tuple[float, float, str]:
     """La taille minimale que la carte doit avoir. Rend `(largeur, hauteur, raison)`.
 
@@ -132,7 +164,8 @@ def taille_minimale(pcb) -> tuple[float, float, str]:
     if not fps:
         return (0.0, 0.0, "aucun composant")
 
-    portees = [(f.reference, _encombrement(f)) for f in fps]
+    ancres = _ancres(pcb)
+    portees = [(f.reference, _exigence_demi(f, f.reference in ancres)) for f in fps]
     # ⚠️ La surface d une empreinte est celle de sa BOITE, pas d un disque de
     # rayon egal a sa demi-diagonale — voir `_boite`.
     surface = sum(l * h for l, h in (_boite(f) for f in fps)) / _REMPLISSAGE
