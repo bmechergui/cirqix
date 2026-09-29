@@ -1015,7 +1015,13 @@ def _route_with_freerouting_api(
         # zero a chaque avancee reelle ; c est elle qui coupe un routeur
         # BAVARD mais bloque, cas que `_routeur_muet` ne pouvait pas voir.
         _dernier_progres_a = time.time()
+        _derniere_trace_a = 0.0
         short_name = str(job.get("short_name", "")).upper()
+        if not short_name:
+            # Sans nom court, le journal du job est illisible et AUCUNE coupure
+            # sur stagnation ne peut jouer : le job ira jusqu a ses 999 passes.
+            logger.warning("job Freerouting %s sans short_name — coupure sur "
+                           "stagnation impossible pour ce job", job_id)
         while time.time() < deadline:
             status = _appel("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
@@ -1100,6 +1106,17 @@ def _route_with_freerouting_api(
                 cadence = ((time.time() - premiere_passe_a) / vues
                            if premiere_passe_a and vues > 0 else 0.0)
                 muet = _routeur_muet(time.time() - depart_silence, cadence, vues)
+                # Trace de diagnostic (2026-09-29) : sur carte-09, deux jobs de
+                # repli GND ont tourne 999 passes sans progres alors que la
+                # coupure a 300 s sans progres aurait du tirer. Une ligne par
+                # minute dit ce que la boucle MESURE, pour trouver pourquoi.
+                if time.time() - _derniere_trace_a >= 60:
+                    _derniere_trace_a = time.time()
+                    logger.info(
+                        "attente job %s : passe %d, %d non routes (min %d), plat %d, "
+                        "fenetre %d, sans progres %.0f s, cadence %.2f s, abandon %s",
+                        short_name, passe, unrouted, dernier_unrouted, plat, fenetre,
+                        time.time() - _dernier_progres_a, cadence, _ABANDON_AUTORISE)
                 if _faut_couper(plat, fenetre, muet,
                                 sans_progres_s=_temps_sans_progres(
                                     dernier_unrouted > 0,
