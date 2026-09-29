@@ -83,8 +83,17 @@ export function shouldRescueRouting(
 export const MAX_PLACEMENT_ATTEMPTS = 3;
 
 /**
+ * D-2026-09-29-a (validée) : à partir de ce pourcentage routé, on ne refait
+ * JAMAIS le placement — `route_auto` a déjà fait ses tirages et monté les
+ * couches ; tout recommencer doublait le temps (carte-09 : 56 min à 96 %, puis
+ * placement refait et 31 min de plus).
+ */
+export const SEUIL_SANS_REPLACEMENT_PCT = 95;
+
+/**
  * Décision à seuil : faut-il re-tirer un placement (nouveau tirage GA) puis
- * re-router ? Règle métier déterministe (pct < 100 et budget restant) → code.
+ * re-router ? Seulement sous `SEUIL_SANS_REPLACEMENT_PCT`, et tant qu'il reste
+ * des tentatives. Règle métier déterministe → code.
  */
 export function shouldRetryPlacement(
   result: Record<string, unknown>,
@@ -94,7 +103,7 @@ export function shouldRetryPlacement(
 ): boolean {
   if (control.cancelled) return false;
   const pct = result['routed_percent'];
-  return typeof pct === 'number' && pct < 100 && attempt < maxAttempts;
+  return typeof pct === 'number' && pct < SEUIL_SANS_REPLACEMENT_PCT && attempt < maxAttempts;
 }
 
 /**

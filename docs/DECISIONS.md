@@ -14,6 +14,26 @@
 
 ## En attente de validation
 
+### D-2026-09-29-a — À partir de 95 %, on ne refait jamais le placement
+
+- **Statut : validée** — l'utilisateur, le 2026-09-29 : « Placement : 3 tirages,
+  on garde le meilleur […] Routage : 3 tirages sur ce meilleur placement. Si le
+  routage atteint 95 % ou plus, on ne refait jamais le placement depuis zéro :
+  on refait seulement des tirages de routage. Si on atteint 95 % on escalade le
+  nombre de couches et on garde le routage fait pour 95 % […] et ainsi de
+  suite. »
+- **Constat** : l'orchestrateur (`shouldRetryPlacement`) et le banc
+  (`run_pipeline.py`) refaisaient TOUT le placement dès que le routage n'était
+  pas à 100 %. Carte-09 compacte : 56 min de routage à 96 %, placement refait,
+  31 min de plus ; carte-08 : 41 min à 97 %, placement refait.
+- **A (codé)** : sous 95 %, le placement se refait comme avant ; à 95 % et
+  au-delà, jamais — `route_auto` a déjà fait ses tirages et son escalade.
+- **B (à réparer)** : « garder le routage fait » en montant de couches est
+  l'escalade incrémentale (D-2026-09-10-b), DÉSACTIVÉE le 2026-09-24
+  (D-2026-09-24-g) parce que le tirage protégé échouait toujours (Freerouting :
+  « Multiple vias skipped », HTTP 500, 0 %). À réparer, puis réactiver à partir
+  de 95 %.
+
 ### D-2026-09-28-a — Un composant ancré réserve son corps, pas deux fois sa portée
 
 - **Statut : validée** — l'utilisateur, le 2026-09-28 : « Oui, corps réel ».

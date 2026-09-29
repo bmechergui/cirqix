@@ -41,6 +41,7 @@ import {
   shouldRetryPlacement,
   keepBestRouting,
   MAX_PLACEMENT_ATTEMPTS,
+  SEUIL_SANS_REPLACEMENT_PCT,
   type SSEEvent,
 } from '../orchestrator';
 import { pcbStateCache } from '../tools/shared';
@@ -72,6 +73,12 @@ describe('shouldRetryPlacement — décision à seuil', () => {
     expect(shouldRetryPlacement({ routed_percent: 91 }, MAX_PLACEMENT_ATTEMPTS)).toBe(false);
     expect(shouldRetryPlacement({}, 1)).toBe(false);
     expect(shouldRetryPlacement({ routed_percent: 'x' }, 1)).toBe(false);
+  });
+  it('D-2026-09-29-a : jamais de re-placement à partir de 95 %', () => {
+    expect(SEUIL_SANS_REPLACEMENT_PCT).toBe(95);
+    expect(shouldRetryPlacement({ routed_percent: 94 }, 1)).toBe(true);
+    expect(shouldRetryPlacement({ routed_percent: 95 }, 1)).toBe(false);
+    expect(shouldRetryPlacement({ routed_percent: 99 }, 1)).toBe(false);
   });
 });
 
@@ -166,6 +173,23 @@ describe('orchestrator — retry placement déterministe', () => {
     // Correctif B (routage) : cache resynchronisé sur le board 91% (PCB1), pas le dernier (PCB3).
     expect(last?.state['kicad_pcb_content']).toBe('PCB1');
     expect(pcbStateCache.get('p1')?.kicad_pcb_content).toBe('PCB1');
+  });
+
+  it('ne re-place PAS à 97 % (D-2026-09-29-a) : le routage déjà fait est gardé', async () => {
+    hoisted.streamQueue.push([...ROUTING_TOOL_STREAM], [...END_STREAM]);
+    toolsMock.executeToolStub.mockImplementation(async (name: string) => {
+      if (name === 'call_agent_routing')
+        return { status: 'success', routed_percent: 97, kicad_pcb_content: 'PCB97', note: 'routing 97%' };
+      if (name === 'call_agent_reason')
+        return { status: 'success', routed_percent: 97, reasoning_steps: [], note: 'reason 97%' };
+      return {};
+    });
+
+    await collect(runOrchestrator({ userMessage: 'route', projectId: 'p1', history: [] }));
+
+    const calls = toolsMock.executeToolStub.mock.calls.map((c) => c[0]);
+    expect(calls).not.toContain('call_agent_placement');
+    expect(calls.filter((n) => n === 'call_agent_routing')).toHaveLength(1);
   });
 
   it('ne re-place PAS quand le routage atteint 100% directement', async () => {

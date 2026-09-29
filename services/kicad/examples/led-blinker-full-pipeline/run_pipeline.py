@@ -47,6 +47,10 @@ _DEFAULT_OUT = _HERE / "output"
 # la main des 100 % atteint. La relever ne coute rien sur une carte simple —
 # `carte-01` finit en 50 s.
 _TIMEOUT_S = 3600
+# D-2026-09-29-a : a partir de ce pourcentage route (sans erreur), le placement
+# n est plus jamais refait. Meme valeur que `SEUIL_SANS_REPLACEMENT_PCT` de
+# l orchestrateur (packages/agents/src/orchestrator.ts).
+SEUIL_SANS_REPLACEMENT_PCT = 95
 
 
 def _service() -> tuple[str, str]:
@@ -285,6 +289,14 @@ def main() -> int:
 
           if routed >= 100 and erreurs == 0:
               print("   100 % atteint — on arrete les essais")
+              break
+          # D-2026-09-29-a (validee) : a partir de 95 % sans erreur, on ne
+          # refait JAMAIS le placement — `route_auto` a deja fait ses tirages et
+          # son escalade. Meme regle que `shouldRetryPlacement` (orchestrateur) ;
+          # une erreur DRC re-tire toujours, comme `shouldRetryForDrc`.
+          if routed >= SEUIL_SANS_REPLACEMENT_PCT and erreurs == 0:
+              print("   %s%% atteint (seuil %d %%) — on ne refait pas le placement"
+                    % (routed, SEUIL_SANS_REPLACEMENT_PCT))
               break
           # D-2026-09-11-b : au plafond de couches sans 100 % / 0 erreur, on
           # AGRANDIT la carte pour l essai suivant plutot que de re-tirer le
