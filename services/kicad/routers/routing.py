@@ -786,6 +786,28 @@ _LIGNE_PASSE_RE = re.compile(
     r".*score of ([\d.]+) \((\d+) unrouted")
 
 
+def _nom_du_job_dans_le_journal(log_text: str, short_name: str) -> str:
+    """Le nom sous lequel le journal désigne le job qu'on attend.
+
+    Le `short_name` rendu par l'API, s'il figure dans le journal ; sinon
+    l'étiquette de l'UNIQUE job qui y figure — le lecteur ne rend que ce qui a
+    été écrit depuis le départ du job, et la JVM est recyclée. Deux jobs et
+    aucun nom API reconnu : on ne devine pas.
+
+    ⚠️ Carte-09 compacte, 2026-09-28 : deux jobs de repli GND ont tourné
+    999 passes sans progrès (13,5 et 7,5 min), sans qu'aucune coupure ne tire.
+    Tout le bloc de mesure dépendait du `short_name` : vide, ou absent du
+    journal, il désarmait À LA FOIS la fenêtre de passes et les 300 s sans
+    progrès, alors que le job écrivait ses passes sous son étiquette.
+    """
+    noms = {m.group(1) for m in _LIGNE_PASSE_RE.finditer(log_text)}
+    if short_name and short_name in noms:
+        return short_name
+    if len(noms) == 1:
+        return noms.pop()
+    return short_name
+
+
 def _passes_sans_progres(log_text: str, short_name: str) -> int:
     """Passes consecutives du job `short_name` sans le moindre progres.
 
@@ -1018,10 +1040,10 @@ def _route_with_freerouting_api(
         _derniere_trace_a = 0.0
         short_name = str(job.get("short_name", "")).upper()
         if not short_name:
-            # Sans nom court, le journal du job est illisible et AUCUNE coupure
-            # sur stagnation ne peut jouer : le job ira jusqu a ses 999 passes.
-            logger.warning("job Freerouting %s sans short_name — coupure sur "
-                           "stagnation impossible pour ce job", job_id)
+            # Sans nom court, on lira le job sous son etiquette du journal
+            # (`_nom_du_job_dans_le_journal`) — sinon aucune coupure ne jouerait.
+            logger.warning("job Freerouting %s sans short_name — il sera lu sous "
+                           "son etiquette du journal", job_id)
         while time.time() < deadline:
             status = _appel("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
@@ -1034,15 +1056,16 @@ def _route_with_freerouting_api(
             # a la passe 4 et 995 passes identiques suivent : 44 minutes de
             # politesse. Le journal est la seule fenetre sur l interieur ; s il
             # est illisible, on retombe sur l attente classique.
-            if short_name and _FREEROUTING_LOG.is_file():
+            if _FREEROUTING_LOG.is_file():
                 journal_du_job = lecteur.lire()
+                nom_job = _nom_du_job_dans_le_journal(journal_du_job, short_name)
                 try:
-                    plat = _passes_sans_progres(journal_du_job, short_name)
+                    plat = _passes_sans_progres(journal_du_job, nom_job)
                 except Exception:
                     plat = 0
                 derniere = _LIGNE_PASSE_RE.findall(journal_du_job)
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
-                                 if j == short_name), 0)
+                                 if j == nom_job), 0)
                 fenetre = _fenetre_effective(
                     _fenetre_stagnation(unrouted), _ABANDON_AUTORISE)
                 # ⚠️ DEUX DECISIONS DISTINCTES, ET C EST LA CAUSE DE MES TROIS
@@ -1072,7 +1095,7 @@ def _route_with_freerouting_api(
                 if _nouveau_minimum(unrouted, dernier_unrouted):
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
-                passe = _numero_de_passe(derniere, short_name)
+                passe = _numero_de_passe(derniere, nom_job)
                 # ⚠️ La mesure existait deja — elle servait uniquement, en
                 # interne, a couper l attente d un job fige. Elle ne
                 # sortait pas du service : l utilisateur voyait « routage
@@ -1115,7 +1138,7 @@ def _route_with_freerouting_api(
                     logger.info(
                         "attente job %s : passe %d, %d non routes (min %d), plat %d, "
                         "fenetre %d, sans progres %.0f s, cadence %.2f s, abandon %s",
-                        short_name, passe, unrouted, dernier_unrouted, plat, fenetre,
+                        nom_job or "?", passe, unrouted, dernier_unrouted, plat, fenetre,
                         time.time() - _dernier_progres_a, cadence, _ABANDON_AUTORISE)
                 if _faut_couper(plat, fenetre, muet,
                                 sans_progres_s=_temps_sans_progres(
