@@ -42,12 +42,13 @@ class TestLeCliHonoreLesPasses:
     def test_run_freerouting_transmet_mp(self, monkeypatch, tmp_path):
         vu = {}
 
-        def faux_run(cmd, **kw):
+        def faux_popen(cmd, **kw):
             vu["cmd"] = cmd
             (tmp_path / "b.ses").write_text("(session)")
-            return type("R", (), {"returncode": 0})()
+            return type("P", (), {"poll": lambda self: 0})()
 
-        monkeypatch.setattr(R.subprocess, "run", faux_run)
+        # Le CLI est lance par `Popen` et surveille depuis le 2026-09-29.
+        monkeypatch.setattr(R.subprocess, "Popen", faux_popen)
         R._run_freerouting(("java", "fr.jar"), tmp_path / "b.dsn", tmp_path / "b.ses",
                            60, max_passes=37)
         assert vu["cmd"][vu["cmd"].index("-mp") + 1] == "37"
@@ -58,8 +59,9 @@ class TestLeCliHonoreLesPasses:
         monkeypatch.setattr(R, "_confier_au_plan", lambda dsn: None)
         monkeypatch.setattr(R, "_find_freerouting", lambda: ("java", "fr.jar"))
 
-        def faux_cli(paths, dsn, ses, timeout_s, max_passes=100):
+        def faux_cli(paths, dsn, ses, timeout_s, max_passes=100, surveiller=True):
             vu["max_passes"], vu["timeout_s"] = max_passes, timeout_s
+            vu["surveiller"] = surveiller
             ses.write_text("(session)")
 
         monkeypatch.setattr(R, "_run_freerouting", faux_cli)
@@ -67,6 +69,8 @@ class TestLeCliHonoreLesPasses:
         assert R._board_partiel_par_cli(b"(kicad_pcb)", passes=37, budget_s=600) == b"BOARD PARTIEL"
         assert vu["max_passes"] == 37
         assert vu["timeout_s"] <= 600
+        # Le rejeu d un tirage deja fige n a de valeur que s il converge seul.
+        assert vu["surveiller"] is False
 
     def test_zero_passe_ne_lance_rien(self, monkeypatch):
         monkeypatch.setattr(R, "_find_freerouting", lambda: ("java", "fr.jar"))

@@ -408,7 +408,7 @@ def _recycler_la_jvm() -> None:
         logger.warning("freerouting : recyclage apres routage impossible (%s)", exc)
 
 
-def _find_freerouting_api() -> Optional[str]:
+def _find_freerouting_api(timeout_s: float = 2.0) -> Optional[str]:
     """Return Freerouting API base URL if the server is reachable, else None."""
     import urllib.request
 
@@ -418,10 +418,63 @@ def _find_freerouting_api() -> Optional[str]:
             f"{base}{_FREEROUTING_API_PREFIX}/system/status",
             headers=_freerouting_api_headers(),
         )
-        urllib.request.urlopen(req, timeout=2)
+        urllib.request.urlopen(req, timeout=timeout_s)
         return base
     except Exception:
         return None
+
+
+# La JVM de l API, et elle seule — meme motif que `_tuer_la_jvm`.
+_MOTIF_JVM_API = r"^(/usr/bin/)?java -jar /opt/freerouting/freerouting\.jar --api_server"
+
+# Patience accordee a une JVM qui tourne mais ne repond pas encore.
+_ATTENTE_API_S: float = 30.0
+
+
+def _jvm_api_lancee() -> bool:
+    """Le processus de la JVM de l API existe-t-il ? Faux si on ne peut le dire."""
+    try:
+        return subprocess.run(["pgrep", "-f", _MOTIF_JVM_API],
+                              capture_output=True, timeout=5).returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _api_freerouting_prete(attente_s: float = _ATTENTE_API_S) -> Optional[str]:
+    """L URL de l API Freerouting, en attendant la JVM plutot que de s en passer.
+
+    ⚠️ Mesure du 2026-09-29, carte-09, placement fige du 24 : la sonde (2 s)
+    a echoue SANS RIEN JOURNALISER, et `route_auto` est tombe sur le CLI, qui a
+    tourne 18 min pour rendre 83 %. Le meme moteur, par l API, rend cette carte
+    en quelques secondes. La JVM est relancee apres chaque routage et chaque
+    job fige : une JVM pas encore prete est un etat NORMAL, pas une panne.
+
+    On attend donc la JVM tant que son processus tourne, on la relance si elle
+    reste muette, et on dit pourquoi on renonce. Le CLI reste le secours d une
+    JVM absente — surveille, desormais, comme l API (`_run_freerouting`).
+    Garde : tests/test_freerouting_jamais_sans_surveillance.py.
+    """
+    base = _find_freerouting_api()
+    if base:
+        return base
+    if not _jvm_api_lancee():
+        logger.warning("freerouting : API injoignable et aucune JVM d API en cours "
+                       "— repli sur le CLI")
+        return None
+    debut = time.time()
+    while time.time() - debut < attente_s:
+        time.sleep(2.0)
+        base = _find_freerouting_api(timeout_s=5.0)
+        if base:
+            logger.info("freerouting : API prete apres %.0f s d attente",
+                        time.time() - debut)
+            return base
+    logger.warning("freerouting : API muette %.0f s alors que sa JVM tourne — "
+                   "on la relance", attente_s)
+    if _tuer_la_jvm():
+        return _find_freerouting_api(timeout_s=5.0)
+    logger.warning("freerouting : JVM relancee sans reponse — repli sur le CLI")
+    return None
 
 
 # Reglages passes a Freerouting a l enfilement du job.
@@ -836,6 +889,75 @@ def _passes_sans_progres(log_text: str, short_name: str) -> int:
     return plat
 
 
+class _VerdictFige:
+    """Ce que le suivi a mesure quand il decide de couper."""
+
+    def __init__(self, unrouted: int, plat: int, passes: int, muet: bool):
+        self.unrouted = unrouted
+        self.plat = plat
+        self.passes = passes
+        self.muet = muet
+
+
+class _SuiviStagnation:
+    """Les criteres de coupure de l API, appliques au journal d un job CLI.
+
+    Memes fonctions, donc memes seuils : fenetre de passes selon ce qu il
+    reste (`_fenetre_stagnation`), temps SANS PROGRES compte depuis le dernier
+    NOUVEAU MINIMUM, silence rapporte a la cadence. Le CLI 2.1.0 ignore `-mp` :
+    sans ce suivi, il tournait jusqu au budget (18 min pour 83 %, 2026-09-29).
+    """
+
+    def __init__(self, horloge=None):
+        self._horloge = horloge or time.time
+        maintenant = self._horloge()
+        self.dernier_unrouted = 0
+        self.dernier_progres_a = maintenant
+        self.depart_silence = maintenant
+        self.premiere_passe_a = None
+        self.premiere_passe = 0
+        self.derniere_passe = 0
+
+    def observer(self, journal: str) -> Optional[_VerdictFige]:
+        """Rend un verdict s il faut couper, `None` s il faut attendre."""
+        maintenant = self._horloge()
+        nom = _nom_du_job_dans_le_journal(journal, "")
+        lignes = _LIGNE_PASSE_RE.findall(journal)
+        if lignes and not nom:
+            # Plusieurs jobs dans le journal (un job de la JVM survit a cote du
+            # CLI) : on ne sait pas lequel juger. On ne coupe pas — le budget
+            # reste la borne, comme avant.
+            return None
+        try:
+            plat = _passes_sans_progres(journal, nom)
+        except Exception:  # noqa: BLE001 — sans mesure on attend
+            plat = 0
+        unrouted = next((int(u) for j, _, _, u in reversed(lignes) if j == nom), 0)
+        if _nouveau_minimum(unrouted, self.dernier_unrouted):
+            self.dernier_unrouted = unrouted
+            self.dernier_progres_a = maintenant
+        passe = _numero_de_passe(lignes, nom)
+        if passe > self.derniere_passe:
+            if self.premiere_passe_a is None:
+                self.premiere_passe_a = maintenant
+                self.premiere_passe = passe
+            self.derniere_passe = passe
+            self.depart_silence = maintenant
+        vues = (self.derniere_passe - self.premiere_passe + 1
+                if self.premiere_passe_a is not None else 0)
+        cadence = ((maintenant - self.premiere_passe_a) / vues
+                   if self.premiere_passe_a is not None and vues > 0 else 0.0)
+        muet = _routeur_muet(maintenant - self.depart_silence, cadence, vues)
+        fenetre = _fenetre_effective(_fenetre_stagnation(unrouted), _ABANDON_AUTORISE)
+        if _faut_couper(plat, fenetre, muet,
+                        sans_progres_s=_temps_sans_progres(
+                            self.dernier_unrouted > 0,
+                            maintenant - self.dernier_progres_a),
+                        cadence_s=cadence):
+            return _VerdictFige(unrouted, plat, self.derniere_passe, muet)
+        return None
+
+
 def _api(method: str, path: str, payload: Optional[dict] = None,
          base: Optional[str] = None) -> dict:
     """Un appel a l API Freerouting. Rend le JSON, ou `{}` si le corps est vide.
@@ -1242,7 +1364,8 @@ def _board_partiel_par_cli(pcb_bytes: bytes, passes: int,
                     (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                     pistes=_PISTES_A_PROTEGER,
                 ), encoding="utf-8")
-            _run_freerouting(paths, dsn, ses, int(budget_s), max_passes=passes)
+            _run_freerouting(paths, dsn, ses, int(budget_s), max_passes=passes,
+                             surveiller=False)
             board = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
         if not board:
             logger.warning("partiel : le CLI n a rendu aucun board")
@@ -1345,7 +1468,7 @@ def _find_freerouting() -> Optional[tuple[str, str]]:
 
 def _run_freerouting(
     paths: tuple[str, str], dsn: Path, ses: Path, timeout_s: int,
-    max_passes: int = 100,
+    max_passes: int = 100, nets_routables: int = 0, surveiller: bool = True,
 ) -> None:
     """Invoke Freerouting CLI. Raises on non-zero exit or timeout.
 
@@ -1353,6 +1476,16 @@ def _run_freerouting(
     passes avec `-mp 3`), pas plus que `max_passes` par l API. Le parametre
     est transmis tel quel, pour une version qui l honorerait ; ne pas lui
     preter d effet aujourd hui.
+
+    ⚠️ Le processus est SURVEILLE comme un job de l API (`_SuiviStagnation`)
+    et arrete s il fige : `RoutageFige`, que l escalade traite comme un tirage
+    fige. Avant le 2026-09-29, `subprocess.run` attendait tout le budget —
+    18 min pour 83 % sur carte-09. Un CLI arrete n ecrit pas de .ses : rien
+    n est perdu qu on aurait eu.
+
+    `surveiller=False` pour le rejeu d un tirage DEJA fige
+    (`_board_partiel_par_cli`) : il n a de valeur que s il converge seul, et
+    seul son budget le borne.
     """
     java, jar = paths
     cmd = [
@@ -1361,11 +1494,45 @@ def _run_freerouting(
         "-do", str(ses),
         "-mp", str(max(1, int(max_passes))),
     ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout_s, check=False,
-    )
-    if result.returncode != 0 and not ses.exists():
-        raise RuntimeError(f"Freerouting exit {result.returncode}")
+    from tools.journal_freerouting import LecteurIncremental
+    # Cree AVANT le lancement : il ne rend que les lignes de CE processus.
+    lecteur = LecteurIncremental(_FREEROUTING_LOG)
+    suivi = _SuiviStagnation()
+    debut = time.time()
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            code = proc.poll()
+            if code is not None:
+                break
+            if time.time() - debut >= timeout_s:
+                logger.warning("Freerouting CLI : budget de %d s epuise — processus arrete",
+                               timeout_s)
+                raise subprocess.TimeoutExpired(cmd, timeout_s)
+            if surveiller and _FREEROUTING_LOG.is_file():
+                verdict = suivi.observer(lecteur.lire())
+                if verdict is not None:
+                    logger.warning(
+                        "Freerouting CLI fige (%d passes sans progres, %d non routes%s) "
+                        "— processus arrete apres %.0f s",
+                        verdict.plat, verdict.unrouted,
+                        ", routeur muet" if verdict.muet else "", time.time() - debut)
+                    # ⚠️ Aucun compte lu (muet avant sa premiere passe) n est pas
+                    # « zero non route » : RoutageFige en deduirait 100 %. On
+                    # declare tout non route, soit 0 %.
+                    raise RoutageFige(
+                        unrouted=verdict.unrouted if verdict.unrouted > 0 else nets_routables,
+                        nets=nets_routables, passes=verdict.passes)
+            time.sleep(2)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+    if code != 0 and not ses.exists():
+        raise RuntimeError(f"Freerouting exit {code}")
 
 
 # Repertoire ou deposer le board a CHAQUE etape, pour inspection dans KiCad.
@@ -4618,6 +4785,21 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
 _REPLI_GND_MAX_MANQUANTES: int = 8
 
 
+def _replis_gnd_inutiles(manquants: set, nets_plan, palier: int, plafond: int) -> bool:
+    """Un SIGNAL manque et un palier plus haut existe : sauter les replis GND.
+
+    Mesure du 2026-09-29, carte-09 a 2 couches : 686 s de finitions, surtout
+    les replis GND, sur un tirage ou manquaient EXT3_2 et EXT4_1. Un repli GND
+    ne relie aucun signal : le tirage n etait pas livrable, et l escalade
+    (D-2026-09-24-e) montait de toute facon. Au plafond, pas de palier
+    suivant : le repli reste le seul levier.
+    Garde : tests/test_pas_de_repli_gnd_quand_un_signal_manque.py.
+    """
+    plan = set(nets_plan or ()) | _NETS_DE_PLAN_CONNUS
+    signaux = {n for n in (manquants or ()) if n and n not in plan}
+    return bool(signaux) and int(palier) < int(plafond)
+
+
 def _repli_gnd_vaut_le_coup(manquantes: int) -> bool:
     try:
         from tools.reglages_banc import reglage
@@ -6045,7 +6227,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     # endroit. Mesure du 2026-08-21 : « Freerouting echoue (... timed out
     # after 0 seconds) » alors qu il n avait jamais tourne, le Niveau 1 ayant
     # consomme tout le budget. Mieux vaut passer au suivant.
-    api_url = _find_freerouting_api()
+    api_url = _api_freerouting_prete()
     if api_url is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
             new_pcb = _route_with_freerouting_api(
@@ -6092,7 +6274,8 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                         (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
-                _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
+                _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline),
+                                 nets_routables=net_count)
                 new_pcb = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
@@ -6106,6 +6289,11 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
             )
+        except RoutageFige:
+            # Meme verdict que le Niveau 1 : un tirage fige, que l escalade
+            # juge. Le laisser tomber sur kicad-tools rejouerait le meme board
+            # condamne, en plus lent.
+            raise
         except Exception as exc:
             # ⚠️ `HTTPException` COMPRISE — c'est ce que lève la garde netlist.
             #
@@ -6206,6 +6394,20 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
         skipped=True,
         warning=reason,
     )
+
+
+def _chrono_tirage(palier: int, preparation_s: float, moteur_s: float,
+                   finitions_s: float, moteur: str) -> str:
+    """Une ligne de journal : ou part le temps d UN tirage.
+
+    Ajoute le 2026-09-29 : le temps d une carte dense se lisait « 42 min »,
+    sans dire si c etait le routeur, la preparation ou les finitions. La
+    mesure a montre que Freerouting en prenait souvent quelques secondes.
+    """
+    total = preparation_s + moteur_s + finitions_s
+    return ("chrono tirage %d couches : preparation %.0f s, moteur %.0f s (%s), "
+            "finitions %.0f s, total %.0f s"
+            % (palier, preparation_s, moteur_s, moteur, finitions_s, total))
 
 
 def _armer_abandon(actif: bool) -> None:
@@ -6567,6 +6769,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # cessait de router ce net — alors que le plan ne peut PAS atteindre les
         # pattes d un LQFP-48. Ni le plan ni le routeur ne faisait le travail :
         # 3 connexions manquantes, qu aucun levier ne resorbait.
+        t_tirage = time.time()
         etendu = _expand_stackup(pcb_bytes, palier)
 
         # ⚠️ LE PLAN EST COULE ICI, AVANT LE ROUTAGE — sequence demandee par
@@ -6675,9 +6878,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
             progress_key=req.progress_key,
         )
+        t_moteur = time.time()
         try:
             res = _route_auto_once(tentative)
         except RoutageFige as fige:
+            logger.info(_chrono_tirage(palier, t_moteur - t_tirage,
+                                       time.time() - t_moteur, 0.0, "fige"))
             # ⚠️ LA STAGNATION EST LA PREUVE QUE LE PALIER A ECHOUE — la regle
             # utilisateur « partir de 2, escalader sur preuve » est respectee,
             # seule l ATTENTE de la preuve raccourcit : ~2 min au lieu de 44.
@@ -6712,6 +6918,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # Un tirage fige ne compte PAS un par un : c est le palier entier
             # qui sera juge plat ou non, a sa sortie.
             continue
+        t_finitions = time.time()
 
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
@@ -6788,6 +6995,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "DEJA tenté sans succès sur ces mêmes broches, on ne le "
                     "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
                     len(orphelines))
+            elif (_NETS_CONFIES_AU_PLAN and orphelines and _replis_gnd_inutiles(
+                    _nets_incomplets(rap_final or {}), _NETS_CONFIES_AU_PLAN,
+                    palier, max(essais))):
+                logger.info(
+                    "plan de masse : %d broche(s) GND non reliee(s), mais un signal "
+                    "manque aussi (%s) — un repli GND ne le relierait pas, le palier "
+                    "suivant le tentera ; replis GND sautes",
+                    len(orphelines),
+                    ", ".join(sorted(_nets_incomplets(rap_final or {}))[:8]))
             elif _NETS_CONFIES_AU_PLAN and orphelines:
                 # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND) :
                 # 11 s mesurees, il n est PAS soumis au seuil du repli global
@@ -6916,6 +7132,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # Tous comptent pour l escalade, masse comprise (D-2026-09-24-e).
         manquants_du_palier = (
             _nets_incomplets(_rap_final) if _rap_final is not None else set())
+        logger.info(_chrono_tirage(palier, t_moteur - t_tirage, t_finitions - t_moteur,
+                                   time.time() - t_finitions, res.engine or "aucun moteur"))
         # ⚠️ NOMMER les erreurs qui font refuser le palier (2026-09-24) : deux
         # tirages de carte-07 a 100 % en 2 couches ont ete ecartes sans que le
         # journal dise pourquoi. Un defaut reparable ici vaut deux couches.

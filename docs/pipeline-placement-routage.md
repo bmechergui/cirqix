@@ -106,6 +106,38 @@ trois règles générales, toutes dans `routers/routing.py` :
 Et une règle d'escalade : un meilleur board **sous 80 %** n'est plus protégé
 au palier suivant — 55 % protégés à 4 couches donnaient 59 % figé à 6.
 
+### Où part le temps d'un routage (mesuré le 2026-09-29)
+
+Freerouting n'est pas le goulot. Sur carte-09 (placement figé du 24), chaque
+tirage écrit sa ligne `chrono tirage N couches : préparation, moteur,
+finitions, total` (`_chrono_tirage`) :
+
+| tirage | préparation | moteur | finitions | résultat |
+|---|---|---|---|---|
+| 2 couches | 48 s | 149 s (API) | **686 s** | 94 % |
+| 4 couches | 35 s | 60 s (API) | 214 s | 87 % |
+| 4 couches | 24 s | 40 s (API) | 243 s | 98 % |
+| 4 couches | 54 s | 71 s (API) | 135 s | 100 % |
+
+Les finitions (repose des vias, fanout, couture, **replis GND**, DRC) pèsent
+2 à 5 fois le routeur. Trois règles, gardées par des tests :
+
+- **Jamais de Freerouting sans surveillance.** La sonde de l'API n'attendait
+  que 2 s, sans rien journaliser, et le secours CLI tournait jusqu'au budget
+  (18 min pour 83 %). `_api_freerouting_prete` attend désormais la JVM, la
+  relance si elle reste muette, et dit pourquoi elle renonce ; le CLI est
+  surveillé par les mêmes critères que l'API (`_SuiviStagnation`) et arrêté
+  s'il fige. Le rejeu d'un tirage déjà figé (`_board_partiel_par_cli`) garde
+  seulement son budget. Garde : `tests/test_freerouting_jamais_sans_surveillance.py`.
+- **Pas de replis GND quand un signal manque**, sous le plafond : un repli GND
+  ne relie aucun signal, et l'escalade monte de toute façon (D-2026-09-24-e).
+  Les 686 s du tirage à 2 couches venaient de là, pour « 4 manquantes → 4 ».
+  Garde : `tests/test_pas_de_repli_gnd_quand_un_signal_manque.py`.
+- **Le chrono de chaque tirage** est journalisé, figé compris.
+
+Restent ouverts : la préparation refaite à chaque tirage d'un même palier,
+et les finitions complètes sur un tirage qui ne peut plus battre le meilleur.
+
 Chaque worker journalise l'**empreinte sha1 du module** au chargement :
 `routers/` est monté à chaud mais le module importé ne suit pas le fichier,
 et un worker périmé est indistinguable d'un worker à jour sans cette ligne.
