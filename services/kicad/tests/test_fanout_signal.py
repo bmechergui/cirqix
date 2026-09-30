@@ -169,7 +169,9 @@ class TestCablage:
         """
         src = inspect.getsource(route_auto)
         i = src.index("_vias_signaux_a_reserver(")
-        ligne = src[src.rindex("\n", 0, i):src.index("\n", i)]
+        # L INSTRUCTION entiere, pas la seule ligne : depuis le 2026-09-29 le
+        # calcul est memorise (`memo_prep.obtenir`) et tient sur deux lignes.
+        ligne = src[src.rindex("_VIAS_RESERVES =", 0, i):src.index("\n", i)]
         assert "_VIAS_RESERVES +" in ligne, (
             "le fanout ECRASE la reservation du plan au lieu de s y ajouter")
 

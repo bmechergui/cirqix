@@ -6396,6 +6396,40 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     )
 
 
+class _MemoPreparation:
+    """Resultats de preparation d UN appel `route_auto`, par empreinte du board.
+
+    Mesure du 2026-09-29, carte-09 : 24 a 101 s de preparation par tirage,
+    refaite a chaque tirage d un palier alors que le board et les couches ne
+    changent pas. Chaque etape memorisee est deterministe (memes octets, meme
+    resultat) : la cle est l empreinte du board d ENTREE de l etape, jamais un
+    numero de tirage. Une valeur rendue est une copie : un appelant qui la
+    modifie ne touche pas la memoire.
+
+    ⚠️ Limites connues (revue du 2026-09-29) : ces etapes avalent leurs
+    exceptions et rendent un resultat neutre ; un echec PASSAGER (pcbnew ou DRC
+    sous charge) est donc rejoue pour les tirages suivants du meme appel, qui
+    le retentaient auparavant. Et les reglages de banc lus par ces etapes
+    (`plan_gnd_interne`, `regles_fine_pitch`) ne sont pas dans la cle : un
+    reglage change EN COURS d appel n est pas vu. Tous deux bornes a un appel.
+    """
+
+    def __init__(self) -> None:
+        self._memo: dict = {}
+        self.reutilises = 0
+
+    def obtenir(self, etape: str, board: bytes, extra, calcul):
+        import copy
+        import hashlib
+        cle = (etape, hashlib.sha1(board).hexdigest(), extra)
+        if cle in self._memo:
+            self.reutilises += 1
+            return copy.deepcopy(self._memo[cle])
+        valeur = calcul()
+        self._memo[cle] = copy.deepcopy(valeur)
+        return valeur
+
+
 def _chrono_tirage(palier: int, preparation_s: float, moteur_s: float,
                    finitions_s: float, moteur: str) -> str:
     """Une ligne de journal : ou part le temps d UN tirage.
@@ -6579,6 +6613,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # Rang du tirage DANS son palier : 0 = incremental, 1+ = libre. Voir
     # `_tirage_libre` — sans lui, 6 couches faisaient pire que 4.
     rang_au_palier = 0
+    # Preparation deterministe memorisee le temps de CET appel (`_MemoPreparation`).
+    memo_prep = _MemoPreparation()
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
     # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
     bonus_accorde: set[int] = set()
@@ -6790,7 +6826,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         #
         # ⚠️ Un plan non REMPLI n est qu un contour, dont le routeur ne tient
         # aucun compte — meme defaut que celui du 2026-08-23.
-        etendu = _fill_zones(_add_ground_planes(etendu))
+        reutilises_avant = memo_prep.reutilises
+        etendu = memo_prep.obtenir("plan", etendu, palier,
+                                   lambda: _fill_zones(_add_ground_planes(etendu)))
         _deposer_etape("plan_coule", etendu)
 
         # ⚠️ Reserver AVANT de router : apres, il n y a plus de place. Mesure
@@ -6800,7 +6838,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # le routeur travaille autour, puis reposes apres le round-trip
         # Specctra, qui efface tout ce qui le precede.
         global _VIAS_RESERVES
-        _VIAS_RESERVES = _vias_a_reserver(etendu) if _NETS_CONFIES_AU_PLAN else []
+        _VIAS_RESERVES = (memo_prep.obtenir("vias_plan", etendu, (),
+                                            lambda: _vias_a_reserver(etendu))
+                          if _NETS_CONFIES_AU_PLAN else [])
 
         # ⚠️ FANOUT DES SIGNAUX — distinct de la reservation ci-dessus,
         # qui ne sert QUE le plan de masse. Grok l a souligne : reserver
@@ -6819,14 +6859,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         #
         # ⚠️ Ce n est PAS un manque de couches : `stm32-100` rend 99 % a
         # 2 couches et 87 % a 4. Le goulot est LOCAL.
-        _VIAS_RESERVES = _VIAS_RESERVES + _vias_signaux_a_reserver(etendu)
+        _VIAS_RESERVES = _VIAS_RESERVES + memo_prep.obtenir(
+            "vias_signaux", etendu, (), lambda: _vias_signaux_a_reserver(etendu))
 
         # ⚠️ ETAPE ③ DE LA SEQUENCE DEMANDEE, sous sa forme PREVENTIVE. Les
         # broches GND ne sont pas orphelines maintenant — elles le deviendront
         # quand les pistes de signal decouperont le plan autour d elles. On
         # leur reserve donc leur sortie tant que la place existe.
-        _VIAS_RESERVES = _VIAS_RESERVES + _vias_gnd_preventifs(
-            etendu, set(_NETS_CONFIES_AU_PLAN))
+        _VIAS_RESERVES = _VIAS_RESERVES + memo_prep.obtenir(
+            "vias_gnd", etendu, tuple(sorted(_NETS_CONFIES_AU_PLAN)),
+            lambda: _vias_gnd_preventifs(etendu, set(_NETS_CONFIES_AU_PLAN)))
 
         # ⚠️ ETAPE ③ : on ne se contente pas de RESERVER, on RELIE. La piste et
         # le via sont poses maintenant, tant que la place existe, puis
@@ -6856,9 +6898,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 etendu, set(_NETS_CONFIES_AU_PLAN), _VIAS_RESERVES)
             _VIAS_RESERVES = _sans_les_pastilles_reliees(_VIAS_RESERVES, reliees)
             _deposer_etape("prioritaire", etendu)
-        etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
+        etendu = memo_prep.obtenir(
+            "liaison", etendu, tuple(sorted(_NETS_CONFIES_AU_PLAN)),
+            lambda: _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN)))
         _deposer_etape("gnd_lie", etendu)
-        if etendu is not avant_liaison:
+        if memo_prep.reutilises > reutilises_avant:
+            logger.info("route_auto: preparation du palier %d reutilisee (%d etape(s) "
+                        "deja calculee(s) sur ce board)", palier,
+                        memo_prep.reutilises - reutilises_avant)
+        # Par CONTENU : une valeur memorisee n est pas forcement le meme objet.
+        if etendu != avant_liaison:
             _ajouter_aux_pistes_protegees(etendu)
 
         tentative = RouteAutoRequest(
@@ -6971,6 +7020,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 logger.info("plan de masse : %s",
                             ", ".join(f"{k} {v} ilot(s)" for k, v in sorted(ilots.items())))
 
+            # ⚠️ D ABORD les reparations LOCALES, en secondes (2026-09-29) :
+            # sur carte-09, les replis Freerouting coutaient 1167 s pour 1 ou 2
+            # broches GND que la coulee avait isolees, et les reparations
+            # locales ne passaient qu APRES eux. Avis concordant de Codex, Grok,
+            # GLM et OpenCode. Les orphelines se mesurent ensuite.
+            final = _reparations_locales_gnd(final)
+            apres_locales = final
+
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via
             # d'échappement ne rentre pas (0,318 mm libres pour 0,500 exigés).
@@ -7050,6 +7107,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     # ⚠️ Par `_bilan_drc`, qui rend None sans verdict : des
                     # couples bruts faisaient valoir (0, 0) a un secours que
                     # kicad-cli n avait pas su ouvrir (2026-09-18).
+                    # A ARMES EGALES : `final` a recu les reparations locales
+                    # (2026-09-29) ; le secours doit les recevoir aussi, sinon
+                    # la comparaison refuserait un repli utile (revue du jour).
+                    secours = _reparations_locales_gnd(secours)
                     avant, apres = _bilan_drc(final), _bilan_drc(secours)
                     if _secours_est_meilleur(avant, apres):
                         logger.info("repli GND retenu : %s -> %s",
@@ -7062,33 +7123,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             "board conserve",
                             _bilan_lisible(apres), _bilan_lisible(avant))
 
-            # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
-            # se mesure sur le remplissage FINAL. Mesuree avant, elle
-            # nommerait des pastilles que la suite aurait de toute facon
-            # reliees, et en manquerait d autres.
-            final = _reparer_reliefs_affames(final)
-
-            # ⚠️ TOUT DERNIER, APRES le dernier remplissage. Place avant
-            # `_reparer_reliefs_affames`, le retrait etait ANNULE : cette
-            # etape recoule les zones, et le remplissage regenere les ilots
-            # qu on venait d enlever. Mesure du 2026-09-02 : « 0 ilot
-            # flottant retire » alors que `stm32-60` en portait un de
-            # 4,9 mm2, mesure a 1 via et 0 reliant.
-            #
-            # Meme faute que le clamp contre le centrage des dominants
-            # (2026-08-27) et le snap contre le Geometre (2026-08-29) : deux
-            # correctifs justes qui s annulent. L ordre fait partie du
-            # correctif, pas de son emballage.
-            # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
-            final = _relier_les_amas_orphelins(final)
-            final = _retirer_ilots_flottants(final)
-            # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du
-            # 2026-09-12 (carte-08/10, stm32-100, tirages a 96-98 %) : le
-            # retrait emportait le via d echappement d une broche GND pose
-            # dans un ilot B.Cu de 1 mm2 — la broche n etait orpheline
-            # QU APRES, et plus rien ne la sortait. Le fanout prefere
-            # desormais un via qui touche le plan principal d en face.
-            final = _fanout_pads_isolees(final)
+            # ⚠️ EN DERNIER, apres la couture et le repli GND : les reparations
+            # locales se mesurent sur le remplissage FINAL. Un repli qui a
+            # change le board a recoule ses zones : on les repasse. Sinon elles
+            # ont deja ete faites, sur ce meme board, juste avant les replis.
+            if final != apres_locales:
+                final = _reparations_locales_gnd(final)
             _garder_une_trace(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
@@ -7271,6 +7311,39 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                      "en re-tirer un autre" if meilleur_fige is not None
                      else "tous les tirages ont stagne ou echoue — aucun routage"))
     return meilleur.model_copy(update={"layers_tried": palier_max_essaye or None})
+
+
+def _reparations_locales_gnd(final: bytes) -> bytes:
+    """Les reparations GND locales et deterministes, dans leur ordre contraint.
+
+    Appelees AVANT les replis Freerouting (2026-09-29 : 1167 s de replis sur
+    carte-09 pour 1 ou 2 broches), et de nouveau apres si un repli a change le
+    board. Chacune ne peut qu ameliorer (comparaison DRC interne).
+    Garde : tests/test_reparations_locales_avant_les_replis.py.
+    """
+    # ⚠️ D ABORD la promotion des reliefs affames : elle recoule les zones, et
+    # se mesure donc sur le remplissage de la couture et des replis.
+    final = _reparer_reliefs_affames(final)
+
+    # ⚠️ PUIS le retrait, APRES le dernier remplissage. Place avant
+    # `_reparer_reliefs_affames`, le retrait etait ANNULE : cette etape recoule
+    # les zones, et le remplissage regenere les ilots qu on venait d enlever.
+    # Mesure du 2026-09-02 : « 0 ilot flottant retire » alors que `stm32-60` en
+    # portait un de 4,9 mm2, mesure a 1 via et 0 reliant.
+    #
+    # Meme faute que le clamp contre le centrage des dominants (2026-08-27) et
+    # le snap contre le Geometre (2026-08-29) : deux correctifs justes qui
+    # s annulent. L ordre fait partie du correctif, pas de son emballage.
+    # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
+    final = _relier_les_amas_orphelins(final)
+    final = _retirer_ilots_flottants(final)
+    # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du 2026-09-12
+    # (carte-08/10, stm32-100, tirages a 96-98 %) : le retrait emportait le
+    # via d echappement d une broche GND pose dans un ilot B.Cu de 1 mm2 — la
+    # broche n etait orpheline QU APRES, et plus rien ne la sortait. Le fanout
+    # prefere desormais un via qui touche le plan principal d en face.
+    final = _fanout_pads_isolees(final)
+    return final
 
 
 class RouteProgressResponse(BaseModel):
