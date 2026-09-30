@@ -4554,6 +4554,65 @@ def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
     return recousu
 
 
+def _relier_les_pastilles_orphelines(pcb_bytes: bytes) -> bytes:
+    """Raccorde par une courte piste une broche GND orpheline SEULE au plan principal.
+
+    Mesure du 2026-09-30, carte-07 : apres un routage a 100 %, 2 ou 3 broches
+    GND restent isolees (U1-8, C20-2). `_relier_les_amas_orphelins` ne vise que
+    des ILOTS portant une pastille ; une broche nue — son ilot retire, son via
+    emporte — n etait visee par personne, et les replis Freerouting coutaient
+    ~5 min par tirage, pour rien. Avis concordant de Codex, Grok, GLM et
+    OpenCode. Meme mecanique cote runner (A*, couloir verifie, degagement).
+
+    Ne peut qu AMELIORER : le board est conserve si le bilan DRC s aggrave.
+    Garde : tests/test_pastille_gnd_orpheline_reliee.py.
+    """
+    if not _NETS_CONFIES_AU_PLAN:
+        return pcb_bytes
+    try:
+        orphelines = _pads_isolees_du_plan(_rapport_drc(pcb_bytes), pcb_bytes)
+    except Exception as exc:  # noqa: BLE001 — sans mesure, on ne touche a rien
+        logger.warning("raccord des broches orphelines : mesure impossible (%s)", exc)
+        return pcb_bytes
+    if not orphelines:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "relier_pastilles",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps([[str(r), str(p)] for r, p in orphelines]),
+                "largeur_mm": str(_TRONCON_LARGEUR_MM),
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("raccord des broches orphelines impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        bilan = json.loads(resultat.read_text(encoding="utf-8"))
+        relie = sortie.read_bytes()
+    relies = int(bilan.get("relies", 0) or 0)
+    if not relies:
+        logger.warning("raccord des broches orphelines : %d vue(s), AUCUNE reliee — %s",
+                       len(orphelines),
+                       _resume_des_echecs(bilan.get("echecs")) or "raison inconnue")
+        return pcb_bytes
+    # Recouler avant de juger : la piste neuve traverse le plan coule.
+    relie = _fill_zones(relie)
+    if _aggrave_le_board(pcb_bytes, relie):
+        logger.warning("raccord des broches orphelines : erreurs ajoutees — board conserve")
+        return pcb_bytes
+    logger.info("raccord des broches orphelines : %d piste(s) posee(s) pour %d broche(s) (%s)",
+                relies, len(orphelines), ", ".join("%s-%s" % o for o in orphelines[:6]))
+    return relie
+
+
 def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
     """Retire les ilots de plan qu AUCUN via ne relie — du cuivre flottant.
 
@@ -7336,6 +7395,9 @@ def _reparations_locales_gnd(final: bytes) -> bytes:
     # s annulent. L ordre fait partie du correctif, pas de son emballage.
     # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
     final = _relier_les_amas_orphelins(final)
+    # Puis la broche orpheline SEULE, que le raccord des amas ne vise pas
+    # (2026-09-30) — avant le retrait, qui ne toucherait pas le plan principal.
+    final = _relier_les_pastilles_orphelines(final)
     final = _retirer_ilots_flottants(final)
     # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du 2026-09-12
     # (carte-08/10, stm32-100, tirages a 96-98 %) : le retrait emportait le
