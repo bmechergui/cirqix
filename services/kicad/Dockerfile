@@ -114,6 +114,20 @@ RUN mv /app/kicad-tools /opt/kicad-tools && \
 RUN cd /opt/kicad-tools && (kct build-native --force || \
     echo "WARNING: kct build-native failed — using pure-Python router")
 
+# ⚠️ Moteur C++ du PLACEMENT (`placement_cpp`). `kct build-native` ne construit et
+# n'installe QUE le routeur (`scripts/build-cpp.sh` ne copie que `router_cpp`) :
+# le calcul des forces du placement retombait sur Python pur. Mesure du
+# 2026-09-30, carte-07 (44 composants), même board de départ :
+#     sans placement_cpp  2144 s      avec  107 s
+# Le build échoue si le module ne se charge pas : un placement vingt fois plus
+# lent ne doit pas partir en silence. Garde : tests/test_placement_cpp_dans_l_image.py.
+RUN cd /opt/kicad-tools \
+    && cmake -B /tmp/build-pcpp -S . -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE="$(which python3)" \
+    && cmake --build /tmp/build-pcpp --target placement_cpp -j4 \
+    && cp "$(find /tmp/build-pcpp -name 'placement_cpp*.so' | head -1)" src/kicad_tools/placement/ \
+    && rm -rf /tmp/build-pcpp \
+    && python3 -c "from kicad_tools.optim.cpp_backend import is_cpp_available as ok, get_cpp_unavailable_reason as why; assert ok(), why()"
+
 # Entrypoint: verify the native backend, then start services.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
