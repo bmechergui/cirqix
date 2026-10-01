@@ -97,4 +97,8 @@ class TestCablage:
         corps = self.SOURCE[self.SOURCE.index("def _rapport_drc(") :]
         corps = corps[: corps.index(chr(10) + "def ")]
         assert "_projet_kicad(" in corps
+        # Depuis le 2026-10-01 le rapport est memorise ; l ecriture du projet
+        # vit dans `_rapport_drc_calcule`, qui lance kicad-cli.
+        corps = self.SOURCE[self.SOURCE.index("def _rapport_drc_calcule(") :]
+        corps = corps[: corps.index(chr(10) + "def ")]
         assert "kicad_pro" in corps

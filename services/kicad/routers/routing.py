@@ -1291,6 +1291,10 @@ def _route_with_freerouting_api(
                                       passes=derniere_passe)
             time.sleep(2)
         else:
+            # Un job qu on cesse d attendre est un job a TUER (`cancel` 501) :
+            # sinon il court pendant les tirages suivants (2026-10-01, budgets
+            # courts des replis GND).
+            _tuer_la_jvm()
             raise RuntimeError("Freerouting API timeout")
 
         output = _appel("GET", f"{pre}/jobs/{job_id}/output")
@@ -2856,8 +2860,39 @@ def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
     return {k: b[k] - a.get(k, 0) for k in sorted(b) if b[k] > a.get(k, 0)}
 
 
+# Rapports DRC deja calcules, par (contenu du board, regles du projet).
+# ⚠️ Banc du 2026-10-01 : les finitions font 50 % du temps de routage et
+# re-jugent souvent un board INCHANGE (gardes « jamais pire », comparaisons des
+# replis). Avis de Codex : seuls les rapports VALIDES sont gardes, toujours
+# rendus en copie ; borne pour la memoire. Garde : tests/test_rapport_drc_memorise.py.
+_CACHE_DRC: "dict[tuple, dict]" = {}
+_CACHE_DRC_MAX = 32
+
+
+def _vider_cache_drc() -> None:
+    _CACHE_DRC.clear()
+
+
 def _rapport_drc(pcb_bytes: bytes) -> dict:
     """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
+    import copy
+    import hashlib
+    projet = _projet_kicad(pcb_bytes)
+    cle = (hashlib.sha1(pcb_bytes).hexdigest(),
+           hashlib.sha1(json.dumps(projet, sort_keys=True).encode()).hexdigest())
+    if cle in _CACHE_DRC:
+        return copy.deepcopy(_CACHE_DRC[cle])
+    rapport = _rapport_drc_calcule(pcb_bytes, projet)
+    if not _sans_verdict(rapport):
+        if len(_CACHE_DRC) >= _CACHE_DRC_MAX:
+            # Tolerant : la route /drc peut l appeler hors du verrou de routage.
+            _CACHE_DRC.pop(next(iter(_CACHE_DRC), None), None)
+        _CACHE_DRC[cle] = copy.deepcopy(rapport)
+    return rapport
+
+
+def _rapport_drc_calcule(pcb_bytes: bytes, projet) -> dict:
+    """Lance kicad-cli sur `pcb_bytes` avec les regles `projet`."""
     cli = shutil.which("kicad-cli")
     if cli is None:
         return _SANS_VERDICT.copy()
@@ -2873,7 +2908,6 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
         # ⚠️ Le fichier PROJET doit etre a cote du board, sinon kicad-cli
         # applique ses defauts et le verdict porte sur des regles que la
         # carte ne suit pas.
-        projet = _projet_kicad(pcb_bytes)
         if projet is not None:
             (Path(tmp) / "b.kicad_pro").write_text(
                 json.dumps(projet), encoding="utf-8")
@@ -4944,6 +4978,24 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
 _REPLI_GND_MAX_MANQUANTES: int = 8
 
 
+def _finitions_inutiles(res: "RouteAutoResponse", meilleur: "Optional[RouteAutoResponse]") -> bool:
+    """Ce tirage peut-il se passer des finitions (couture, replis, DRC) ?
+
+    Decision validee le 2026-10-01 (avis de Grok) : les finitions font 50 % du
+    temps du banc, y compris sur des tirages ensuite ecartes — un 66 % recevait
+    les memes minutes qu un 99 %. On finit un tirage a portee
+    (`_SEUIL_PALIER_A_PORTEE`) ou qui bat le meilleur board deja fini ; le
+    premier tirage est toujours fini.
+    Garde : tests/test_finitions_reservees.py.
+    """
+    if meilleur is None or not res.kicad_pcb_b64 or res.skipped:
+        return False
+    # Marge d un point : `res` porte le % du MOTEUR, `meilleur` le % VERIFIE
+    # par le DRC — deux mesures voisines, pas identiques (revue du 2026-10-01).
+    return (res.routed_percent < _SEUIL_PALIER_A_PORTEE
+            and res.routed_percent < meilleur.routed_percent - 1)
+
+
 def _secours_peut_gagner(avant: Optional[tuple], brut: Optional[tuple],
                          orphelines: int) -> bool:
     """Le secours BRUT merite-t-il les reparations locales avant comparaison ?
@@ -5179,6 +5231,11 @@ def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
 
 _REPLI_CIBLE_TOURS = 4
 
+# Budget TOTAL du repli GND cible, tous tours compris. Decision validee le
+# 2026-10-01 (banc des dix cartes : replis tous refuses, 2 a 13 min par
+# tirage ; la carte montait ensuite d un palier et atteignait 100 %).
+_BUDGET_REPLI_CIBLE_S = 60
+
 
 def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: float,
                               orphelines, final: bytes) -> tuple:
@@ -5187,11 +5244,21 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
 
     Mesure du 2026-09-11 (carte-08) : un tour passe de 6 a 5 orphelines en
     11 s ; s arreter la laissait 5 broches pour un repli global de 15 min.
+
+    ⚠️ `budget_s` est un budget TOTAL pour tous les tours (decision validee le
+    2026-10-01, `_BUDGET_REPLI_CIBLE_S`) : chaque tour recoit le reste, et on
+    s arrete quand il ne reste plus un budget de niveau.
     """
+    fin = time.time() + budget_s
     for tour in range(1, _REPLI_CIBLE_TOURS + 1):
         if not orphelines:
             break
-        cible = _router_gnd_cible(etendu, req, budget_s, orphelines, deja_route=final)
+        reste = fin - time.time()
+        if reste < _MIN_LEVEL_BUDGET_S:
+            logger.info("repli GND CIBLE : budget de %.0f s epuise apres %d tour(s)",
+                        budget_s, tour - 1)
+            break
+        cible = _router_gnd_cible(etendu, req, reste, orphelines, deja_route=final)
         if cible is None:
             break
         avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
@@ -7142,6 +7209,13 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # qui sera juge plat ou non, a sa sortie.
             continue
         t_finitions = time.time()
+        if _finitions_inutiles(res, meilleur):
+            logger.info(
+                "route_auto: tirage a %d%% (%d couches) sans finitions — sous %d%% et "
+                "pas mieux que le meilleur board (%d%%)", res.routed_percent, palier,
+                _SEUIL_PALIER_A_PORTEE, meilleur.routed_percent)
+            meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
+            continue
 
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
@@ -7240,7 +7314,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 # 11 s mesurees, il n est PAS soumis au seuil du repli global
                 # (qui coute 10-17 min). Repete tant qu il referme des broches.
                 final, orphelines = _repli_gnd_cible_iteratif(
-                    etendu, req, restant, orphelines, final)
+                    etendu, req, min(restant, _BUDGET_REPLI_CIBLE_S), orphelines, final)
                 bilan_final = _bilan_drc(final) if orphelines else (0, 0)
                 secours = None
                 if orphelines and bilan_final is None:
@@ -7261,7 +7335,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
                         len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
                     orphelines = []
-                elif orphelines and not _repli_deja_tente(orphelines, couches=couches_final):
+                elif orphelines and palier < max(essais):
+                    # Decision validee le 2026-10-01 : sous le plafond, le
+                    # repli GLOBAL ne paie pas (refuse a chaque fois, 2-7 min) ;
+                    # le palier suivant relie la masse.
+                    logger.info(
+                        "plan de masse : %d broche(s) GND non reliee(s) — repli "
+                        "global saute sous le plafond, le palier suivant s en charge",
+                        len(orphelines))
+                    # Rien n a ete tente : rien a noter comme « repli echoue ».
+                    orphelines = []
+                elif (orphelines and palier >= max(essais)
+                        and not _repli_deja_tente(orphelines, couches=couches_final)):
                     logger.warning(
                         "plan de masse : %d broche(s) GND non reliée(s) — "
                         "repli sur un routage incluant GND", len(orphelines))

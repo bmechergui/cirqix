@@ -52,6 +52,9 @@ def _jamais_attendre_la_vraie_jvm(monkeypatch):
         routing = None
     if routing is not None and hasattr(routing, "_jvm_api_lancee"):
         monkeypatch.setattr(routing, "_jvm_api_lancee", lambda: False)
+    # Un rapport DRC memorise par un test ne doit pas servir au suivant.
+    if routing is not None and hasattr(routing, "_vider_cache_drc"):
+        routing._vider_cache_drc()
     yield
 
 

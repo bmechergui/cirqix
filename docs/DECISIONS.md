@@ -14,6 +14,26 @@
 
 ## En attente de validation
 
+### D-2026-10-01-a — Finitions du routage : replis GND bornés, finitions réservées
+
+- **Statut : validée** — l'utilisateur, le 2026-10-01, sur l'ordre proposé
+  après avis de Codex et Grok : « Mémoriser les rapports DRC […] Replis GND :
+  supprimer le global sous le plafond, et donner au ciblé un budget total de
+  60 s […] Finitions réservées aux tirages qui peuvent gagner, à 97 % ou plus,
+  ou meilleur du palier […] Détection précoce d'un placement mauvais, à
+  calibrer d'abord sur le banc. »
+- **Constat** (banc des dix cartes du 2026-10-01, code du jour, 33 tirages) :
+  finitions 4705 s (50 %), Freerouting 3882 s (41 %), préparation 868 s.
+  Tous les replis GND observés refusés (historique : 11, 0 retenu) ; la carte
+  montait ensuite d'un palier et atteignait 100 % en 2 à 5 min.
+- **Codé** : rapports DRC mémorisés (contenu + règles du projet, rapports
+  valides seulement) ; repli GND global seulement au plafond de couches ; repli
+  ciblé à budget TOTAL de 60 s (`_BUDGET_REPLI_CIBLE_S`) ; un job Freerouting
+  arrêté au budget est tué ; finitions sautées pour un tirage sous
+  `_SEUIL_PALIER_A_PORTEE` (97 %) qui ne bat pas le meilleur board fini.
+- **À calibrer** : détection précoce d'un placement condamné (signaux
+  manquants disjoints d'un tirage à l'autre, carte-10 du 2026-10-01).
+
 ### D-2026-09-29-a — À partir de 95 %, on ne refait jamais le placement
 
 - **Statut : validée** — l'utilisateur, le 2026-09-29 : « Placement : 3 tirages,
