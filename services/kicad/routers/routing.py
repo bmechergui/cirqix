@@ -4944,6 +4944,21 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
 _REPLI_GND_MAX_MANQUANTES: int = 8
 
 
+def _secours_peut_gagner(avant: Optional[tuple], brut: Optional[tuple],
+                         orphelines: int) -> bool:
+    """Le secours BRUT merite-t-il les reparations locales avant comparaison ?
+
+    Les couples sont `(erreurs, manquantes)`. Les reparations locales ne
+    relient que des broches GND : elles ne font pas descendre un secours a
+    57 manquantes sous le 1 du board garde (carte-07, 2026-10-01, 5 min
+    perdues). Sans verdict d un cote, on ne paie rien.
+    Garde : tests/test_secours_perdu_sans_reparation.py.
+    """
+    if avant is None or brut is None:
+        return False
+    return brut[1] <= avant[1] + max(0, int(orphelines))
+
+
 def _replis_gnd_inutiles(manquants: set, nets_plan, palier: int, plafond: int) -> bool:
     """Un SIGNAL manque et un palier plus haut existe : sauter les replis GND.
 
@@ -7269,8 +7284,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     # A ARMES EGALES : `final` a recu les reparations locales
                     # (2026-09-29) ; le secours doit les recevoir aussi, sinon
                     # la comparaison refuserait un repli utile (revue du jour).
-                    secours = _reparations_locales_gnd(secours)
-                    avant, apres = _bilan_drc(final), _bilan_drc(secours)
+                    # Seulement s il peut gagner (`_secours_peut_gagner`).
+                    avant = _bilan_drc(final)
+                    brut = _bilan_drc(secours)
+                    if _secours_peut_gagner(avant, brut, len(orphelines)):
+                        secours = _reparations_locales_gnd(secours)
+                        apres = _bilan_drc(secours)
+                    else:
+                        apres = brut
                     if _secours_est_meilleur(avant, apres):
                         logger.info("repli GND retenu : %s -> %s",
                                     _bilan_lisible(avant), _bilan_lisible(apres))

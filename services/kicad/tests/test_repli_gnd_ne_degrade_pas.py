@@ -86,7 +86,7 @@ class TestCablage:
         # ⚠️ Fenetre elargie : le refus se journalise apres tout le bloc de
         # comparaison. Une garde trop etroite mesurerait la mise en page.
         i = self.SOURCE.index("secours = _router_en_incluant_gnd(")
-        bloc = self.SOURCE[i:i + 1800]
+        bloc = self.SOURCE[i:i + 2600]
         assert "repli GND REFUSE" in bloc and "logger.warning" in bloc
 
     def test_toutes_les_etapes_qui_remplacent_le_board_comparent(self):
