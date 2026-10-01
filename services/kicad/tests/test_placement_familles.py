@@ -48,6 +48,27 @@ def _charger(tmp_path, source=CARTE_10):
     return PCB.load(str(copie))
 
 
+def test_aucune_famille_dans_le_halo_d_echappement(tmp_path):
+    """Le rangement ne rebouche pas le couloir que l'étape ④ vient de libérer.
+
+    Mesure du 2026-09-30, carte-09 : toutes les connexions manquantes partaient
+    de U1 (LQFP-48) vers R10-R24, et les tirages figeaient à 67-83 % sur 4 et
+    6 couches. Le halo réservait 5 mm autour de U1 ; les familles, rangées
+    APRÈS, ne le connaissaient pas. Deux règles justes qui s'annulaient.
+    """
+    for source in (CARTE_07, CARTE_10):
+        pcb = _charger(tmp_path, source)
+        denses = P._dense_part_refs(pcb)
+        assert denses, source
+        deplaces = set(ranger_les_familles(pcb, P._connector_refs(pcb)))
+        fps = {f.reference: f for f in pcb.footprints}
+        for ref in deplaces:
+            for d in denses:
+                assert not P._boites_se_recouvrent(
+                    Z.boite_absolue(fps[ref]), Z.boite_absolue(fps[d]),
+                    P._ESCAPE_HALO_MM), (source.parent.parent.name, ref, d)
+
+
 def test_les_paires_sont_rangees_en_matrice_alignee(tmp_path):
     pcb = _charger(tmp_path)
     conn = P._connector_refs(pcb)

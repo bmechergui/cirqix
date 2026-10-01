@@ -220,7 +220,15 @@ def _ranger_une_famille(pcb, fps: dict, paires: list, ctx) -> list:
     else:
         cx = sum((b[0] + b[2]) / 2 for b in boites.values()) / len(boites)
         cy = sum((b[1] + b[3]) / 2 for b in boites.values()) / len(boites)
-    obstacles = [Z.boite_absolue(f) for ref, f in fps.items() if ref not in membres]
+    # ⚠️ Un boîtier dense garde son HALO D'ÉCHAPPEMENT (étape ④, 5 mm) : sans
+    # lui, la matrice se collait au LQFP et rebouchait le couloir que l'étape
+    # précédente venait de libérer. Mesure du 2026-09-30, carte-09 : toutes les
+    # connexions manquantes partaient de U1 vers R10-R24, tirages figés à
+    # 67-83 % sur 4 et 6 couches. Même valeur que `_reserve_escape_halos`.
+    # Garde : tests/test_placement_familles.py (halo d'échappement).
+    denses = set(P._dense_part_refs(pcb))
+    obstacles = [(Z.boite_absolue(f), P._ESCAPE_HALO_MM if ref in denses else 0.0)
+                 for ref, f in fps.items() if ref not in membres]
     marge = P._MARGE_ENTRE_COURTYARDS_MM
 
     meilleur = None
@@ -231,7 +239,7 @@ def _ranger_une_famille(pcb, fps: dict, paires: list, ctx) -> list:
             bloc = (x0, y0, x0 + w, y0 + h)
             if Z._raisons(bloc, cadre, zones):
                 continue
-            if any(P._boites_se_recouvrent(bloc, o, marge) for o in obstacles):
+            if any(P._boites_se_recouvrent(bloc, o, marge + halo) for o, halo in obstacles):
                 continue
             dist = math.hypot(dx, dy)
             if meilleur is None or dist < meilleur[0]:
