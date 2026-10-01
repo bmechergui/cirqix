@@ -42,6 +42,8 @@ import {
   keepBestRouting,
   MAX_PLACEMENT_ATTEMPTS,
   SEUIL_SANS_REPLACEMENT_PCT,
+  pourcentageMesure,
+  placementAGarder,
   type SSEEvent,
 } from '../orchestrator';
 import { pcbStateCache } from '../tools/shared';
@@ -74,6 +76,16 @@ describe('shouldRetryPlacement — décision à seuil', () => {
     expect(shouldRetryPlacement({}, 1)).toBe(false);
     expect(shouldRetryPlacement({ routed_percent: 'x' }, 1)).toBe(false);
   });
+  it('un pourcentage de tirages FIGÉS (aucun board) ne protège pas le placement', () => {
+    // Mesuré le 2026-10-01 (carte-10) : « 98 % » rendu avec 0 via, 280 erreurs.
+    expect(shouldRetryPlacement({ status: 'error', routed_percent: 98, verdict: 'tirages_figes' }, 1))
+      .toBe(true);
+    expect(pourcentageMesure({ routed_percent: 98, verdict: 'tirages_figes' })).toBe(0);
+    expect(pourcentageMesure({ status: 'success', routed_percent: 97 })).toBe(97);
+    expect(placementAGarder({ status: 'success', routed_percent: 97 })).toBe(true);
+    expect(placementAGarder({ routed_percent: 98, verdict: 'tirages_figes' })).toBe(false);
+    expect(placementAGarder(undefined)).toBe(false);
+  });
   it('D-2026-09-29-a : jamais de re-placement à partir de 95 %', () => {
     expect(SEUIL_SANS_REPLACEMENT_PCT).toBe(95);
     expect(shouldRetryPlacement({ routed_percent: 94 }, 1)).toBe(true);
@@ -86,6 +98,13 @@ describe('keepBestRouting — anti-régression', () => {
   it('garde le candidat s’il est meilleur', () => {
     const best = keepBestRouting({ routed_percent: 91 }, { routed_percent: 100 });
     expect(best['routed_percent']).toBe(100);
+  });
+  it('un « 98 % » de tirages figés (sans board) ne bat pas un vrai board à 90 %', () => {
+    const best = keepBestRouting(
+      { status: 'error', routed_percent: 98, verdict: 'tirages_figes' },
+      { status: 'success', routed_percent: 90, kicad_pcb_content: 'VRAI' },
+    );
+    expect(best['kicad_pcb_content']).toBe('VRAI');
   });
   it('conserve le meilleur existant sinon', () => {
     const best = keepBestRouting(

@@ -26,3 +26,23 @@ def test_la_boucle_s_arrete_au_seuil_sans_erreur():
     assert "break" in boucle[i:i + 400]
     # avant l agrandissement de carte : on ne prepare pas un essai qui n aura pas lieu
     assert i < boucle.index("taille_suivante(")
+
+
+def test_a_95_avec_erreurs_on_re_route_le_meme_placement():
+    """Regle du 2026-10-01 : le placement est deja verifie au DRC ; une erreur
+    DRC apres routage vient du routage. A >= 95 %, l essai suivant reprend le
+    MEME placement (ni /place/auto, ni agrandissement), comme `placementAGarder`."""
+    src = PIPELINE.read_text(encoding="utf-8")
+    boucle = src[src.index("for essai in range("):]
+    assert "if place_garde is not None:" in boucle
+    assert boucle.index("if place_garde is not None:") < boucle.index('_post("/place/auto"')
+    assert "place_garde = place" in boucle
+    agrandir = boucle.index("taille_suivante(")
+    assert "if place_garde is None:" in boucle[agrandir - 300:agrandir]
+
+
+def test_un_routage_sans_board_ne_compte_pas():
+    """2026-10-01, carte-10 : « 98 % » rendu par des tirages figes, sans board
+    (0 via, 280 erreurs au DRC du board place). Il ne doit ni gagner ni verrouiller."""
+    src = PIPELINE.read_text(encoding="utf-8")
+    assert 'if res_r.get("skipped") or not res_r.get("kicad_pcb_b64"):' in src

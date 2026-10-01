@@ -34,6 +34,22 @@
   « Multiple vias skipped », HTTP 500, 0 %). À réparer, puis réactiver à partir
   de 95 %.
 
+- **C (validée le 2026-10-01, codée)** — l'utilisateur : « Le placement passe
+  déjà au DRC, la carte est routable, il n'y a pas de chevauchement : une erreur
+  DRC après routage vient du routage. À 95 %, on garde le placement même avec
+  des erreurs DRC : 3 tirages de routage, escalade si ce n'est pas atteint, et
+  on corrige les erreurs DRC. Solution générale. » Le verrou ne jouait que sans
+  erreur DRC ; il joue désormais aussi avec : l'orchestrateur re-route le MÊME
+  placement dans sa boucle DRC (`placementAGarder`), le banc aussi
+  (`place_garde`), sans agrandir la carte.
+- **Garde-fou** : un pourcentage n'a de valeur que s'il vient d'un vrai board
+  (`pourcentageMesure`). Mesuré le 2026-10-01 sur carte-10 : tirages tous figés
+  → « 98 % » SANS board (0 via, 280 erreurs au DRC du board placé). Compté tel
+  quel, il aurait verrouillé un placement qui ne se route pas ; il vaut 0, et
+  le re-placement reste permis. Avis concordant de Codex, Grok et OpenCode.
+- **Reste** : corriger après routage les erreurs DRC qu'aucun mécanisme ne
+  traite (`track_dangling`, `clearance`, `copper_edge_clearance`).
+
 ### D-2026-09-28-a — Un composant ancré réserve son corps, pas deux fois sa portée
 
 - **Statut : validée** — l'utilisateur, le 2026-09-28 : « Oui, corps réel ».

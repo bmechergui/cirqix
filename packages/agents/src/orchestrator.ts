@@ -102,8 +102,33 @@ export function shouldRetryPlacement(
   control: RunControl = {},
 ): boolean {
   if (control.cancelled) return false;
+  if (typeof result['routed_percent'] !== 'number') return false;
+  return pourcentageMesure(result) < SEUIL_SANS_REPLACEMENT_PCT && attempt < maxAttempts;
+}
+
+/**
+ * Pourcentage d'un routage qui a RENDU un board, 0 sinon.
+ *
+ * ⚠️ Mesuré le 2026-10-01 (carte-10) : quand tous les tirages figent, le service
+ * rend le meilleur pourcentage LU DANS LE JOURNAL (« 98 % ») sans aucun board —
+ * le DRC du board placé donnait 280 erreurs, 0 via. Compté tel quel, ce 98 %
+ * verrouillait un placement qui ne se route pas.
+ */
+export function pourcentageMesure(result: Record<string, unknown>): number {
+  if (result['verdict'] === 'tirages_figes' || result['status'] === 'error') return 0;
   const pct = result['routed_percent'];
-  return typeof pct === 'number' && pct < SEUIL_SANS_REPLACEMENT_PCT && attempt < maxAttempts;
+  return typeof pct === 'number' ? pct : 0;
+}
+
+/**
+ * Règle de l'utilisateur, 2026-10-01 : le placement passe déjà par un DRC avant
+ * le routage ; une erreur DRC après routage vient donc du ROUTAGE. Dès
+ * `SEUIL_SANS_REPLACEMENT_PCT` sur un vrai board, on garde le placement, même
+ * avec des erreurs DRC : on re-route, et `route_auto` fait ses tirages et monte
+ * les couches.
+ */
+export function placementAGarder(routing: Record<string, unknown> | undefined): boolean {
+  return routing !== undefined && pourcentageMesure(routing) >= SEUIL_SANS_REPLACEMENT_PCT;
 }
 
 /**
@@ -113,8 +138,10 @@ export function keepBestRouting(
   best: Record<string, unknown>,
   candidate: Record<string, unknown>,
 ): Record<string, unknown> {
-  const b = typeof best['routed_percent'] === 'number' ? (best['routed_percent'] as number) : -1;
-  const c = typeof candidate['routed_percent'] === 'number' ? (candidate['routed_percent'] as number) : -1;
+  // Par `pourcentageMesure` : un « 98 % » de tirages figés, sans board, ne
+  // bat pas un vrai board à 90 % (revue du 2026-10-01).
+  const b = typeof best['routed_percent'] === 'number' ? pourcentageMesure(best) : -1;
+  const c = typeof candidate['routed_percent'] === 'number' ? pourcentageMesure(candidate) : -1;
   return c > b ? candidate : best;
 }
 
@@ -192,7 +219,10 @@ export function growBoardIfStalled(
   drc?: Record<string, unknown>,
 ): BoardGrowth {
   const ceiling = maxLayersForPlan(getProjectPlan(projectId));
-  const pct = typeof routing?.['routed_percent'] === 'number' ? (routing['routed_percent'] as number) : 100;
+  // Tirages figés (aucun board) : 0, pas le « 98 % » lu dans le journal —
+  // sinon la carte ne serait jamais agrandie (revue du 2026-10-01).
+  const pct = routing !== undefined && typeof routing['routed_percent'] === 'number'
+    ? pourcentageMesure(routing) : 100;
   // Le plafond se juge sur le palier ESSAYÉ (D-2026-09-25-e) : le meilleur
   // board peut n'avoir que 2 couches après un essai à 8. `layers` ne sert que
   // si le service ne rend pas `layers_tried`.
@@ -469,16 +499,22 @@ export async function* runOrchestrator(
       if (tool.name === 'call_agent_drc') {
         let attempt = 1;
         let growth = initialGrowth(options.projectId);
+        // Verrou du placement (règle du 2026-10-01) : une fois un vrai board à
+        // ≥ 95 %, on ne re-place plus ni n'agrandit — on re-route seulement.
+        let placementVerrouille = placementAGarder(lastRoutingResult.get(options.projectId));
         while (shouldRetryForDrc(result, attempt)) {
           attempt++;
-          growth = growBoardIfStalled(
-            options.projectId, growth, lastRoutingResult.get(options.projectId), result);
-          yield { type: 'step', step: 'PLACEMENT' };
-          const placement = await executeToolStub('call_agent_placement', placementInputFor(growth), options.projectId);
-          yield { type: 'pcb_state', projectId: options.projectId, state: placement };
+          if (!placementVerrouille) {
+            growth = growBoardIfStalled(
+              options.projectId, growth, lastRoutingResult.get(options.projectId), result);
+            yield { type: 'step', step: 'PLACEMENT' };
+            const placement = await executeToolStub('call_agent_placement', placementInputFor(growth), options.projectId);
+            yield { type: 'pcb_state', projectId: options.projectId, state: placement };
+          }
           yield { type: 'step', step: 'ROUTING' };
           const routing = await executeToolStub('call_agent_routing', {}, options.projectId);
           lastRoutingResult.set(options.projectId, routing);
+          placementVerrouille = placementVerrouille || placementAGarder(routing);
           yield { type: 'step', step: 'DRC' };
           const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
           result = keepBestDrc(result, retry);

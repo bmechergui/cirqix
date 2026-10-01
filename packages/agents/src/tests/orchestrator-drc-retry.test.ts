@@ -212,6 +212,37 @@ describe('orchestrateur — re-tirage piloté par le DRC', () => {
     expect(calls).not.toContain('call_agent_placement');
   });
 
+  it('à ≥ 95 % routé, re-route le MÊME placement au lieu de re-placer (règle du 2026-10-01)', async () => {
+    const ROUTING_STREAM = [
+      { type: 'content_block_start', content_block: { type: 'tool_use', id: 'tu_r', name: 'call_agent_routing' } },
+      { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{}' } },
+      { type: 'content_block_stop' },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+    ];
+    hoisted.streamQueue.push([...ROUTING_STREAM], [...DRC_TOOL_STREAM], [...END_STREAM]);
+    let drcCalls = 0;
+    toolsMock.executeToolStub.mockImplementation(async (name: string) => {
+      if (name === 'call_agent_routing')
+        return { status: 'success', routed_percent: 97, kicad_pcb_content: 'PCB', note: 'routing 97%' };
+      if (name === 'call_agent_reason')
+        return { status: 'success', routed_percent: 97, reasoning_steps: [], note: 'reason' };
+      if (name === 'call_agent_drc') {
+        drcCalls++;
+        return drcCalls === 1
+          ? { status: 'success', drc_clean: false, drcViolations: [1], note: 'DRC 1 erreur' }
+          : { status: 'success', drc_clean: true, drcViolations: [], note: 'DRC OK' };
+      }
+      return { status: 'success', placed_count: 8, note: 'placement' };
+    });
+
+    await collect(runOrchestrator({ userMessage: 'fabrique', projectId: 'p95', history: [] }));
+
+    const calls = toolsMock.executeToolStub.mock.calls.map((c) => c[0]);
+    expect(calls).not.toContain('call_agent_placement');
+    expect(calls.filter((n) => n === 'call_agent_routing')).toHaveLength(2);
+    expect(calls.filter((n) => n === 'call_agent_drc')).toHaveLength(2);
+  });
+
   it('ne re-place PAS quand le service DRC est en erreur', async () => {
     hoisted.streamQueue.push([...DRC_TOOL_STREAM], [...END_STREAM]);
     toolsMock.executeToolStub.mockImplementation(async (name: string) => {
