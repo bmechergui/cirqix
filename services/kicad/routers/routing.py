@@ -2740,6 +2740,106 @@ def _aggrave_le_board(avant: bytes, apres: bytes, *,
     return aggrave
 
 
+_TYPES_PENDANTS = ("track_dangling", "via_dangling")
+_TETE_CUIVRE_RE = re.compile(r"\n\t\((segment|arc|via)\b")
+
+
+def _fin_du_bloc(texte: str, debut: int) -> int:
+    """Indice juste apres la parenthese qui ferme le bloc ouvert a `debut`.
+
+    Les guillemets sont sautes : un nom de net comme `Net-(U1-Pad3)` porte des
+    parentheses qui ne comptent pas.
+    """
+    profondeur, i, dans_chaine = 0, debut, False
+    while i < len(texte):
+        c = texte[i]
+        if dans_chaine:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                dans_chaine = False
+        elif c == '"':
+            dans_chaine = True
+        elif c == "(":
+            profondeur += 1
+        elif c == ")":
+            profondeur -= 1
+            if profondeur == 0:
+                return i + 1
+        i += 1
+    return len(texte)
+
+
+def _supprimer_cuivre_par_uuid(pcb_bytes: bytes, uuids: set) -> bytes:
+    """Retire les pistes, arcs et vias dont l `uuid` est vise — et rien d autre."""
+    texte = pcb_bytes.decode("utf-8", errors="replace")
+    morceaux, curseur = [], 0
+    for m in _TETE_CUIVRE_RE.finditer(texte):
+        if m.start() < curseur:
+            continue
+        fin = _fin_du_bloc(texte, m.start() + 1)
+        bloc = texte[m.start():fin]
+        if any('(uuid "%s")' % u in bloc for u in uuids):
+            morceaux.append(texte[curseur:m.start()])
+            curseur = fin
+    morceaux.append(texte[curseur:])
+    return "".join(morceaux).encode("utf-8")
+
+
+def _retirer_pendants(pcb_bytes: bytes, max_passes: int = 5) -> bytes:
+    """Retire le cuivre PENDANT du board livre : pistes et vias qui ne relient rien.
+
+    Mesure du 2026-10-01 : les boards livres du banc ont 0 erreur, mais des
+    `track_dangling` (carte-09 : 4) et `via_dangling`. kicad-tools les dit « non
+    reparables » ; le DRC donne pourtant leur `uuid`. Retirer un pendant peut en
+    reveler un autre : quelques passes. Jamais pire : ni erreur ni connexion
+    manquante en plus, sinon on rend le board recu.
+    Garde : tests/test_board_livre_sans_pendants.py.
+    """
+    board = pcb_bytes
+    rapport = _rapport_drc(board)
+    for _ in range(max_passes):
+        if not rapport or _sans_verdict(rapport):
+            return board
+        uuids = {it.get("uuid") for v in rapport.get("violations") or []
+                 if v.get("type") in _TYPES_PENDANTS
+                 for it in v.get("items") or [] if it.get("uuid")}
+        if not uuids:
+            return board
+        candidat = _supprimer_cuivre_par_uuid(board, uuids)
+        if candidat == board:
+            return board
+        apres = _rapport_drc(candidat)
+        if (_sans_verdict(apres)
+                or _compte_erreurs(apres) > _compte_erreurs(rapport)
+                or len(apres.get("unconnected_items") or [])
+                > len(rapport.get("unconnected_items") or [])):
+            logger.warning("pendants : leur retrait aggraverait le DRC — board conserve")
+            return board
+        logger.info("pendants : %d piste(s)/via(s) sans issue retire(s)", len(uuids))
+        board, rapport = candidat, apres
+    return board
+
+
+def _livrer_sans_pendants(res: "RouteAutoResponse") -> "RouteAutoResponse":
+    """Copie de `res` dont le board ne porte plus de cuivre pendant."""
+    if not res.kicad_pcb_b64:
+        return res
+    try:
+        avant = base64.b64decode(res.kicad_pcb_b64)
+        apres = _retirer_pendants(avant)
+    except Exception as exc:  # noqa: BLE001 — un nettoyage ne casse jamais une livraison
+        logger.warning("pendants : nettoyage impossible (%s)", exc)
+        return res
+    if apres == avant:
+        return res
+    return res.model_copy(update={
+        "kicad_pcb_b64": base64.b64encode(apres).decode("ascii"),
+        "via_count": _count_vias(apres),
+        "track_length_mm": _track_length_mm(apres),
+    })
+
+
 def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
     """{type: +n} des erreurs DRC en plus dans `r_apres` (types en hausse seulement)."""
     from tools.drc import est_bloquante
@@ -7255,7 +7355,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 ", ".join(sorted(manquants_du_palier)[:8]))
         if (res.routed_percent >= 100 and not res.skipped and erreurs == 0
                 and not manquants_du_palier):
-            return res
+            return _livrer_sans_pendants(res)
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
         # ⚠️ UNE PANNE NE PEUT PAS ETRE « LE MEILLEUR ». Sans ce filtre, le
         # premier resultat venu prend la place — meme un « 0 % (aucun moteur) »
@@ -7369,7 +7469,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             warning=("tous les tirages ont fige — ce placement ne se route pas, "
                      "en re-tirer un autre" if meilleur_fige is not None
                      else "tous les tirages ont stagne ou echoue — aucun routage"))
-    return meilleur.model_copy(update={"layers_tried": palier_max_essaye or None})
+    meilleur = _livrer_sans_pendants(
+        meilleur.model_copy(update={"layers_tried": palier_max_essaye or None}))
+    return meilleur
 
 
 def _reparations_locales_gnd(final: bytes) -> bytes:
