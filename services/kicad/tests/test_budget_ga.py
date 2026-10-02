@@ -50,15 +50,13 @@ class TestBudget:
 
 
 class TestTiragesMinimum:
-    def test_trois_tirages_on_garde_le_meilleur(self):
-        """Regle validee par l utilisateur (D-2026-09-29-a, rappelee le
-        2026-10-02) : « placement : 3 tirages, on garde le meilleur ».
-
-        Avec 1, le placement s arretait au PREMIER tirage propre. Banc du
-        2026-10-02, carte-10 : quatre placements successifs, chacun le premier
-        propre venu, trois non routables (1 h 30).
+    def test_le_premier_placement_propre_est_garde(self):
+        """Regle validee par l utilisateur (D-2026-10-02-b) : un placement
+        propre est garde, et c est le ROUTAGE qui le juge (3 tirages par
+        palier, puis escalade). Remplace « 3 tirages, on garde le meilleur »
+        (D-2026-09-29-a) : 377 s contre 129 s sur carte-09.
         """
-        assert _TIRAGES_MINIMUM == 3
+        assert _TIRAGES_MINIMUM == 1
 
 
 class TestChoixDuMeilleur:

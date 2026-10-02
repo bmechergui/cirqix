@@ -2371,7 +2371,12 @@ _MAX_TIRAGES_PLACEMENT = 4
 # (D-2026-09-29-a) — « placement : 3 tirages, on garde le meilleur, puis le
 # routage ». A 1, la boucle gardait le PREMIER tirage propre : carte-10 a
 # enchaine quatre placements, trois non routables (1 h 30 de banc).
-_TIRAGES_MINIMUM = 3
+# ⚠️ RAMENE A 1 le 2026-10-02 (D-2026-10-02-b, validee par l utilisateur) :
+# le PREMIER placement propre est garde et c est le ROUTAGE qui le juge
+# (3 tirages par palier, puis escalade). Mesure du jour : 3 tirages = 5-6 min
+# au banc, un seul = 129 s (carte-09) ; en parallele (377 s), ils se ralentissent et le
+# CMA-ES de chacun expire (140 s, resultat jete) — essaye et retire.
+_TIRAGES_MINIMUM = 1
 
 # Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
 # compter dans la longueur de fil fausserait la comparaison.

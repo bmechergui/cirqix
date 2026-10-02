@@ -14,6 +14,27 @@
 
 ## En attente de validation
 
+### D-2026-10-02-b — Un seul placement propre, jugé par le routage
+
+- **Statut : validée** (étapes 1-2) — l'utilisateur, le 2026-10-02 : « on passe
+  que placement est proposé et on garde ce placement et après on passe routage
+  et chaque deux couches on fait 3 tirages max si on n'atteint pas 100 % et on
+  escalade ; si on observe pas [de progrès à l'] escalade, [un] agent raisonne
+  et dit quel problème : soit placement soit routage ».
+- **Remplace** le « 3 tirages de placement, on garde le meilleur » de
+  D-2026-09-29-a (le reste de D-2026-09-29-a est inchangé).
+- **Mesuré** (carte-09, 2026-10-02) : 3 tirages en série 5 à 6 min (banc) ; un
+  seul tirage 129 s. 3 tirages en parallèle : 377 s, ils se ralentissent et le
+  CMA-ES de chacun expire (140 s, résultat jeté) — essayé, retiré.
+- **carte-10, un seul placement** (2026-10-02, un tirage) : placement 235 s,
+  routage 74 s, **100 % sur 2 couches, 0 erreur DRC** — contre 1 h 27 au banc
+  du matin (quatre placements). Un tirage ne prouve rien : banc à refaire.
+- **Codé** : `_TIRAGES_MINIMUM = 1` (`tools/placement.py`) ; un tirage non
+  propre (conflit, zone) est toujours re-tiré, jusqu'à `_MAX_TIRAGES_PLACEMENT`.
+- **Étape 3 (à construire, en attente)** : diagnostic placement ou routage
+  quand l'escalade ne progresse pas. Le tirage carte-10 ci-dessus n'a rien
+  laissé à diagnostiquer ; les causes se mesureront sur les échecs du banc.
+
 ### D-2026-10-02-a — Un placement gardé se reroute à partir du palier atteint
 
 - **Statut : validée** — l'utilisateur, le 2026-10-02 (« Ok » à la
