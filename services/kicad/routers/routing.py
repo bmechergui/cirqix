@@ -5278,7 +5278,9 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
             logger.info("repli GND CIBLE : budget de %.0f s epuise apres %d tour(s)",
                         budget_s, tour - 1)
             break
-        cible = _router_gnd_cible(etendu, req, reste, orphelines, deja_route=final)
+        # ENTIER : `RouteAutoRequest.timeout_s` refuse 59,9 s (« 1 validation
+        # error », 2026-10-02) — le repli ne tournait jamais.
+        cible = _router_gnd_cible(etendu, req, int(reste), orphelines, deja_route=final)
         if cible is None:
             break
         avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)

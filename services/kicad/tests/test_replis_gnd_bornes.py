@@ -36,7 +36,7 @@ def test_budget_total_du_cible(monkeypatch):
 
     def cible(etendu, req, budget_s, orphelines, deja_route):
         budgets.append(budget_s)
-        horloge.t += 25  # chaque tour consomme 25 s
+        horloge.t += 25.3  # chaque tour consomme 25,3 s : reste non entier
         return deja_route + b"+"
 
     monkeypatch.setattr(R, "_router_gnd_cible", cible)
@@ -48,6 +48,12 @@ def test_budget_total_du_cible(monkeypatch):
     # 60 s : tour 1 (60 s restants), tour 2 (35 s) ; au tour 3 il reste 10 s < 30.
     assert len(budgets) == 2
     assert budgets[0] == 60 and 30 <= budgets[1] < 60
+    # Un budget ENTIER : la requete de routage refuse 59,9 s (2026-10-02).
+    assert all(isinstance(b, int) for b in budgets)
+
+
+def test_le_budget_transmis_est_accepte_par_la_requete():
+    R.RouteAutoRequest(kicad_pcb_b64="eA==", layers=4, timeout_s=int(59.9))
 
 
 def test_route_auto_borne_le_cible_et_reserve_le_global_au_plafond():
