@@ -14,6 +14,21 @@
 
 ## En attente de validation
 
+### D-2026-10-02-a — Un placement gardé se reroute à partir du palier atteint
+
+- **Statut : validée** — l'utilisateur, le 2026-10-02 (« Ok » à la
+  proposition : reprendre un reroutage au palier déjà atteint).
+- **Constat** (banc dense du 2026-10-01) : carte-09 atteint 97 % à 6 couches ;
+  la règle des 95 % (D-2026-09-29-a C) garde le placement, mais chaque
+  reroutage repartait de 2 couches et refaisait toute l'escalade (~25 min
+  chacun) : 82 min au total, 100 % au troisième.
+- **Codé** : `palier_depart` (requête `/route/auto`) fait commencer l'échelle
+  au palier du board qui a verrouillé le placement ; transmis par
+  l'orchestrateur (`palierDuRoutage`) et par le banc (`palier_garde`).
+- **Détection précoce d'un placement condamné** (D-2026-10-01-a) : le signal
+  « meilleur < 95 % et signaux manquants presque disjoints » n'a qu'un cas
+  mesuré (carte-10) ; gain estimé 6-10 min. En attente d'un second cas.
+
 ### D-2026-10-01-a — Finitions du routage : replis GND bornés, finitions réservées
 
 - **Statut : validée** — l'utilisateur, le 2026-10-01, sur l'ordre proposé

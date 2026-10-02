@@ -131,6 +131,12 @@ export function placementAGarder(routing: Record<string, unknown> | undefined): 
   return routing !== undefined && pourcentageMesure(routing) >= SEUIL_SANS_REPLACEMENT_PCT;
 }
 
+/** Couches du board rendu par un routage, si le résultat les porte. */
+export function palierDuRoutage(routing: Record<string, unknown> | undefined): number | undefined {
+  const l = routing?.['layers'];
+  return typeof l === 'number' && Number.isInteger(l) && l >= 2 ? l : undefined;
+}
+
 /**
  * Anti-régression inter-tentatives : conserve le meilleur routage rencontré.
  */
@@ -502,6 +508,10 @@ export async function* runOrchestrator(
         // Verrou du placement (règle du 2026-10-01) : une fois un vrai board à
         // ≥ 95 %, on ne re-place plus ni n'agrandit — on re-route seulement.
         let placementVerrouille = placementAGarder(lastRoutingResult.get(options.projectId));
+        // Palier où le placement gardé avait atteint 95 % : le reroutage y
+        // reprend au lieu de refaire 2 → 4 → 6 (décision validée le 2026-10-02).
+        let palierVerrou = placementVerrouille
+          ? palierDuRoutage(lastRoutingResult.get(options.projectId)) : undefined;
         while (shouldRetryForDrc(result, attempt)) {
           attempt++;
           if (!placementVerrouille) {
@@ -512,9 +522,15 @@ export async function* runOrchestrator(
             yield { type: 'pcb_state', projectId: options.projectId, state: placement };
           }
           yield { type: 'step', step: 'ROUTING' };
-          const routing = await executeToolStub('call_agent_routing', {}, options.projectId);
+          const routing = await executeToolStub(
+            'call_agent_routing',
+            placementVerrouille && palierVerrou ? { palier_depart: palierVerrou } : {},
+            options.projectId);
           lastRoutingResult.set(options.projectId, routing);
-          placementVerrouille = placementVerrouille || placementAGarder(routing);
+          if (!placementVerrouille && placementAGarder(routing)) {
+            placementVerrouille = true;
+            palierVerrou = palierDuRoutage(routing);
+          }
           yield { type: 'step', step: 'DRC' };
           const retry = await executeToolStub('call_agent_drc', toolInput, options.projectId);
           result = keepBestDrc(result, retry);

@@ -130,8 +130,15 @@ class RouteAutoRequest(BaseModel):
     # lire pendant que celle-ci route. Optionnelle : un appelant qui ne la
     # fournit pas route exactement comme avant, sans rien publier.
     progress_key: Optional[str] = Field(default=None)
+    # Palier (couches) ou commencer l echelle : celui ou un placement GARDE
+    # avait deja atteint 95 % (decision validee le 2026-10-02). Absent, on part
+    # de 2 comme toujours.
+    palier_depart: Optional[int] = Field(default=None)
 
     def model_post_init(self, _context: Any) -> None:
+        if self.palier_depart is not None and (
+                self.palier_depart < 2 or self.palier_depart % 2):
+            raise ValueError("palier_depart must be an even layer count >= 2")
         # ⚠️ `layers` est un PLAFOND depuis le 2026-08-21, plus une consigne :
         # le service part de 2 et escalade jusqu a lui. Le modele n acceptait
         # que 2, 4 ou 8 — la grille des PLANS — et rejetait donc un plafond
@@ -4978,6 +4985,19 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
 _REPLI_GND_MAX_MANQUANTES: int = 8
 
 
+def _paliers_a_partir_de(essais: list, palier_depart: Optional[int]) -> list:
+    """L echelle sans les paliers sous `palier_depart` — au moins le plafond.
+
+    Decision validee le 2026-10-02 (carte-09 : trois reroutages d un placement
+    garde, chacun repartant de 2 couches, 82 min). Garde :
+    tests/test_palier_de_depart.py.
+    """
+    if not palier_depart or not essais:
+        return list(essais)
+    garde = [p for p in essais if p >= palier_depart]
+    return garde or [max(essais)]
+
+
 def _finitions_inutiles(res: "RouteAutoResponse", meilleur: "Optional[RouteAutoResponse]") -> bool:
     """Ce tirage peut-il se passer des finitions (couture, replis, DRC) ?
 
@@ -6846,6 +6866,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER,
         plancher=plancher if _tirage_de_preuve() else 0)
+    if req.palier_depart:
+        logger.info("route_auto: placement garde — l echelle reprend a %d couches",
+                    req.palier_depart)
+    essais = _paliers_a_partir_de(essais, req.palier_depart)
     if plancher > 2 and _tirage_de_preuve():
         logger.info("route_auto: sous le plancher de %d couches, un seul tirage de "
                     "preuve par palier (D-2026-09-11-a) — echelle %s", plancher, essais)

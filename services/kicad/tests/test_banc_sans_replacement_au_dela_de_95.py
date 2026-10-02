@@ -41,6 +41,15 @@ def test_a_95_avec_erreurs_on_re_route_le_meme_placement():
     assert "if place_garde is None:" in boucle[agrandir - 300:agrandir]
 
 
+def test_le_reroutage_garde_reprend_au_palier_atteint():
+    """2026-10-02 : carte-09, trois reroutages repartant de 2 couches (82 min)."""
+    src = PIPELINE.read_text(encoding="utf-8")
+    boucle = src[src.index("for essai in range("):]
+    assert 'requete["palier_depart"] = palier_garde' in boucle
+    assert boucle.index('requete["palier_depart"]') < boucle.index('_post("/route/auto", requete)')
+    assert 'palier_garde = couches if' in boucle
+
+
 def test_un_routage_sans_board_ne_compte_pas():
     """2026-10-01, carte-10 : « 98 % » rendu par des tirages figes, sans board
     (0 via, 280 erreurs au DRC du board place). Il ne doit ni gagner ni verrouiller."""

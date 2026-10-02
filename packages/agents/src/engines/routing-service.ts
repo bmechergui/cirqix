@@ -39,6 +39,11 @@ export interface RealRoutingInput {
    * 422 au service, donc échouer le routage pour un simple indicateur.
    */
   progressKey?: string;
+  /**
+   * Palier (couches) où reprendre l'échelle : celui où un placement GARDÉ avait
+   * déjà atteint 95 % (décision validée le 2026-10-02). Absent : on part de 2.
+   */
+  palierDepart?: number;
 }
 
 export interface RealRoutingResult {
@@ -119,6 +124,7 @@ export async function runRealRouting(
     // Absente par defaut : un appelant qui ne suit pas la progression route
     // exactement comme avant, et le service ne publie rien.
     ...(input.progressKey ? { progress_key: input.progressKey } : {}),
+    ...(input.palierDepart ? { palier_depart: input.palierDepart } : {}),
   });
 
   let response: Response;

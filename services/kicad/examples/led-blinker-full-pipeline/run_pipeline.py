@@ -215,6 +215,7 @@ def main() -> int:
     # Placement verrouille (regle du 2026-10-01) : des qu un vrai board atteint
     # SEUIL_SANS_REPLACEMENT_PCT, les essais suivants re-routent CE placement.
     place_garde = None
+    palier_garde = None      # couches du board qui a verrouille le placement
     for essai in range(1, max(1, tentatives) + 1):
       # ⚠️ UN ESSAI QUI PLANTE NE DOIT PAS EMPORTER LES SUIVANTS.
       #
@@ -260,8 +261,12 @@ def main() -> int:
 
           t = _step(6, "call_agent_routing → POST /route/auto (essai %d/%d)"
                     % (essai, tentatives))
-          res_r = _post("/route/auto", {"kicad_pcb_b64": _b64(place),
-                                        "layers": plafond, "timeout_s": budget})
+          requete = {"kicad_pcb_b64": _b64(place), "layers": plafond, "timeout_s": budget}
+          # Placement garde : on reprend au palier ou il avait atteint 95 %
+          # (decision validee le 2026-10-02), au lieu de refaire 2 -> 4 -> 6.
+          if place_garde is not None and palier_garde:
+              requete["palier_depart"] = palier_garde
+          res_r = _post("/route/auto", requete)
           routed = res_r.get("routed_percent", 0) or 0
           # ⚠️ Mesure du 2026-10-01 (carte-10) : tirages tous figes -> « 98 % »
           # SANS board ; le DRC du board place donnait 280 erreurs, 0 via. Un
@@ -317,6 +322,8 @@ def main() -> int:
           # placement — l essai suivant re-route seulement, sans agrandir.
           if routed >= SEUIL_SANS_REPLACEMENT_PCT and place_garde is None:
               place_garde = place
+              couches = res_r.get("layers")
+              palier_garde = couches if isinstance(couches, int) and couches >= 2 else None
           # D-2026-09-11-b : au plafond de couches sans 100 % / 0 erreur, on
           # AGRANDIT la carte pour l essai suivant plutot que de re-tirer le
           # meme espace. Le service rend le contour a la taille demandee.
