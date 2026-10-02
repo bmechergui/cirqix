@@ -2367,7 +2367,11 @@ _MAX_TIRAGES_PLACEMENT = 4
 # CONTREPARTIE du budget reduit — un filtre contre ses placements aberrants
 # (etendue du fil 206 mm contre 42). A budget complet cette dispersion
 # disparait, et forcer un second tirage ne ferait que doubler le cout.
-_TIRAGES_MINIMUM = 1
+# ⚠️ RAMENE A 3 le 2026-10-02 : regle validee par l utilisateur
+# (D-2026-09-29-a) — « placement : 3 tirages, on garde le meilleur, puis le
+# routage ». A 1, la boucle gardait le PREMIER tirage propre : carte-10 a
+# enchaine quatre placements, trois non routables (1 h 30 de banc).
+_TIRAGES_MINIMUM = 3
 
 # Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
 # compter dans la longueur de fil fausserait la comparaison.

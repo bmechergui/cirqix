@@ -50,13 +50,15 @@ class TestBudget:
 
 
 class TestTiragesMinimum:
-    def test_un_seul_tirage_suffit_a_budget_complet(self):
-        """Le best-of-2 etait la CONTREPARTIE du budget reduit.
+    def test_trois_tirages_on_garde_le_meilleur(self):
+        """Regle validee par l utilisateur (D-2026-09-29-a, rappelee le
+        2026-10-02) : « placement : 3 tirages, on garde le meilleur ».
 
-        A budget complet la dispersion disparait (etendue du fil 42 mm contre
-        206) : forcer un second tirage ne ferait que doubler le cout.
+        Avec 1, le placement s arretait au PREMIER tirage propre. Banc du
+        2026-10-02, carte-10 : quatre placements successifs, chacun le premier
+        propre venu, trois non routables (1 h 30).
         """
-        assert _TIRAGES_MINIMUM == 1
+        assert _TIRAGES_MINIMUM == 3
 
 
 class TestChoixDuMeilleur:
