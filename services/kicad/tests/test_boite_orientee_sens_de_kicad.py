@@ -65,7 +65,13 @@ class TestUneSeuleRegle:
                                      "_reparer_chevauchements_du_drc"])
     def test_les_reparations_lisent_la_boite_orientee(self, nom):
         corps = self._corps(nom)
-        assert "_boite_orientee_fp(" in corps
+        # Appelee, ou passee a `_ecarter_les_paires` (2026-10-02).
+        assert ("_boite_orientee_fp(" in corps
+                or "_ecarter_les_paires(pcb, paires, _boite_orientee_fp," in corps)
+        assert "_boite_locale_fp(" not in corps
+
+    def test_la_boucle_partagee_ne_lit_que_la_boite_recue(self):
+        corps = self._corps("_ecarter_les_paires")
         assert "_boite_locale_fp(" not in corps
 
 

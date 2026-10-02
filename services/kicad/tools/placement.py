@@ -470,46 +470,8 @@ def _reparer_chevauchements_du_drc(pcb_path: Path, ancres) -> int:
     erreurs_avant = _conflits_du_rapport(rapport)
     try:
         pcb = PCB.load(str(pcb_path))
-        bornes = _outline_bounds(pcb)
-        if bornes is None:
-            return 0
-        par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
-        aires = {}
-        for ref, fp in par_ref.items():
-            x0, y0, x1, y1 = _boite_orientee_fp(fp)
-            aires[ref] = (x1 - x0) * (y1 - y0)
-        figes = set(ancres or ())
-        deplaces: list[str] = []
-        for a, b in paires:
-            mobile = _choisir_le_mobile(a, b, aires, figes)
-            if mobile is None or mobile not in par_ref or mobile in deplaces:
-                continue
-            fp = par_ref[mobile]
-            bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
-            etendue = max(abs(bx0), abs(bx1), abs(by0), abs(by1))
-            marge = etendue + _MARGE_COURTYARD_BORD_MM + _GARDE_REPARATION_MM
-            zone = (bornes[0] + marge, bornes[1] - marge, bornes[2] + marge, bornes[3] - marge)
-            if zone[0] >= zone[1] or zone[2] >= zone[3]:
-                continue
-            occupees = []
-            for autre in pcb.footprints:
-                if autre.reference == mobile:
-                    continue
-                ox0, oy0, ox1, oy1 = _boite_orientee_fp(autre)
-                ax, ay = autre.position
-                occupees.append((ax + ox0, ay + oy0, ax + ox1, ay + oy1))
-            x, y = fp.position
-            cible = (min(max(x, zone[0]), zone[1]), min(max(y, zone[2]), zone[3]))
-            place = _nearest_free_cell(cible, [], zone, boite_locale=(bx0, by0, bx1, by1),
-                                       boites_occupees=occupees)
-            if place is None:
-                logger.warning("chevauchement DRC : aucune case libre pour %s", mobile)
-                continue
-            logger.info("chevauchement DRC : %s (%.2f,%.2f) -> (%.2f,%.2f) — sorti du "
-                        "courtyard de %s", mobile, x, y, place[0], place[1],
-                        b if mobile == a else a)
-            fp.position = place
-            deplaces.append(mobile)
+        deplaces = _ecarter_les_paires(pcb, paires, _boite_orientee_fp, ancres,
+                                       "chevauchement DRC")
         if not deplaces:
             return 0
         pcb.save(str(pcb_path))
@@ -526,6 +488,164 @@ def _reparer_chevauchements_du_drc(pcb_path: Path, ancres) -> int:
     except Exception as exc:  # noqa: BLE001 — un filet en panne ne casse pas le placement
         pcb_path.write_bytes(avant_octets)
         logger.warning("chevauchement DRC : reparation impossible (%s) — board conserve", exc)
+        return 0
+
+
+def _ecarter_les_paires(pcb, paires, boite, ancres, etiquette: str) -> list[str]:
+    """Pour chaque paire, le plus petit non ancre va a la case libre la plus
+    proche, ou `boite(fp)` (relative, orientee) ne touche aucune autre boite.
+
+    Partage par les reparations des courtyards et des contours de serigraphie :
+    seule la boite change. Rend les references deplacees (pcb modifie en memoire).
+    """
+    bornes = _outline_bounds(pcb)
+    if bornes is None:
+        return []
+    par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    boites = {ref: boite(fp) for ref, fp in par_ref.items()}
+    aires = {ref: (b[2] - b[0]) * (b[3] - b[1]) for ref, b in boites.items()}
+    figes = set(ancres or ())
+    deplaces: list[str] = []
+    for a, b in paires:
+        mobile = _choisir_le_mobile(a, b, aires, figes)
+        if mobile is None or mobile not in par_ref or mobile in deplaces:
+            continue
+        fp = par_ref[mobile]
+        bx0, by0, bx1, by1 = boites[mobile]
+        etendue = max(abs(bx0), abs(bx1), abs(by0), abs(by1))
+        marge = etendue + _MARGE_COURTYARD_BORD_MM + _GARDE_REPARATION_MM
+        zone = (bornes[0] + marge, bornes[1] - marge, bornes[2] + marge, bornes[3] - marge)
+        if zone[0] >= zone[1] or zone[2] >= zone[3]:
+            continue
+        occupees = []
+        for autre in pcb.footprints:
+            if autre.reference == mobile:
+                continue
+            ox0, oy0, ox1, oy1 = boites.get(autre.reference) or boite(autre)
+            ax, ay = autre.position
+            occupees.append((ax + ox0, ay + oy0, ax + ox1, ay + oy1))
+        x, y = fp.position
+        cible = (min(max(x, zone[0]), zone[1]), min(max(y, zone[2]), zone[3]))
+        place = _nearest_free_cell(cible, [], zone, boite_locale=(bx0, by0, bx1, by1),
+                                   boites_occupees=occupees)
+        if place is None:
+            logger.warning("%s : aucune case libre pour %s", etiquette, mobile)
+            continue
+        logger.info("%s : %s (%.2f,%.2f) -> (%.2f,%.2f) — ecarte de %s", etiquette,
+                    mobile, x, y, place[0], place[1], b if mobile == a else a)
+        fp.position = place
+        deplaces.append(mobile)
+    return deplaces
+
+
+# Demi-epaisseur d un trait de serigraphie (0,12 mm chez KiCad) plus une garde :
+# les extremites des traits sont les points, pas le bord du trait.
+_DEMI_TRAIT_SERIGRAPHIE_MM = 0.1
+
+
+def _boite_orientee_serigraphie(fp) -> tuple:
+    """Comme `_boite_orientee_fp`, mais englobant AUSSI la serigraphie du corps.
+
+    Le courtyard d une LED 0603 fait 1,46 mm de haut, ses traits sont a
+    +/- 0,735 mm : deux LED a 1,5 mm de pas sont legales, et leurs contours se
+    touchent (carte-07, banc du 2026-10-02).
+    """
+    corps = _boite_orientee_fp(fp)      # courtyard, ou pastilles a defaut
+    xs, ys = [], []
+    for g in getattr(fp, "graphics", []) or []:
+        if "SilkS" not in str(getattr(g, "layer", "")):
+            continue
+        centre = getattr(g, "center", None)
+        if getattr(g, "graphic_type", "") == "circle" and centre is not None:
+            # `fp_circle` : (center) et un point (end) du cercle — `start`
+            # n existe pas et vaut l origine par defaut.
+            r = math.dist(centre, getattr(g, "end", centre))
+            points = [(centre[0] - r, centre[1] - r), (centre[0] + r, centre[1] + r)]
+        else:
+            points = [getattr(g, "start", None), getattr(g, "end", None)]
+            points += list(getattr(g, "points", []) or [])
+        for point in points:
+            try:
+                px, py = float(point[0]), float(point[1])
+            except (TypeError, IndexError, ValueError):
+                continue
+            xs += [px - _DEMI_TRAIT_SERIGRAPHIE_MM, px + _DEMI_TRAIT_SERIGRAPHIE_MM]
+            ys += [py - _DEMI_TRAIT_SERIGRAPHIE_MM, py + _DEMI_TRAIT_SERIGRAPHIE_MM]
+    if not xs:
+        return corps
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    a = math.radians(float(getattr(fp, "rotation", 0.0) or 0.0))
+    ca, sa = math.cos(a), math.sin(a)
+    coins = [(x * ca + y * sa, -x * sa + y * ca)
+             for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
+    return (min(corps[0], min(c[0] for c in coins)), min(corps[1], min(c[1] for c in coins)),
+            max(corps[2], max(c[0] for c in coins)), max(corps[3], max(c[1] for c in coins)))
+
+
+def _paires_de_contours_serigraphie(rapport: dict) -> list[tuple[str, str]]:
+    """Paires d empreintes DISTINCTES dont les contours de serigraphie se touchent.
+
+    Un repere (« Reference field », « Value field ») n en fait pas partie : il
+    se deplace seul (`tools/serigraphie.py`), sans bouger le composant.
+    """
+    vues: list[tuple[str, str]] = []
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("type") != "silk_overlap":
+            continue
+        descriptions = [str(i.get("description") or "") for i in v.get("items") or []]
+        if len(descriptions) < 2 or any("field" in d.lower() for d in descriptions):
+            continue
+        refs = []
+        for d in descriptions:
+            m = _RE_REF_DRC.search(d)
+            if m:
+                refs.append(m.group(1))
+        if len(refs) >= 2 and refs[0] != refs[1]:
+            paire = tuple(sorted(refs[:2]))
+            if paire not in vues:
+                vues.append(paire)
+    return vues
+
+
+def _ecarter_les_contours_de_serigraphie(pcb_path: Path, ancres) -> int:
+    """Ecarte deux empreintes dont les contours de serigraphie se touchent.
+
+    Soeur de `_reparer_chevauchements_du_drc` : memes paires lues dans le DRC,
+    meme case libre, avec une boite courtyard + serigraphie. NE PEUT QU
+    AMELIORER : garde seulement si aucune erreur n est ajoutee et si des
+    contours sont retires ; sinon le board recu est restaure.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    rapport = _rapport_drc_sans_lever(pcb_path)
+    paires = _paires_de_contours_serigraphie(rapport)
+    if not paires:
+        return 0
+    avant_octets = pcb_path.read_bytes()
+    erreurs_avant = _conflits_du_rapport(rapport)
+    try:
+        pcb = PCB.load(str(pcb_path))
+        deplaces = _ecarter_les_paires(pcb, paires, _boite_orientee_serigraphie, ancres,
+                                       "contours de serigraphie")
+        if not deplaces:
+            return 0
+        pcb.save(str(pcb_path))
+        _rendre_lisible(pcb_path)
+        apres = _rapport_drc_sans_lever(pcb_path)
+        erreurs_apres = _conflits_du_rapport(apres) if apres else _CONFLITS_INDETERMINES
+        restants = len(_paires_de_contours_serigraphie(apres))
+        if erreurs_apres > erreurs_avant or restants >= len(paires):
+            pcb_path.write_bytes(avant_octets)
+            logger.warning("contours de serigraphie : ecart ANNULE (erreurs %d -> %d, "
+                           "contours %d -> %d)", erreurs_avant, erreurs_apres,
+                           len(paires), restants)
+            return 0
+        logger.info("contours de serigraphie : %d composant(s) ecarte(s), %d -> %d paire(s)",
+                    len(deplaces), len(paires), restants)
+        return len(deplaces)
+    except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
+        pcb_path.write_bytes(avant_octets)
+        logger.warning("contours de serigraphie : ecart impossible (%s) — board conserve", exc)
         return 0
 
 
@@ -3512,6 +3632,10 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # courtyards, kicad-cli lit la vraie `F.CrtYd` — carte-05 et carte-09
         # sortaient a une erreur U2 <-> passif, « livrees en l etat ».
         _reparer_chevauchements_du_drc(out, conn)
+
+        # Contours de serigraphie qui se touchent (banc du 2026-10-02, carte-07 :
+        # deux LED 0603 a 1,5 mm de pas, courtyards legaux, traits superposes).
+        _ecarter_les_contours_de_serigraphie(out, conn)
 
         # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
         # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les
