@@ -28,7 +28,11 @@
   CMA-ES de chacun expire (140 s, résultat jeté) — essayé, retiré.
 - **carte-10, un seul placement** (2026-10-02, un tirage) : placement 235 s,
   routage 74 s, **100 % sur 2 couches, 0 erreur DRC** — contre 1 h 27 au banc
-  du matin (quatre placements). Un tirage ne prouve rien : banc à refaire.
+  du matin (quatre placements).
+- **Banc des dix cartes** (2026-10-02, 3 tirages par carte, 3 h 06) : **30/30 à
+  100 %, 0 erreur DRC**. carte-10 : 6, 17 et 25 min (1 h 27 avec 3 placements
+  le matin) ; carte-09 : 6, 7 et 29 min. Résidu : 4 tirages avec des
+  avertissements de sérigraphie (`silk_overlap`, `silk_over_copper`).
 - **Codé** : `_TIRAGES_MINIMUM = 1` (`tools/placement.py`) ; un tirage non
   propre (conflit, zone) est toujours re-tiré, jusqu'à `_MAX_TIRAGES_PLACEMENT`.
 - **Étape 3 (à construire, en attente)** : diagnostic placement ou routage
