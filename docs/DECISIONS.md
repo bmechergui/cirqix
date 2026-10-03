@@ -14,6 +14,22 @@
 
 ## En attente de validation
 
+### D-2026-10-03-a — Repère sans place : 0,8 mm, puis masqué en dernier recours
+
+- **Statut : validée** — l'utilisateur, le 2026-10-03 : « Ok » à la
+  recommandation « A puis B » (0,8 mm d'abord, masquage seulement si même
+  0,8 mm ne trouve pas de place). Lève, pour ce seul cas, l'interdiction de
+  D-2026-09-26-a (« repère réduit ou masqué : NON autorisé »).
+- **Constat** (banc du 2026-10-02, 30 tirages) : 42 avertissements de
+  sérigraphie, tous présents dès le board placé. 26 viennent de repères sans
+  aucune place libre à 1 mm, à plat ou tournés, jusqu'à 1,4 mm du corps
+  (C33, C66, C71, R10…). 16 sont des contours de LED qui se touchent :
+  réparés à part (commit `07e98032`, technique).
+- **Codé** : `dernier_recours` (`tools/serigraphie.py`), seulement pour les
+  repères que le DRC signale encore ; appelé après les deux recherches.
+- **Mesuré** sur les 4 boards concernés : 26 → 0 avertissement de repère,
+  3 réduits, 6 masqués, 0 erreur ajoutée.
+
 ### D-2026-10-02-b — Un seul placement propre, jugé par le routage
 
 - **Statut : validée** (étapes 1-2) — l'utilisateur, le 2026-10-02 : « on passe

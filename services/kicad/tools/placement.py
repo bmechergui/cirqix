@@ -252,7 +252,8 @@ def _degager_la_serigraphie(pcb_path: Path) -> int:
     """
     try:
         from kicad_tools.schema.pcb import PCB
-        from tools.serigraphie import degager_references, reorienter_et_degager
+        from tools.serigraphie import (degager_references, dernier_recours,
+                                       reorienter_et_degager, reperes_signales)
         pcb = PCB.load(str(pcb_path))
         # D-2026-09-26-a, phase B : ce que la recherche a plat ne place pas,
         # un repere tourne dans l axe du boitier et pose contre son corps le
@@ -261,6 +262,15 @@ def _degager_la_serigraphie(pcb_path: Path) -> int:
         n = degager_references(pcb) + reorienter_et_degager(pcb)
         if n:
             pcb.save(str(pcb_path))
+        # D-2026-10-03-a : sans aucune place, 0,8 mm puis masque — seulement
+        # les reperes que le DRC signale encore, lu sur le board ecrit.
+        signales = reperes_signales(_rapport_drc_sans_lever(pcb_path))
+        if signales:
+            pcb = PCB.load(str(pcb_path))
+            recours = sum(dernier_recours(pcb, seulement=signales))
+            if recours:
+                pcb.save(str(pcb_path))
+                n += recours
         return n
     except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
         logger.warning("auto_place: serigraphie non degagee (%s)", exc)

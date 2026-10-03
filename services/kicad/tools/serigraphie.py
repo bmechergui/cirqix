@@ -330,7 +330,8 @@ def degager_references(pcb: Any) -> int:
 # modèle `FootprintText` ne lit pas l angle du texte : on le lit et on
 # l écrit dans l arbre S-expr, troisième terme de `(at x y a)`, ABSOLU.
 #
-# ⚠️ Toujours ni réduction, ni masquage (D-2026-09-26-a : NON autorisés).
+# ⚠️ Ni réduction, ni masquage ICI : seulement en dernier recours, plus bas
+# (`dernier_recours`, D-2026-10-03-a), quand aucune place n existe.
 
 # Écarts au corps, du plus serré au plus lâche : au-delà de 1,4 mm un repère
 # ne désigne plus clairement son composant dans un amas.
@@ -475,3 +476,129 @@ def reorienter_et_degager(pcb: Any) -> int:
     if deplaces:
         logger.info("serigraphie: %d reference(s) reorientee(s) contre leur corps", deplaces)
     return deplaces
+
+
+# ── D-2026-10-03-a (validée) : DERNIER RECOURS, seulement quand les deux
+# recherches ci-dessus n ont trouvé AUCUNE place. Banc du 2026-10-02 : 26
+# avertissements venaient de repères sans la moindre place libre à 1 mm de haut
+# (C33, C66, C71, R10…). On essaie à 0,8 mm — le minimum de JLCPCB —, et on
+# ne masque que si même 0,8 mm ne trouve pas de place. Un repère masqué ne
+# manque pas à l assemblage : le fichier de placement (CPL) porte les positions.
+_HAUTEUR_MIN_MM = 0.8
+_EPAISSEUR_MIN_MM = 0.15
+
+
+def _propriete_reference(pcb: Any, ref: str):
+    """Le nœud `property "Reference"` (ou `fp_text reference`) de `ref`."""
+    at = _noeud_reference(pcb, ref)
+    arbre = getattr(pcb, "_sexp", None)
+    if at is None or arbre is None:
+        return None
+    for fp in arbre.iter_children():
+        if fp.tag != "footprint" or pcb._get_footprint_reference(fp) != ref:
+            continue
+        for tag, cle in (("property", "Reference"), ("fp_text", "reference")):
+            for t in fp.find_all(tag):
+                if t.get_string(0) == cle:
+                    return t
+    return None
+
+
+def _reduire_reference(pcb: Any, ref: str, hauteur: float) -> bool:
+    noeud = _propriete_reference(pcb, ref)
+    effets = noeud.find("effects") if noeud is not None else None
+    police = effets.find("font") if effets is not None else None
+    if police is None:
+        return False
+    taille, epaisseur = police.find("size"), police.find("thickness")
+    if taille is None:
+        return False
+    taille.set_value(0, hauteur)
+    taille.set_value(1, hauteur)
+    if epaisseur is not None:
+        epaisseur.set_value(0, _EPAISSEUR_MIN_MM)
+    return True
+
+
+def _masquer_reference(pcb: Any, ref: str) -> bool:
+    from kicad_tools.sexp.parser import SExp
+
+    noeud = _propriete_reference(pcb, ref)
+    if noeud is None:
+        return False
+    if noeud.find("hide") is not None or "hide" in noeud.get_atoms():
+        return True
+    # KiCad 8+ : `(hide yes)` dans la property ; ancien `fp_text` : l atome nu.
+    marque = SExp.list("hide", "yes") if noeud.tag == "property" else SExp.atom("hide")
+    try:
+        noeud.insert_after("layer", marque)
+    except KeyError:
+        noeud.append(marque)
+    return True
+
+
+def reperes_signales(rapport: dict) -> set[str]:
+    """Les repères que le DRC désigne dans un avertissement de sérigraphie."""
+    out = set()
+    for v in (rapport or {}).get("violations") or []:
+        if not str(v.get("type", "")).startswith("silk"):
+            continue
+        for i in v.get("items") or []:
+            d = str(i.get("description") or "")
+            if d.startswith("Reference field of "):
+                out.add(d.split()[3])
+    return out
+
+
+def dernier_recours(pcb: Any, seulement=None) -> tuple[int, int]:
+    """Pour chaque repère qui chevauche ENCORE : 0,8 mm s il trouve une place
+    autour de son corps, masqué sinon. Rend (réduits, masqués).
+
+    À appeler après `degager_references` et `reorienter_et_degager` : un repère
+    qui a trouvé sa place à 1 mm n est jamais réduit. `seulement` : les
+    repères que le DRC signale. Les boîtes d ici sont plus larges que les
+    glyphes : sans ce filtre, on touchait des repères que le DRC acceptait
+    (carte-07 du 2026-10-02 : 1 signalé, 3 touchés).
+    """
+    cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
+    par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    contour = _contour(pcb)
+    boites = {}
+    for ref, fp in par_ref.items():
+        t = _reference_visible(fp)
+        if t is None:
+            continue
+        dx, dy = getattr(t, "position", (0.0, 0.0))
+        cx, cy = _absolu(fp, dx, dy)
+        boites[ref] = _boite_texte(cx, cy, ref, _hauteur(t), _angle(pcb, fp, t))
+    reduits, masques = [], []
+    for ref in sorted(boites):
+        if seulement is not None and ref not in seulement:
+            continue
+        fp = par_ref[ref]
+        genes = cuivre + [b for r, b in boites.items() if r != ref]
+        if not any(_chevauche(boites[ref], o) for o in genes) and not _deborde(boites[ref], contour):
+            continue
+        trouve = None
+        for angle, (qx, qy), b in _candidats(_corps(fp), ref, _HAUTEUR_MIN_MM,
+                                             _angle_reference(pcb, ref)):
+            if not any(_chevauche(b, o) for o in genes) and not _deborde(b, contour):
+                trouve = (angle, (qx, qy), b)
+                break
+        if trouve is not None:
+            angle, (qx, qy), b = trouve
+            # Poser d abord : un repere reduit mais reste sur place serait le
+            # pire des deux.
+            if (_poser_reference(pcb, ref, _vers_local(fp, qx, qy), angle)
+                    and _reduire_reference(pcb, ref, _HAUTEUR_MIN_MM)):
+                boites[ref] = b
+                reduits.append(ref)
+                continue
+        if _masquer_reference(pcb, ref):
+            del boites[ref]
+            masques.append(ref)
+    if reduits or masques:
+        logger.info("serigraphie: dernier recours — %d repere(s) a %.1f mm (%s), "
+                    "%d masque(s) (%s)", len(reduits), _HAUTEUR_MIN_MM,
+                    ", ".join(reduits) or "-", len(masques), ", ".join(masques) or "-")
+    return len(reduits), len(masques)
