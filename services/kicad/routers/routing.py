@@ -2095,19 +2095,6 @@ def _placement_condamne(fige_max: int) -> bool:
     return fige_max < seuil
 
 
-def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
-    """Faut-il abandonner les tirages restants de ce palier et monter ?
-
-    Un ZERO ne declenche rien : « 0 % (aucun moteur) » n est pas un verdict de
-    routage mais une panne — Freerouting injoignable, budget epuise avant le
-    repli. Monter d une couche sur une panne serait payer une couche pour un
-    defaut d infrastructure. On re-tire au meme palier.
-
-    Garde : tests/test_escalade_precoce.py.
-    """
-    return 0 < meilleur_pct < _SEUIL_REDRAW_PCT
-
-
 # Au-dessus de ce pourcentage, QUITTER le palier est le pari perdant : on
 # accorde des tirages supplementaires avant d escalader.
 #
@@ -2145,8 +2132,8 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     """Tirages supplementaires a accorder AVANT de quitter ce palier.
 
     Un ZERO n en recoit aucun : « 0 % (aucun moteur) » est une panne, pas un
-    verdict de routage. Un palier hors d atteinte non plus — il est deja
-    abandonne par `_tirages_epuises_au_palier`.
+    verdict de routage. Un palier sous `_SEUIL_PALIER_A_PORTEE` non plus : il
+    garde ses trois tirages ordinaires (D-2026-10-03-b).
 
     Garde : tests/test_palier_a_portee.py.
     """
@@ -6840,8 +6827,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # escalade sur PREUVE.
     #
     # Le prix est mesure et assume : sur stm32-100, un tirage a 2 couches coute
-    # ~44 min avant que `_tirages_epuises_au_palier` ne l abandonne. C est le
-    # cout d une preuve plutot que d une supposition.
+    # ~44 min. C est le cout d une preuve plutot que d une supposition.
     signaux = _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN))
     plancher = _couches_pour_echapper(signaux)
     if plancher > 2:
@@ -7032,16 +7018,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # maintenant, qu on sait s il a ete plat. Un palier compte UNE fois.
             palier_courant, meilleur_du_palier = palier, 0
             rang_au_palier = 0
-        # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
-        # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
-        # carte n a jamais essaye 4 couches (mesure du 2026-08-29).
-        elif _tirages_epuises_au_palier(meilleur_du_palier):
-            logger.info(
-                "route_auto: tirages restants a %d couches abandonnes — %d%% "
-                "est trop loin de 100%% pour qu un re-tirage le rattrape "
-                "(ecart mesure : 26 points au plus)",
-                palier, meilleur_du_palier)
-            continue
+        # ⚠️ PLUS D ABANDON D UN PALIER AU PREMIER TIRAGE SOUS 80 %
+        # (D-2026-10-03-b, validee par l utilisateur) : chaque palier a ses
+        # trois tirages. stm32-30 du 2026-10-03 : un seul tirage a 4 couches
+        # (74 %) a suffi a sauter le palier, alors que l ecart mesure entre
+        # tirages atteint 26 points. L ancienne regle (2026-08-29) protegeait
+        # le budget de stm32-100 ; c est desormais la coupure de stagnation et
+        # le budget borne des replis qui le protegent.
+        # Garde : tests/test_escalade_precoce.py.
         restant = _remaining_budget_s(deadline)
         if meilleur is not None and not _budget_suffisant(restant):
             logger.info(

@@ -14,6 +14,25 @@
 
 ## En attente de validation
 
+### D-2026-10-03-b — Trois tirages par palier, plus d'abandon sous 80 %
+
+- **Statut : validée** — l'utilisateur, le 2026-10-03 : « D », sur la
+  proposition « toujours 3 tirages par palier, plus d'abandon au premier
+  tirage sous 80 % ». La proposition C (tirages bonus quand 1 à 3 nets
+  manquent) n'a pas été retenue.
+- **Constat** (stm32-30, cartes de référence du 2026-10-03, budget 1800 s) :
+  96 % à 2 couches, un net manquant différent à chaque tirage. À 4 couches,
+  un seul tirage (74 %) a suffi à sauter le palier ; à 6 couches, un tirage
+  figé puis « budget épuisé ». Avis de Codex et Grok : l'écart entre tirages
+  atteint 26 points, un premier tirage ne condamne pas un palier.
+- **Codé** : `_tirages_epuises_au_palier` retirée de `route_auto` ; garde
+  `tests/test_escalade_precoce.py`. Remplace la règle du 2026-08-29.
+- **Avec, techniques** : budget de `banc_exemples.py` aligné sur la
+  production (600 + 300 × 8 = 3000 s au lieu de 1800) ; repli « signal
+  ciblé » borné à 60 s au total (code non commité de l'autre session :
+  la borne n'est pas dans ce commit).
+- **À mesurer** : stm32-30 rejouée, puis toutes les cartes de référence.
+
 ### D-2026-10-03-a — Repère sans place : 0,8 mm, puis masqué en dernier recours
 
 - **Statut : validée** — l'utilisateur, le 2026-10-03 : « Ok » à la

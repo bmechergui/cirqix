@@ -213,7 +213,12 @@ def _un_tirage(circuit: dict, sortie: Path) -> dict:
     # refuse par 422 : la frontiere HTTP ne doit jamais etre plus large que ce
     # que le routeur sait consommer, et la deplacer desynchroniserait la
     # chaine (defaut « quatre frontieres » documente dans CLAUDE.md).
-    budget = min(3600, max(1800, 60 * len(circuit["components"])))
+    # ⚠️ ALIGNE SUR LA PRODUCTION le 2026-10-03 : `routingSearchBudgetS`
+    # (`packages/agents/src/engines/routing-budget.ts`) donne 600 + 300 par
+    # couche du plafond, soit 3000 s a 8 couches. Le banc donnait 1800 s a
+    # stm32-30 : son escalade s est arretee « budget epuise » a 96 %, un
+    # verdict qu aucun client ne verrait.
+    budget = min(3600, 600 + 300 * 8)
     route = route_auto(RouteAutoRequest(kicad_pcb_b64=_b64(board), layers=8,
                                         timeout_s=budget))
     # ⚠️ `route_auto` peut ne rendre AUCUN board — c est son contrat quand tous
