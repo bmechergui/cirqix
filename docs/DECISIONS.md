@@ -29,6 +29,8 @@
   repères que le DRC signale encore ; appelé après les deux recherches.
 - **Mesuré** sur les 4 boards concernés : 26 → 0 avertissement de repère,
   3 réduits, 6 masqués, 0 erreur ajoutée.
+- **Banc des dix cartes** (2026-10-03, 1 tirage par carte, 1 h 27) : **10/10 à
+  100 %, 0 erreur, 0 avertissement de sérigraphie** (42 la veille).
 
 ### D-2026-10-02-b — Un seul placement propre, jugé par le routage
 
