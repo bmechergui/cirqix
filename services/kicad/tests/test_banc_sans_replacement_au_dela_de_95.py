@@ -7,12 +7,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 RACINE = Path(__file__).resolve().parents[1]
 PIPELINE = RACINE / "examples" / "led-blinker-full-pipeline" / "run_pipeline.py"
-ORCH = RACINE.parents[1] / "packages" / "agents" / "src" / "orchestrator.ts"
+# `.parent.parent` : dans l image Docker le service est `/app` (un seul parent).
+ORCH = RACINE.parent.parent / "packages" / "agents" / "src" / "orchestrator.ts"
 
 
 def test_meme_seuil_que_l_orchestrateur():
+    if not ORCH.is_file():
+        pytest.skip("orchestrateur TS absent : image Docker du service seul")
     banc = re.search(r"^SEUIL_SANS_REPLACEMENT_PCT = (\d+)", PIPELINE.read_text(encoding="utf-8"), re.M)
     prod = re.search(r"SEUIL_SANS_REPLACEMENT_PCT = (\d+)", ORCH.read_text(encoding="utf-8"))
     assert banc and prod and banc.group(1) == prod.group(1) == "95"

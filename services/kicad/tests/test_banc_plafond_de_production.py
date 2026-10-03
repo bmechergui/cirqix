@@ -25,7 +25,9 @@ from pathlib import Path
 
 _SERVICE = Path(__file__).resolve().parents[1]
 _PIPELINE = _SERVICE / "examples" / "led-blinker-full-pipeline" / "run_pipeline.py"
-_BUDGET_TS = _SERVICE.parents[1] / "packages" / "agents" / "src" / "engines" / "routing-budget.ts"
+# `.parent.parent`, pas `.parents[1]` : dans l image Docker le service est
+# `/app`, qui n a qu un parent — `parents[1]` levait a la collecte.
+_BUDGET_TS = _SERVICE.parent.parent / "packages" / "agents" / "src" / "engines" / "routing-budget.ts"
 
 
 def _source() -> str:
