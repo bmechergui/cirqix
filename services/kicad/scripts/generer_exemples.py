@@ -72,6 +72,33 @@ _CONNECTEURS = {
 }
 
 
+# Broches du MCU qui ne portent PAS de signal (alimentation, masse, reset,
+# boot), lues dans les bibliotheques de KiCad 10 le 2026-10-03, et nombre de
+# broches du boitier.
+#
+# ⚠️ Les signaux etaient attribues sequentiellement depuis la broche 10, sans
+# regarder le role des broches. stm32-100 branchait GPIO18, GPIO34 et GPIO50
+# sur les trois VSS (23, 35, 47) — que KiCad relie entre elles : le generateur
+# de PCB voyait un court-circuit et refusait la carte. Il allait aussi jusqu a
+# la broche 51 d un boitier qui en a 48. Meme defaut sur nucleo-f401 (4),
+# stm32-60 (2) et arduino-uno (connecteur sur GND/VCC 3 a 6).
+_NON_SIGNAL = {
+    "stm32": ({1, 7, 8, 9, 23, 24, 35, 36, 44, 47, 48}, 48),
+    "nucleo": ({1, 7, 12, 13, 18, 19, 30, 31, 32, 47, 48, 60, 63, 64}, 64),
+    "arduino": ({3, 4, 5, 6, 18, 20, 21, 29}, 32),
+    "esp32": ({1, 2, 3, 15, 38, 39}, 39),
+}
+
+
+def _broche_signal(famille: str, depuis: int):
+    """La premiere broche de signal du MCU a partir de `depuis`, ou None."""
+    reservees, total = _NON_SIGNAL.get(famille, (set(), 10 ** 6))
+    b = depuis
+    while b in reservees:
+        b += 1
+    return b if b <= total else None
+
+
 def circuit(famille: str, cible: int) -> dict:
     """Circuit coherent d environ `cible` composants.
 
@@ -126,6 +153,9 @@ def circuit(famille: str, cible: int) -> dict:
         relier("+3.3V", ref, 2)
         broche_mcu = premiere
         for k in range(3, min(n_broches, 10) + 1):
+            broche_mcu = _broche_signal(famille, broche_mcu)
+            if broche_mcu is None:
+                break
             relier("%s_%d" % (val, k), ref, k)
             relier("%s_%d" % (val, k), "U1", broche_mcu)
             broche_mcu += 1
@@ -143,12 +173,19 @@ def circuit(famille: str, cible: int) -> dict:
                                "symbol": "Device:R", "footprint": _RES})
             composants.append({"ref": d_, "value": "LED",
                                "symbol": "Device:LED", "footprint": _LED})
-            relier(f"GPIO{i}", "U1", broche)
-            relier(f"GPIO{i}", r, 1)
+            libre = _broche_signal(famille, broche) if broche is not None else None
+            if libre is not None:
+                relier(f"GPIO{i}", "U1", libre)
+                relier(f"GPIO{i}", r, 1)
+                broche = libre + 1
+            else:
+                # Plus de broche de signal : un temoin d alimentation, comme
+                # sur une vraie carte quand le MCU est plein.
+                broche = None
+                relier("+3.3V", r, 1)
             relier(f"LED{i}", r, 2)
             relier(f"LED{i}", d_, 1)
             relier("GND", d_, 2)
-            broche += 1
         else:
             # Un decouplage tous les quatre composants : leur vraie proportion
             # sur une carte reelle.
