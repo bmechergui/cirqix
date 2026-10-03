@@ -78,7 +78,9 @@ if hasattr(sys.stdout, "reconfigure"):
 _SCRIPTS = Path(__file__).resolve().parent
 _SERVICE = _SCRIPTS.parent
 _EXEMPLES = _SERVICE / "examples"
-_RACINE = _SERVICE.parents[1]
+# Comme `livrer_campagne.py` : dans l image Docker le service est `/app`,
+# qui n a qu un parent ; `parents[1]` levait a l import.
+_RACINE = _SERVICE.parents[1] if len(_SERVICE.parents) > 1 else _SERVICE
 sys.path.insert(0, str(_SERVICE))
 
 
