@@ -29,7 +29,20 @@ function routingFailure(cause: string, hint: string = SERVICE_HINT): Record<stri
   };
 }
 
-export async function handleRouting(projectId: string): Promise<Record<string, unknown>> {
+/**
+ * Palier où reprendre un reroutage, lu dans l'entrée de l'outil : pair, ≥ 2.
+ * Toute autre valeur est ignorée (on repart de 2, comme avant).
+ */
+export function palierDepartDe(input: Record<string, unknown> | undefined): number | undefined {
+  const p = input?.['palier_depart'];
+  return typeof p === 'number' && Number.isInteger(p) && p >= 2 && p % 2 === 0 ? p : undefined;
+}
+
+export async function handleRouting(
+  projectId: string,
+  input?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const palierDepart = palierDepartDe(input);
   const cached = pcbStateCache.get(projectId);
   const schema = cached?.schema ?? { components: [], nets: [] };
   const boardW = cached?.boardW ?? 50;
@@ -90,6 +103,8 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
       // pour un simple indicateur. Le champ est OMIS quand il renonce
       // (`exactOptionalPropertyTypes`), jamais pose a `undefined`.
       ...(progressKey ? { progressKey } : {}),
+      // Placement gardé : reprise au palier déjà atteint (2026-10-02).
+      ...(palierDepart ? { palierDepart } : {}),
     });
 
     if (service.skipped) {
@@ -107,6 +122,9 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
           ),
           routed_percent: service.routedPercent,
           verdict: service.verdict,
+          // Palier le plus haut essayé (D-2026-09-25-e) : figé au plafond, la
+          // carte doit pouvoir être agrandie au re-tirage.
+          ...(typeof service.layersTried === 'number' ? { layers_tried: service.layersTried } : {}),
         };
       }
       log.error({ projectId, warning: service.warning }, 'routing skipped — no traces laid');
@@ -155,6 +173,9 @@ export async function handleRouting(projectId: string): Promise<Record<string, u
     };
     if (typeof service.viaCount === 'number') {
       success['via_count'] = service.viaCount;
+    }
+    if (typeof service.layersTried === 'number') {
+      success['layers_tried'] = service.layersTried;
     }
     if (typeof service.trackLengthMm === 'number') {
       success['track_length_mm'] = service.trackLengthMm;

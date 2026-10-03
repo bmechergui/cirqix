@@ -1,4 +1,10 @@
-"""Escalader depend de QUEL net manque, pas seulement de combien.
+"""Escalader depend de CE QUI manque — et depuis le 2026-09-24, TOUT manque compte.
+
+⚠️ REVISE LE 2026-09-24 (D-2026-09-24-e, consigne de l utilisateur : « si tu
+n atteins pas 100 % routage tu dois escalader le numero de couche »). La regle
+du 2026-08-31 ci-dessous refusait l escalade pour un net confie au plan ; la
+mesure du 2026-09-24 la contredit (carte-08 : 98 % GND seul a 2 couches,
+100 % a 4). Historique conserve.
 
 Regle demandee par l utilisateur le 2026-08-31, et elle est mieux fondee que
 celle que j avais codee le matin meme :
@@ -34,11 +40,10 @@ from routers import routing as R  # noqa: E402
 
 
 class TestRegle:
-    def test_seul_GND_manque_on_n_escalade_PAS_quand_il_est_confie_au_plan(self, monkeypatch):
-        # LE CAS MESURE : stm32-60 a 98 %, un net incomplet, GND — a l epoque ou
-        # GND etait CONFIE AU PLAN. Du cuivre en plus n y changeait rien.
+    def test_seul_GND_manque_on_ESCALADE_meme_confie_au_plan(self, monkeypatch):
+        # D-2026-09-24-e : carte-08, 98 % a 2 couches (GND seul), 100 % a 4.
         monkeypatch.setattr(R, "_NETS_CONFIES_AU_PLAN", ("GND",))
-        assert R._escalade_peut_aider(98, erreurs=0, manquants={"GND"}) is False
+        assert R._escalade_peut_aider(98, erreurs=0, manquants={"GND"}) is True
 
     def test_seul_GND_manque_on_ESCALADE_quand_il_est_route(self, monkeypatch):
         """⚠️ Depuis le 2026-09-10, GND est ROUTE en pistes (decision validee par
@@ -59,7 +64,7 @@ class TestRegle:
         assert R._escalade_peut_aider(
             97, erreurs=0, manquants={"GND", "GPIO23"}) is True
 
-    def test_plusieurs_nets_CONFIES_AU_PLAN_ne_justifient_rien(self, monkeypatch):
+    def test_plusieurs_nets_CONFIES_AU_PLAN_font_aussi_escalader(self, monkeypatch):
         """⚠️ Le critere est « confie au PLAN dans CE run », pas « porte un nom
         de masse ».
 
@@ -69,8 +74,9 @@ class TestRegle:
         les aider. Le code avait raison, mon test confondait le nom et le role.
         """
         monkeypatch.setattr(R, "_NETS_CONFIES_AU_PLAN", ("GND", "AGND", "DGND"))
+        # D-2026-09-24-e : plus d exception pour les nets du plan.
         assert R._escalade_peut_aider(
-            90, erreurs=0, manquants={"GND", "AGND", "DGND"}) is False
+            90, erreurs=0, manquants={"GND", "AGND", "DGND"}) is True
 
     def test_un_net_de_masse_NON_confie_au_plan_fait_escalader(self):
         # AGND route par des pistes : c est un signal comme un autre.
@@ -81,7 +87,7 @@ class TestRegle:
         contrairement a une pastille de plan orpheline."""
         assert R._escalade_peut_aider(98, erreurs=2, manquants={"GND"}) is True
 
-    def test_sans_liste_on_retombe_sur_l_ancienne_regle(self):
+    def test_sans_liste_seul_le_pourcentage_livre_decide(self):
         # Compatibilite : les appelants qui n ont pas la liste gardent le
         # comportement precedent, jamais un refus d escalade infonde.
         assert R._escalade_peut_aider(98, erreurs=0) is True

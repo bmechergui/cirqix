@@ -1,37 +1,51 @@
 {
   "exemple": "driver-thermometre-i2c",
-  "date": "2026-09-13",
-  "run_id": "537dc8a5-2e21-439c-b2c9-fa45875e5708",
-  "project_id": "27ced4b4-4904-46c2-9a70-1466fee604bc",
-  "provenance": "driver",
-  "schema_ecrit_par": "Claude Code en ligne de commande (claude -p), CIRQIX_SCHEMA_PROVIDER=claude-code, depuis la seule description du run",
   "composants": 10,
   "nets": 6,
-  "board_mm": [
+  "board_mm_demande": [
     40,
     35
   ],
-  "duree_s": 198,
+  "board_mm": [
+    40.1,
+    33.84
+  ],
+  "duree_s": 163,
+  "git": "d5eb5682",
   "routed_percent": 100,
-  "couches": 2,
-  "vias": 14,
-  "segments": 41,
-  "longueur_piste_mm": 144.637,
+  "drc_violations": 0,
   "drc_clean": true,
   "fichiers_exportes": 20,
-  "credits_debites": 0,
+  "types_violations": "-",
+  "abouti": true,
+  "board": {
+    "segments": 40,
+    "vias": 5,
+    "zones": 2,
+    "empreintes": 10
+  },
   "drc_du_board": {
-    "violations": 2,
+    "violations": 0,
     "non_connectes": 0,
-    "types": "silk_overlap:2",
+    "types": "",
+    "erreurs": [],
     "nb_erreurs": 0,
     "fabricable": true
   },
-  "fidelite_du_schema": "bus I2C complet (SDA et SCL a 3 broches) ; TMP102 en connecteur 6 broches par strategie du prompt ; LED traversante",
-  "commandable": false,
-  "run_precedent": {
-    "run_id": "25a6853c-2c23-4a02-8610-41f3edb1806e",
-    "defaut": "net SDA a 1 broche (filtre de broches a 2 pastilles par defaut)",
-    "duree_s": 279
+  "board_place": {
+    "segments": 0,
+    "vias": 0,
+    "zones": 0,
+    "empreintes": 10
+  },
+  "drc_du_placement": {
+    "violations": 19,
+    "non_connectes": 19,
+    "types": "unconnected_items:19",
+    "erreurs": [
+      "unconnected_items"
+    ],
+    "nb_erreurs": 19,
+    "fabricable": false
   }
 }

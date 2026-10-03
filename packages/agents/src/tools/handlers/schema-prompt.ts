@@ -7,7 +7,7 @@ import type { SchemaJson } from '../../engines/engine-router';
  * dans_pastille` cote service, dont la docstring promettait de suivre le
  * fanout et ne le faisait plus.
  */
-export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a circuit description, return a single JSON object (no markdown, no comments) with exactly these four keys:
+export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a circuit description, return a JSON object with the keys "components", "nets" and "connections" described here, plus "board_size_imposed" (and, when you choose the board size, "board_width_mm" / "board_height_mm") described under Rules:
 
 "components": array of { "ref": string, "value": string, "footprint": string, "symbol": string, "lcsc"?: string }
 "nets": array of net name strings — every net that appears in connections MUST be listed here
@@ -15,8 +15,8 @@ export const SCHEMA_SYSTEM_PROMPT = `You are a PCB schematic generator. Given a 
   - EVERY net in "nets" MUST appear in "connections"
   - Every component "ref" used in pins MUST exist in "components"
   - "pin" rules:
-      • Passives (R, C, LED, D, J/connector): use INTEGER pad number (1 or 2)
-      • ICs (NE555, LM7805, regulators, op-amps, transistors): use KiCad PIN NAME string (see table below)
+      • Passives and connectors (R, C, LED, D, J): INTEGER pad number, from 1 to the part's pin count
+      • ICs and transistors: the KiCad pin NAME string from the table below — except where the table gives pin numbers (LM358)
 
 KiCad symbol table — use EXACTLY these values for "symbol":
   Resistor           → "Device:R"
@@ -57,47 +57,101 @@ KiCad symbol table — use EXACTLY these values for "symbol":
 
 Footprint keys:
   "0402" / "0603" / "0805" / "1206" = 2 pads  (use pin 1 or 2)
-  "LED"  = 2 pads  (pin 1=anode, pin 2=cathode)
+  "LED"  = 2 pads  (pin 1=K cathode, pin 2=A anode — KiCad Device:LED)
   "TO-220" / "SOT-223" = 3 pads
   "DIP-8" / "TSSOP-8"  = 8 pads
   "Conn_2" / "Conn_3" / "Conn_4" = 2/3/4 pads
 
-KiCad pin NAMES for ICs — use these exact strings in "pin":
+KiCad pin names for ICs — use these strings in "pin" (the service maps NE555 datasheet names to KiCad's TRIG/OUT/~{RST}/CONT/THRES/DISCH):
   NE555P (Timer:NE555P):
     "GND"=1, "TR"=2 (TRIG), "Q"=3 (OUT), "R"=4 (RST), "CV"=5, "THR"=6, "DIS"=7, "VCC"=8
   L7805 (Regulator_Linear:L7805):
     "IN"=1, "GND"=2, "OUT"=3
   LM1117 (Regulator_Linear:LM1117T-x.x):
-    "GND"=1, "OUT"=2, "IN"=3
+    "GND"=1, "VO"=2 (output), "VI"=3 (input)
   LM317 (Regulator_Linear:LM317_TO-220):
-    "IN"=1, "ADJ"=2, "OUT"=3
-  LM358 op-amp (Amplifier_Operational:LM358) — unit A:
-    "IN-"=2, "IN+"=3, "VCC"=8, "OUT"=1, "GND"=4
+    "ADJ"=1, "VO"=2 (output), "VI"=3 (input)
+  LM358 op-amp (Amplifier_Operational:LM358) — its pins have no usable names; use pin NUMBERS:
+    1=OUT A, 2=IN− A, 3=IN+ A, 4=V− (GND), 5=IN+ B, 6=IN− B, 7=OUT B, 8=V+
   Q_NPN_BCE (Device:Q_NPN_BCE):
     "B"=1 (base), "C"=2 (collector), "E"=3 (emitter)
   Q_PMOS_GSD (Device:Q_PMOS_GSD):
     "G"=1 (gate), "S"=2 (source), "D"=3 (drain)
 
-Reference designators: R=resistor, C=capacitor, U=module/IC (use U_ESP, U_ARD, U_BME…), D=diode/LED, J=connector, Q=transistor.
-IMPORTANT: For MCU/sensor modules, use ref prefix U_ followed by short name (U_ESP1, U_ARD1, U_BME1).
-Keep it to ≤ 20 components.
+Reference designators: 1-2 uppercase letters then a number — R resistor, C capacitor, U IC or module (U1, U2…), D diode/LED, J connector, Q transistor, SW switch.
+Include every part the circuit needs (decoupling, pull-ups, connectors) and nothing it does not.
 
-HARD RULES (a schema breaking one is rejected and you will be asked again):
+Rules:
   - EVERY net in "connections" joins AT LEAST 2 pins. A one-pin net is an error.
   - For a connector, the footprint pin count MUST equal the symbol pin count:
     Conn_01x04 → "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", never 1x02.
-  - "footprint" is a full KiCad footprint "Library:Name" whenever you know it; the short keys below are the only accepted shortcuts.
+  - "footprint" is a full KiCad footprint "Library:Name" whenever you know it; the short keys listed above are the only accepted shortcuts.
   - Every pin of a power/bus signal named in the description (SDA, SCL, TX, RX…) reaches its connector.
   - "ref" is a KiCad reference: 1-2 uppercase letters then a number (U1, C12, J2, SW1). Never a name like U_TMP1 or SENSOR — the reference is printed on the silkscreen next to a small footprint.
   - If you choose the board size, add "board_width_mm" and "board_height_mm" (numbers) AND "board_size_imposed": true ONLY when the description itself states dimensions ("40 x 30 mm", "carte de 50 mm de large"). Otherwise "board_size_imposed": false — the outline will then be tightened to the placement.
 
 Example — "LED with 330R on 3.3V" (passives use numbers, connectors use numbers):
-{"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":2}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":1}]}]}
+{"components":[{"ref":"J1","value":"PWR","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"},{"ref":"R1","value":"330R","footprint":"0603","symbol":"Device:R"},{"ref":"D1","value":"LED_RED","footprint":"LED","symbol":"Device:LED"}],"nets":["GND","3V3","NET_R_D"],"connections":[{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"D1","pin":1}]},{"name":"3V3","pins":[{"ref":"J1","pin":1},{"ref":"R1","pin":1}]},{"name":"NET_R_D","pins":[{"ref":"R1","pin":2},{"ref":"D1","pin":2}]}]}
 
-Example — "LM7805 5V regulator" (IC uses pin names):
-{"components":[{"ref":"U1","value":"LM7805","footprint":"TO-220","symbol":"Regulator_Linear:L7805"},{"ref":"C1","value":"100nF","footprint":"0603","symbol":"Device:C"},{"ref":"J1","value":"VIN","footprint":"Conn_2","symbol":"Connector_Generic:Conn_01x02"}],"nets":["GND","VIN","VOUT"],"connections":[{"name":"VIN","pins":[{"ref":"J1","pin":1},{"ref":"U1","pin":"IN"},{"ref":"C1","pin":1}]},{"name":"VOUT","pins":[{"ref":"U1","pin":"OUT"},{"ref":"C1","pin":1}]},{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"U1","pin":"GND"},{"ref":"C1","pin":2}]}]}
+Example — "LM7805 5V regulator" (IC uses pin names; one pin belongs to exactly one net):
+{"components":[{"ref":"J1","value":"VIN","footprint":"Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical","symbol":"Connector_Generic:Conn_01x02"},{"ref":"U1","value":"LM7805","footprint":"Package_TO_SOT_THT:TO-220-3_Vertical","symbol":"Regulator_Linear:L7805"},{"ref":"C1","value":"330nF","footprint":"Capacitor_SMD:C_0603_1608Metric","symbol":"Device:C"},{"ref":"C2","value":"100nF","footprint":"Capacitor_SMD:C_0603_1608Metric","symbol":"Device:C"},{"ref":"J2","value":"5V_OUT","footprint":"Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical","symbol":"Connector_Generic:Conn_01x02"}],"nets":["VIN","5V","GND"],"connections":[{"name":"VIN","pins":[{"ref":"J1","pin":1},{"ref":"U1","pin":"IN"},{"ref":"C1","pin":1}]},{"name":"5V","pins":[{"ref":"U1","pin":"OUT"},{"ref":"C2","pin":1},{"ref":"J2","pin":1}]},{"name":"GND","pins":[{"ref":"J1","pin":2},{"ref":"U1","pin":"GND"},{"ref":"C1","pin":2},{"ref":"C2","pin":2},{"ref":"J2","pin":2}]}]}
+`;
 
-Return ONLY valid JSON. No markdown fences. No explanation.`;
+/**
+ * Le meme contrat pour l API (output_config.format) : Haiku 4.5 prend en charge
+ * les sorties structurees, qui garantissent un JSON conforme. Le chemin
+ * `claude -p` ne peut pas le passer ; il garde la consigne en prose
+ * (schema-claude-code.ts) et le nettoyage des clotures de parseSchemaText.
+ */
+export const SCHEMA_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['components', 'nets', 'connections', 'board_size_imposed'],
+  properties: {
+    components: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['ref', 'value', 'footprint', 'symbol'],
+        properties: {
+          ref: { type: 'string' },
+          value: { type: 'string' },
+          footprint: { type: 'string' },
+          symbol: { type: 'string' },
+          lcsc: { type: 'string' },
+        },
+      },
+    },
+    nets: { type: 'array', items: { type: 'string' } },
+    connections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'pins'],
+        properties: {
+          name: { type: 'string' },
+          pins: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['ref', 'pin'],
+              properties: {
+                ref: { type: 'string' },
+                pin: { anyOf: [{ type: 'integer' }, { type: 'string' }] },
+              },
+            },
+          },
+        },
+      },
+    },
+    board_width_mm: { type: 'number' },
+    board_height_mm: { type: 'number' },
+    board_size_imposed: { type: 'boolean' },
+  },
+} as const;
 
 /**
  * Nombre de pastilles d un footprint, LU dans son nom — ou null si le nom ne
@@ -140,9 +194,21 @@ export const REFERENCE_KICAD = /^[A-Z]{1,2}[0-9]{1,3}$/;
 
 export function problemesDuSchema(schema: SchemaJson): string[] {
   const problemes: string[] = [];
+  // Une broche dans deux nets les court-circuite : la generation refuse ensuite
+  // le board (_courts_circuits, d3b35bbc). Mieux vaut le dire au modele ici.
+  const netDeLaBroche = new Map<string, string>();
   for (const conn of schema.connections ?? []) {
     if ((conn.pins?.length ?? 0) < 2) {
       problemes.push(`net "${conn.name}" has ${conn.pins?.length ?? 0} pin(s) — a net must join at least 2 pins`);
+    }
+    for (const p of conn.pins ?? []) {
+      const cle = `${p.ref}.${String(p.pin)}`;
+      const deja = netDeLaBroche.get(cle);
+      if (deja !== undefined && deja !== conn.name) {
+        problemes.push(`pin ${cle} is in nets "${deja}" and "${conn.name}" — a pin belongs to exactly one net`);
+      } else {
+        netDeLaBroche.set(cle, conn.name);
+      }
     }
   }
   for (const c of schema.components ?? []) {

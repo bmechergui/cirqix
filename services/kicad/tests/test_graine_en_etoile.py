@@ -199,7 +199,7 @@ class TestLaChaineNeSeBatPasContreLEtoile:
 
     def test_les_rangees_ne_defont_pas_l_etoile(self):
         corps = self.SOURCE[self.SOURCE.index("def _auto_place_une_fois("):]
-        rangees = corps.index("from tools.placement_rangees import ranger_les_paires")
+        rangees = corps.index("from tools.placement_familles import ranger_les_familles")
         assert "if not centres_etoile:" in corps[rangees - 400:rangees]
 
     def test_un_placement_calcule_n_est_pas_retire_a_l_identique(self):
@@ -301,9 +301,9 @@ class TestDansLaVraieChaine:
         monkeypatch.setattr("tools.reglages_banc.reglage",
                             lambda nom, defaut: True if nom == "graine_etoile" else defaut)
         appels = []
-        import tools.placement_rangees as PR
-        monkeypatch.setattr(PR, "ranger_les_paires",
-                            lambda *a, **k: appels.append(a) or 0)
+        import tools.placement_familles as PF
+        monkeypatch.setattr(PF, "ranger_les_familles",
+                            lambda *a, **k: appels.append(a) or [])
         r = P._auto_place_une_fois(b64, 57.8, 44.0)
         assert r["centres_etoile"], "la graine n a pas joue DANS la chaine"
         assert not appels, "les rangees ont tourne et defont l etoile"

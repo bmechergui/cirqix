@@ -80,7 +80,7 @@ def test_le_connecteur_part_du_milieu_du_bord_gauche(board: Path):
         assert apres[ref] == avant[ref], f"{ref} ne doit pas bouger"
 
     j1 = next(fp for fp in pcb.footprints if fp.reference == "J1")
-    bx0, by0, bx1, by1 = placement_mod._boite_locale_fp(j1)
+    bx0, by0, bx1, by1 = placement_mod._boite_orientee_fp(j1)
     corps_x0 = j1.position[0] + bx0
     corps_cy = j1.position[1] + (by0 + by1) / 2.0
     # Contour de la fixture : 25 x 20 en repère board (0..25, 0..20).
@@ -103,7 +103,7 @@ def test_chaque_connecteur_va_au_bord_le_plus_proche_et_les_bords_sont_repartis(
     par_ref = {fp.reference: fp for fp in pcb.footprints}
 
     def corps(ref):
-        fp = par_ref[ref]; b = placement_mod._boite_locale_fp(fp)
+        fp = par_ref[ref]; b = placement_mod._boite_orientee_fp(fp)
         return (fp.position[0] + b[0], fp.position[1] + b[1], fp.position[0] + b[2], fp.position[1] + b[3])
 
     # J1 (coin) -> bord gauche, seul dessus : centre a mi-hauteur.

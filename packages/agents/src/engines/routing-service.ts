@@ -39,6 +39,11 @@ export interface RealRoutingInput {
    * 422 au service, donc échouer le routage pour un simple indicateur.
    */
   progressKey?: string;
+  /**
+   * Palier (couches) où reprendre l'échelle : celui où un placement GARDÉ avait
+   * déjà atteint 95 % (décision validée le 2026-10-02). Absent : on part de 2.
+   */
+  palierDepart?: number;
 }
 
 export interface RealRoutingResult {
@@ -58,6 +63,12 @@ export interface RealRoutingResult {
    * la mesure du routeur sur le meilleur tirage figé (2026-09-20).
    */
   verdict?: string;
+  /**
+   * Plus haut palier où un tirage a réellement tourné (D-2026-09-25-e). Le
+   * board livré peut n'avoir que 2 couches après un essai à 8 : c'est ce
+   * palier, pas `layers`, qui dit si le plafond a été essayé.
+   */
+  layersTried?: number;
 }
 
 interface ServiceResponseBody {
@@ -66,6 +77,7 @@ interface ServiceResponseBody {
   layers?: unknown;
   via_count?: unknown;
   track_length_mm?: unknown;
+  layers_tried?: unknown;
   skipped?: unknown;
   warning?: unknown;
   engine?: unknown;
@@ -112,6 +124,7 @@ export async function runRealRouting(
     // Absente par defaut : un appelant qui ne suit pas la progression route
     // exactement comme avant, et le service ne publie rien.
     ...(input.progressKey ? { progress_key: input.progressKey } : {}),
+    ...(input.palierDepart ? { palier_depart: input.palierDepart } : {}),
   });
 
   let response: Response;
@@ -160,6 +173,7 @@ export async function runRealRouting(
   }
   if (typeof parsed.via_count === 'number') result.viaCount = parsed.via_count;
   if (typeof parsed.track_length_mm === 'number') result.trackLengthMm = parsed.track_length_mm;
+  if (typeof parsed.layers_tried === 'number') result.layersTried = parsed.layers_tried;
   const engine = readRoutingEngine(parsed);
   if (engine) result.engine = engine;
   if (typeof parsed.warning === 'string') result.warning = parsed.warning;

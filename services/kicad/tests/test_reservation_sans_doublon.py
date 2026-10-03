@@ -72,7 +72,8 @@ class TestCablage:
         # La fenetre va de la PREMIERE reservation jusqu a la fin du
         # nommage : le dedoublonnage doit tomber entre les deux, ou que son
         # appel soit ecrit.
-        debut = self.SOURCE.index("_VIAS_RESERVES = _vias_a_reserver(")
+        # Premiere reservation : memorisee depuis le 2026-09-29 (`memo_prep`).
+        debut = self.SOURCE.index("lambda: _vias_a_reserver(etendu)")
         fin = self.SOURCE.index("_VIAS_RESERVES = _nommer_les_nets(")
         bloc = self.SOURCE[debut:fin + 300]
         assert "_sans_doublons(" in bloc, (

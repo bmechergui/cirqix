@@ -991,7 +991,6 @@
       ]
     }
   ],
-  "max_layers": 2,
-  "route_budget_s": 1800,
+  "max_layers": 8,
   "board_size_imposed": false
 }

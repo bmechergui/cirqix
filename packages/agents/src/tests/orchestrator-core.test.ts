@@ -138,6 +138,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
     zip_b64: 'ZIP_B64_HANDLER_BLOB',
     bom_csv: 'BOM_BLOB',
     simulation_output_raw: 'RAW_BLOB',
+    kicad_mod: 'MOD_BLOB',
     routed_percent: 100,
     note: 'export ok',
   };
@@ -158,6 +159,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
       zip_b64: TRUNCATED,
       bom_csv: TRUNCATED,
       simulation_output_raw: TRUNCATED,
+      kicad_mod: TRUNCATED,
     });
     // Aucun blob ne fuit nulle part ailleurs dans le contexte envoyé.
     const sentToSonnet = JSON.stringify(hoisted.createCalls[1]?.messages);
@@ -168,6 +170,7 @@ describe('strip des blobs KiCad avant le contexte Sonnet', () => {
       'ZIP_B64_HANDLER_BLOB',
       'BOM_BLOB',
       'RAW_BLOB',
+      'MOD_BLOB',
     ]) {
       expect(sentToSonnet).not.toContain(blob);
     }
@@ -289,7 +292,9 @@ describe('émission de pcb_state', () => {
 });
 
 describe('robustesse au JSON d’outil malformé', () => {
-  it('retombe sur un input vide sans casser la boucle', async () => {
+  it('échoue fermé : aucun outil exécuté sur une entrée illisible', async () => {
+    // Un input vide exécutait l'outil sur des paramètres INVENTÉS — la famille
+    // « un échec rend la valeur du cas normal ».
     hoisted.streamQueue.push(
       toolStream('call_agent_schema', 'tu_bad', '{"description": "tronq'),
       [...END_STREAM],
@@ -297,13 +302,34 @@ describe('robustesse au JSON d’outil malformé', () => {
 
     const events = await run();
 
-    const call = events.find(
-      (e): e is Extract<SSEEvent, { type: 'tool_call' }> => e.type === 'tool_call',
+    expect(toolsMock.executeToolStub).not.toHaveBeenCalled();
+    expect(events[events.length - 1]?.type).toBe('error');
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('échoue fermé sur un tour coupé (max_tokens) : un tool_use peut y être tronqué', async () => {
+    const coupe = toolStream('call_agent_schema', 'tu_cut', '{}').map((e) =>
+      (e as { type: string }).type === 'message_delta'
+        ? { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }
+        : e,
     );
-    expect(call?.input).toEqual({});
-    // L'outil est quand même exécuté et la boucle va jusqu'au bout.
-    expect(toolsMock.executeToolStub).toHaveBeenCalledWith('call_agent_schema', {}, 'p1');
-    expect(events[events.length - 1]?.type).toBe('done');
+    hoisted.streamQueue.push(coupe);
+
+    const events = await run();
+
+    expect(toolsMock.executeToolStub).not.toHaveBeenCalled();
+    expect(events[events.length - 1]?.type).toBe('error');
+  });
+
+  it("retire schema_json d'un tool_use du modèle (réservé au driver)", async () => {
+    hoisted.streamQueue.push(
+      toolStream('call_agent_schema', 'tu_sj', '{"description":"LED","schema_json":{"components":[]}}'),
+      [...END_STREAM],
+    );
+
+    await run();
+
+    expect(toolsMock.executeToolStub).toHaveBeenCalledWith('call_agent_schema', { description: 'LED' }, 'p1');
   });
 
   it('parse normalement un JSON valide livré en plusieurs deltas', async () => {
@@ -345,10 +371,14 @@ describe('contexte de conversation', () => {
       ],
     });
 
+    // Le dernier bloc porte le point de cache ; le reste de l'historique est intact.
     expect(hoisted.createCalls[0]?.messages).toEqual([
       { role: 'user', content: 'fais un régulateur 3V3' },
       { role: 'assistant', content: 'schéma généré' },
-      { role: 'user', content: 'ajoute une LED' },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'ajoute une LED', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      },
     ]);
   });
 

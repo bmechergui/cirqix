@@ -1,4 +1,8 @@
-"""L escalade de couches est INCREMENTALE : le palier suivant recoit les
+"""⚠️ DESACTIVEE PAR DEFAUT depuis le 2026-09-24 (D-2026-09-24-g) : chaque
+palier repart LIBRE. Historique ci-dessous, mecanisme conserve derriere le
+reglage `escalade_incrementale`.
+
+L escalade de couches est INCREMENTALE : le palier suivant recoit les
 pistes du meilleur board du palier quitte, protegees, et ne route que ce qui
 manque. D-2026-09-10-b, validee par l utilisateur le 2026-09-11.
 """
@@ -14,13 +18,18 @@ sys.path.insert(0, str(_SERVICE))
 from routers import routing as R  # noqa: E402
 
 
-def test_active_par_defaut_et_desarmable():
-    assert R._escalade_incrementale() is True
+def test_desactivee_par_defaut_et_rearmable():
+    """D-2026-09-24-g, consigne de l utilisateur : « fais le tirage libre, s il
+    fait 100 % et rapide ». Le tirage PROTEGE d un nouveau palier echouait a
+    chaque fois (HTTP 500, 0 %) ; le tirage libre qui le suivait routait
+    carte-07 a 100 % a 4 couches en 11 s. L incremental reste rearmable par le
+    reglage de banc, pour le comparer une fois repare."""
+    assert R._escalade_incrementale() is False
     from tools import reglages_banc
     original = reglages_banc.reglage
     try:
-        reglages_banc.reglage = lambda nom, defaut=None: False if nom == "escalade_incrementale" else defaut
-        assert R._escalade_incrementale() is False
+        reglages_banc.reglage = lambda nom, defaut=None: True if nom == "escalade_incrementale" else defaut
+        assert R._escalade_incrementale() is True
     finally:
         reglages_banc.reglage = original
 

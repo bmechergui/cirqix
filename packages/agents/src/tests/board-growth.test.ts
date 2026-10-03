@@ -26,7 +26,7 @@ describe('nextBoardSize — D-2026-09-11-b', () => {
 });
 
 import { growBoardIfStalled, placementInputFor, initialGrowth } from '../orchestrator';
-import { pcbStateCache } from '../tools/shared';
+import { pcbStateCache, setProjectPlan } from '../tools/shared';
 
 describe('growBoardIfStalled — câblage dans l orchestrateur', () => {
   const schema = { components: [], nets: [], connections: [] } as never;
@@ -37,6 +37,21 @@ describe('growBoardIfStalled — câblage dans l orchestrateur', () => {
     expect(g1).toEqual({ boardW: 120, boardH: 72, growths: 1 });
     expect(pcbStateCache.get('p-croissance')?.boardW).toBe(120);
     expect(placementInputFor(g1)).toEqual({ board_width_mm: 120, board_height_mm: 72 });
+  });
+  it('juge le plafond sur le palier ESSAYÉ, pas sur les couches du board livré (D-2026-09-25-e)', () => {
+    // Banc du 2026-09-25, carte-08 : escalade jusqu'à 8 couches, meilleur board
+    // un 2 couches à 85 %. Lire `layers` (2) laissait croire « sous le plafond ».
+    pcbStateCache.set('p-essaye', { schema, boardW: 125, boardH: 95 });
+    setProjectPlan('p-essaye', 'pro_max');
+    const g0 = initialGrowth('p-essaye');
+    const g1 = growBoardIfStalled('p-essaye', g0, { routed_percent: 85, layers: 2, layers_tried: 8 });
+    expect(g1).toEqual({ boardW: 150, boardH: 114, growths: 1 });
+  });
+  it('sans layers_tried, retombe sur les couches du board (service ancien)', () => {
+    pcbStateCache.set('p-ancien', { schema, boardW: 125, boardH: 95 });
+    setProjectPlan('p-ancien', 'pro_max');
+    const g0 = initialGrowth('p-ancien');
+    expect(growBoardIfStalled('p-ancien', g0, { routed_percent: 85, layers: 2 })).toBe(g0);
   });
   it('sans routage connu et DRC propre, rien ne bouge', () => {
     pcbStateCache.set('p-stable', { schema, boardW: 100, boardH: 60 });

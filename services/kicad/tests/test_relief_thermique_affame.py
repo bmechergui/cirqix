@@ -178,6 +178,12 @@ class TestCablage:
             "definie mais jamais appelee (%d occurrence(s))" % appels)
 
     def test_elle_est_appelee_AVANT_l_encodage_du_board_rendu(self):
-        i = self.SOURCE.rindex("_reparer_reliefs_affames(final)")
-        j = self.SOURCE.index("res.kicad_pcb_b64 = base64.b64encode(final)", i)
+        # Depuis le 2026-09-29, la reparation vit dans `_reparations_locales_gnd`,
+        # que `route_auto` appelle avant d encoder le board rendu.
+        aide = self.SOURCE[self.SOURCE.index("def _reparations_locales_gnd("):]
+        assert "final = _reparer_reliefs_affames(final)" in aide[:aide.index("\nclass ")]
+        route_auto = self.SOURCE[self.SOURCE.index("def route_auto("):
+                                 self.SOURCE.index("def _reparations_locales_gnd(")]
+        i = route_auto.rindex("final = _reparations_locales_gnd(final)")
+        j = route_auto.index("res.kicad_pcb_b64 = base64.b64encode(final)", i)
         assert j > i, "la reparation arrive apres que le board a ete rendu"

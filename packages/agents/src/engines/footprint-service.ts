@@ -190,30 +190,56 @@ async function searchLCSC(partNumber: string): Promise<FootprintResult | null> {
 // ─── Step 4 — Claude Haiku AI generation ─────────────────────────────────────
 
 function buildFootprintPrompt(partNumber: string, packageHint?: string): string {
-  return `Generate a valid KiCad 7/8 .kicad_mod footprint file for the component: "${partNumber}"${packageHint ? ` (package: ${packageHint})` : ''}.
+  return `Generate a KiCad footprint (.kicad_mod, current S-expression format as written by KiCad 10) for the component: "${partNumber}"${packageHint ? ` (package: ${packageHint})` : ''}.
 
 Rules:
 - Determine the package type from the part number (SOT-23, SOIC-8, 0402, DIP-8, etc.)
 - Use standard IPC-7351 pad dimensions for the detected package
-- Include: fp_text reference, fp_text value, pads (numbered from 1), F.Courtyard rect, F.Fab rect, F.SilkS outline
-- Output ONLY the raw S-expression — no markdown, no explanation
+- Include: Reference and Value properties, pads (numbered from 1), a courtyard on layer "F.CrtYd", a body outline on "F.Fab", a silkscreen outline on "F.SilkS" that stays clear of the pads. Layer names are KiCad's file names ("F.CrtYd", not the display name "F.Courtyard").
+- Put the footprint name in "footprint_name" and the complete S-expression in "kicad_mod"
 
-Example structure for SOT-23 (3 pads):
+Illustrative syntax — SOT-23 as in KiCad's own library (another package takes its own IPC-7351 dimensions):
 (footprint "SOT-23"
   (layer "F.Cu")
   (descr "SOT-23 3-pin package")
   (attr smd)
-  (fp_text reference "REF**" (at 0 -1.8) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
-  (fp_text value "SOT-23" (at 0 2) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
-  (pad "1" smd rect (at -0.95 0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "2" smd rect (at 0.95 0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "3" smd rect (at 0 -0.9) (size 0.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.Courtyard") (stroke (width 0.05) (type solid)))
-  (fp_rect (start -0.7 -1.2) (end 0.7 1.2) (layer "F.Fab") (stroke (width 0.1) (type solid)))
+  (property "Reference" "REF**" (at 0 -2.4 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+  (property "Value" "SOT-23" (at 0 2.4 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
+  (fp_line (start -0.76 -1.56) (end 0.76 -1.56) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -0.76 1.56) (end 0.76 1.56) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_rect (start -1.93 -1.7) (end 1.93 1.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+  (fp_rect (start -0.65 -1.45) (end 0.65 1.45) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+  (pad "1" smd roundrect (at -0.9375 -0.95) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
+  (pad "2" smd roundrect (at -0.9375 0.95) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
+  (pad "3" smd roundrect (at 0.9375 0) (size 1.475 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25))
 )
 
 Generate for "${partNumber}"${packageHint ? ` / ${packageHint}` : ''} now:`;
 }
+
+/** Parenthèses équilibrées hors chaînes quotées : une S-expression complète. */
+function parenthesesEquilibrees(s: string): boolean {
+  let profondeur = 0;
+  let dansChaine = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (dansChaine) {
+      if (c === '\\') i++;
+      else if (c === '"') dansChaine = false;
+    } else if (c === '"') dansChaine = true;
+    else if (c === '(') profondeur++;
+    else if (c === ')' && --profondeur < 0) return false;
+  }
+  return profondeur === 0 && !dansChaine;
+}
+
+/** Enveloppe de sortie (sorties structurées, Haiku 4.5) : JSON garanti, sans consigne « Output ONLY ». */
+const FOOTPRINT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['footprint_name', 'kicad_mod'],
+  properties: { footprint_name: { type: 'string' }, kicad_mod: { type: 'string' } },
+} as const;
 
 async function generateWithAI(
   partNumber: string,
@@ -226,19 +252,30 @@ async function generateWithAI(
     const client = new Anthropic({ apiKey });
     const msg = await client.messages.create({
       model: HAIKU_MODEL,
-      max_tokens: 1024,
+      max_tokens: 8192,
       messages: [{ role: 'user', content: buildFootprintPrompt(partNumber, packageHint) }],
+      output_config: { format: { type: 'json_schema', schema: FOOTPRINT_JSON_SCHEMA } },
     });
+    log.info({ surface: 'footprint-ai', partNumber, usage: msg.usage }, 'llm usage');
 
-    const kicadMod = (msg.content[0] as Anthropic.TextBlock).text.trim();
-    if (!kicadMod.startsWith('(footprint')) {
+    // Une S-expression tronquée commence quand même par « (footprint » : sans ce
+    // contrôle, l'empreinte cassée était renvoyée PUIS déposée dans le cache
+    // communautaire, resservie ensuite à tous les utilisateurs.
+    if (msg.stop_reason !== 'end_turn') {
+      log.warn({ partNumber, stop_reason: msg.stop_reason }, 'AI footprint incomplete — not returned, not cached');
+      return null;
+    }
+    const texte = msg.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text ?? '';
+    const sortie = JSON.parse(texte) as { footprint_name: string; kicad_mod: string };
+    const kicadMod = sortie.kicad_mod.trim();
+    if (!kicadMod.startsWith('(footprint') || !parenthesesEquilibrees(kicadMod)) {
       log.warn({ kicadMod: kicadMod.slice(0, 100) }, 'AI footprint output invalid');
       return null;
     }
 
     // Derive a footprint_name from the output
     const nameMatch = kicadMod.match(/\(footprint "([^"]+)"/);
-    const footprintName = nameMatch?.[1] ?? `${partNumber}_AI`;
+    const footprintName = nameMatch?.[1] ?? (sortie.footprint_name.trim() || `${partNumber}_AI`);
     log.info({ partNumber, footprintName }, 'AI footprint generated');
 
     return {

@@ -2,7 +2,7 @@
 
 > Fichier de référence : tous les skills utilisés dans ce projet.
 > Mettre à jour après chaque installation ou création de skill.
-> Référencé dans `CLAUDE.md` et `.claude/WORKFLOW.md`.
+> Référencé dans `CLAUDE.md`.
 
 ---
 
@@ -10,15 +10,16 @@
 
 | Skill | Fichier | Description | Invoquer quand |
 |-------|---------|-------------|----------------|
-| `cirqix-prompt-improver` | `cirqix-prompt-improver/SKILL.md` | Améliore tout prompt — 9D matrix, XML, contexte Cirqix Phase 2, détection skill | **TOUJOURS en premier** |
+| `cirqix-prompt-improver` | `cirqix-prompt-improver/SKILL.md` | Améliore le prompt reçu : contexte Cirqix de la phase en cours (lu dans `CLAUDE.md` et `PLAN.md`), choix du skill | **En premier, à chaque tâche** |
 | `cirqix-pcb-agent` | `cirqix-pcb-agent/SKILL.md` | Boucle agentique PCB : Orchestrateur Sonnet, 15 itérations max, états INITIAL→PCB_LIVRÉ, SSE streaming, Redis | Agent / Orchestrateur / Boucle PCB |
-| `cirqix-footprint` | `cirqix-footprint/SKILL.md` | Cascade 8 étapes : KiCad → SnapMagic → Octopart → PDF Vision → génération .kicad_mod → pgvector | Footprint manquant / librairie |
+| `cirqix-footprint` | `cirqix-footprint/SKILL.md` | Cascade `findFootprint` : bibliothèque KiCad → cache pgvector → SnapMagic → LCSC → génération Haiku 4.5, puis repli générique | Footprint manquant / librairie |
 | `cirqix-kicad-service` | `cirqix-kicad-service/SKILL.md` | FastAPI Python + pcbnew headless : placement, Freerouting, DRC, export Gerbers, Docker, BullMQ | KiCad / placement / routage / export |
-| `cirqix-viewer` | `cirqix-viewer/SKILL.md` | KiCanvas (viewer natif .kicad_sch + .kicad_pcb) + Three.js 3D (STEP, matériaux FR4) | Viewer PCB / schéma / rendu KiCanvas |
+| `cirqix-viewer` | `cirqix-viewer/SKILL.md` | KiCanvas (.kicad_sch + .kicad_pcb natifs, `controls="full"`) + 3D par GLB (`Board3DView`) + rendus PNG kicad-cli | Viewer PCB / schéma / rendu KiCanvas / 3D |
 | `cirqix-credits` | `cirqix-credits/SKILL.md` | Déduction atomique Supabase RPC, plans Free/Pro/Pro Max, top-ups, webhook Lemon Squeezy, UI badge | Crédits / plans / paiement |
-| `cirqix-drc` | `cirqix-drc/SKILL.md` | Boucle DRC max 3 itérations, system prompt Haiku, corrections pcbnew, markers viewer | DRC / violations / correction PCB |
+| `cirqix-drc` | `cirqix-drc/SKILL.md` | Chaîne DRC réelle : `POST /drc/auto`, kicad-cli fait foi, auto-correction ≤ 3× dans le service, fail-closed, aucun modèle ; markers viewer | DRC / violations / correction PCB |
 | `cirqix-frontend-verify` | `cirqix-frontend-verify/SKILL.md` | Diagnostic visuel read-only : screenshots Chrome DevTools (3 breakpoints — 375px/768px/1440px), détecte chevauchements/overlaps/layout cassé, rapport structuré + corrections Tailwind | **APRÈS chaque modification UI** — responsive broken / overlap / visuel à valider |
 | `cirqix-circuit-synth` | `cirqix-circuit-synth/SKILL.md` | Génération `.kicad_sch` via circuit_synth Python : `@circuit` pattern, mapping symbol (Device:R/Timer:NE555P/etc.), KICAD_SYMBOL_DIR setup, erreurs classiques + fixes, router FastAPI primary/fallback | **Toute génération schéma KiCad** — circuit_synth, mapping symbol, pin names, setup libs |
+| `cirqix-quality-gate` | `cirqix-quality-gate/SKILL.md` | Grille de validation entre les étapes du pipeline PCB (Schema → ERC → Place → Route → DRC → Export) | Après chaque étape du pipeline, avant d'avancer |
 
 ---
 
@@ -26,7 +27,7 @@
 
 | Skill | Source | Installs | Description | Invoquer quand |
 |-------|--------|----------|-------------|----------------|
-| `tscircuit` | tscircuit/skill | 313 | TSCircuit — moteur PCB React-like (DÉPRÉCIÉ — remplacé par Circuit-Synth) | Fallback uniquement si Circuit-Synth indisponible |
+| `tscircuit` | tscircuit/skill | 313 | TSCircuit — moteur PCB React-like, déprécié depuis v0.3.0 | Jamais en nouveau code (`CLAUDE.md`) ; seulement pour lire un ancien code TSCircuit |
 | `eda-pcb` | l3wi/claude-eda | 93 | EDA/PCB général — schémas, netlists, conventions électroniques | Schéma électronique, netlist |
 | `jlcpcb-component-finder` | takazudo | 28 | Recherche composants LCSC/JLCPCB — prix, stock, part numbers | Sélection composants, BOM |
 | `kicad` | aklofas/kicad-happy | 18 | KiCad patterns — conventions fichiers .kicad_pcb, .kicad_sch, pcbnew API | KiCad, fichiers PCB |
@@ -41,7 +42,7 @@
 | `nextjs-supabase-auth` | sickn33 | 3.7K | Next.js + Supabase Auth — middleware, RLS, sessions, routes protégées | Auth, login, sessions |
 | `turborepo` | vercel/turborepo | 13.7K | Turborepo monorepo — configuration, pipelines, packages partagés | Setup monorepo, packages |
 | `bullmq-specialist` | davila7 | 180 | BullMQ + Redis — workers, queues, jobs, retry, concurrency | Files d'attente, jobs KiCad |
-| `prompt-master` | nidhinjs | — | Optimisation prompts pour tout outil IA — matrice 9D, XML, signal words | Avant toute tâche (avec cirqix-prompt-improver) |
+| `prompt-master` | nidhinjs | — | Rédaction de prompts pour d'autres outils IA (matrice 9D, XML) | Sur demande, pour un prompt destiné à un outil tiers — pas avant chaque tâche (le contexte Cirqix passe par `cirqix-prompt-improver`) |
 
 ---
 
@@ -49,7 +50,7 @@
 
 | Skill | Source | Description | Invoquer quand |
 |-------|--------|-------------|----------------|
-| `graphify` | safishamsi/graphify | Knowledge graph AST, relations inter-fichiers, requêtes `query`, `path` et `explain` | Toute question sur le code, l'architecture ou les dépendances |
+| `graphify` | safishamsi/graphify | Knowledge graph AST, relations inter-fichiers, requêtes `query`, `path` et `explain` | Question d'architecture ou « qui appelle quoi » ; jamais pendant un banc ou une mesure (~1 Go par requête) |
 
 ---
 
@@ -66,7 +67,7 @@
 | `/everything-claude-code:deployment-patterns` | Vercel, Railway, DigitalOcean | Deploy, CI/CD |
 | `/everything-claude-code:tdd` | Test-Driven Development | Avant chaque feature |
 | `/everything-claude-code:e2e` | Tests E2E Playwright | Flows critiques |
-| `/everything-claude-code:security-scan` | Audit sécurité | Avant commit (auth, paiement) |
+| `/everything-claude-code:security-scan` | Audit de la configuration Claude Code (AgentShield) : `CLAUDE.md`, settings, hooks, MCP | Après une modification de `.claude/`, de `CLAUDE.md` ou des MCP — pas pour le code auth/paiement (agent `security-reviewer`) |
 | `/everything-claude-code:security-review` | Review sécurité complète | Avant merge |
 | `/everything-claude-code:plan` | Planification feature | Feature complexe |
 | `/everything-claude-code:save-session` | Sauvegarde session | Fin de session |
@@ -106,21 +107,9 @@ npx skills add owner/repo@skill -g -y
 ### 3. Créer avec skill-creator (priorité 3)
 ```bash
 # Invoquer : /skill-creator:skill-creator
-# Créer dans : .claude/skills/cirqix-xxx.md
+# Créer dans : .claude/skills/cirqix-xxx/SKILL.md
 # Puis ajouter dans ce fichier + CLAUDE.md
 ```
-
----
-
-## Historique des installations
-
-## Ajout — Circuit-Synth + KiCanvas (2026-04-05)
-
-| Skill | Changement |
-|-------|-----------|
-| `cirqix-viewer` | Mis à jour : PixiJS → KiCanvas (rendu .kicad_sch + .kicad_pcb natifs) |
-| `cirqix-pcb-agent` | Mis à jour : moteur TSCircuit → Circuit-Synth (Python KiCad) |
-| `tscircuit` | Déprécié — garde comme fallback uniquement |
 
 ---
 

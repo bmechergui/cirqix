@@ -71,7 +71,22 @@ docker cp "$LOCAL" "cirqix-kicad:$FILE" >/dev/null
 docker exec -u root cirqix-kicad chmod -R 777 "$FILE"
 
 # ⚠️ Partir propre. Un orphelin d'une campagne precedente ferait tuer celle-ci.
-docker exec -u root cirqix-kicad sh -c 'pkill -f run_pipeline.py; pkill -f derouler.sh; rm -f /tmp/cirqix-reglages.json' 2>/dev/null || true
+#
+# ⚠️ UNE COMMANDE PAR ACTION, ET DES MOTIFS COUPES (2026-09-24). Cette ligne
+# etait `sh -c 'pkill -f run_pipeline.py; pkill -f derouler.sh; rm -f …'` :
+# le motif figurait dans la commande qui le porte, `pkill` tuait son propre
+# shell AVANT le `rm`, et `|| true` le cachait. Le reglage de banc n etait donc
+# JAMAIS supprime ici — une campagne pouvait tourner avec la graine en etoile
+# sans le savoir. Meme piege que `pgrep -f freerouting.jar` (CLAUDE.md), paye
+# deux fois le 2026-09-23. Le motif est coupe (`run_pipe""line`) pour ne pas se
+# viser, et la suppression, independante, est VERIFIEE.
+docker exec -u root cirqix-kicad pkill -f "run_pipe""line.py" 2>/dev/null || true
+docker exec -u root cirqix-kicad pkill -f "derou""ler.sh" 2>/dev/null || true
+docker exec -u root cirqix-kicad rm -f /tmp/cirqix-reglages.json
+if docker exec cirqix-kicad test -e /tmp/cirqix-reglages.json; then
+  echo "ECHEC : /tmp/cirqix-reglages.json est toujours la — la campagne ne serait pas la production" >&2
+  exit 1
+fi
 sleep 3
 
 docker exec -d cirqix-kicad sh "$FILE/derouler.sh" "$FILE" "$TIRAGES" $CARTES

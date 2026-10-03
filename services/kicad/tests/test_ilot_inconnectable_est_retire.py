@@ -135,10 +135,17 @@ class TestOrdre:
 
     def test_le_board_retire_est_bien_CELUI_QUI_EST_RENDU(self):
         # Un retrait dont le resultat n'est pas encodé serait inerte.
-        retrait = self.SOURCE.rindex("final = _retirer_ilots_flottants(final)")
-        rendu = self.SOURCE.index("res.kicad_pcb_b64 = base64.b64encode(final)",
-                                  retrait)
-        assert rendu > retrait
+        # Depuis le 2026-09-29, le retrait vit dans `_reparations_locales_gnd`,
+        # appelee avant les replis puis, si un repli a change le board, apres.
+        corps = self.SOURCE[self.SOURCE.index("def _reparations_locales_gnd("):]
+        corps = corps[:corps.index("\nclass ")]
+        retrait = corps.index("final = _retirer_ilots_flottants(final)")
+        assert corps.index("return final", retrait) > retrait
+        # Le dernier appel DANS route_auto precede l encodage.
+        route_auto = self.SOURCE[self.SOURCE.index("def route_auto("):
+                                 self.SOURCE.index("def _reparations_locales_gnd(")]
+        assert (route_auto.rindex("final = _reparations_locales_gnd(final)")
+                < route_auto.index("res.kicad_pcb_b64 = base64.b64encode(final)"))
 
 
 class TestIlotAvecPastille:

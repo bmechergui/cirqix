@@ -14,7 +14,7 @@
 
 ## Agents Claude
 - Orchestrateur = Sonnet 4.6 — max 15 itérations par PCB
-- Agents spécialisés = Haiku 4.5
+- Agents spécialisés qui appellent un modèle = Haiku 4.5
 - Coût cible : ~0.12€ par PCB complet
 - **JAMAIS** de commande JLCPCB automatique — confirmation "OUI JE CONFIRME" obligatoire
 
@@ -23,8 +23,8 @@
 - Badge variants : `default | secondary | success | warning | destructive | copper | outline`
 
 ## Types source de vérité
-Fichier : `apps/web/src/shared/lib/mock-data.ts` (migré FSD — ancien chemin : `apps/web/src/lib/mock-data.ts`)
-- `PCBStatus` = `'INITIAL' | 'SCHEMA_DONE' | 'PLACEMENT_DONE' | 'ROUTING_DONE' | 'DRC_CLEAN' | 'PCB_LIVRÉ'`
+Fichier : `packages/types/src/index.ts`, importé via `@cirqix/types` (`apps/web/src/shared/lib/mock-data.ts` ne fait que ré-exporter ; n'y définir aucun type).
+- `PCBStatus` : lire l'union dans ce fichier (elle inclut `ERC_CLEAN`) plutôt que de la recopier ici
 - `Message.role` = `'user' | 'assistant'` (jamais `'agent'`)
 - `Credits` = `{ balance, plan, daily_limit }` (pas `remaining`/`total`)
 - `Project` = snake_case : `updated_at`, `iteration_count`

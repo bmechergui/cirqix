@@ -1,0 +1,18 @@
+06:38:18 debut
+06:38:18 arduino-uno demarre
+06:39:25 arduino-uno ROUTE {"routed_percent": 100, "couches": 2, "vias": 30, "longueur_mm": 604.407, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 35, "couches": 2}
+06:39:25 esp32-baseline demarre
+06:40:32 esp32-baseline ROUTE {"routed_percent": 100, "couches": 2, "vias": 27, "longueur_mm": 991.998, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 1, "couches": 2}
+06:40:32 stm32-baseline demarre
+06:41:33 stm32-baseline ROUTE {"routed_percent": 100, "couches": 2, "vias": 19, "longueur_mm": 308.838, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 12, "couches": 2}
+06:41:33 stm32-validation demarre
+06:42:37 stm32-validation ROUTE {"routed_percent": 100, "couches": 2, "vias": 20, "longueur_mm": 293.143, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 25, "couches": 2}
+06:42:37 stm32-30 demarre
+06:43:48 stm32-30 ROUTE {"routed_percent": 100, "couches": 2, "vias": 33, "longueur_mm": 633.419, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 23, "couches": 2}
+06:43:48 stm32-60 demarre
+06:53:33 stm32-60 ROUTE {"routed_percent": 100, "couches": 4, "vias": 99, "longueur_mm": 2920.375, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 68, "couches": 4}
+06:53:33 nucleo-f401 demarre
+06:59:20 nucleo-f401 ROUTE {"routed_percent": 100, "couches": 4, "vias": 104, "longueur_mm": 3679.291, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 71, "couches": 4}
+06:59:20 stm32-100 demarre
+07:09:05 stm32-100 ROUTE {"routed_percent": 100, "couches": 6, "vias": 197, "longueur_mm": 8683.138, "moteur": "freerouting-api", "note": ""} DRC {"manquantes": 0, "bloquantes": 0, "violations": 130, "couches": 6}
+07:09:05 TERMINE

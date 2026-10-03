@@ -6,7 +6,7 @@ description: Grille de validation obligatoire avant chaque transition de pipelin
 
 ## Quand invoquer
 
-**OBLIGATOIRE** après chaque étape du pipeline avant de passer à la suivante :
+Après chaque étape du pipeline, avant de passer à la suivante :
 - Après `call_agent_schema` → avant ERC
 - Après `call_agent_erc` → avant Placement
 - Après `call_agent_placement` → avant Routing
@@ -31,72 +31,48 @@ description: Grille de validation obligatoire avant chaque transition de pipelin
 - Un composant n'a aucune connexion → l'ajouter ou le supprimer
 - Un net a 1 seule pin → net ouvert = erreur électrique
 
-**NEVER** progresser vers ERC si le schéma a des composants non connectés.
-
 ---
 
 ### ✅ ERC → PLACEMENT
 
 **Critères obligatoires :**
-- [ ] ERC = 0 violations (ou violations documentées comme acceptables)
-- [ ] Si ERC skipped : afficher avertissement explicite et demander confirmation utilisateur
-- [ ] Tous les footprints sont au format `Library:Footprint` (ex: `Resistor_SMD:R_0402_1005Metric`)
+- [ ] ERC d'autorité exécuté (`kicad-cli sch erc`) ; s'il est `skipped`, verdict de `runErcFallback()` (`packages/agents/src/engines/erc-fallback.ts`). Un `skipped` n'est jamais un succès.
+- [ ] Toute violation restante est corrigée ou documentée explicitement
+- [ ] Aucune violation `pin_not_connected` ou `wire_not_connected` non résolue
+- [ ] Footprints au format `Library:Footprint` (ex : `Resistor_SMD:R_0402_1005Metric`)
 
-**Blocage si :**
-- ERC a des violations de type `pin_not_connected` non résolues
-- ERC a des violations de type `wire_not_connected`
-- ERC skipped en production (accepté seulement en développement local avec avertissement)
-
-**NEVER** skip ERC sans afficher `⚠️ ERC non validé en dev — obligatoire en production`.
+**Blocage si :** aucun contrôle ERC n'a réellement tourné, en développement comme en production.
 
 ---
 
 ### ✅ PLACEMENT → ROUTING
 
 **Critères obligatoires :**
-- [ ] Tous les composants placés à l'intérieur des limites du PCB
-- [ ] Espacement minimum entre composants : 1.5mm (passives), 2mm (ICs)
-- [ ] Composants groupés logiquement :
-  - Connecteurs : bords gauche/droit
-  - Découplage : à côté de leur IC (distance < 10mm)
-  - ICs : zone centrale
-- [ ] Aucun composant à (0,0)
-- [ ] Orientation des composants cohérente (SMD face Up)
-
-**Blocage si :**
-- Des composants se chevauchent (overlap > 50%)
-- Un composant est hors de la zone utile du PCB
+- [ ] DRC kicad-cli du board PLACÉ, sans piste : 0 `courtyards_overlap`, 0 erreur. Le board doit se charger : un rapport vide n'est pas un zéro.
+- [ ] Composants dans `Edge.Cuts`, connecteurs collés au bord le plus proche
+- [ ] Membres de cluster à portée de leur ancre (`FunctionalCluster.max_distance_mm`)
 
 ---
 
 ### ✅ ROUTING → DRC
 
 **Critères obligatoires :**
-- [ ] 0 nets non routés (ratsnest = 0)
-- [ ] Trace width : ≥ 0.25mm pour signaux, ≥ 0.3mm pour power
-- [ ] Clearance minimum : ≥ 0.15mm
-- [ ] GND plane ajouté sur B.Cu (ground fill)
-- [ ] Vias de stitching pour GND plane si 2+ layers
-
-**Blocage si :**
-- Des nets sont non routés
-- Width < 0.15mm (non fabricable)
+- [ ] `routed_percent` mesuré = 100 et 0 connexion manquante au DRC
+- [ ] Plan GND coulé et rempli sur les faces extérieures, îlots cousus
+- [ ] Largeurs et dégagements : profil fabricant (`services/kicad/tools/drc.py`), jamais des constantes recopiées ici
 
 ---
 
 ### ✅ DRC → EXPORT
 
 **Critères obligatoires :**
-- [ ] DRC = 0 violations
-- [ ] Aucune violation de type `clearance`, `annular_ring`, `drill`
-- [ ] Board outline fermée (Edge.Cuts)
-- [ ] Taille board raisonnable (≤ 200×200mm pour MVP)
+- [ ] Aucune violation bloquante au sens de `est_bloquante` (`services/kicad/tools/drc.py`) : toute `error`, plus `hole_to_hole` et `holes_co_located` même en avertissement
+- [ ] Tout avertissement restant est listé et justifié dans le rapport, jamais passé sous silence
+- [ ] 0 connexion manquante
+- [ ] Contour de carte fermé (Edge.Cuts)
+- [ ] Dimensions dans les limites du profil fabricant (`max_board_width_mm`, `max_board_height_mm` de kicad-tools)
 
-**Blocage si :**
-- DRC > 0 violations → corriger avant export
-- Board outline ouverte ou manquante
-
-**NEVER** exporter vers JLCPCB avec des violations DRC actives.
+**NEVER** exporter vers JLCPCB avec une violation bloquante : `DRC_CLEAN` ouvre le gate de commande.
 
 ---
 
@@ -128,27 +104,13 @@ Quand une étape passe :
 
 ## Critères de qualité visuelle (viewer)
 
-### Schéma (KiCanvas native)
-- Symboles groupés par fonction (gauche → droite : connecteurs, power, core, passives)
-- Labels de nets visibles sans zoom (font ≥ 1.524mm)
-- Stubs de fils ≥ 5mm (lisibles dans KiCanvas)
-- Référence et valeur en bold lisible
-
-### PCB (KiCanvas native)
-- Composants visibles avec contours (fab layer présent)
-- Traces visibles (width ≥ 0.25mm)
-- GND plane couvre ≥ 60% de la surface
-- Board outline clairement visible
-
-### PCB (Spec canvas)
-- Tous les composants avec label REF + VALUE lisibles
-- Traces affichées (showRouting = true après routing)
-- Zoom auto-fit centré sur les composants
+À vérifier à l'œil dans KiCanvas. Aucun seuil chiffré : le code n'en applique aucun, et les largeurs de piste suivent le profil fabricant (0,15 mm admis sur une carte fine-pitch, `_REGLES_FINE_PITCH` dans `services/kicad/routers/routing.py`).
+- Schéma : symboles groupés par fonction ; labels de nets, références et valeurs lisibles sans zoom.
+- PCB (KiCanvas) : contours des composants (couche fab), pistes, plan GND et contour de carte visibles.
+- PCB (vue Cirqix) : REF et VALUE lisibles, pistes affichées après le routage (`showRouting`), cadrage centré sur les composants.
 
 ---
 
 ## Règle d'or
 
-> **Un PCB ne doit jamais arriver à l'étape suivante avec des composants flottants, des nets ouverts, des DRC violations, ou des stubs de connexion invisibles.**
->
-> Si l'étape précédente ne satisfait pas les critères, **corriger d'abord** et **re-valider** avant de progresser.
+Un PCB n'avance pas à l'étape suivante avec des composants flottants, des nets ouverts ou une violation bloquante au sens de `est_bloquante` ; un avertissement restant est listé et justifié. Si l'étape précédente échoue, corriger puis re-valider.

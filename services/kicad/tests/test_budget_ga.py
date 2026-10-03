@@ -50,11 +50,11 @@ class TestBudget:
 
 
 class TestTiragesMinimum:
-    def test_un_seul_tirage_suffit_a_budget_complet(self):
-        """Le best-of-2 etait la CONTREPARTIE du budget reduit.
-
-        A budget complet la dispersion disparait (etendue du fil 42 mm contre
-        206) : forcer un second tirage ne ferait que doubler le cout.
+    def test_le_premier_placement_propre_est_garde(self):
+        """Regle validee par l utilisateur (D-2026-10-02-b) : un placement
+        propre est garde, et c est le ROUTAGE qui le juge (3 tirages par
+        palier, puis escalade). Remplace « 3 tirages, on garde le meilleur »
+        (D-2026-09-29-a) : 377 s contre 129 s sur carte-09.
         """
         assert _TIRAGES_MINIMUM == 1
 

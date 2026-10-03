@@ -49,6 +49,13 @@ def _flag(ref: str, x: float, y: float) -> str:
     return P._instance_pwr_flag(x, y, ref)
 
 
+def _rail(nom: str, x: float, y: float, ref: str = "#PWR01") -> str:
+    """Un symbole d'alimentation `power:<nom>` en (x, y) : le seul endroit où un
+    drapeau peut se poser sans renommer le net."""
+    return (f'\t(symbol\n\t\t(lib_id "power:{nom}")\n\t\t(at {x} {y} 0)\n'
+            f'\t\t(property "Reference" "{ref}")\n\t\t(property "Value" "{nom}")\n\t)\n')
+
+
 def _sch(*corps: str) -> str:
     return (
         '(kicad_sch\n\t(version 20240108)\n\t(lib_symbols\n\t\t' + _DEFINITION + '\n\t)\n'
@@ -93,18 +100,27 @@ class TestCorrections:
                        "message": "Pins of type Power output and Power output are connected"}]
         assert A.corriger_erc(sch, violations) == (sch, 0)
 
-    def test_rail_sans_pilote_recoit_un_drapeau_sur_la_broche(self):
-        violations = [{"type": "power_pin_not_driven", "severity": "error", "ref": "U1", "pin": "3",
+    def test_rail_sans_pilote_recoit_un_drapeau_sur_son_symbole(self):
+        """⚠️ Ce test s'appelait `…_sur_la_broche` et exigeait un drapeau sur la
+        broche 3 de U1 — la broche d'un COMPOSANT. C'était le défaut, encodé
+        comme comportement voulu : sur une broche nue, le drapeau nomme le net
+        `PWR_FLAG`, et tous ces drapeaux fusionnent. Mesuré le 2026-09-24 sur
+        `carte-10` : VIN, +3V3 et un GPIO reliés en cuivre. Le drapeau se pose
+        désormais sur le symbole du RAIL. Voir
+        `test_pwr_flag_jamais_sur_une_broche.py`."""
+        violations = [{"type": "power_pin_not_driven", "severity": "error", "ref": "#PWR01", "pin": "1",
                        "message": "Input Power pin not driven by any Output Power pins",
                        "x_mm": 30.48, "y_mm": 30.48}]
-        out, n = A.corriger_erc(_sch(), violations, racine_symboles="/inexistant")
+        out, n = A.corriger_erc(_sch(_rail("+3V3", 30.48, 30.48)), violations,
+                                racine_symboles="/inexistant")
         assert n == 1
         assert '(lib_id "power:PWR_FLAG")' in out and "(at 30.48 30.48 0)" in out
         assert out.count("(") == out.count(")")
 
     def test_deux_violations_au_meme_point_un_seul_drapeau(self):
         v = {"type": "power_pin_not_driven", "severity": "error", "message": "x", "x_mm": 30.48, "y_mm": 30.48}
-        out, n = A.corriger_erc(_sch(), [v, dict(v)], racine_symboles="/inexistant")
+        out, n = A.corriger_erc(_sch(_rail("+3V3", 30.48, 30.48)), [v, dict(v)],
+                                racine_symboles="/inexistant")
         assert n == 1 and out.count('(lib_id "power:PWR_FLAG")') == 1
 
     def test_les_autres_erreurs_ne_sont_jamais_corrigees(self):

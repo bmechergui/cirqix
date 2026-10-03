@@ -200,6 +200,44 @@ def _is_nc_pad_clearance(violation: dict[str, Any]) -> bool:
     )
 
 
+# Types de violation qui font REFUSER une carte a la fabrication, QUELLE QUE
+# SOIT la severite que KiCad leur donne.
+#
+# ⚠️ KiCad classe ces deux-la en AVERTISSEMENT par defaut, et tous nos juges ne
+# comptaient que les `error`. Mesure du 2026-09-23 sur `carte-11-croisements` :
+# `drc_clean: true` sur une carte portant deux vias a 0,340 mm bord a bord, et
+# deux vias dont le percage RECOUPE celui d une broche de connecteur a
+# -0,050 mm. Aucun fabricant ne perce cela. Et `drc_clean` ouvre le gate de
+# commande JLCPCB, par DRC_CLEAN comme par PCB_LIVRE.
+#
+# UNE liste, UN predicat (`est_bloquante`), lus par le juge de la commande
+# (`parse_drc_report` -> `/drc/auto`) ET par celui du routage
+# (`_compte_erreurs`). Ce depot a deja paye cinq fois une meme comparaison
+# ecrite cinq fois (2026-09-07).
+#
+# ⚠️ Le SEUIL n est pas touche : KiCad juge `hole_to_hole` a 0,25 mm, nos
+# poseurs visent 0,50. L aligner serait un nouveau chiffre, donc une decision
+# produit. La promotion suffit a attraper les percages qui se RECOUPENT.
+# Garde : `tests/test_percages_bloquent_la_fabrication.py`.
+TYPES_BLOQUANTS_FABRICATION: frozenset[str] = frozenset({
+    "hole_to_hole",       # deux percages trop proches, ou qui se recoupent
+    "holes_co_located",   # deux percages au meme point
+})
+
+
+def est_bloquante(violation: dict[str, Any]) -> bool:
+    """Cette violation fait-elle refuser la carte ?
+
+    Une `error`, toujours. Un avertissement, seulement s il porte un type de
+    `TYPES_BLOQUANTS_FABRICATION` : la serigraphie qui chevauche ne fait
+    refuser aucune carte, un percage recoupe si.
+    """
+    if not isinstance(violation, dict):
+        return False
+    return (violation.get("severity") == "error"
+            or violation.get("type") in TYPES_BLOQUANTS_FABRICATION)
+
+
 def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
     """Parse a ``kicad-cli pcb drc --format json`` report.
 
@@ -256,6 +294,12 @@ def parse_drc_report(report_json: str) -> list[dict[str, Any]]:
             severity = "warning"
         message = str(raw.get("description", raw.get("type", "DRC violation")))
         v_type = str(raw.get("type", "")) or None
+        # ⚠️ PROMOTION : un percage trop proche fait refuser la carte, meme si
+        # KiCad le classe en avertissement. Fait ICI, avant `drc_clean`, pour
+        # que la route, sa boucle d auto-fix et le client TS voient tous une
+        # erreur — sans qu aucun d eux ait a connaitre la liste.
+        if est_bloquante({"type": v_type, "severity": severity}):
+            severity = "error"
 
         items = raw.get("items")
         if isinstance(items, list) and items:

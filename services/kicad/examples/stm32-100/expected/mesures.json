@@ -1,0 +1,19 @@
+{
+  "exemple": "stm32-100",
+  "source": "expected/3_route.kicad_pcb (board VERSIONNE, pas un rejeu)",
+  "mesure_par": "kicad-cli pcb drc --severity-all",
+  "date": "2026-09-24",
+  "drc_du_board": {
+    "nb_erreurs": 0,
+    "non_connectes": 0,
+    "violations": 19,
+    "types": "silk_over_copper:11,silk_overlap:8"
+  },
+  "board": {
+    "segments": 547,
+    "vias": 166,
+    "empreintes": 101,
+    "couches_cuivre": 2
+  },
+  "temoin_placement": "2_placement_valide.kicad_pcb"
+}

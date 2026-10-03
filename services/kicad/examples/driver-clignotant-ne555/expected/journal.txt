@@ -1,0 +1,71 @@
+SchÃ©ma (driver LLM) : 9 composants, 7 nets, board 45x30mm
+
+==============================================================
+[1] call_agent_schema â†’ POST /schematic/generate
+==============================================================
+    -> taille=44960o  (1.1s)
+
+==============================================================
+[2] call_agent_erc â†’ POST /erc
+==============================================================
+    -> clean=True Â· violations=0 Â· fixed=0 Â· skipped=False Â· engine=kicad-cli  (23.3s)
+
+==============================================================
+[4] call_agent_gen_pcb â†’ POST /pcb/generate
+==============================================================
+    -> taille=24912o  (3.7s)
+
+==============================================================
+[5] call_agent_placement â†’ POST /place/auto (essai 1/4)
+==============================================================
+    -> placÃ©s=9 Â· status=None  (38.5s)
+
+==============================================================
+[6] call_agent_routing â†’ POST /route/auto (essai 1/4)
+==============================================================
+    -> routÃ©=100% Â· couches=2 Â· vias=5 Â· warning=None  (96.9s)
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto (essai 1/4)
+==============================================================
+    -> clean=True Â· violations=0 Â· erreurs=0  (5.8s)
+   essai 1 retenu (100%, 0 erreur(s) DRC)
+   100 % atteint â€” on arrete les essais
+
+[6b] Reasoner NON dÃ©clenchÃ© â€” routage dÃ©jÃ  Ã  100% (comportement attendu).
+
+==============================================================
+[7] call_agent_drc â†’ POST /drc/auto (rapport final)
+==============================================================
+    -> clean=True Â· violations=0 Â· fixed=0 Â· skipped=False Â· warning=kicad-tools DRC indisponible â€” rÃ©sultat kicad-cli officiel seul  (10.1s)
+
+==============================================================
+[8] call_agent_export â†’ POST /export/all
+==============================================================
+    -> fichiers=20 Â· devis=$None Â· skipped=False Â· warning=kicad-tools unavailable â€” kicad-cli export  (5.4s)
+       + led-blinker-B_Adhesive.gba
+       + led-blinker-B_Courtyard.gbr
+       + led-blinker-B_Cu.gbl
+       + led-blinker-B_Fab.gbr
+       + led-blinker-B_Mask.gbs
+       + led-blinker-B_Paste.gbp
+       + led-blinker-B_Silkscreen.gbo
+       + led-blinker-Edge_Cuts.gm1
+       + led-blinker-F_Adhesive.gta
+       + led-blinker-F_Courtyard.gbr
+       + led-blinker-F_Cu.gtl
+       + led-blinker-F_Fab.gbr
+       + led-blinker-F_Mask.gts
+       + led-blinker-F_Paste.gtp
+       + led-blinker-F_Silkscreen.gto
+       + led-blinker-Margin.gbr
+       + led-blinker-User_Drawings.gbr
+       + led-blinker-job.gbrjob
+       + led-blinker.drl
+       + pos.csv
+
+==============================================================
+SUMMARY routed=100 drc_violations=0 drc_clean=True files=20 types=-
+VERDICT : routage 100% Â· DRC clean=True (skipped=False) Â· 20 fichiers exportÃ©s
+PIPELINE COMPLET OK
+Artefacts : /tmp/banc-driver-clignotant-ne555-1790202368/output

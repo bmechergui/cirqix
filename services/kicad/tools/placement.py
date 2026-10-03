@@ -39,6 +39,9 @@ from typing import Optional
 # pip-installé avec le backend C++).
 from tools.kct_route import _kct_env
 from tools.placement_bypass import snap_cluster_members
+from tools.placement_zones import (MARGE_CONNECTEUR_BORD_MM, coucher_les_connecteurs,
+                                   redresser_les_conflits, respecter_les_zones,
+                                   violations_de_zones)
 from tools.sexp_quote import unquote_keepout_values
 
 logger = logging.getLogger(__name__)
@@ -249,11 +252,25 @@ def _degager_la_serigraphie(pcb_path: Path) -> int:
     """
     try:
         from kicad_tools.schema.pcb import PCB
-        from tools.serigraphie import degager_references
+        from tools.serigraphie import (degager_references, dernier_recours,
+                                       reorienter_et_degager, reperes_signales)
         pcb = PCB.load(str(pcb_path))
-        n = degager_references(pcb)
+        # D-2026-09-26-a, phase B : ce que la recherche a plat ne place pas,
+        # un repere tourne dans l axe du boitier et pose contre son corps le
+        # place souvent (campagne du 2026-09-26 : 70 -> 16 avertissements sur
+        # quatre cartes, carte-05 et carte-06 a zero).
+        n = degager_references(pcb) + reorienter_et_degager(pcb)
         if n:
             pcb.save(str(pcb_path))
+        # D-2026-10-03-a : sans aucune place, 0,8 mm puis masque — seulement
+        # les reperes que le DRC signale encore, lu sur le board ecrit.
+        signales = reperes_signales(_rapport_drc_sans_lever(pcb_path))
+        if signales:
+            pcb = PCB.load(str(pcb_path))
+            recours = sum(dernier_recours(pcb, seulement=signales))
+            if recours:
+                pcb.save(str(pcb_path))
+                n += recours
         return n
     except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
         logger.warning("auto_place: serigraphie non degagee (%s)", exc)
@@ -463,46 +480,8 @@ def _reparer_chevauchements_du_drc(pcb_path: Path, ancres) -> int:
     erreurs_avant = _conflits_du_rapport(rapport)
     try:
         pcb = PCB.load(str(pcb_path))
-        bornes = _outline_bounds(pcb)
-        if bornes is None:
-            return 0
-        par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
-        aires = {}
-        for ref, fp in par_ref.items():
-            x0, y0, x1, y1 = _boite_orientee_fp(fp)
-            aires[ref] = (x1 - x0) * (y1 - y0)
-        figes = set(ancres or ())
-        deplaces: list[str] = []
-        for a, b in paires:
-            mobile = _choisir_le_mobile(a, b, aires, figes)
-            if mobile is None or mobile not in par_ref or mobile in deplaces:
-                continue
-            fp = par_ref[mobile]
-            bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
-            etendue = max(abs(bx0), abs(bx1), abs(by0), abs(by1))
-            marge = etendue + _MARGE_COURTYARD_BORD_MM + _GARDE_REPARATION_MM
-            zone = (bornes[0] + marge, bornes[1] - marge, bornes[2] + marge, bornes[3] - marge)
-            if zone[0] >= zone[1] or zone[2] >= zone[3]:
-                continue
-            occupees = []
-            for autre in pcb.footprints:
-                if autre.reference == mobile:
-                    continue
-                ox0, oy0, ox1, oy1 = _boite_orientee_fp(autre)
-                ax, ay = autre.position
-                occupees.append((ax + ox0, ay + oy0, ax + ox1, ay + oy1))
-            x, y = fp.position
-            cible = (min(max(x, zone[0]), zone[1]), min(max(y, zone[2]), zone[3]))
-            place = _nearest_free_cell(cible, [], zone, boite_locale=(bx0, by0, bx1, by1),
-                                       boites_occupees=occupees)
-            if place is None:
-                logger.warning("chevauchement DRC : aucune case libre pour %s", mobile)
-                continue
-            logger.info("chevauchement DRC : %s (%.2f,%.2f) -> (%.2f,%.2f) — sorti du "
-                        "courtyard de %s", mobile, x, y, place[0], place[1],
-                        b if mobile == a else a)
-            fp.position = place
-            deplaces.append(mobile)
+        deplaces = _ecarter_les_paires(pcb, paires, _boite_orientee_fp, ancres,
+                                       "chevauchement DRC")
         if not deplaces:
             return 0
         pcb.save(str(pcb_path))
@@ -519,6 +498,164 @@ def _reparer_chevauchements_du_drc(pcb_path: Path, ancres) -> int:
     except Exception as exc:  # noqa: BLE001 — un filet en panne ne casse pas le placement
         pcb_path.write_bytes(avant_octets)
         logger.warning("chevauchement DRC : reparation impossible (%s) — board conserve", exc)
+        return 0
+
+
+def _ecarter_les_paires(pcb, paires, boite, ancres, etiquette: str) -> list[str]:
+    """Pour chaque paire, le plus petit non ancre va a la case libre la plus
+    proche, ou `boite(fp)` (relative, orientee) ne touche aucune autre boite.
+
+    Partage par les reparations des courtyards et des contours de serigraphie :
+    seule la boite change. Rend les references deplacees (pcb modifie en memoire).
+    """
+    bornes = _outline_bounds(pcb)
+    if bornes is None:
+        return []
+    par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    boites = {ref: boite(fp) for ref, fp in par_ref.items()}
+    aires = {ref: (b[2] - b[0]) * (b[3] - b[1]) for ref, b in boites.items()}
+    figes = set(ancres or ())
+    deplaces: list[str] = []
+    for a, b in paires:
+        mobile = _choisir_le_mobile(a, b, aires, figes)
+        if mobile is None or mobile not in par_ref or mobile in deplaces:
+            continue
+        fp = par_ref[mobile]
+        bx0, by0, bx1, by1 = boites[mobile]
+        etendue = max(abs(bx0), abs(bx1), abs(by0), abs(by1))
+        marge = etendue + _MARGE_COURTYARD_BORD_MM + _GARDE_REPARATION_MM
+        zone = (bornes[0] + marge, bornes[1] - marge, bornes[2] + marge, bornes[3] - marge)
+        if zone[0] >= zone[1] or zone[2] >= zone[3]:
+            continue
+        occupees = []
+        for autre in pcb.footprints:
+            if autre.reference == mobile:
+                continue
+            ox0, oy0, ox1, oy1 = boites.get(autre.reference) or boite(autre)
+            ax, ay = autre.position
+            occupees.append((ax + ox0, ay + oy0, ax + ox1, ay + oy1))
+        x, y = fp.position
+        cible = (min(max(x, zone[0]), zone[1]), min(max(y, zone[2]), zone[3]))
+        place = _nearest_free_cell(cible, [], zone, boite_locale=(bx0, by0, bx1, by1),
+                                   boites_occupees=occupees)
+        if place is None:
+            logger.warning("%s : aucune case libre pour %s", etiquette, mobile)
+            continue
+        logger.info("%s : %s (%.2f,%.2f) -> (%.2f,%.2f) — ecarte de %s", etiquette,
+                    mobile, x, y, place[0], place[1], b if mobile == a else a)
+        fp.position = place
+        deplaces.append(mobile)
+    return deplaces
+
+
+# Demi-epaisseur d un trait de serigraphie (0,12 mm chez KiCad) plus une garde :
+# les extremites des traits sont les points, pas le bord du trait.
+_DEMI_TRAIT_SERIGRAPHIE_MM = 0.1
+
+
+def _boite_orientee_serigraphie(fp) -> tuple:
+    """Comme `_boite_orientee_fp`, mais englobant AUSSI la serigraphie du corps.
+
+    Le courtyard d une LED 0603 fait 1,46 mm de haut, ses traits sont a
+    +/- 0,735 mm : deux LED a 1,5 mm de pas sont legales, et leurs contours se
+    touchent (carte-07, banc du 2026-10-02).
+    """
+    corps = _boite_orientee_fp(fp)      # courtyard, ou pastilles a defaut
+    xs, ys = [], []
+    for g in getattr(fp, "graphics", []) or []:
+        if "SilkS" not in str(getattr(g, "layer", "")):
+            continue
+        centre = getattr(g, "center", None)
+        if getattr(g, "graphic_type", "") == "circle" and centre is not None:
+            # `fp_circle` : (center) et un point (end) du cercle — `start`
+            # n existe pas et vaut l origine par defaut.
+            r = math.dist(centre, getattr(g, "end", centre))
+            points = [(centre[0] - r, centre[1] - r), (centre[0] + r, centre[1] + r)]
+        else:
+            points = [getattr(g, "start", None), getattr(g, "end", None)]
+            points += list(getattr(g, "points", []) or [])
+        for point in points:
+            try:
+                px, py = float(point[0]), float(point[1])
+            except (TypeError, IndexError, ValueError):
+                continue
+            xs += [px - _DEMI_TRAIT_SERIGRAPHIE_MM, px + _DEMI_TRAIT_SERIGRAPHIE_MM]
+            ys += [py - _DEMI_TRAIT_SERIGRAPHIE_MM, py + _DEMI_TRAIT_SERIGRAPHIE_MM]
+    if not xs:
+        return corps
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    a = math.radians(float(getattr(fp, "rotation", 0.0) or 0.0))
+    ca, sa = math.cos(a), math.sin(a)
+    coins = [(x * ca + y * sa, -x * sa + y * ca)
+             for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
+    return (min(corps[0], min(c[0] for c in coins)), min(corps[1], min(c[1] for c in coins)),
+            max(corps[2], max(c[0] for c in coins)), max(corps[3], max(c[1] for c in coins)))
+
+
+def _paires_de_contours_serigraphie(rapport: dict) -> list[tuple[str, str]]:
+    """Paires d empreintes DISTINCTES dont les contours de serigraphie se touchent.
+
+    Un repere (« Reference field », « Value field ») n en fait pas partie : il
+    se deplace seul (`tools/serigraphie.py`), sans bouger le composant.
+    """
+    vues: list[tuple[str, str]] = []
+    for v in (rapport or {}).get("violations") or []:
+        if v.get("type") != "silk_overlap":
+            continue
+        descriptions = [str(i.get("description") or "") for i in v.get("items") or []]
+        if len(descriptions) < 2 or any("field" in d.lower() for d in descriptions):
+            continue
+        refs = []
+        for d in descriptions:
+            m = _RE_REF_DRC.search(d)
+            if m:
+                refs.append(m.group(1))
+        if len(refs) >= 2 and refs[0] != refs[1]:
+            paire = tuple(sorted(refs[:2]))
+            if paire not in vues:
+                vues.append(paire)
+    return vues
+
+
+def _ecarter_les_contours_de_serigraphie(pcb_path: Path, ancres) -> int:
+    """Ecarte deux empreintes dont les contours de serigraphie se touchent.
+
+    Soeur de `_reparer_chevauchements_du_drc` : memes paires lues dans le DRC,
+    meme case libre, avec une boite courtyard + serigraphie. NE PEUT QU
+    AMELIORER : garde seulement si aucune erreur n est ajoutee et si des
+    contours sont retires ; sinon le board recu est restaure.
+    """
+    from kicad_tools.schema.pcb import PCB
+
+    rapport = _rapport_drc_sans_lever(pcb_path)
+    paires = _paires_de_contours_serigraphie(rapport)
+    if not paires:
+        return 0
+    avant_octets = pcb_path.read_bytes()
+    erreurs_avant = _conflits_du_rapport(rapport)
+    try:
+        pcb = PCB.load(str(pcb_path))
+        deplaces = _ecarter_les_paires(pcb, paires, _boite_orientee_serigraphie, ancres,
+                                       "contours de serigraphie")
+        if not deplaces:
+            return 0
+        pcb.save(str(pcb_path))
+        _rendre_lisible(pcb_path)
+        apres = _rapport_drc_sans_lever(pcb_path)
+        erreurs_apres = _conflits_du_rapport(apres) if apres else _CONFLITS_INDETERMINES
+        restants = len(_paires_de_contours_serigraphie(apres))
+        if erreurs_apres > erreurs_avant or restants >= len(paires):
+            pcb_path.write_bytes(avant_octets)
+            logger.warning("contours de serigraphie : ecart ANNULE (erreurs %d -> %d, "
+                           "contours %d -> %d)", erreurs_avant, erreurs_apres,
+                           len(paires), restants)
+            return 0
+        logger.info("contours de serigraphie : %d composant(s) ecarte(s), %d -> %d paire(s)",
+                    len(deplaces), len(paires), restants)
+        return len(deplaces)
+    except Exception as exc:  # noqa: BLE001 — la serigraphie ne bloque rien
+        pcb_path.write_bytes(avant_octets)
+        logger.warning("contours de serigraphie : ecart impossible (%s) — board conserve", exc)
         return 0
 
 
@@ -821,7 +958,7 @@ def _clamp_fixed_refs_to_outline(pcb, fixed_refs: list[str], margin_mm: float = 
         # 2x19 mesure 50 mm, et clamper sa position a 2 mm du bord laissait
         # 48 mm de corps DEHORS — le defaut meme que ce clamp doit empecher,
         # puisqu un ancrage n est plus jamais deplace ensuite.
-        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        fx0, fy0, fx1, fy1 = _boite_orientee_fp(fp)
         cx = _clamp_axe(x, fx0, fx1, min_x, max_x)
         cy = _clamp_axe(y, fy0, fy1, min_y, max_y)
         # ⚠️ On vérifie la collision de TOUT ancrage, clampé ou non : deux
@@ -870,8 +1007,12 @@ def _encombrement_mm(pcb, ref: str) -> float:
     return max(max(xs) - min(xs), max(ys) - min(ys), _PAS_MIN_MM)
 
 
+_CARRE_ALLONGE_MM = 0.5   # en dessous, un corps n a pas de grand axe
+
+
 def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
-                      direction: Optional[float] = None) -> tuple:
+                      direction: Optional[float] = None,
+                      parallele_d_abord: bool = False) -> tuple:
     """Position d un ancrage glisse contre un bord : celui que vise la
     ``direction``, ou a defaut le plus proche de son corps.
 
@@ -898,6 +1039,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
 
     Sans ``direction``, rien ne change : `_coller_les_ancrages_au_bord` glisse
     toujours par le plus court chemin, et c est sa regle propre.
+
+    ``parallele_d_abord`` (D-2026-09-26-a) : un corps ALLONGE essaie d abord
+    les bords que son grand axe longe, le plus court chemin ne departageant
+    qu ensuite. Campagne du 2026-09-26 : un en-tete vertical dans un coin, a
+    3,2 mm du bord gauche, etait colle au bord BAS, plus proche de 1 mm — et
+    finissait debout, perpendiculaire a son bord, sur 5 cartes sur 6.
     """
     x, y = pos
     bx0, by0, bx1, by1 = boite
@@ -919,7 +1066,12 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
         (abs((min_y - by0) - y), (cx, min_y - by0), "x", (0.0, -1.0)),
         (abs((max_y - by1) - y), (cx, max_y - by1), "x", (0.0, 1.0)),
     ]
-    if direction is None:
+    allonge = abs((bx1 - bx0) - (by1 - by0)) >= _CARRE_ALLONGE_MM
+    if direction is None and parallele_d_abord and allonge:
+        # axe libre "y" = bord vertical : il longe un corps plus haut que large.
+        vertical = (by1 - by0) > (bx1 - bx0)
+        bords.sort(key=lambda b: ((b[2] == "y") != vertical, b[0]))
+    elif direction is None:
         bords.sort(key=lambda b: b[0])
     else:
         # Le bord vers lequel le rayon POINTE le plus franchement vient en
@@ -939,6 +1091,74 @@ def _position_au_bord(pos: tuple, boite: tuple, bornes: tuple, autres: list,
                 if lo <= (qy if axe == "y" else qx) <= hi and libre(qx, qy):
                     return qx, qy
     return pos
+
+
+def _est_net_de_masse(nom: str) -> bool:
+    n = (nom or "").upper().lstrip("/")
+    return n.startswith("GND") or n in ("VSS", "AGND", "DGND", "PGND")
+
+
+def _barycentre_des_fixes(pcb, fp, fixes) -> Optional[tuple]:
+    """Barycentre des pastilles des composants FIXES reliées à `fp` par un net
+    autre que la masse, ou None."""
+    from tools.serigraphie import _tourne
+    nets = {p.net_name for p in fp.pads
+            if getattr(p, "net_name", None) and not _est_net_de_masse(p.net_name)}
+    if not nets or not fixes:
+        return None
+    pts = [_tourne(o, *p.position) for o in pcb.footprints
+           if o.reference in fixes and o is not fp
+           for p in o.pads if getattr(p, "net_name", None) in nets]
+    if not pts:
+        return None
+    return (sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts))
+
+
+def _aligner_en_face(fp, direction: float, cible: tuple) -> None:
+    """Glisse `fp` pour que son corps soit EN FACE de `cible` le long du bord
+    que `direction` désigne (le collage fixe ensuite l autre axe).
+
+    D-2026-09-27-b, campagne du 2026-09-28 : le bord était bien choisi, mais le
+    connecteur gardait sa position de DÉPART le long de ce bord — Arduino : J1
+    collé au bord gauche tout en haut, la broche VIN du module en bas.
+    """
+    b = _boite_orientee_fp(fp)
+    x, y = fp.position
+    if abs(math.cos(direction)) >= abs(math.sin(direction)):     # gauche ou droite
+        fp.position = (x, cible[1] - (b[1] + b[3]) / 2)
+    else:                                                        # haut ou bas
+        fp.position = (cible[0] - (b[0] + b[2]) / 2, y)
+
+
+def _direction_vers_les_fixes(pcb, fp, fixes, centre) -> Optional[float]:
+    """Angle (repère KiCad, y vers le bas) du centre de la carte vers le
+    barycentre des pastilles des composants FIXES reliées à `fp` par un net
+    autre que la masse. None si `fp` n en relie aucun.
+
+    D-2026-09-27-b : sur une carte à module, J1 (VIN, GND) finissait dans le
+    coin le plus proche de sa position de DÉPART, loin de la broche VIN du
+    module qu il alimente — Arduino 92 x 85 mm pour un module de 69 x 53.
+    """
+    cible = _barycentre_des_fixes(pcb, fp, fixes)
+    if cible is None:
+        return None
+    bx, by = cible
+    if abs(bx - centre[0]) < 1e-6 and abs(by - centre[1]) < 1e-6:
+        return None
+    return math.atan2(by - centre[1], bx - centre[0])
+
+
+def _coucher_face_a(fp, direction: float) -> None:
+    """Tourne `fp` de 90° si son grand axe ne longe pas le bord vers lequel
+    `direction` pointe — il y sera collé ensuite."""
+    from tools.placement_zones import _tourner
+    b = _boite_orientee_fp(fp)
+    largeur, hauteur = b[2] - b[0], b[3] - b[1]
+    if abs(largeur - hauteur) < 0.5:
+        return
+    bord_horizontal = abs(math.sin(direction)) >= abs(math.cos(direction))   # haut ou bas
+    if (largeur >= hauteur) != bord_horizontal:
+        _tourner(fp, 90.0)
 
 
 def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
@@ -970,9 +1190,16 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             poses[fp.reference] = (fp.position[0] + b[0], fp.position[1] + b[1],
                                    fp.position[0] + b[2], fp.position[1] + b[3])
     deplaces = []
+    centre = ((bornes_contour[0] + bornes_contour[1]) / 2, (bornes_contour[2] + bornes_contour[3]) / 2)
     for fp in ancres:
         if fp.reference in ignores:
             continue
+        # D-2026-09-27-b (validee) : face aux broches FIXES qu il relie (module,
+        # empreinte verrouillee) — seules positions fiables avant l optimisation.
+        direction = _direction_vers_les_fixes(pcb, fp, ignores, centre)
+        if direction is not None:
+            _coucher_face_a(fp, direction)
+            _aligner_en_face(fp, direction, _barycentre_des_fixes(pcb, fp, ignores))
         b = _boite_orientee_fp(fp)
         x, y = fp.position
         # Les ancrages pas encore traites comptent a leur place ACTUELLE.
@@ -980,7 +1207,8 @@ def _coller_les_ancrages_au_bord(pcb, fixed_refs: list, margin_mm: float = 2.0,
             (o.position[0] + ob[0], o.position[1] + ob[1], o.position[0] + ob[2], o.position[1] + ob[3])
             for o in ancres if o.reference not in poses and o is not fp
             for ob in (_boite_orientee_fp(o),)]
-        nx, ny = _position_au_bord((x, y), b, bornes, autres)
+        nx, ny = _position_au_bord((x, y), b, bornes, autres, direction=direction,
+                                   parallele_d_abord=True)
         if abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6:
             logger.warning("ancrage %s (%.2f,%.2f) -> colle au bord (%.2f,%.2f)",
                            fp.reference, x, y, nx, ny)
@@ -996,7 +1224,7 @@ def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
     for fp in pcb.footprints:
         if fp.reference in refs:
             x, y = fp.position
-            b = _boite_locale_fp(fp)
+            b = _boite_orientee_fp(fp)
             out[fp.reference] = (x + b[0] - marge, y + b[1] - marge,
                                  x + b[2] + marge, y + b[3] + marge)
     return out
@@ -1004,7 +1232,7 @@ def _boites_absolues(pcb, refs, marge: float = 0.5) -> dict:
 
 def _corps_dans_le_contour(fp, x: float, y: float,
                            min_x: float, max_x: float, min_y: float, max_y: float) -> bool:
-    b = _boite_locale_fp(fp)
+    b = _boite_orientee_fp(fp)
     return (min_x <= x + b[0] and x + b[2] <= max_x
             and min_y <= y + b[1] and y + b[3] <= max_y)
 
@@ -1051,7 +1279,7 @@ def _position_libre_pour_ancrage(pcb, ref: str, cx: float, cy: float,
         autres = _boites_absolues(pcb, set(ancres) - {ref})
 
         def libre(x, y):
-            b = _boite_locale_fp(fp)
+            b = _boite_orientee_fp(fp)
             bx0, by0, bx1, by1 = x + b[0], y + b[1], x + b[2], y + b[3]
             return not any(bx0 < ox1 and bx1 > ox0 and by0 < oy1 and by1 > oy0
                            for ox0, oy0, ox1, oy1 in autres.values())
@@ -1728,7 +1956,7 @@ def _encombrement_fp(fp) -> tuple:
     Sans courtyard declare, on retombe sur les pastilles — rendre 0 ferait
     perdre toute protection.
     """
-    x0, y0, x1, y1 = _boite_locale_fp(fp)
+    x0, y0, x1, y1 = _boite_orientee_fp(fp)
     return x1 - x0, y1 - y0
 
 
@@ -1795,6 +2023,12 @@ def _boite_orientee_fp(fp) -> tuple:
              for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
     return (min(c[0] for c in coins), min(c[1] for c in coins),
             max(c[0] for c in coins), max(c[1] for c in coins))
+
+
+def _refs_verrouillees(pcb) -> list:
+    """Références des empreintes verrouillées (`(locked yes)`), dans l ordre du board."""
+    return [fp.reference for fp in pcb.footprints
+            if getattr(fp, "locked", False) and getattr(fp, "reference", None)]
 
 
 def _boitiers_dominants(pcb) -> list:
@@ -1871,7 +2105,7 @@ def _placer_en_couronne(pcb, dominants: list) -> int:
     principal = modules[0]
     # ⚠️ On centre le CORPS, pas l ORIGINE. L origine d un module est sur sa
     # pastille 1 ; la poser au milieu de la carte y decale le corps d autant.
-    bx0, by0, bx1, by1 = _boite_locale_fp(principal)
+    bx0, by0, bx1, by1 = _boite_orientee_fp(principal)
     principal.position = (cx - (bx0 + bx1) / 2.0, cy - (by0 + by1) / 2.0)
     px, py = principal.position
     # Boite ABSOLUE du corps : c est elle que la couronne doit contourner.
@@ -1902,7 +2136,7 @@ def _placer_en_couronne(pcb, dominants: list) -> int:
         for x, y in cases:
             if not restants:
                 break
-            fx0, fy0, fx1, fy1 = _boite_locale_fp(restants[0])
+            fx0, fy0, fx1, fy1 = _boite_orientee_fp(restants[0])
             # Hors contour : un passif dehors est inroutable. La boite du
             # passif, pas sa demi-taille — meme raison que pour le module.
             if not (0.0 <= x + fx0 and x + fx1 <= l_carte
@@ -1975,7 +2209,7 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
         fp = next((f for f in pcb.footprints if f.reference == ref), None)
         if fp is None:
             continue
-        bx0, by0, bx1, by1 = _boite_locale_fp(fp)
+        bx0, by0, bx1, by1 = _boite_orientee_fp(fp)
         px, py = fp.position
         boites.append((px + bx0, py + by0, px + bx1, py + by1))
     if not boites:
@@ -1987,7 +2221,7 @@ def _ecarter_des_dominants(pcb, dominants: list) -> int:
             continue
         x, y = fp.position
         # Le mobile n est pas un POINT non plus : sa propre boite compte.
-        fx0, fy0, fx1, fy1 = _boite_locale_fp(fp)
+        fx0, fy0, fx1, fy1 = _boite_orientee_fp(fp)
         for mx0, my0, mx1, my1 in boites:
             if (x + fx1 <= mx0 or mx1 <= x + fx0
                     or y + fy1 <= my0 or my1 <= y + fy0):
@@ -2037,7 +2271,7 @@ def _centrer(pcb, refs: list) -> None:
         # ⚠️ Le CORPS au centre, pas l ORIGINE. L origine d un module est sur
         # sa pastille 1 : centrer l origine decale le corps de tout le
         # decalage du courtyard — 10 mm sur l ESP32-WROOM.
-        x0, y0, x1, y1 = _boite_locale_fp(fp)
+        x0, y0, x1, y1 = _boite_orientee_fp(fp)
         l = x1 - x0
         # Plusieurs dominants : on les decale de leur propre largeur.
         fp.position = (cx + i * (l + 5.0) - (x0 + x1) / 2.0, cy - (y0 + y1) / 2.0)
@@ -2263,6 +2497,15 @@ _MAX_TIRAGES_PLACEMENT = 4
 # CONTREPARTIE du budget reduit — un filtre contre ses placements aberrants
 # (etendue du fil 206 mm contre 42). A budget complet cette dispersion
 # disparait, et forcer un second tirage ne ferait que doubler le cout.
+# ⚠️ RAMENE A 3 le 2026-10-02 : regle validee par l utilisateur
+# (D-2026-09-29-a) — « placement : 3 tirages, on garde le meilleur, puis le
+# routage ». A 1, la boucle gardait le PREMIER tirage propre : carte-10 a
+# enchaine quatre placements, trois non routables (1 h 30 de banc).
+# ⚠️ RAMENE A 1 le 2026-10-02 (D-2026-10-02-b, validee par l utilisateur) :
+# le PREMIER placement propre est garde et c est le ROUTAGE qui le juge
+# (3 tirages par palier, puis escalade). Mesure du jour : 3 tirages = 5-6 min
+# au banc, un seul = 129 s (carte-09) ; en parallele (377 s), ils se ralentissent et le
+# CMA-ES de chacun expire (140 s, resultat jete) — essaye et retire.
 _TIRAGES_MINIMUM = 1
 
 # Nets portes par un plan de cuivre : ils ne se routent pas par des pistes, les
@@ -2322,6 +2565,19 @@ def _charger_features(pcb_path):
 def _crossing_count(features) -> float:
     from kicad_tools.optim.fom_geometry import crossing_count
     return float(crossing_count(features))
+
+
+def _rangement_degrade(err_avant: int, err_apres: int,
+                       x_avant: Optional[float], x_apres: Optional[float]) -> bool:
+    """Le rangement des familles (phase C) empire-t-il le placement ?
+    Plus d erreurs, ou plus de croisements du chevelu. Une mesure de
+    croisements INCONNUE apres le rangement le condamne : on ne garde pas un
+    changement qu on n a pas su juger."""
+    if err_apres > err_avant:
+        return True
+    if x_avant is None:
+        return False
+    return x_apres is None or x_apres > x_avant
 
 
 def _croisements_du_placement(pcb_path) -> Optional[float]:
@@ -2393,6 +2649,12 @@ def _placement_meilleur(candidat: dict, reference: Optional[dict]) -> bool:
     r_conf = reference.get("conflits_restants", 10 ** 6)
     if c_conf != r_conf:
         return c_conf < r_conf
+    # D-2026-09-26-a : une règle de zone violée (composant contre le bord ou
+    # sous un connecteur) passe avant la routabilité. Mesure inconnue = perd.
+    c_z = candidat.get("violations_zones", 10 ** 6)
+    r_z = reference.get("violations_zones", 10 ** 6)
+    if c_z != r_z:
+        return c_z < r_z
     c_x, r_x = candidat.get("croisements"), reference.get("croisements")
     if c_x is None and r_x is not None:
         return False
@@ -2505,11 +2767,12 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
         r = _auto_place_une_fois(kicad_pcb_b64, board_width_mm, board_height_mm,
                                  graine=graine_encore_utile)
         n_conflits = r.get("conflits_restants", 0)
+        n_zones = r.get("violations_zones", 0)
         if _placement_meilleur(r, meilleur):
             meilleur = r
         if r.get("centres_etoile"):
             graine_encore_utile = False
-            if n_conflits == 0:
+            if n_conflits == 0 and n_zones == 0:
                 logger.info("auto_place: placement calcule et propre — un seul tirage")
                 break
         # ⚠️ ON NE S ARRETE PLUS AU PREMIER PLACEMENT PROPRE. Le budget du GA
@@ -2518,7 +2781,10 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
         # de fil contre 372) avec 0 conflit, donc indiscernable sans second
         # tirage. Le filtre EST la contrepartie du budget reduit : deux
         # tirages reduits coutent moins qu un seul complet (246 s contre 342).
-        if n_conflits == 0 and essai + 1 >= _TIRAGES_MINIMUM:
+        # Un tirage qui viole une zone (D-2026-09-26-a) ne clôt pas la boucle :
+        # carte-02 du 2026-09-26, « U2 touche connecteur J2, aucune place
+        # libre » sur un tirage, 0 violation sur les deux autres.
+        if n_conflits == 0 and n_zones == 0 and essai + 1 >= _TIRAGES_MINIMUM:
             logger.info(
                 "auto_place: %d tirage(s) propres — retenu %s",
                 essai + 1,
@@ -2529,6 +2795,15 @@ def auto_place(kicad_pcb_b64: str, board_width_mm: float,
             logger.warning(
                 "auto_place: %d conflit(s) au tirage %d/%d — on re-tire plutot "
                 "que de router un board casse", n_conflits, essai + 1, tirages)
+        elif n_zones:
+            logger.warning(
+                "auto_place: %d violation(s) de zone au tirage %d/%d — on re-tire",
+                n_zones, essai + 1, tirages)
+    if meilleur.get("violations_zones") and not meilleur.get("conflits_restants"):
+        logger.warning(
+            "auto_place: %d violation(s) de zone sur le MEILLEUR tirage — "
+            "la carte est trop pleine pour D-2026-09-26-a a cette taille",
+            meilleur["violations_zones"])
     if meilleur.get("conflits_restants"):
         # ⚠️ L optimiseur a echoue a TOUS ses tirages : ce n est pas de la
         # malchance, c est structurel. Mesure du 2026-08-27 sur l ESP32 —
@@ -2563,6 +2838,10 @@ def _resserrer_le_contour(resultat: dict) -> dict:
             taille = ajuster_contour_au_placement(f)
             if taille is None:
                 return resultat
+            # Le contour resserre (courtyards + 3 mm) peut couper un repere
+            # pose contre son corps, jusqu a 1,4 mm plus loin (phase B) :
+            # le degagement se rejoue sur le NOUVEAU bord.
+            _degager_la_serigraphie(f)
             return {
                 **resultat,
                 "kicad_pcb_b64": _b64.b64encode(f.read_bytes()).decode(),
@@ -2831,18 +3110,34 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
 
         # Connecteurs ancrés + clampés dans le contour AVANT l'optimisation
         conn = _connector_refs(pcb)
+        # D-2026-09-27-a (validee) : une empreinte VERROUILLEE (connecteurs et
+        # trous d un gabarit de carte — Arduino Uno, Nucleo-64…) est a la
+        # position du FORMAT. Fixe partout ; jamais centree, couchee ni collee.
+        verrouilles = _refs_verrouillees(pcb)
+        if verrouilles:
+            logger.info("auto_place: %d empreinte(s) verrouillee(s) par le gabarit : %s",
+                        len(verrouilles), ", ".join(verrouilles))
+            conn = conn + [r for r in verrouilles if r not in conn]
         # ⚠️ Les boitiers DOMINANTS rejoignent les ancrages, apres avoir ete
         # centres. Un module qui occupe un quart de la carte ne se place pas
         # par tirage genetique : mesure du 2026-08-26, l ESP32-WROOM recevait
         # 9 chevauchements de courtyard meme avec la place necessaire.
-        dominants = _boitiers_dominants(pcb)
+        dominants = [r for r in _boitiers_dominants(pcb) if r not in verrouilles]
         if dominants:
             logger.info("auto_place: boitier(s) dominant(s) centre(s) et ancre(s) : %s",
                         ", ".join(dominants))
             _centrer(pcb, dominants)
             conn = conn + [r for r in dominants if r not in conn]
-        _clamp_fixed_refs_to_outline(pcb, conn, exempts=dominants)
-        _coller_les_ancrages_au_bord(pcb, conn, exempts=dominants)
+        exempts = dominants + verrouilles
+        _clamp_fixed_refs_to_outline(pcb, conn, exempts=exempts)
+        # D-2026-09-26-a (validee) : un connecteur est COUCHE le long de son bord
+        # avant d y etre colle — 35 sur 48 etaient debout (2026-09-26).
+        couches = coucher_les_connecteurs(pcb, conn, exempts=exempts)
+        _coller_les_ancrages_au_bord(pcb, conn, exempts=exempts,
+                                    margin_mm=MARGE_CONNECTEUR_BORD_MM)
+        if redresser_les_conflits(pcb, couches):
+            _coller_les_ancrages_au_bord(pcb, conn, exempts=exempts,
+                                        margin_mm=MARGE_CONNECTEUR_BORD_MM)
 
         # ── Commande native : kct placement optimize --strategy hybrid --cluster ──
         # ⚠️ DEUX LEVIERS NATIFS QUE NOUS N AVIONS JAMAIS PASSES (2026-09-08).
@@ -3281,30 +3576,41 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # le long d un bord DEFAIT le rayon sur lequel la graine vient de les
         # poser, et laissait un conflit contre le centre. Deux mises en forme
         # qui se combattent — comme le clamp et le centrage le 2026-08-27.
+        #
+        # ⚠️ D-2026-09-26-a, phase C : les paires sont rangees en MATRICE la ou
+        # l optimiseur les a mises (`placement_familles`), plus contre le bord
+        # le plus libre — depuis la phase A chaque bord porte un connecteur, et
+        # `ranger_les_paires` repondait « aucun bord assez libre » sur 22
+        # tirages de la campagne du 2026-09-26. Garde-fou elargi : annule si
+        # les erreurs OU les croisements du chevelu augmentent.
         try:
-            n_rang = 0
+            deplaces_fam = []
             if not centres_etoile:
-                from tools.placement_contraintes import paires_du_board as _paires_du_board
-                from tools.placement_rangees import ranger_les_paires
+                from tools.placement_familles import ranger_les_familles
                 _rendre_lisible(out)
                 pcb_rang = PCB.load(str(out))
-                n_rang = ranger_les_paires(pcb_rang, _paires_du_board(pcb_rang), conn,
-                                           board_width_mm, board_height_mm)
-            if n_rang:
+                deplaces_fam = ranger_les_familles(pcb_rang, conn)
+            if deplaces_fam:
                 avant_rangees = out.read_bytes()
                 err_avant_rangees = _compter_conflits_erreur(out)
+                x_avant_rangees = _croisements_du_placement(out)
                 pcb_rang.save(str(out))
                 _normalize_to_board_frame(out)
                 _resolve_remaining_conflicts(out, fixes_snap)
                 _rendre_lisible(out)
-                if _compter_conflits_erreur(out) > err_avant_rangees:
+                err_apres = _compter_conflits_erreur(out)
+                x_apres = _croisements_du_placement(out)
+                if _rangement_degrade(err_avant_rangees, err_apres, x_avant_rangees, x_apres):
                     out.write_bytes(avant_rangees)
-                    logger.info("auto_place: rangees de paires annulees (%d -> %d erreurs)",
-                                err_avant_rangees, _compter_conflits_erreur(out))
+                    logger.info("auto_place: familles annulees (erreurs %d -> %d, "
+                                "croisements %s -> %s)", err_avant_rangees, err_apres,
+                                x_avant_rangees, x_apres)
                 else:
-                    logger.info("auto_place: rangees de paires — %d footprint(s) poses", n_rang)
+                    logger.info("auto_place: familles rangees — %d footprint(s) poses "
+                                "(croisements %s -> %s)", len(deplaces_fam),
+                                x_avant_rangees, x_apres)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("auto_place: rangees de paires impossibles (%s) — placement conserve", exc)
+            logger.warning("auto_place: familles non rangees (%s) — placement conserve", exc)
 
         _pas = _grille_mm()
         if _pas > 0:
@@ -3327,11 +3633,19 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
         # connecteurs et a ressorti R1 que le premier filet venait de rentrer.
         _garder_dans_le_contour(out, conn, fixes_snap)
 
+        # D-2026-09-26-a (validee) : rien sous ni autour d un connecteur, rien
+        # contre le bord — apres le dernier deplacement, avant la reparation DRC.
+        respecter_les_zones(out, conn)
+
         # ⚠️ PUIS LES CHEVAUCHEMENTS QUE SEUL LE DRC VOIT (2026-09-20), apres
         # la derniere etape qui deplace : l Inspecteur approxime les
         # courtyards, kicad-cli lit la vraie `F.CrtYd` — carte-05 et carte-09
         # sortaient a une erreur U2 <-> passif, « livrees en l etat ».
         _reparer_chevauchements_du_drc(out, conn)
+
+        # Contours de serigraphie qui se touchent (banc du 2026-10-02, carte-07 :
+        # deux LED 0603 a 1,5 mm de pas, courtyards legaux, traits superposes).
+        _ecarter_les_contours_de_serigraphie(out, conn)
 
         # ⚠️ SERIGRAPHIE EN DERNIER, apres tout ce qui deplace. `degager_references`
         # existait, testee, et n etait appelee NULLE PART (2026-09-12) : les
@@ -3348,11 +3662,15 @@ def _auto_place_une_fois(kicad_pcb_b64: str, board_width_mm: float,
                 conflits_restants)
 
         _journaliser_qualite(out, "livre")
-        footprints = PCB.load(str(out)).footprints
+        board_livre = PCB.load(str(out))
+        footprints = board_livre.footprints
         return {
             "kicad_pcb_b64": base64.b64encode(out.read_bytes()).decode(),
             "placed_count": len(footprints),
             "conflits_restants": conflits_restants,
+            # D-2026-09-26-a : composants contre le bord ou sous un connecteur.
+            # Départage les tirages juste après les conflits.
+            "violations_zones": len(violations_de_zones(board_livre, conn)),
             # Non vide : ce placement est CALCULE (graine en etoile), pas tire.
             "centres_etoile": centres_etoile,
             # Second critere de choix entre tirages LEGAUX — sans lui, deux

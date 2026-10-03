@@ -35,6 +35,29 @@ if not os.environ.get("KICAD_SYMBOL_DIR"):
             break
 
 
+@pytest.fixture(autouse=True)
+def _jamais_attendre_la_vraie_jvm(monkeypatch):
+    """Un test ne doit ni attendre ni relancer la JVM Freerouting REELLE.
+
+    `_api_freerouting_prete` patiente puis relance la JVM quand l API se tait
+    alors que son processus tourne. Dans le conteneur, une JVM tourne : un test
+    qui simule « API absente » attendrait 30 s puis tuerait la JVM du service.
+    Les tests de ce mecanisme re-patchent ces deux points eux-memes.
+    """
+    # Importe ici, et non seulement lu dans sys.modules : un test qui charge le
+    # module tard (TestClient, `main`) doit etre protege lui aussi.
+    try:
+        from routers import routing
+    except Exception:  # noqa: BLE001 — un test sans le service n a rien a proteger
+        routing = None
+    if routing is not None and hasattr(routing, "_jvm_api_lancee"):
+        monkeypatch.setattr(routing, "_jvm_api_lancee", lambda: False)
+    # Un rapport DRC memorise par un test ne doit pas servir au suivant.
+    if routing is not None and hasattr(routing, "_vider_cache_drc"):
+        routing._vider_cache_drc()
+    yield
+
+
 @pytest.fixture(scope="session")
 def stm32_board_bytes() -> bytes:
     """Board STM32 de référence (committé dans examples/) — 17 composants, 12 nets."""

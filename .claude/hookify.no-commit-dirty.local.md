@@ -12,4 +12,4 @@ pattern: git commit
 2. Fichiers ajoutés sont **spécifiques** (pas git add -A)
 3. Message de commit suit le format **conventional commits** (feat/fix/refactor/docs...)
 
-Si type-check non exécuté → annuler et lancer `npm run type-check` d'abord.
+Si type-check non exécuté → annuler et lancer `pnpm type-check` d'abord.

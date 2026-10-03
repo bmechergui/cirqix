@@ -103,6 +103,18 @@ describe('problemesDuSchema — ce que le DRC ne voit pas', () => {
       connections: [{ name: 'A', pins: [{ ref: 'J1', pin: 1 }, { ref: 'R1', pin: 1 }] }, { name: 'B', pins: [{ ref: 'J1', pin: 2 }, { ref: 'R1', pin: 2 }] }],
     })).toEqual([]);
   });
+  it('nomme une broche placée dans deux nets (l ancien exemple LM7805 du prompt)', () => {
+    const p = problemesDuSchema({
+      components: [{ ref: 'U1', value: 'LM7805', footprint: 'TO-220', symbol: 'Regulator_Linear:L7805' }, { ref: 'C1', value: '100nF', footprint: '0603', symbol: 'Device:C' }],
+      nets: ['VIN', 'VOUT'],
+      connections: [
+        { name: 'VIN', pins: [{ ref: 'U1', pin: 'IN' }, { ref: 'C1', pin: 1 }] },
+        { name: 'VOUT', pins: [{ ref: 'U1', pin: 'OUT' }, { ref: 'C1', pin: 1 }] },
+      ],
+    });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toContain('C1.1');
+  });
 });
 
 describe('le second essai porte les problèmes, puis on refuse', () => {

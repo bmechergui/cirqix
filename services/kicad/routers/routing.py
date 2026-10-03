@@ -130,8 +130,15 @@ class RouteAutoRequest(BaseModel):
     # lire pendant que celle-ci route. Optionnelle : un appelant qui ne la
     # fournit pas route exactement comme avant, sans rien publier.
     progress_key: Optional[str] = Field(default=None)
+    # Palier (couches) ou commencer l echelle : celui ou un placement GARDE
+    # avait deja atteint 95 % (decision validee le 2026-10-02). Absent, on part
+    # de 2 comme toujours.
+    palier_depart: Optional[int] = Field(default=None)
 
     def model_post_init(self, _context: Any) -> None:
+        if self.palier_depart is not None and (
+                self.palier_depart < 2 or self.palier_depart % 2):
+            raise ValueError("palier_depart must be an even layer count >= 2")
         # ⚠️ `layers` est un PLAFOND depuis le 2026-08-21, plus une consigne :
         # le service part de 2 et escalade jusqu a lui. Le modele n acceptait
         # que 2, 4 ou 8 — la grille des PLANS — et rejetait donc un plafond
@@ -180,6 +187,11 @@ class RouteAutoResponse(BaseModel):
     # declenche — au lieu de lire `skipped` comme un service eteint.
     # `skipped` reste vrai et aucun board n est rendu : on n invente rien.
     verdict: Optional[str] = None
+    # Le plus haut palier ou un tirage a reellement tourne (D-2026-09-25-e).
+    # L agrandissement de la carte se juge sur lui : le board livre peut n avoir
+    # que 2 couches apres un essai a 8. `None` quand la boucle des paliers n a
+    # pas tourne (cas simples) : le client retombe alors sur `layers`.
+    layers_tried: Optional[int] = None
 
 
 # ----------------------------------------------------------------------------
@@ -403,7 +415,7 @@ def _recycler_la_jvm() -> None:
         logger.warning("freerouting : recyclage apres routage impossible (%s)", exc)
 
 
-def _find_freerouting_api() -> Optional[str]:
+def _find_freerouting_api(timeout_s: float = 2.0) -> Optional[str]:
     """Return Freerouting API base URL if the server is reachable, else None."""
     import urllib.request
 
@@ -413,10 +425,63 @@ def _find_freerouting_api() -> Optional[str]:
             f"{base}{_FREEROUTING_API_PREFIX}/system/status",
             headers=_freerouting_api_headers(),
         )
-        urllib.request.urlopen(req, timeout=2)
+        urllib.request.urlopen(req, timeout=timeout_s)
         return base
     except Exception:
         return None
+
+
+# La JVM de l API, et elle seule — meme motif que `_tuer_la_jvm`.
+_MOTIF_JVM_API = r"^(/usr/bin/)?java -jar /opt/freerouting/freerouting\.jar --api_server"
+
+# Patience accordee a une JVM qui tourne mais ne repond pas encore.
+_ATTENTE_API_S: float = 30.0
+
+
+def _jvm_api_lancee() -> bool:
+    """Le processus de la JVM de l API existe-t-il ? Faux si on ne peut le dire."""
+    try:
+        return subprocess.run(["pgrep", "-f", _MOTIF_JVM_API],
+                              capture_output=True, timeout=5).returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _api_freerouting_prete(attente_s: float = _ATTENTE_API_S) -> Optional[str]:
+    """L URL de l API Freerouting, en attendant la JVM plutot que de s en passer.
+
+    ⚠️ Mesure du 2026-09-29, carte-09, placement fige du 24 : la sonde (2 s)
+    a echoue SANS RIEN JOURNALISER, et `route_auto` est tombe sur le CLI, qui a
+    tourne 18 min pour rendre 83 %. Le meme moteur, par l API, rend cette carte
+    en quelques secondes. La JVM est relancee apres chaque routage et chaque
+    job fige : une JVM pas encore prete est un etat NORMAL, pas une panne.
+
+    On attend donc la JVM tant que son processus tourne, on la relance si elle
+    reste muette, et on dit pourquoi on renonce. Le CLI reste le secours d une
+    JVM absente — surveille, desormais, comme l API (`_run_freerouting`).
+    Garde : tests/test_freerouting_jamais_sans_surveillance.py.
+    """
+    base = _find_freerouting_api()
+    if base:
+        return base
+    if not _jvm_api_lancee():
+        logger.warning("freerouting : API injoignable et aucune JVM d API en cours "
+                       "— repli sur le CLI")
+        return None
+    debut = time.time()
+    while time.time() - debut < attente_s:
+        time.sleep(2.0)
+        base = _find_freerouting_api(timeout_s=5.0)
+        if base:
+            logger.info("freerouting : API prete apres %.0f s d attente",
+                        time.time() - debut)
+            return base
+    logger.warning("freerouting : API muette %.0f s alors que sa JVM tourne — "
+                   "on la relance", attente_s)
+    if _tuer_la_jvm():
+        return _find_freerouting_api(timeout_s=5.0)
+    logger.warning("freerouting : JVM relancee sans reponse — repli sur le CLI")
+    return None
 
 
 # Reglages passes a Freerouting a l enfilement du job.
@@ -781,6 +846,28 @@ _LIGNE_PASSE_RE = re.compile(
     r".*score of ([\d.]+) \((\d+) unrouted")
 
 
+def _nom_du_job_dans_le_journal(log_text: str, short_name: str) -> str:
+    """Le nom sous lequel le journal désigne le job qu'on attend.
+
+    Le `short_name` rendu par l'API, s'il figure dans le journal ; sinon
+    l'étiquette de l'UNIQUE job qui y figure — le lecteur ne rend que ce qui a
+    été écrit depuis le départ du job, et la JVM est recyclée. Deux jobs et
+    aucun nom API reconnu : on ne devine pas.
+
+    ⚠️ Carte-09 compacte, 2026-09-28 : deux jobs de repli GND ont tourné
+    999 passes sans progrès (13,5 et 7,5 min), sans qu'aucune coupure ne tire.
+    Tout le bloc de mesure dépendait du `short_name` : vide, ou absent du
+    journal, il désarmait À LA FOIS la fenêtre de passes et les 300 s sans
+    progrès, alors que le job écrivait ses passes sous son étiquette.
+    """
+    noms = {m.group(1) for m in _LIGNE_PASSE_RE.finditer(log_text)}
+    if short_name and short_name in noms:
+        return short_name
+    if len(noms) == 1:
+        return noms.pop()
+    return short_name
+
+
 def _passes_sans_progres(log_text: str, short_name: str) -> int:
     """Passes consecutives du job `short_name` sans le moindre progres.
 
@@ -807,6 +894,75 @@ def _passes_sans_progres(log_text: str, short_name: str) -> int:
         else:
             plat += 1
     return plat
+
+
+class _VerdictFige:
+    """Ce que le suivi a mesure quand il decide de couper."""
+
+    def __init__(self, unrouted: int, plat: int, passes: int, muet: bool):
+        self.unrouted = unrouted
+        self.plat = plat
+        self.passes = passes
+        self.muet = muet
+
+
+class _SuiviStagnation:
+    """Les criteres de coupure de l API, appliques au journal d un job CLI.
+
+    Memes fonctions, donc memes seuils : fenetre de passes selon ce qu il
+    reste (`_fenetre_stagnation`), temps SANS PROGRES compte depuis le dernier
+    NOUVEAU MINIMUM, silence rapporte a la cadence. Le CLI 2.1.0 ignore `-mp` :
+    sans ce suivi, il tournait jusqu au budget (18 min pour 83 %, 2026-09-29).
+    """
+
+    def __init__(self, horloge=None):
+        self._horloge = horloge or time.time
+        maintenant = self._horloge()
+        self.dernier_unrouted = 0
+        self.dernier_progres_a = maintenant
+        self.depart_silence = maintenant
+        self.premiere_passe_a = None
+        self.premiere_passe = 0
+        self.derniere_passe = 0
+
+    def observer(self, journal: str) -> Optional[_VerdictFige]:
+        """Rend un verdict s il faut couper, `None` s il faut attendre."""
+        maintenant = self._horloge()
+        nom = _nom_du_job_dans_le_journal(journal, "")
+        lignes = _LIGNE_PASSE_RE.findall(journal)
+        if lignes and not nom:
+            # Plusieurs jobs dans le journal (un job de la JVM survit a cote du
+            # CLI) : on ne sait pas lequel juger. On ne coupe pas — le budget
+            # reste la borne, comme avant.
+            return None
+        try:
+            plat = _passes_sans_progres(journal, nom)
+        except Exception:  # noqa: BLE001 — sans mesure on attend
+            plat = 0
+        unrouted = next((int(u) for j, _, _, u in reversed(lignes) if j == nom), 0)
+        if _nouveau_minimum(unrouted, self.dernier_unrouted):
+            self.dernier_unrouted = unrouted
+            self.dernier_progres_a = maintenant
+        passe = _numero_de_passe(lignes, nom)
+        if passe > self.derniere_passe:
+            if self.premiere_passe_a is None:
+                self.premiere_passe_a = maintenant
+                self.premiere_passe = passe
+            self.derniere_passe = passe
+            self.depart_silence = maintenant
+        vues = (self.derniere_passe - self.premiere_passe + 1
+                if self.premiere_passe_a is not None else 0)
+        cadence = ((maintenant - self.premiere_passe_a) / vues
+                   if self.premiere_passe_a is not None and vues > 0 else 0.0)
+        muet = _routeur_muet(maintenant - self.depart_silence, cadence, vues)
+        fenetre = _fenetre_effective(_fenetre_stagnation(unrouted), _ABANDON_AUTORISE)
+        if _faut_couper(plat, fenetre, muet,
+                        sans_progres_s=_temps_sans_progres(
+                            self.dernier_unrouted > 0,
+                            maintenant - self.dernier_progres_a),
+                        cadence_s=cadence):
+            return _VerdictFige(unrouted, plat, self.derniere_passe, muet)
+        return None
 
 
 def _api(method: str, path: str, payload: Optional[dict] = None,
@@ -1010,7 +1166,13 @@ def _route_with_freerouting_api(
         # zero a chaque avancee reelle ; c est elle qui coupe un routeur
         # BAVARD mais bloque, cas que `_routeur_muet` ne pouvait pas voir.
         _dernier_progres_a = time.time()
+        _derniere_trace_a = 0.0
         short_name = str(job.get("short_name", "")).upper()
+        if not short_name:
+            # Sans nom court, on lira le job sous son etiquette du journal
+            # (`_nom_du_job_dans_le_journal`) — sinon aucune coupure ne jouerait.
+            logger.warning("job Freerouting %s sans short_name — il sera lu sous "
+                           "son etiquette du journal", job_id)
         while time.time() < deadline:
             status = _appel("GET", f"{pre}/jobs/{job_id}")
             state = status.get("state", "")
@@ -1023,15 +1185,16 @@ def _route_with_freerouting_api(
             # a la passe 4 et 995 passes identiques suivent : 44 minutes de
             # politesse. Le journal est la seule fenetre sur l interieur ; s il
             # est illisible, on retombe sur l attente classique.
-            if short_name and _FREEROUTING_LOG.is_file():
+            if _FREEROUTING_LOG.is_file():
                 journal_du_job = lecteur.lire()
+                nom_job = _nom_du_job_dans_le_journal(journal_du_job, short_name)
                 try:
-                    plat = _passes_sans_progres(journal_du_job, short_name)
+                    plat = _passes_sans_progres(journal_du_job, nom_job)
                 except Exception:
                     plat = 0
                 derniere = _LIGNE_PASSE_RE.findall(journal_du_job)
                 unrouted = next((int(u) for j, _, _, u in reversed(derniere)
-                                 if j == short_name), 0)
+                                 if j == nom_job), 0)
                 fenetre = _fenetre_effective(
                     _fenetre_stagnation(unrouted), _ABANDON_AUTORISE)
                 # ⚠️ DEUX DECISIONS DISTINCTES, ET C EST LA CAUSE DE MES TROIS
@@ -1061,7 +1224,7 @@ def _route_with_freerouting_api(
                 if _nouveau_minimum(unrouted, dernier_unrouted):
                     dernier_unrouted = unrouted
                     _dernier_progres_a = time.time()
-                passe = _numero_de_passe(derniere, short_name)
+                passe = _numero_de_passe(derniere, nom_job)
                 # ⚠️ La mesure existait deja — elle servait uniquement, en
                 # interne, a couper l attente d un job fige. Elle ne
                 # sortait pas du service : l utilisateur voyait « routage
@@ -1095,6 +1258,17 @@ def _route_with_freerouting_api(
                 cadence = ((time.time() - premiere_passe_a) / vues
                            if premiere_passe_a and vues > 0 else 0.0)
                 muet = _routeur_muet(time.time() - depart_silence, cadence, vues)
+                # Trace de diagnostic (2026-09-29) : sur carte-09, deux jobs de
+                # repli GND ont tourne 999 passes sans progres alors que la
+                # coupure a 300 s sans progres aurait du tirer. Une ligne par
+                # minute dit ce que la boucle MESURE, pour trouver pourquoi.
+                if time.time() - _derniere_trace_a >= 60:
+                    _derniere_trace_a = time.time()
+                    logger.info(
+                        "attente job %s : passe %d, %d non routes (min %d), plat %d, "
+                        "fenetre %d, sans progres %.0f s, cadence %.2f s, abandon %s",
+                        nom_job or "?", passe, unrouted, dernier_unrouted, plat, fenetre,
+                        time.time() - _dernier_progres_a, cadence, _ABANDON_AUTORISE)
                 if _faut_couper(plat, fenetre, muet,
                                 sans_progres_s=_temps_sans_progres(
                                     dernier_unrouted > 0,
@@ -1124,6 +1298,10 @@ def _route_with_freerouting_api(
                                       passes=derniere_passe)
             time.sleep(2)
         else:
+            # Un job qu on cesse d attendre est un job a TUER (`cancel` 501) :
+            # sinon il court pendant les tirages suivants (2026-10-01, budgets
+            # courts des replis GND).
+            _tuer_la_jvm()
             raise RuntimeError("Freerouting API timeout")
 
         output = _appel("GET", f"{pre}/jobs/{job_id}/output")
@@ -1197,7 +1375,8 @@ def _board_partiel_par_cli(pcb_bytes: bytes, passes: int,
                     (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                     pistes=_PISTES_A_PROTEGER,
                 ), encoding="utf-8")
-            _run_freerouting(paths, dsn, ses, int(budget_s), max_passes=passes)
+            _run_freerouting(paths, dsn, ses, int(budget_s), max_passes=passes,
+                             surveiller=False)
             board = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
         if not board:
             logger.warning("partiel : le CLI n a rendu aucun board")
@@ -1300,7 +1479,7 @@ def _find_freerouting() -> Optional[tuple[str, str]]:
 
 def _run_freerouting(
     paths: tuple[str, str], dsn: Path, ses: Path, timeout_s: int,
-    max_passes: int = 100,
+    max_passes: int = 100, nets_routables: int = 0, surveiller: bool = True,
 ) -> None:
     """Invoke Freerouting CLI. Raises on non-zero exit or timeout.
 
@@ -1308,6 +1487,16 @@ def _run_freerouting(
     passes avec `-mp 3`), pas plus que `max_passes` par l API. Le parametre
     est transmis tel quel, pour une version qui l honorerait ; ne pas lui
     preter d effet aujourd hui.
+
+    ⚠️ Le processus est SURVEILLE comme un job de l API (`_SuiviStagnation`)
+    et arrete s il fige : `RoutageFige`, que l escalade traite comme un tirage
+    fige. Avant le 2026-09-29, `subprocess.run` attendait tout le budget —
+    18 min pour 83 % sur carte-09. Un CLI arrete n ecrit pas de .ses : rien
+    n est perdu qu on aurait eu.
+
+    `surveiller=False` pour le rejeu d un tirage DEJA fige
+    (`_board_partiel_par_cli`) : il n a de valeur que s il converge seul, et
+    seul son budget le borne.
     """
     java, jar = paths
     cmd = [
@@ -1316,11 +1505,45 @@ def _run_freerouting(
         "-do", str(ses),
         "-mp", str(max(1, int(max_passes))),
     ]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout_s, check=False,
-    )
-    if result.returncode != 0 and not ses.exists():
-        raise RuntimeError(f"Freerouting exit {result.returncode}")
+    from tools.journal_freerouting import LecteurIncremental
+    # Cree AVANT le lancement : il ne rend que les lignes de CE processus.
+    lecteur = LecteurIncremental(_FREEROUTING_LOG)
+    suivi = _SuiviStagnation()
+    debut = time.time()
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            code = proc.poll()
+            if code is not None:
+                break
+            if time.time() - debut >= timeout_s:
+                logger.warning("Freerouting CLI : budget de %d s epuise — processus arrete",
+                               timeout_s)
+                raise subprocess.TimeoutExpired(cmd, timeout_s)
+            if surveiller and _FREEROUTING_LOG.is_file():
+                verdict = suivi.observer(lecteur.lire())
+                if verdict is not None:
+                    logger.warning(
+                        "Freerouting CLI fige (%d passes sans progres, %d non routes%s) "
+                        "— processus arrete apres %.0f s",
+                        verdict.plat, verdict.unrouted,
+                        ", routeur muet" if verdict.muet else "", time.time() - debut)
+                    # ⚠️ Aucun compte lu (muet avant sa premiere passe) n est pas
+                    # « zero non route » : RoutageFige en deduirait 100 %. On
+                    # declare tout non route, soit 0 %.
+                    raise RoutageFige(
+                        unrouted=verdict.unrouted if verdict.unrouted > 0 else nets_routables,
+                        nets=nets_routables, passes=verdict.passes)
+            time.sleep(2)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+    if code != 0 and not ses.exists():
+        raise RuntimeError(f"Freerouting exit {code}")
 
 
 # Repertoire ou deposer le board a CHAQUE etape, pour inspection dans KiCad.
@@ -1549,11 +1772,10 @@ _MAX_LAYERS: int = 16
 # routeur.
 _TIRAGES_ROUTAGE_PAR_PALIER = 3
 
-# Tirages consecutifs sans le moindre gain que l on tolere avant de cesser
-# d escalader. Deux paliers entiers a plat : en dessous, deux tirages
-# malchanceux au meme palier couperaient l escalade avant d avoir essaye le
-# palier suivant.
-_TOLERANCE_SANS_GAIN = 2 * _TIRAGES_ROUTAGE_PAR_PALIER
+# ⚠️ Plus de regle « deux paliers sans gain » (D-2026-09-25-e, validee) : tant
+# que le meilleur board n est pas livrable, l escalade va jusqu au plafond du
+# plan, et seul le budget l arrete. Banc du 2026-09-25, carte-08 : la regle a
+# coupe a 6 couches, livre un 2 couches a 85 %, et empeche l agrandissement.
 
 
 def _tirage_de_preuve() -> bool:
@@ -1704,14 +1926,162 @@ _CONDAMNE_PCT: int = 50
 
 def _escalade_incrementale() -> bool:
     """Le palier suivant garde-t-il les pistes du meilleur board du palier
-    quitte ? Defaut : oui (D-2026-09-10-b). Reglage `escalade_incrementale`
-    pour l A/B — la mesure anterieure (kicad-tools, `--preserve-existing`)
-    est perimee et ne vaut pas pour Freerouting."""
+    quitte ? Defaut : NON depuis le 2026-09-24 (D-2026-09-24-g).
+
+    Consigne de l utilisateur : « fais le tirage libre, s il fait 100 % et
+    rapide ». Le tirage PROTEGE d un nouveau palier echouait a CHAQUE fois :
+    Freerouting journalise des dizaines de « Multiple vias skipped », rend
+    HTTP 500, et le repli CLI donne 0 %. Mesure sur carte-07 le 2026-09-24,
+    passage 2 -> 4 couches : protege 0 %, puis tirage LIBRE 100 % (11 s de
+    routeur). Meme motif la veille sur nucleo-f401 (protege 0 %, libre 100 %).
+    Un tirage qui echoue toujours coute un tirage par palier et n apporte rien.
+
+    Le mecanisme (D-2026-09-10-b) est CONSERVE, rearmable par le reglage de
+    banc `escalade_incrementale`, pour le comparer une fois repare."""
     try:
         from tools.reglages_banc import reglage
-        return bool(reglage("escalade_incrementale", True))
+        return bool(reglage("escalade_incrementale", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _tirage_libre(rang_au_palier: int) -> bool:
+    """Ce tirage repart-il du board PLACE, sans rien proteger ?
+
+    Le premier tirage d un palier (rang 0) reste INCREMENTAL — D-2026-09-10-b,
+    validee le 2026-09-11 : il protege les pistes du meilleur board et ne route
+    que ce qui manque, ce qui est souvent le plus rapide. Les tirages suivants
+    du MEME palier sont LIBRES.
+
+    ⚠️ Pourquoi. La protection posee au changement de palier restait en place
+    pour TOUS les tirages du palier : apres le tout premier tirage, plus aucun
+    n etait libre. Mesure sur `nucleo-f401` (2026-09-23) :
+
+        2 couches -> 96 %     4 couches (proteges) -> 98 %
+        6 couches (proteges) -> 96 %     arret : 7 paliers sans gain
+
+    Six couches PIRES que quatre : on ne donnait pas plus de couches a la
+    carte, on en donnait au premier tirage pour qu il se rapiece. Un tirage
+    libre de la meme carte, au meme placement, a rendu 100 % sur DEUX couches
+    en 98 s (2026-09-24).
+
+    `_palier_meilleur` garde le meilleur de tous : un tirage libre ne peut rien
+    degrader. Aucun seuil touche, aucun tirage ajoute — seule la NATURE des
+    tirages deja prevus change. Reglage `tirages_libres_par_palier` pour l A/B.
+    Garde : `tests/test_tirage_libre_par_palier.py`.
+    """
+    if rang_au_palier <= 0:
+        return False
+    try:
+        from tools.reglages_banc import reglage
+        return bool(reglage("tirages_libres_par_palier", True))
     except Exception:  # noqa: BLE001
         return True
+
+
+def _reservations_du_tirage(vias: list, protege: bool) -> list:
+    """Les vias a reserver pour CE tirage : aucun si le tirage est protege.
+
+    Un tirage protege complete le meilleur board du palier precedent, qui
+    porte DEJA ses vias d echappement. Mesure du 2026-09-25 sur carte-07
+    (2 -> 4 couches, board a 97 % protege) : sans reservation 7 s et 100 % ;
+    avec, 220 s ou plus, 4 vias poses au meme point, et en production HTTP 500
+    puis 0 % a chaque changement de palier.
+    Garde : tests/test_tirage_protege_sans_reservation.py.
+    """
+    return [] if protege else list(vias)
+
+
+def _passe_prioritaire_au_tirage(rang: int) -> bool:
+    """Ce tirage (rang compte a partir de 1) fait-il le routage PRIORITAIRE ?
+
+    D-2026-09-25-a. Desactive par defaut jusqu a la mesure A/B (reglage de banc
+    `routage_prioritaire`). Quand il est actif, un tirage sur DEUX : une piste
+    protegee mal posee reviendrait a chaque tirage sans qu aucun ne puisse la
+    rattraper ; l alternance garde des tirages libres, et `_palier_meilleur`
+    garde le meilleur des deux familles.
+    Garde : tests/test_passe_prioritaire_cablee.py.
+    """
+    try:
+        from tools.reglages_banc import reglage
+        actif = bool(reglage("routage_prioritaire", False))
+    except Exception:  # noqa: BLE001
+        actif = False
+    return actif and int(rang) % 2 == 1
+
+
+def _sans_les_pastilles_reliees(vias: list, reliees: set) -> list:
+    """Une pastille, un proprietaire : une broche reliee en priorite ne garde
+    pas son via d echappement reserve."""
+    if not reliees:
+        return list(vias)
+    return [v for v in vias if not (isinstance(v, dict)
+                                    and (str(v.get("ref")), str(v.get("pad"))) in reliees)]
+
+
+def _relier_liaisons_critiques(pcb_bytes: bytes, nets_plan: set,
+                               vias_reserves: list) -> tuple:
+    """ROUTAGE PRIORITAIRE (D-2026-09-25-a). Rend `(board, pastilles_reliees)`.
+
+    Pose, AVANT le routage general, les liaisons critiques detectees par
+    `tools.nets_critiques` : quartz, charges du quartz, decouplages — des
+    pistes courtes, sur une face, sans via. Le board rendu est ensuite PROTEGE
+    avec la liaison GND : Freerouting route autour.
+
+    ⚠️ NE PEUT QU AMELIORER : nets perdus, ou board aggrave apres recoulee des
+    plans, et on rend le board recu. Jugee AVANT recoulee, la passe serait
+    condamnee a tort (lecon du 2026-09-22 : un board qui vient de recevoir du
+    cuivre porte des erreurs que la coulee efface).
+    """
+    from tools.nets_critiques import liaisons_critiques
+    try:
+        liaisons = liaisons_critiques(pcb_bytes.decode("utf-8", "replace"),
+                                      nets_plan=tuple(nets_plan) or ("GND",))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("routage prioritaire : detection impossible (%s)", exc)
+        return pcb_bytes, set()
+    if not liaisons:
+        logger.info("routage prioritaire : aucune liaison critique courte a poser")
+        return pcb_bytes, set()
+    reserves = [{"ref": v.get("ref"), "pad": v.get("pad"), "x": v["via_x"], "y": v["via_y"]}
+                for v in vias_reserves if isinstance(v, dict) and "via_x" in v]
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            entree, sortie, resultat = (Path(tmp) / n for n in ("in.kicad_pcb", "out.kicad_pcb", "r.json"))
+            entree.write_bytes(pcb_bytes)
+            _run_pcbnew_operation({
+                "operation": "relier_liaisons",
+                "pcb": str(entree), "output": str(sortie), "result": str(resultat),
+                "liaisons": json.dumps([l.en_dict() for l in liaisons]),
+                "vias_reserves": json.dumps(reserves),
+            })
+            if not sortie.is_file():
+                return pcb_bytes, set()
+            bilan = json.loads(resultat.read_text(encoding="utf-8"))
+            relie = sortie.read_bytes()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("routage prioritaire impossible (%s) — board recu conserve", exc)
+        return pcb_bytes, set()
+    logger.info(
+        "routage prioritaire : %d liaison(s) posee(s) sur %d visee(s), %d renoncee(s) %s",
+        bilan.get("poses", 0), len(liaisons), bilan.get("renonces", 0),
+        bilan.get("raisons") or "")
+    if not bilan.get("poses"):
+        return pcb_bytes, set()
+    perdus = _nets_du_board(pcb_bytes) - _nets_du_board(relie)
+    if perdus:
+        logger.error("routage prioritaire : %d net(s) PERDU(S) — board recu conserve", len(perdus))
+        return pcb_bytes, set()
+    relie = _fill_zones(relie)
+    if _aggrave_le_board(pcb_bytes, relie):
+        logger.warning("routage prioritaire : erreurs ajoutees — board recu conserve")
+        return pcb_bytes, set()
+    reliees = {(str(r), str(n)) for paire in bilan.get("reliees") or [] for r, n in paire}
+    # La ligne « posee(s) » plus haut précède les gardes : seule celle-ci dit
+    # que le cuivre de la passe entre dans le tirage.
+    logger.info("routage prioritaire : RETENUE, %d liaison(s) dans le tirage",
+                bilan.get("poses", 0))
+    return relie, reliees
 
 
 def _placement_condamne(fige_max: int) -> bool:
@@ -1723,19 +2093,6 @@ def _placement_condamne(fige_max: int) -> bool:
     except Exception:  # noqa: BLE001
         seuil = _CONDAMNE_PCT
     return fige_max < seuil
-
-
-def _tirages_epuises_au_palier(meilleur_pct: int) -> bool:
-    """Faut-il abandonner les tirages restants de ce palier et monter ?
-
-    Un ZERO ne declenche rien : « 0 % (aucun moteur) » n est pas un verdict de
-    routage mais une panne — Freerouting injoignable, budget epuise avant le
-    repli. Monter d une couche sur une panne serait payer une couche pour un
-    defaut d infrastructure. On re-tire au meme palier.
-
-    Garde : tests/test_escalade_precoce.py.
-    """
-    return 0 < meilleur_pct < _SEUIL_REDRAW_PCT
 
 
 # Au-dessus de ce pourcentage, QUITTER le palier est le pari perdant : on
@@ -1775,8 +2132,8 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     """Tirages supplementaires a accorder AVANT de quitter ce palier.
 
     Un ZERO n en recoit aucun : « 0 % (aucun moteur) » est une panne, pas un
-    verdict de routage. Un palier hors d atteinte non plus — il est deja
-    abandonne par `_tirages_epuises_au_palier`.
+    verdict de routage. Un palier sous `_SEUIL_PALIER_A_PORTEE` non plus : il
+    garde ses trois tirages ordinaires (D-2026-10-03-b).
 
     Garde : tests/test_palier_a_portee.py.
     """
@@ -1785,80 +2142,32 @@ def _tirages_bonus(meilleur_pct: int) -> int:
     return 0
 
 
-def _escalade_peut_aider(percent_moteur: int, erreurs: int,
-                         manquants: Optional[set] = None,
-                         orpheline_sans_issue: bool = False) -> bool:
-    """Ajouter des couches peut-il encore servir a quelque chose ?
+def _escalade_peut_aider(percent_livre: int, erreurs: int,
+                         manquants: Optional[set] = None) -> bool:
+    """Le palier suivant peut-il servir ? OUI des que le board LIVRE n est pas
+    complet ou pas propre — QUEL QUE SOIT le net qui manque (D-2026-09-24-e).
 
-    ⚠️ `orpheline_sans_issue` (D-2026-09-14-b, validee) : la broche de masse
-    orpheline est NOMMEE et son repli cible vient d echouer a ce palier. Le
-    palier suivant offre alors un chemin — deux couches internes pour une
-    piste de masse courte — et l appelant n accorde ce palier qu UNE fois.
+    Consigne de l utilisateur : « si tu n atteins pas 100 % routage tu dois
+    escalader le numero de couche ».
 
-    ⚠️ Non quand le ROUTEUR annonce 100 % sur un board propre. Il a tout relie
-    par des pistes ; l ecart restant vient de NOTRE verification, qui regarde
-    le board livre et compte un net confie au PLAN — GND, qui n est pas route
-    mais COULE. Du cuivre supplementaire n y change rien, par construction.
+    ⚠️ La regle du 2026-08-31 refusait d escalader quand seul un net confie au
+    PLAN manquait (GND), sur la foi d `arduino-uno` : 93 % a 2, 4 et 6 couches.
+    Ce jour-la les paliers superieurs repartaient du routage precedent, pistes
+    protegees ; depuis le 2026-09-24 ils routent librement (D-2026-09-24-a), et
+    la mesure du meme jour la contredit — `carte-08` passe de 98 % (GND seul) a
+    100 % a 4 couches, tandis que `carte-07` restait a 97 % sans jamais monter.
+    A 2 couches, B.Cu porte le plan ET des signaux : les pistes decoupent le
+    plan et enferment une broche de masse. Deux couches de plus pour les
+    signaux, c est un plan moins decoupe.
 
-    Mesure du 2026-08-31, `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a
-    100 % et un seul net incomplet (GND) a chaque palier. Douze minutes
-    d escalade pour zero gain — et une carte 6 couches proposee la ou 2
-    suffisent, alors qu elle coute sensiblement plus cher a fabriquer.
+    ⚠️ Lire le pourcentage LIVRE (`_percent_verifie`), jamais celui du moteur :
+    le moteur ignore les nets confies au plan, et c est exactement ce qui
+    laissait une masse orpheline passer pour « le routeur a fini ».
 
-    L escalade existe pour donner de la place a un routeur qui n y arrive pas.
-    Elle n a aucun sens face a un routeur qui a fini.
-
-    ⚠️ On continue en revanche si le board porte des ERREURS : une violation de
-    fabricabilite (clearance, largeur) peut, elle, se resoudre avec plus
-    d espace — contrairement a une pastille de plan orpheline.
-
-    Garde : tests/test_escalade_inutile.py.
+    L arret reste borne par le plafond du plan et par le budget (D-2026-09-25-e).
+    Garde : tests/test_escalade_toute_connexion_manquante.py.
     """
-    if erreurs > 0:
-        return True
-    # ⚠️ REGLE DEMANDEE PAR L UTILISATEUR (2026-08-31), et mieux fondee que la
-    # precedente, qui ne regardait que « le moteur annonce-t-il 100 % » :
-    #
-    #     il manque du GND     -> le plan ne l atteint pas   -> PAS d escalade
-    #     il manque du SIGNAL  -> le routeur manque de place -> escalade
-    #
-    # Un net confie au PLAN n est pas route par des pistes : il est COULE. Du
-    # cuivre supplementaire ne l atteint pas davantage. Preuve mesuree sur
-    # `arduino-uno` : 93 % a 2, 4 puis 6 couches, moteur a 100 % chaque fois,
-    # un seul net incomplet — GND. Six tirages, douze minutes, zero gain.
-    #
-    # ⚠️ Le critere est CE QUI manque, jamais COMBIEN. Un seul net de signal
-    # justifie l escalade ; dix nets de plan ne la justifient pas.
-    if manquants:
-        # ⚠️ PLUS DE REPLI SUR `_NETS_DE_PLAN_CONNUS` ICI (2026-09-10). Depuis
-        # qu on route GND (decision validee par l utilisateur), une liste vide
-        # signifie « rien n est confie au plan » — pas « on ne sait pas ». Le
-        # repli faisait retomber sur {GND, AGND, DGND} et REFUSAIT d escalader
-        # sur une masse manquante, alors qu elle est desormais une piste comme
-        # une autre, que du cuivre en plus peut relier. Garde :
-        # tests/test_escalade_selon_le_net.py (un net de masse NON confie au
-        # plan fait escalader).
-        # On lit la CONSTANTE, pas la fonction : le module la reaffecte lui-meme
-        # (`global`) pendant `_router_en_incluant_gnd`, et les gardes la
-        # monkeypatchent. Lire la fonction ici rendrait ces deux mecanismes
-        # inertes — mesure : deux gardes rouges sur une regle pourtant juste.
-        plan = set(_NETS_CONFIES_AU_PLAN)
-        if plan and set(manquants) <= plan:
-            # D-2026-09-14-b : l orpheline est nommee et son repli vient
-            # d echouer ici — le palier suivant lui donne un chemin.
-            return bool(orpheline_sans_issue)
-    return percent_moteur < 100
-
-
-def _escalade_epuisee(sans_gain: int) -> bool:
-    """Faut-il cesser d escalader apres `sans_gain` paliers consecutifs plats ?
-
-    Ne change JAMAIS le resultat rendu : `route_auto` garde le meilleur palier,
-    pas le dernier. Seul le nombre d essais diminue.
-
-    Garde : tests/test_escalade_sans_gain.py.
-    """
-    return sans_gain > _TOLERANCE_SANS_GAIN
+    return erreurs > 0 or bool(manquants) or percent_livre < 100
 
 
 # Capacite d echappement : signaux qu un COTE de boitier peut sortir, par couche.
@@ -2429,20 +2738,155 @@ def _aggrave_le_board(avant: bytes, apres: bytes, *,
     return aggrave
 
 
+_TYPES_PENDANTS = ("track_dangling", "via_dangling")
+_TETE_CUIVRE_RE = re.compile(r"\n\t\((segment|arc|via)\b")
+
+
+def _fin_du_bloc(texte: str, debut: int) -> int:
+    """Indice juste apres la parenthese qui ferme le bloc ouvert a `debut`.
+
+    Les guillemets sont sautes : un nom de net comme `Net-(U1-Pad3)` porte des
+    parentheses qui ne comptent pas.
+    """
+    profondeur, i, dans_chaine = 0, debut, False
+    while i < len(texte):
+        c = texte[i]
+        if dans_chaine:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                dans_chaine = False
+        elif c == '"':
+            dans_chaine = True
+        elif c == "(":
+            profondeur += 1
+        elif c == ")":
+            profondeur -= 1
+            if profondeur == 0:
+                return i + 1
+        i += 1
+    return len(texte)
+
+
+def _supprimer_cuivre_par_uuid(pcb_bytes: bytes, uuids: set) -> bytes:
+    """Retire les pistes, arcs et vias dont l `uuid` est vise — et rien d autre."""
+    texte = pcb_bytes.decode("utf-8", errors="replace")
+    morceaux, curseur = [], 0
+    for m in _TETE_CUIVRE_RE.finditer(texte):
+        if m.start() < curseur:
+            continue
+        fin = _fin_du_bloc(texte, m.start() + 1)
+        bloc = texte[m.start():fin]
+        if any('(uuid "%s")' % u in bloc for u in uuids):
+            morceaux.append(texte[curseur:m.start()])
+            curseur = fin
+    morceaux.append(texte[curseur:])
+    return "".join(morceaux).encode("utf-8")
+
+
+def _retirer_pendants(pcb_bytes: bytes, max_passes: int = 5) -> bytes:
+    """Retire le cuivre PENDANT du board livre : pistes et vias qui ne relient rien.
+
+    Mesure du 2026-10-01 : les boards livres du banc ont 0 erreur, mais des
+    `track_dangling` (carte-09 : 4) et `via_dangling`. kicad-tools les dit « non
+    reparables » ; le DRC donne pourtant leur `uuid`. Retirer un pendant peut en
+    reveler un autre : quelques passes. Jamais pire : ni erreur ni connexion
+    manquante en plus, sinon on rend le board recu.
+    Garde : tests/test_board_livre_sans_pendants.py.
+    """
+    board = pcb_bytes
+    rapport = _rapport_drc(board)
+    for _ in range(max_passes):
+        if not rapport or _sans_verdict(rapport):
+            return board
+        uuids = {it.get("uuid") for v in rapport.get("violations") or []
+                 if v.get("type") in _TYPES_PENDANTS
+                 for it in v.get("items") or [] if it.get("uuid")}
+        if not uuids:
+            return board
+        candidat = _supprimer_cuivre_par_uuid(board, uuids)
+        if candidat == board:
+            return board
+        apres = _rapport_drc(candidat)
+        if (_sans_verdict(apres)
+                or _compte_erreurs(apres) > _compte_erreurs(rapport)
+                or len(apres.get("unconnected_items") or [])
+                > len(rapport.get("unconnected_items") or [])):
+            logger.warning("pendants : leur retrait aggraverait le DRC — board conserve")
+            return board
+        logger.info("pendants : %d piste(s)/via(s) sans issue retire(s)", len(uuids))
+        board, rapport = candidat, apres
+    return board
+
+
+def _livrer_sans_pendants(res: "RouteAutoResponse") -> "RouteAutoResponse":
+    """Copie de `res` dont le board ne porte plus de cuivre pendant."""
+    if not res.kicad_pcb_b64:
+        return res
+    try:
+        avant = base64.b64decode(res.kicad_pcb_b64)
+        apres = _retirer_pendants(avant)
+    except Exception as exc:  # noqa: BLE001 — un nettoyage ne casse jamais une livraison
+        logger.warning("pendants : nettoyage impossible (%s)", exc)
+        return res
+    if apres == avant:
+        return res
+    return res.model_copy(update={
+        "kicad_pcb_b64": base64.b64encode(apres).decode("ascii"),
+        "via_count": _count_vias(apres),
+        "track_length_mm": _track_length_mm(apres),
+    })
+
+
 def _erreurs_ajoutees(r_avant: dict, r_apres: dict) -> dict:
     """{type: +n} des erreurs DRC en plus dans `r_apres` (types en hausse seulement)."""
+    from tools.drc import est_bloquante
+
     def _par_type(rap):
         c: dict = {}
         for v in (rap or {}).get("violations") or []:
-            if isinstance(v, dict) and v.get("severity") == "error":
+            # Meme predicat que `_compte_erreurs` : la garde doit NOMMER ce
+            # qu elle refuse, y compris un percage recoupe.
+            if est_bloquante(v):
                 c[v.get("type", "?")] = c.get(v.get("type", "?"), 0) + 1
         return c
     a, b = _par_type(r_avant), _par_type(r_apres)
     return {k: b[k] - a.get(k, 0) for k in sorted(b) if b[k] > a.get(k, 0)}
 
 
+# Rapports DRC deja calcules, par (contenu du board, regles du projet).
+# ⚠️ Banc du 2026-10-01 : les finitions font 50 % du temps de routage et
+# re-jugent souvent un board INCHANGE (gardes « jamais pire », comparaisons des
+# replis). Avis de Codex : seuls les rapports VALIDES sont gardes, toujours
+# rendus en copie ; borne pour la memoire. Garde : tests/test_rapport_drc_memorise.py.
+_CACHE_DRC: "dict[tuple, dict]" = {}
+_CACHE_DRC_MAX = 32
+
+
+def _vider_cache_drc() -> None:
+    _CACHE_DRC.clear()
+
+
 def _rapport_drc(pcb_bytes: bytes) -> dict:
     """Rapport DRC de kicad-cli, ou dict vide s il est indisponible."""
+    import copy
+    import hashlib
+    projet = _projet_kicad(pcb_bytes)
+    cle = (hashlib.sha1(pcb_bytes).hexdigest(),
+           hashlib.sha1(json.dumps(projet, sort_keys=True).encode()).hexdigest())
+    if cle in _CACHE_DRC:
+        return copy.deepcopy(_CACHE_DRC[cle])
+    rapport = _rapport_drc_calcule(pcb_bytes, projet)
+    if not _sans_verdict(rapport):
+        if len(_CACHE_DRC) >= _CACHE_DRC_MAX:
+            # Tolerant : la route /drc peut l appeler hors du verrou de routage.
+            _CACHE_DRC.pop(next(iter(_CACHE_DRC), None), None)
+        _CACHE_DRC[cle] = copy.deepcopy(rapport)
+    return rapport
+
+
+def _rapport_drc_calcule(pcb_bytes: bytes, projet) -> dict:
+    """Lance kicad-cli sur `pcb_bytes` avec les regles `projet`."""
     cli = shutil.which("kicad-cli")
     if cli is None:
         return _SANS_VERDICT.copy()
@@ -2458,7 +2902,6 @@ def _rapport_drc(pcb_bytes: bytes) -> dict:
         # ⚠️ Le fichier PROJET doit etre a cote du board, sinon kicad-cli
         # applique ses defauts et le verdict porte sur des regles que la
         # carte ne suit pas.
-        projet = _projet_kicad(pcb_bytes)
         if projet is not None:
             (Path(tmp) / "b.kicad_pro").write_text(
                 json.dumps(projet), encoding="utf-8")
@@ -2616,6 +3059,52 @@ def _liberation_active() -> bool:
 
 def _pres_d_une_zone_liberee(x: float, y: float, zones, rayon: float) -> bool:
     return any((x - zx) ** 2 + (y - zy) ** 2 <= rayon * rayon for zx, zy in zones)
+
+
+def _segment_pres_d_une_zone(a, b, zones, rayon: float) -> bool:
+    """Le SEGMENT `a`-`b` passe-t-il a moins de `rayon` d une zone ?
+
+    ⚠️ On mesurait la distance des deux EXTREMITES, jamais celle du segment.
+    Une piste qui TRAVERSE la zone avec ses deux bouts au loin y echappait
+    donc en silence — et c est le cas le plus frequent, puisqu une piste qui
+    genve une pastille passe a cote d elle sans s y arreter.
+
+    Mesure sur `nucleo-f401` (2026-09-24, board reel d une campagne de
+    production) : la pastille `U1.37 [MORPHO_R_6]` restait non reliee, et le
+    couloir qui y mene etait barre par
+
+        MORPHO_R_5  B.Cu  (169.004,110.826) -> (159.287,101.109)
+
+    une diagonale de 13,7 mm qui passe a **0,533 mm** du point non relie et que
+    la regle des extremites declarait PROTEGEE. Quatre paliers d escalade
+    (2 -> 4 -> 6 couches) n ont rien pu y faire : on ajoutait du cuivre autour
+    d un verrou qu on interdisait de toucher.
+
+    Le rayon ne change PAS. C est la mesure qui devient celle que la regle
+    annonce depuis le debut. Garde : `tests/test_liberation_segment_traversant.py`.
+    """
+    if not zones:
+        return False
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    long2 = dx * dx + dy * dy
+    r2 = rayon * rayon
+    for zx, zy in zones:
+        if long2 <= 0.0:
+            # ⚠️ `start == end` existe dans de vrais boards : diviser par la
+            # longueur y leverait ZeroDivisionError AU MILIEU d un routage.
+            if (zx - ax) ** 2 + (zy - ay) ** 2 <= r2:
+                return True
+            continue
+        # Projection bornee au segment : le point le plus proche est soit un
+        # bout, soit un point interieur — jamais au-dela.
+        t = ((zx - ax) * dx + (zy - ay) * dy) / long2
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        px, py = ax + t * dx, ay + t * dy
+        if (zx - px) ** 2 + (zy - py) ** 2 <= r2:
+            return True
+    return False
 
 # ⚠️ NOM DISTINCT de `_SEGMENT_RE` (ligne ~847), qui sert a `_track_length_mm`
 # et ne capture que quatre groupes. Reutiliser le nom l ecrasait EN SILENCE :
@@ -2910,9 +3399,12 @@ def _bloc_wiring_pistes(pcb_bytes, liberer=None) -> str:
         # plan. Mesure du 2026-09-14, carte-10 : « 51 LIBERE(S) » a chaque palier,
         # puis « Pad 8 [GND] of U1 <-> Via [GND] » au DRC final — le via reste, le
         # troncon a disparu.
-        if zones and nom not in _NETS_CONFIES_AU_PLAN and (
-                _pres_d_une_zone_liberee(float(x1), float(y1), zones, _RAYON_LIBERATION_MM)
-                or _pres_d_une_zone_liberee(float(x2), float(y2), zones, _RAYON_LIBERATION_MM)):
+        # ⚠️ La distance se mesure au SEGMENT, jamais a ses deux extremites :
+        # une piste qui traverse la zone avec ses bouts au loin y echappait en
+        # silence. Voir `_segment_pres_d_une_zone`.
+        if zones and nom not in _NETS_CONFIES_AU_PLAN and _segment_pres_d_une_zone(
+                (float(x1), float(y1)), (float(x2), float(y2)),
+                zones, _RAYON_LIBERATION_MM):
             liberes += 1
             continue
         lignes.append(
@@ -3142,6 +3634,75 @@ def _nets_declares_dsn(dsn_text: str) -> set:
             for n in _NET_DECLARE_RE.findall(_section_network(dsn_text))}
 
 
+# Deux trous plus proches que l ecart minimal font un `hole_to_hole` : pour une
+# reservation, « a cote » veut dire sous cet ecart (runner : _ECART_TROUS_MM).
+_ECART_RESERVE_UM: float = 500.0
+# Deux vias proteges a moins de 50 um sont le MEME via, ecrit deux fois (meme
+# tolerance que `_TOLERANCE_VIA_EXISTANT_NM` du runner).
+_MEME_VIA_UM: float = 50.0
+_VIA_WIRING_RE = re.compile(r'\(via\s+"[^"]*"\s+(-?[\d.]+)\s+(-?[\d.]+)')
+_FIL_WIRING_RE = re.compile(r'\(wire\s+\(path\s+\S+\s+[\d.]+\s+((?:-?[\d.]+\s*)+)\)')
+
+
+def _dedoublonner_wiring(reserves: str, proteges: str) -> tuple:
+    """Une pastille, un seul proprietaire, dans le bloc `(wiring)` du DSN.
+
+    Rend `(reserves, proteges, vias_reserves_ecartes, doublons_proteges)` :
+
+    - un via RESERVE a moins de `_ECART_RESERVE_UM` d un via PROTEGE est
+      ecarte, avec son troncon — la pastille est deja servie ;
+    - un element PROTEGE ecrit deux fois (meme ligne, ou via a moins de
+      `_MEME_VIA_UM` d un autre) n est garde qu une fois : le meilleur board du
+      palier et la liaison GND recalculee portent souvent le meme via.
+
+    Mesure du 2026-09-25 (carte-07, tirage protege 4 couches) : sans doublon
+    7 s et 100 % ; avec 4 vias au meme point, 220 s ou plus, puis HTTP 500 en
+    production. Garde : tests/test_une_pastille_un_proprietaire.py.
+    """
+    import math
+
+    def _proche(pt, pts, tol):
+        return any(math.hypot(pt[0] - q[0], pt[1] - q[1]) < tol for q in pts)
+
+    vias_gardes, lignes_p, vues, doublons = [], [], set(), 0
+    for ligne in (proteges or "").splitlines():
+        cle = ligne.strip()
+        if not cle:
+            continue
+        m = _VIA_WIRING_RE.search(ligne)
+        if cle in vues or (m and _proche((float(m.group(1)), float(m.group(2))),
+                                         vias_gardes, _MEME_VIA_UM)):
+            doublons += 1
+            continue
+        vues.add(cle)
+        if m:
+            vias_gardes.append((float(m.group(1)), float(m.group(2))))
+        lignes_p.append(ligne)
+
+    lignes_r, ecartes, via_ecarte = [], 0, None
+    for ligne in (reserves or "").splitlines():
+        m = _VIA_WIRING_RE.search(ligne)
+        if m:
+            pt = (float(m.group(1)), float(m.group(2)))
+            if _proche(pt, vias_gardes, _ECART_RESERVE_UM):
+                ecartes += 1
+                via_ecarte = pt
+                continue
+            via_ecarte = None
+            lignes_r.append(ligne)
+            continue
+        f = _FIL_WIRING_RE.search(ligne)
+        if f and via_ecarte is not None:
+            coords = [float(v) for v in f.group(1).split()]
+            if len(coords) >= 2 and _proche((coords[-2], coords[-1]), [via_ecarte], 1.0):
+                continue   # le troncon du via ecarte part avec lui
+        lignes_r.append(ligne)
+
+    if not ecartes and not doublons:
+        return reserves, proteges, 0, 0
+    return chr(10).join(lignes_r), chr(10).join(lignes_p), ecartes, doublons
+
+
 def _injecter_wiring(dsn_text: str, vias: list, net: str,
                      pistes: Optional[bytes] = None) -> str:
     """Ecrit les vias reserves dans le bloc `(wiring)` du DSN.
@@ -3175,6 +3736,15 @@ def _injecter_wiring(dsn_text: str, vias: list, net: str,
             if pistes else "")
     if declares:
         fils = _garder_les_nets_declares(fils, declares, "piste")
+    # ⚠️ UNE PASTILLE, UN PROPRIETAIRE (2026-09-25). Trois sources ecrivent des
+    # vias ici — reservation, meilleur board protege, liaison GND — et visent
+    # souvent les memes pastilles : « Multiple vias skipped », routeur trente
+    # fois plus lent, HTTP 500. Voir `_dedoublonner_wiring`.
+    bloc, fils, ecartes, doublons = _dedoublonner_wiring(bloc, fils)
+    if ecartes or doublons:
+        logger.info(
+            "wiring : %d via(s) reserve(s) ecarte(s) (deja un via protege a cote), "
+            "%d element(s) protege(s) en double retire(s)", ecartes, doublons)
     bloc = chr(10).join(x for x in (bloc, fils) if x)
     if not bloc:
         return dsn_text
@@ -3232,10 +3802,12 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
         """
         trouves = []
         for morceau in bloc.split('(pad "')[1:]:
-            nom = morceau.split('"', 1)[0]
+            nom, reste = morceau.split('"', 1)
             m = re.search(r'\(net \d+ "([^"]*)"\)', morceau)
             if m:
-                trouves.append((nom, m.group(1)))
+                # Le TYPE suit le nom : `(pad "2" smd roundrect`. On le garde
+                # pour trier plus bas — voir la raison au point de ciblage.
+                trouves.append((nom, m.group(1), reste.lstrip().startswith("smd")))
         return trouves
 
     # Nets presents sur au moins DEUX boitiers : les seuls a router.
@@ -3252,15 +3824,25 @@ def _pads_signal_fine_pitch(pcb_bytes: bytes) -> list:
                or re.search(r'\(fp_text reference "([^"]+)"', bloc))
         pads = _pads(bloc)
         par_bloc.append((ref.group(1) if ref else "", pads))
-        for net in {n for _, n in pads}:
+        # ⚠️ TOUTES les pastilles comptent pour les LIAISONS : une broche de
+        # LQFP reliee a un connecteur traversant EST une liaison. Ne compter
+        # que les CMS ici ferait disparaitre ce net, et avec lui le fanout du
+        # LQFP.
+        for net in {n for _, n, _ in pads}:
             occurrences[net] = occurrences.get(net, 0) + 1
     liaisons = {n for n, k in occurrences.items() if k >= 2 and n}
 
     cibles = []
     for ref, pads in par_bloc:
-        if not ref or len(pads) < _PADS_FINE_PITCH:
+        # ⚠️ Densite ET ciblage sur les CMS seulement : « fine-pitch » est une
+        # notion CMS, et une traversante est deja reliee aux deux faces par son
+        # percage. Meme defaut que `_pads_gnd_fine_pitch` — un connecteur 2x20
+        # passait pour un boitier dense. Garde :
+        # `tests/test_traversantes_jamais_visees.py`.
+        cms = [(nom, net) for nom, net, est_cms in pads if est_cms]
+        if not ref or len(cms) < _PADS_FINE_PITCH:
             continue
-        for nom, net in pads:
+        for nom, net in cms:
             if net in _NETS_CONFIES_AU_PLAN or net not in liaisons:
                 continue
             cibles.append((ref, nom))
@@ -3316,7 +3898,19 @@ def _pads_gnd_fine_pitch(pcb_bytes: bytes, nets_plan: set) -> list:
             continue
         pads = []
         for morceau in bloc_fp.split('(pad "')[1:]:
-            nom = morceau.split('"', 1)[0]
+            nom, reste = morceau.split('"', 1)
+            # ⚠️ CMS SEULEMENT, pour la densite ET pour le ciblage. Une
+            # traversante est deja reliee aux deux faces par son propre
+            # percage. On comptait TOUTES les pastilles : un connecteur 2x20
+            # au pas de 2,54 mm (40 pastilles) passait pour un boitier
+            # « fine-pitch », et sa broche GND recevait un via d echappement…
+            # dans son propre percage. Mesure sur `carte-11` : -0,050 mm bord a
+            # bord, sur un board declare drc_clean. La soeur
+            # `_pads_plan_a_degager` excluait deja les traversantes depuis le
+            # 2026-09-02 ; le filtre n avait jamais ete porte ici.
+            # Garde : `tests/test_traversantes_jamais_visees.py`.
+            if not reste.lstrip().startswith("smd"):
+                continue
             m = (re.search(r'\(net \d+ "([^"]*)"\)', morceau)
                  or re.search(r'\(net "([^"]*)"\)', morceau))
             pads.append((nom, m.group(1) if m else ""))
@@ -3910,7 +4504,10 @@ def _percent_verifie(pcb_bytes: bytes, percent_moteur: int, routables: int) -> i
     nets = _nets_incomplets(rapport)
     if not nets:
         return percent_moteur
-    reel = int(round(100 * max(0, routables - len(nets)) / routables))
+    # ⚠️ PLAFONNE A 99 : 1 net manquant sur 250 s arrondissait a
+    # round(99,6) = 100 — le cas de SUCCES rendu sur une carte incomplete,
+    # et `route_auto` s arretait la. Des qu un net manque, on est sous 100.
+    reel = min(99, int(round(100 * max(0, routables - len(nets)) / routables)))
     if reel < percent_moteur:
         # ⚠️ NOMMER les nets, pas seulement les compter. Sans leur nom on ne
         # peut pas savoir si le manque vient d un SIGNAL que le routeur a rate
@@ -4083,6 +4680,65 @@ def _relier_les_amas_orphelins(pcb_bytes: bytes) -> bytes:
                 "%s", relies, examines,
                 " (dont %d par DEGAGEMENT du couloir)" % degages if degages else "")
     return recousu
+
+
+def _relier_les_pastilles_orphelines(pcb_bytes: bytes) -> bytes:
+    """Raccorde par une courte piste une broche GND orpheline SEULE au plan principal.
+
+    Mesure du 2026-09-30, carte-07 : apres un routage a 100 %, 2 ou 3 broches
+    GND restent isolees (U1-8, C20-2). `_relier_les_amas_orphelins` ne vise que
+    des ILOTS portant une pastille ; une broche nue — son ilot retire, son via
+    emporte — n etait visee par personne, et les replis Freerouting coutaient
+    ~5 min par tirage, pour rien. Avis concordant de Codex, Grok, GLM et
+    OpenCode. Meme mecanique cote runner (A*, couloir verifie, degagement).
+
+    Ne peut qu AMELIORER : le board est conserve si le bilan DRC s aggrave.
+    Garde : tests/test_pastille_gnd_orpheline_reliee.py.
+    """
+    if not _NETS_CONFIES_AU_PLAN:
+        return pcb_bytes
+    try:
+        orphelines = _pads_isolees_du_plan(_rapport_drc(pcb_bytes), pcb_bytes)
+    except Exception as exc:  # noqa: BLE001 — sans mesure, on ne touche a rien
+        logger.warning("raccord des broches orphelines : mesure impossible (%s)", exc)
+        return pcb_bytes
+    if not orphelines:
+        return pcb_bytes
+    with tempfile.TemporaryDirectory() as tmp:
+        entree = Path(tmp) / "in.kicad_pcb"
+        sortie = Path(tmp) / "out.kicad_pcb"
+        resultat = Path(tmp) / "r.json"
+        entree.write_bytes(pcb_bytes)
+        try:
+            _run_pcbnew_operation({
+                "operation": "relier_pastilles",
+                "pcb": str(entree),
+                "output": str(sortie),
+                "result": str(resultat),
+                "pads": json.dumps([[str(r), str(p)] for r, p in orphelines]),
+                "largeur_mm": str(_TRONCON_LARGEUR_MM),
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("raccord des broches orphelines impossible (%s) — board conserve", exc)
+            return pcb_bytes
+        if not sortie.is_file():
+            return pcb_bytes
+        bilan = json.loads(resultat.read_text(encoding="utf-8"))
+        relie = sortie.read_bytes()
+    relies = int(bilan.get("relies", 0) or 0)
+    if not relies:
+        logger.warning("raccord des broches orphelines : %d vue(s), AUCUNE reliee — %s",
+                       len(orphelines),
+                       _resume_des_echecs(bilan.get("echecs")) or "raison inconnue")
+        return pcb_bytes
+    # Recouler avant de juger : la piste neuve traverse le plan coule.
+    relie = _fill_zones(relie)
+    if _aggrave_le_board(pcb_bytes, relie):
+        logger.warning("raccord des broches orphelines : erreurs ajoutees — board conserve")
+        return pcb_bytes
+    logger.info("raccord des broches orphelines : %d piste(s) posee(s) pour %d broche(s) (%s)",
+                relies, len(orphelines), ", ".join("%s-%s" % o for o in orphelines[:6]))
+    return relie
 
 
 def _retirer_ilots_flottants(pcb_bytes: bytes) -> bytes:
@@ -4316,6 +4972,67 @@ def _gnd_orphelines(pcb_bytes: bytes) -> int:
 _REPLI_GND_MAX_MANQUANTES: int = 8
 
 
+def _paliers_a_partir_de(essais: list, palier_depart: Optional[int]) -> list:
+    """L echelle sans les paliers sous `palier_depart` — au moins le plafond.
+
+    Decision validee le 2026-10-02 (carte-09 : trois reroutages d un placement
+    garde, chacun repartant de 2 couches, 82 min). Garde :
+    tests/test_palier_de_depart.py.
+    """
+    if not palier_depart or not essais:
+        return list(essais)
+    garde = [p for p in essais if p >= palier_depart]
+    return garde or [max(essais)]
+
+
+def _finitions_inutiles(res: "RouteAutoResponse", meilleur: "Optional[RouteAutoResponse]") -> bool:
+    """Ce tirage peut-il se passer des finitions (couture, replis, DRC) ?
+
+    Decision validee le 2026-10-01 (avis de Grok) : les finitions font 50 % du
+    temps du banc, y compris sur des tirages ensuite ecartes — un 66 % recevait
+    les memes minutes qu un 99 %. On finit un tirage a portee
+    (`_SEUIL_PALIER_A_PORTEE`) ou qui bat le meilleur board deja fini ; le
+    premier tirage est toujours fini.
+    Garde : tests/test_finitions_reservees.py.
+    """
+    if meilleur is None or not res.kicad_pcb_b64 or res.skipped:
+        return False
+    # Marge d un point : `res` porte le % du MOTEUR, `meilleur` le % VERIFIE
+    # par le DRC — deux mesures voisines, pas identiques (revue du 2026-10-01).
+    return (res.routed_percent < _SEUIL_PALIER_A_PORTEE
+            and res.routed_percent < meilleur.routed_percent - 1)
+
+
+def _secours_peut_gagner(avant: Optional[tuple], brut: Optional[tuple],
+                         orphelines: int) -> bool:
+    """Le secours BRUT merite-t-il les reparations locales avant comparaison ?
+
+    Les couples sont `(erreurs, manquantes)`. Les reparations locales ne
+    relient que des broches GND : elles ne font pas descendre un secours a
+    57 manquantes sous le 1 du board garde (carte-07, 2026-10-01, 5 min
+    perdues). Sans verdict d un cote, on ne paie rien.
+    Garde : tests/test_secours_perdu_sans_reparation.py.
+    """
+    if avant is None or brut is None:
+        return False
+    return brut[1] <= avant[1] + max(0, int(orphelines))
+
+
+def _replis_gnd_inutiles(manquants: set, nets_plan, palier: int, plafond: int) -> bool:
+    """Un SIGNAL manque et un palier plus haut existe : sauter les replis GND.
+
+    Mesure du 2026-09-29, carte-09 a 2 couches : 686 s de finitions, surtout
+    les replis GND, sur un tirage ou manquaient EXT3_2 et EXT4_1. Un repli GND
+    ne relie aucun signal : le tirage n etait pas livrable, et l escalade
+    (D-2026-09-24-e) montait de toute facon. Au plafond, pas de palier
+    suivant : le repli reste le seul levier.
+    Garde : tests/test_pas_de_repli_gnd_quand_un_signal_manque.py.
+    """
+    plan = set(nets_plan or ()) | _NETS_DE_PLAN_CONNUS
+    signaux = {n for n in (manquants or ()) if n and n not in plan}
+    return bool(signaux) and int(palier) < int(plafond)
+
+
 def _repli_gnd_vaut_le_coup(manquantes: int) -> bool:
     try:
         from tools.reglages_banc import reglage
@@ -4521,6 +5238,11 @@ def _pins_gnd_a_garder(pcb_bytes: bytes, orphelines, nets_plan,
 
 _REPLI_CIBLE_TOURS = 4
 
+# Budget TOTAL du repli GND cible, tous tours compris. Decision validee le
+# 2026-10-01 (banc des dix cartes : replis tous refuses, 2 a 13 min par
+# tirage ; la carte montait ensuite d un palier et atteignait 100 %).
+_BUDGET_REPLI_CIBLE_S = 60
+
 
 def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: float,
                               orphelines, final: bytes) -> tuple:
@@ -4529,11 +5251,23 @@ def _repli_gnd_cible_iteratif(etendu: bytes, req: "RouteAutoRequest", budget_s: 
 
     Mesure du 2026-09-11 (carte-08) : un tour passe de 6 a 5 orphelines en
     11 s ; s arreter la laissait 5 broches pour un repli global de 15 min.
+
+    ⚠️ `budget_s` est un budget TOTAL pour tous les tours (decision validee le
+    2026-10-01, `_BUDGET_REPLI_CIBLE_S`) : chaque tour recoit le reste, et on
+    s arrete quand il ne reste plus un budget de niveau.
     """
+    fin = time.time() + budget_s
     for tour in range(1, _REPLI_CIBLE_TOURS + 1):
         if not orphelines:
             break
-        cible = _router_gnd_cible(etendu, req, budget_s, orphelines, deja_route=final)
+        reste = fin - time.time()
+        if reste < _MIN_LEVEL_BUDGET_S:
+            logger.info("repli GND CIBLE : budget de %.0f s epuise apres %d tour(s)",
+                        budget_s, tour - 1)
+            break
+        # ENTIER : `RouteAutoRequest.timeout_s` refuse 59,9 s (« 1 validation
+        # error », 2026-10-02) — le repli ne tournait jamais.
+        cible = _router_gnd_cible(etendu, req, int(reste), orphelines, deja_route=final)
         if cible is None:
             break
         avant_c, apres_c = _bilan_drc(final), _bilan_drc(cible)
@@ -4662,11 +5396,29 @@ def _fill_zones(pcb_bytes: bytes) -> bytes:
 
 
 def _compte_erreurs(rapport: dict) -> int:
-    """Nombre de violations de severite `error`. Les warnings ne bloquent rien."""
-    return sum(
-        1 for v in (rapport.get("violations") or [])
-        if isinstance(v, dict) and v.get("severity") == "error"
-    )
+    """Nombre de violations qui font REFUSER la carte a la fabrication.
+
+    ⚠️ On comptait les seules `error`, sur la premisse « les warnings ne
+    bloquent rien ». Faux pour un percage : KiCad classe `hole_to_hole` en
+    avertissement, et `carte-11` est sortie `drc_clean` avec des percages qui
+    se recoupent. Une reparation qui en AJOUTAIT passait la garde « ne peut
+    qu ameliorer ». La liste vit dans `tools/drc.py`, UNE fois, lue par ce
+    juge-ci comme par celui de la commande.
+    """
+    from tools.drc import est_bloquante
+    return sum(1 for v in (rapport.get("violations") or []) if est_bloquante(v))
+
+
+def _types_bloquants(rapport: dict) -> dict:
+    """{type: nombre} des violations qui font refuser la carte — les MEMES que
+    `_compte_erreurs`, pour que le journal nomme ce que le juge a compte."""
+    from tools.drc import est_bloquante
+    types: dict = {}
+    for v in (rapport.get("violations") or []):
+        if est_bloquante(v):
+            t = str(v.get("type") or "?")
+            types[t] = types.get(t, 0) + 1
+    return types
 
 
 def _pose_les_vias_d_echappement(pcb_bytes: bytes, isolees: list) -> bytes:
@@ -5725,7 +6477,7 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
     # endroit. Mesure du 2026-08-21 : « Freerouting echoue (... timed out
     # after 0 seconds) » alors qu il n avait jamais tourne, le Niveau 1 ayant
     # consomme tout le budget. Mieux vaut passer au suivant.
-    api_url = _find_freerouting_api()
+    api_url = _api_freerouting_prete()
     if api_url is not None and _budget_suffisant(_remaining_budget_s(deadline)):
         try:
             new_pcb = _route_with_freerouting_api(
@@ -5772,7 +6524,8 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                         (_NETS_CONFIES_AU_PLAN or ("GND",))[0],
                         pistes=_PISTES_A_PROTEGER,
                     ), encoding="utf-8")
-                _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline))
+                _run_freerouting(paths, dsn, ses, _remaining_budget_s(deadline),
+                                 nets_routables=net_count)
                 new_pcb = _specctra_roundtrip(_sans_pistes(pcb_bytes), ses)
             _guard_netlist_preserved(new_pcb, input_nets, "freerouting-cli")
             routed_pct = _measured_routed_percent(new_pcb, net_count)
@@ -5786,6 +6539,11 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
                 track_length_mm=_track_length_mm(new_pcb),
                 skipped=False,
             )
+        except RoutageFige:
+            # Meme verdict que le Niveau 1 : un tirage fige, que l escalade
+            # juge. Le laisser tomber sur kicad-tools rejouerait le meme board
+            # condamne, en plus lent.
+            raise
         except Exception as exc:
             # ⚠️ `HTTPException` COMPRISE — c'est ce que lève la garde netlist.
             #
@@ -5886,6 +6644,54 @@ def _route_auto_once(req: RouteAutoRequest) -> RouteAutoResponse:
         skipped=True,
         warning=reason,
     )
+
+
+class _MemoPreparation:
+    """Resultats de preparation d UN appel `route_auto`, par empreinte du board.
+
+    Mesure du 2026-09-29, carte-09 : 24 a 101 s de preparation par tirage,
+    refaite a chaque tirage d un palier alors que le board et les couches ne
+    changent pas. Chaque etape memorisee est deterministe (memes octets, meme
+    resultat) : la cle est l empreinte du board d ENTREE de l etape, jamais un
+    numero de tirage. Une valeur rendue est une copie : un appelant qui la
+    modifie ne touche pas la memoire.
+
+    ⚠️ Limites connues (revue du 2026-09-29) : ces etapes avalent leurs
+    exceptions et rendent un resultat neutre ; un echec PASSAGER (pcbnew ou DRC
+    sous charge) est donc rejoue pour les tirages suivants du meme appel, qui
+    le retentaient auparavant. Et les reglages de banc lus par ces etapes
+    (`plan_gnd_interne`, `regles_fine_pitch`) ne sont pas dans la cle : un
+    reglage change EN COURS d appel n est pas vu. Tous deux bornes a un appel.
+    """
+
+    def __init__(self) -> None:
+        self._memo: dict = {}
+        self.reutilises = 0
+
+    def obtenir(self, etape: str, board: bytes, extra, calcul):
+        import copy
+        import hashlib
+        cle = (etape, hashlib.sha1(board).hexdigest(), extra)
+        if cle in self._memo:
+            self.reutilises += 1
+            return copy.deepcopy(self._memo[cle])
+        valeur = calcul()
+        self._memo[cle] = copy.deepcopy(valeur)
+        return valeur
+
+
+def _chrono_tirage(palier: int, preparation_s: float, moteur_s: float,
+                   finitions_s: float, moteur: str) -> str:
+    """Une ligne de journal : ou part le temps d UN tirage.
+
+    Ajoute le 2026-09-29 : le temps d une carte dense se lisait « 42 min »,
+    sans dire si c etait le routeur, la preparation ou les finitions. La
+    mesure a montre que Freerouting en prenait souvent quelques secondes.
+    """
+    total = preparation_s + moteur_s + finitions_s
+    return ("chrono tirage %d couches : preparation %.0f s, moteur %.0f s (%s), "
+            "finitions %.0f s, total %.0f s"
+            % (palier, preparation_s, moteur_s, moteur, finitions_s, total))
 
 
 def _armer_abandon(actif: bool) -> None:
@@ -6003,7 +6809,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # recalculer sur la sortie fausserait le pourcentage.
     nets_routables = _count_routable_nets(pcb_bytes)
 
-    sans_gain = 0
+    # Le plus haut palier ou un tirage a REELLEMENT tourne : l agrandissement
+    # de la carte (D-2026-09-11-b) se juge sur lui, pas sur les couches du board
+    # livre — le meilleur board peut etre un 2 couches apres un essai a 8.
+    palier_max_essaye = 0
     meilleur_note = (-1, 10 ** 6)
     # ⚠️ Le palier de DEPART se deduit du board, il n est plus toujours 2.
     # `stm32-100` a brule 45 minutes a 2 couches — un palier qu aucun tirage
@@ -6018,8 +6827,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     # escalade sur PREUVE.
     #
     # Le prix est mesure et assume : sur stm32-100, un tirage a 2 couches coute
-    # ~44 min avant que `_tirages_epuises_au_palier` ne l abandonne. C est le
-    # cout d une preuve plutot que d une supposition.
+    # ~44 min. C est le cout d une preuve plutot que d une supposition.
     signaux = _signaux_a_echapper(pcb_bytes, set(_NETS_CONFIES_AU_PLAN))
     plancher = _couches_pour_echapper(signaux)
     if plancher > 2:
@@ -6046,19 +6854,26 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
     essais = _paliers_avec_tirages(
         _layer_ladder(req.layers), _TIRAGES_ROUTAGE_PAR_PALIER,
         plancher=plancher if _tirage_de_preuve() else 0)
+    if req.palier_depart:
+        logger.info("route_auto: placement garde — l echelle reprend a %d couches",
+                    req.palier_depart)
+    essais = _paliers_a_partir_de(essais, req.palier_depart)
     if plancher > 2 and _tirage_de_preuve():
         logger.info("route_auto: sous le plancher de %d couches, un seul tirage de "
                     "preuve par palier (D-2026-09-11-a) — echelle %s", plancher, essais)
     palier_courant: Optional[int] = None
     meilleur_du_palier = 0
+    # Rang du tirage DANS son palier : 0 = incremental, 1+ = libre. Voir
+    # `_tirage_libre` — sans lui, 6 couches faisaient pire que 4.
+    rang_au_palier = 0
+    # Preparation deterministe memorisee le temps de CET appel (`_MemoPreparation`).
+    memo_prep = _MemoPreparation()
     # ⚠️ Le bonus n est accorde qu UNE FOIS par palier : sinon une carte qui
     # plafonne a 99 % re-tirerait sans fin et ne verrait jamais 4 couches.
     bonus_accorde: set[int] = set()
-    # ⚠️ Le routeur a-t-il DEJA fini, sur un board propre ? Si oui, escalader
-    # est inutile par construction : l ecart restant vient d un net confie au
-    # PLAN, que du cuivre supplementaire ne relie pas.
+    # ⚠️ Le board LIVRE est-il complet et propre ? Alors monter d une couche
+    # ne peut rien apporter et coute plus cher a fabriquer (D-2026-09-24-e).
     escalade_inutile = False
-    palier_orpheline_accorde = False  # D-2026-09-14-b : un palier de plus, une fois
     # Boucle indexee, et non `for ... in essais` : le bonus INSERE des tirages
     # dans la file au moment ou l on s appreterait a quitter le palier.
     i_essai = 0
@@ -6113,10 +6928,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # couche ne peut rien apporter, et coute plus cher a fabriquer.
             if escalade_inutile:
                 logger.info(
-                    "route_auto: escalade arretee avant %d couches — le routeur "
-                    "annonce 100%% sur un board sans erreur ; ce qui manque est "
-                    "confie au PLAN, que du cuivre en plus ne relie pas",
-                    palier)
+                    "route_auto: escalade arretee avant %d couches — le board "
+                    "livre est complet et sans erreur", palier)
                 break
             if palier_courant is not None and palier_courant not in bonus_accorde:
                 bonus = _tirages_bonus(meilleur_du_palier)
@@ -6180,6 +6993,15 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "meilleur board (%d%%) PROTEGEES, le routeur complete "
                         "au lieu de repartir de zero",
                         palier, n_fils, meilleur.routed_percent)
+            else:
+                # ⚠️ RIEN n est protege en entrant dans ce palier (tirage libre,
+                # D-2026-09-24-g, ou pas encore de meilleur board). Sans cette
+                # remise a zero, la LIAISON GND du dernier tirage du palier
+                # quitte — posee sur un AUTRE empilage — restait protegee, et la
+                # nouvelle s y ajoutait : des vias en double dans le DSN, le
+                # defaut meme qu on chassait (revue du 2026-09-25).
+                _PISTES_A_PROTEGER = None
+                _ZONES_LIBEREES = []
             # ⚠️ ESCALADE INCREMENTALE (D-2026-09-10-b, validee par l utilisateur
             # le 2026-09-11 : « normalement on garde le routage et on ajoute »).
             # Le palier suivant recoit les pistes du MEILLEUR board du palier
@@ -6192,23 +7014,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # seconde fois DOUBLAIT les fils dans le DSN (mesure du 2026-09-11,
             # 09:08 : 673 pistes protegees deux fois, 4 couches -> 79 % apres
             # 88 % a 2). Le reglage `escalade_incrementale` gouverne ce bloc.
+            # On QUITTE le palier precedent : c est maintenant, et seulement
+            # maintenant, qu on sait s il a ete plat. Un palier compte UNE fois.
             palier_courant, meilleur_du_palier = palier, 0
-        # ⚠️ Abandonner les tirages RESTANTS d un palier hors d atteinte. Ils
-        # ne sont pas gratuits : sur stm32-100 ils ont mange les 3600 s et la
-        # carte n a jamais essaye 4 couches (mesure du 2026-08-29).
-        elif _tirages_epuises_au_palier(meilleur_du_palier):
-            logger.info(
-                "route_auto: tirages restants a %d couches abandonnes — %d%% "
-                "est trop loin de 100%% pour qu un re-tirage le rattrape "
-                "(ecart mesure : 26 points au plus)",
-                palier, meilleur_du_palier)
-            continue
-        if _escalade_epuisee(sans_gain):
-            logger.info(
-                "route_auto: escalade arretee avant %d couches — %d palier(s) "
-                "consecutif(s) sans gain, le meilleur est deja acquis",
-                palier, sans_gain)
-            break
+            rang_au_palier = 0
+        # ⚠️ PLUS D ABANDON D UN PALIER AU PREMIER TIRAGE SOUS 80 %
+        # (D-2026-10-03-b, validee par l utilisateur) : chaque palier a ses
+        # trois tirages. stm32-30 du 2026-10-03 : un seul tirage a 4 couches
+        # (74 %) a suffi a sauter le palier, alors que l ecart mesure entre
+        # tirages atteint 26 points. L ancienne regle (2026-08-29) protegeait
+        # le budget de stm32-100 ; c est desormais la coupure de stagnation et
+        # le budget borne des replis qui le protegent.
+        # Garde : tests/test_escalade_precoce.py.
         restant = _remaining_budget_s(deadline)
         if meilleur is not None and not _budget_suffisant(restant):
             logger.info(
@@ -6216,12 +7033,30 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 palier,
             )
             break
+        palier_max_essaye = max(palier_max_essaye, palier)
+
+        # ⚠️ TIRAGE LIBRE. Au-dela du premier tirage du palier, on ne protege
+        # RIEN : le tirage repart du board place, avec toutes les couches du
+        # palier. Sans cela, apres le tout premier tirage aucun n etait plus
+        # libre, et 6 couches faisaient pire que 4 (voir `_tirage_libre`).
+        # Decide AVANT `_expand_stackup` : apres, on routerait avec la
+        # protection du tirage precedent.
+        if _tirage_libre(rang_au_palier) and (_PISTES_A_PROTEGER or _ZONES_LIBEREES):
+            _PISTES_A_PROTEGER = None
+            _ZONES_LIBEREES = []
+            logger.info(
+                "route_auto: tirage %d a %d couches LIBRE — il repart du board "
+                "place, sans proteger les pistes du meilleur (%d%%)",
+                rang_au_palier + 1, palier,
+                meilleur.routed_percent if meilleur is not None else 0)
+        rang_au_palier += 1
 
         # ⚠️ Les plans sont coules APRES le routage, pas ici. Coules avant, le
         # routeur voyait la zone GND, en deduisait « GND est pris en charge » et
         # cessait de router ce net — alors que le plan ne peut PAS atteindre les
         # pattes d un LQFP-48. Ni le plan ni le routeur ne faisait le travail :
         # 3 connexions manquantes, qu aucun levier ne resorbait.
+        t_tirage = time.time()
         etendu = _expand_stackup(pcb_bytes, palier)
 
         # ⚠️ LE PLAN EST COULE ICI, AVANT LE ROUTAGE — sequence demandee par
@@ -6242,7 +7077,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         #
         # ⚠️ Un plan non REMPLI n est qu un contour, dont le routeur ne tient
         # aucun compte — meme defaut que celui du 2026-08-23.
-        etendu = _fill_zones(_add_ground_planes(etendu))
+        reutilises_avant = memo_prep.reutilises
+        etendu = memo_prep.obtenir("plan", etendu, palier,
+                                   lambda: _fill_zones(_add_ground_planes(etendu)))
         _deposer_etape("plan_coule", etendu)
 
         # ⚠️ Reserver AVANT de router : apres, il n y a plus de place. Mesure
@@ -6252,7 +7089,9 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # le routeur travaille autour, puis reposes apres le round-trip
         # Specctra, qui efface tout ce qui le precede.
         global _VIAS_RESERVES
-        _VIAS_RESERVES = _vias_a_reserver(etendu) if _NETS_CONFIES_AU_PLAN else []
+        _VIAS_RESERVES = (memo_prep.obtenir("vias_plan", etendu, (),
+                                            lambda: _vias_a_reserver(etendu))
+                          if _NETS_CONFIES_AU_PLAN else [])
 
         # ⚠️ FANOUT DES SIGNAUX — distinct de la reservation ci-dessus,
         # qui ne sert QUE le plan de masse. Grok l a souligne : reserver
@@ -6271,14 +7110,16 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         #
         # ⚠️ Ce n est PAS un manque de couches : `stm32-100` rend 99 % a
         # 2 couches et 87 % a 4. Le goulot est LOCAL.
-        _VIAS_RESERVES = _VIAS_RESERVES + _vias_signaux_a_reserver(etendu)
+        _VIAS_RESERVES = _VIAS_RESERVES + memo_prep.obtenir(
+            "vias_signaux", etendu, (), lambda: _vias_signaux_a_reserver(etendu))
 
         # ⚠️ ETAPE ③ DE LA SEQUENCE DEMANDEE, sous sa forme PREVENTIVE. Les
         # broches GND ne sont pas orphelines maintenant — elles le deviendront
         # quand les pistes de signal decouperont le plan autour d elles. On
         # leur reserve donc leur sortie tant que la place existe.
-        _VIAS_RESERVES = _VIAS_RESERVES + _vias_gnd_preventifs(
-            etendu, set(_NETS_CONFIES_AU_PLAN))
+        _VIAS_RESERVES = _VIAS_RESERVES + memo_prep.obtenir(
+            "vias_gnd", etendu, tuple(sorted(_NETS_CONFIES_AU_PLAN)),
+            lambda: _vias_gnd_preventifs(etendu, set(_NETS_CONFIES_AU_PLAN)))
 
         # ⚠️ ETAPE ③ : on ne se contente pas de RESERVER, on RELIE. La piste et
         # le via sont poses maintenant, tant que la place existe, puis
@@ -6288,11 +7129,36 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # KiCad : le DSN ne connait que les noms.
         _VIAS_RESERVES = _nommer_les_nets(
             _sans_doublons(_VIAS_RESERVES), etendu)
+        # ⚠️ TIRAGE PROTEGE : aucune reservation neuve (2026-09-25). A ce stade,
+        # `_PISTES_A_PROTEGER` ne porte que le meilleur board du palier
+        # precedent — la liaison GND ne s y ajoute que plus bas.
+        if _PISTES_A_PROTEGER and _VIAS_RESERVES:
+            logger.info(
+                "reservation : %d via(s) ecarte(s) — tirage protege, le board "
+                "garde porte deja ses vias d echappement", len(_VIAS_RESERVES))
+        _VIAS_RESERVES = _reservations_du_tirage(
+            _VIAS_RESERVES, protege=bool(_PISTES_A_PROTEGER))
 
         avant_liaison = etendu
-        etendu = _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN))
+        # ⚠️ ROUTAGE PRIORITAIRE (D-2026-09-25-a) : quartz, charges et
+        # decouplages d abord, par des pistes courtes, puis la liaison GND
+        # (qui voit ces pistes comme des obstacles), puis Freerouting. Un
+        # tirage sur deux, et seulement si le reglage l active.
+        if _passe_prioritaire_au_tirage(rang_au_palier):
+            etendu, reliees = _relier_liaisons_critiques(
+                etendu, set(_NETS_CONFIES_AU_PLAN), _VIAS_RESERVES)
+            _VIAS_RESERVES = _sans_les_pastilles_reliees(_VIAS_RESERVES, reliees)
+            _deposer_etape("prioritaire", etendu)
+        etendu = memo_prep.obtenir(
+            "liaison", etendu, tuple(sorted(_NETS_CONFIES_AU_PLAN)),
+            lambda: _relier_gnd_avant_routage(etendu, set(_NETS_CONFIES_AU_PLAN)))
         _deposer_etape("gnd_lie", etendu)
-        if etendu is not avant_liaison:
+        if memo_prep.reutilises > reutilises_avant:
+            logger.info("route_auto: preparation du palier %d reutilisee (%d etape(s) "
+                        "deja calculee(s) sur ce board)", palier,
+                        memo_prep.reutilises - reutilises_avant)
+        # Par CONTENU : une valeur memorisee n est pas forcement le meme objet.
+        if etendu != avant_liaison:
             _ajouter_aux_pistes_protegees(etendu)
 
         tentative = RouteAutoRequest(
@@ -6312,9 +7178,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             timeout_s=max(restant, _MIN_LEVEL_BUDGET_S),
             progress_key=req.progress_key,
         )
+        t_moteur = time.time()
         try:
             res = _route_auto_once(tentative)
         except RoutageFige as fige:
+            logger.info(_chrono_tirage(palier, t_moteur - t_tirage,
+                                       time.time() - t_moteur, 0.0, "fige"))
             # ⚠️ LA STAGNATION EST LA PREUVE QUE LE PALIER A ECHOUE — la regle
             # utilisateur « partir de 2, escalader sur preuve » est respectee,
             # seule l ATTENTE de la preuve raccourcit : ~2 min au lieu de 44.
@@ -6346,13 +7215,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # `_board_partiel_par_cli`).
             if meilleur_fige is None or int(fige.routed_percent or 0) > meilleur_fige[0]:
                 meilleur_fige = (int(fige.routed_percent or 0), etendu, int(fige.passes or 0))
-            sans_gain += 1
+            # Un tirage fige ne compte PAS un par un : c est le palier entier
+            # qui sera juge plat ou non, a sa sortie.
+            continue
+        t_finitions = time.time()
+        if _finitions_inutiles(res, meilleur):
+            logger.info(
+                "route_auto: tirage a %d%% (%d couches) sans finitions — sous %d%% et "
+                "pas mieux que le meilleur board (%d%%)", res.routed_percent, palier,
+                _SEUIL_PALIER_A_PORTEE, meilleur.routed_percent)
+            meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
             continue
 
-        # ⚠️ Initialise AVANT le bloc : lire cette variable par `locals()`
-        # serait fragile, et un tirage sans board la laisserait indefinie.
-        # Zero veut dire « le routeur n a rien annonce », donc on escalade.
-        percent_moteur = 0
         # Reparation ciblee : les broches fine-pitch que le plan n atteint pas
         # et que le routeur n a pas routees, faute de les croire a sa charge.
         if res.kicad_pcb_b64 and not res.skipped:
@@ -6404,6 +7278,14 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 logger.info("plan de masse : %s",
                             ", ".join(f"{k} {v} ilot(s)" for k, v in sorted(ilots.items())))
 
+            # ⚠️ D ABORD les reparations LOCALES, en secondes (2026-09-29) :
+            # sur carte-09, les replis Freerouting coutaient 1167 s pour 1 ou 2
+            # broches GND que la coulee avait isolees, et les reparations
+            # locales ne passaient qu APRES eux. Avis concordant de Codex, Grok,
+            # GLM et OpenCode. Les orphelines se mesurent ensuite.
+            final = _reparations_locales_gnd(final)
+            apres_locales = final
+
             # ⚠️ REPLI — la séquence « le plan prend GND » est préférée, mais
             # elle laisse parfois des broches fine-pitch non reliées : le via
             # d'échappement ne rentre pas (0,318 mm libres pour 0,500 exigés).
@@ -6428,12 +7310,21 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     "DEJA tenté sans succès sur ces mêmes broches, on ne le "
                     "refait pas (mesure du 2026-09-02 : 11 replis, 0 retenu)",
                     len(orphelines))
+            elif (_NETS_CONFIES_AU_PLAN and orphelines and _replis_gnd_inutiles(
+                    _nets_incomplets(rap_final or {}), _NETS_CONFIES_AU_PLAN,
+                    palier, max(essais))):
+                logger.info(
+                    "plan de masse : %d broche(s) GND non reliee(s), mais un signal "
+                    "manque aussi (%s) — un repli GND ne le relierait pas, le palier "
+                    "suivant le tentera ; replis GND sautes",
+                    len(orphelines),
+                    ", ".join(sorted(_nets_incomplets(rap_final or {}))[:8]))
             elif _NETS_CONFIES_AU_PLAN and orphelines:
                 # ⚠️ D ABORD le repli CIBLE (l orpheline + ses voisines GND) :
                 # 11 s mesurees, il n est PAS soumis au seuil du repli global
                 # (qui coute 10-17 min). Repete tant qu il referme des broches.
                 final, orphelines = _repli_gnd_cible_iteratif(
-                    etendu, req, restant, orphelines, final)
+                    etendu, req, min(restant, _BUDGET_REPLI_CIBLE_S), orphelines, final)
                 bilan_final = _bilan_drc(final) if orphelines else (0, 0)
                 secours = None
                 if orphelines and bilan_final is None:
@@ -6454,7 +7345,18 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                         "complete, on ne paie pas ses 10-17 min ici (seuil %d)",
                         len(orphelines), manquantes_avant, _REPLI_GND_MAX_MANQUANTES)
                     orphelines = []
-                elif orphelines and not _repli_deja_tente(orphelines, couches=couches_final):
+                elif orphelines and palier < max(essais):
+                    # Decision validee le 2026-10-01 : sous le plafond, le
+                    # repli GLOBAL ne paie pas (refuse a chaque fois, 2-7 min) ;
+                    # le palier suivant relie la masse.
+                    logger.info(
+                        "plan de masse : %d broche(s) GND non reliee(s) — repli "
+                        "global saute sous le plafond, le palier suivant s en charge",
+                        len(orphelines))
+                    # Rien n a ete tente : rien a noter comme « repli echoue ».
+                    orphelines = []
+                elif (orphelines and palier >= max(essais)
+                        and not _repli_deja_tente(orphelines, couches=couches_final)):
                     logger.warning(
                         "plan de masse : %d broche(s) GND non reliée(s) — "
                         "repli sur un routage incluant GND", len(orphelines))
@@ -6474,7 +7376,17 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     # ⚠️ Par `_bilan_drc`, qui rend None sans verdict : des
                     # couples bruts faisaient valoir (0, 0) a un secours que
                     # kicad-cli n avait pas su ouvrir (2026-09-18).
-                    avant, apres = _bilan_drc(final), _bilan_drc(secours)
+                    # A ARMES EGALES : `final` a recu les reparations locales
+                    # (2026-09-29) ; le secours doit les recevoir aussi, sinon
+                    # la comparaison refuserait un repli utile (revue du jour).
+                    # Seulement s il peut gagner (`_secours_peut_gagner`).
+                    avant = _bilan_drc(final)
+                    brut = _bilan_drc(secours)
+                    if _secours_peut_gagner(avant, brut, len(orphelines)):
+                        secours = _reparations_locales_gnd(secours)
+                        apres = _bilan_drc(secours)
+                    else:
+                        apres = brut
                     if _secours_est_meilleur(avant, apres):
                         logger.info("repli GND retenu : %s -> %s",
                                     _bilan_lisible(avant), _bilan_lisible(apres))
@@ -6486,33 +7398,12 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                             "board conserve",
                             _bilan_lisible(apres), _bilan_lisible(avant))
 
-            # ⚠️ EN DERNIER, apres la couture et le repli GND : la promotion
-            # se mesure sur le remplissage FINAL. Mesuree avant, elle
-            # nommerait des pastilles que la suite aurait de toute facon
-            # reliees, et en manquerait d autres.
-            final = _reparer_reliefs_affames(final)
-
-            # ⚠️ TOUT DERNIER, APRES le dernier remplissage. Place avant
-            # `_reparer_reliefs_affames`, le retrait etait ANNULE : cette
-            # etape recoule les zones, et le remplissage regenere les ilots
-            # qu on venait d enlever. Mesure du 2026-09-02 : « 0 ilot
-            # flottant retire » alors que `stm32-60` en portait un de
-            # 4,9 mm2, mesure a 1 via et 0 reliant.
-            #
-            # Meme faute que le clamp contre le centrage des dominants
-            # (2026-08-27) et le snap contre le Geometre (2026-08-29) : deux
-            # correctifs justes qui s annulent. L ordre fait partie du
-            # correctif, pas de son emballage.
-            # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
-            final = _relier_les_amas_orphelins(final)
-            final = _retirer_ilots_flottants(final)
-            # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du
-            # 2026-09-12 (carte-08/10, stm32-100, tirages a 96-98 %) : le
-            # retrait emportait le via d echappement d une broche GND pose
-            # dans un ilot B.Cu de 1 mm2 — la broche n etait orpheline
-            # QU APRES, et plus rien ne la sortait. Le fanout prefere
-            # desormais un via qui touche le plan principal d en face.
-            final = _fanout_pads_isolees(final)
+            # ⚠️ EN DERNIER, apres la couture et le repli GND : les reparations
+            # locales se mesurent sur le remplissage FINAL. Un repli qui a
+            # change le board a recoule ses zones : on les repasse. Sinon elles
+            # ont deja ete faites, sur ce meme board, juste avant les replis.
+            if final != apres_locales:
+                final = _reparations_locales_gnd(final)
             _garder_une_trace(final)
 
             res.kicad_pcb_b64 = base64.b64encode(final).decode("ascii")
@@ -6531,11 +7422,8 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
             # ⚠️ Dernier mot au DRC, qui voit le board LIVRE — plans coules,
             # reparations faites. La mesure du moteur, elle, regarde le board
             # juste apres le routeur et ignore les nets confies au plan.
-            # ⚠️ CONSERVER le chiffre du MOTEUR avant de l ecraser : c est lui
-            # qui dit si le routeur a fini, et donc si escalader a encore un
-            # sens. Le chiffre corrige, lui, melange le routage et l etat du
-            # plan de masse.
-            percent_moteur = res.routed_percent
+            # C est CE chiffre, celui du board livre, qui decide de l escalade
+            # (D-2026-09-24-e) : il compte aussi les nets confies au plan.
             res.routed_percent = _percent_verifie(
                 final, res.routed_percent, nets_routables
             )
@@ -6555,34 +7443,35 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         _rap_final = _rapport_drc(final) if res.kicad_pcb_b64 and not res.skipped else None
         erreurs = (10 ** 6 if _rap_final is None or _sans_verdict(_rap_final)
                    else _compte_erreurs(_rap_final))
-        # ⚠️ QUELS nets manquent, pas seulement combien. Regle de l utilisateur :
-        # un net confie au PLAN ne se relie pas avec du cuivre en plus.
+        # ⚠️ QUELS nets manquent, pas seulement combien : le journal les NOMME.
+        # Tous comptent pour l escalade, masse comprise (D-2026-09-24-e).
         manquants_du_palier = (
             _nets_incomplets(_rap_final) if _rap_final is not None else set())
-        # D-2026-09-14-b : l orpheline est NOMMEE et son repli cible vient
-        # d echouer a ce palier -> un palier de plus, une seule fois.
-        orpheline_sans_issue = bool(
-            orphelines and not palier_orpheline_accorde
-            and _repli_deja_tente(orphelines, couches=couches_final))
-        if not _escalade_peut_aider(percent_moteur, erreurs,
-                                    manquants=manquants_du_palier,
-                                    orpheline_sans_issue=orpheline_sans_issue):
+        logger.info(_chrono_tirage(palier, t_moteur - t_tirage, t_finitions - t_moteur,
+                                   time.time() - t_finitions, res.engine or "aucun moteur"))
+        # ⚠️ NOMMER les erreurs qui font refuser le palier (2026-09-24) : deux
+        # tirages de carte-07 a 100 % en 2 couches ont ete ecartes sans que le
+        # journal dise pourquoi. Un defaut reparable ici vaut deux couches.
+        if 0 < erreurs < 10 ** 6:
+            logger.info(
+                "route_auto: %d couches — %d erreur(s) bloquante(s) : %s",
+                couches_final or palier, erreurs,
+                ", ".join("%s x%d" % kv for kv in
+                          sorted(_types_bloquants(_rap_final).items())))
+        # ⚠️ TOUTE connexion manquante fait monter d un palier, masse comprise
+        # (D-2026-09-24-e). Ce qui manque est NOMME dans le journal : c est
+        # la seule facon de savoir si l escalade a relie une masse ou un signal.
+        if not _escalade_peut_aider(res.routed_percent, erreurs,
+                                    manquants=manquants_du_palier):
             escalade_inutile = True
-        elif orpheline_sans_issue and (
-                _NETS_CONFIES_AU_PLAN and manquants_du_palier
-                and set(manquants_du_palier) <= set(_NETS_CONFIES_AU_PLAN)):
-            palier_orpheline_accorde = True
+        elif manquants_du_palier:
             logger.info(
-                "route_auto: broche(s) de masse orpheline(s) nommee(s) (%s) et repli "
-                "cible refuse a %d couches — UN palier de plus pour lui donner un "
-                "chemin (D-2026-09-14-b)",
-                ", ".join(f"{r}-{p}" for r, p in orphelines), couches_final or 0)
-            logger.info(
-                "route_auto: ce qui manque est confie au PLAN (%s) — escalader "
-                "n y changerait rien, c est un probleme d acces a la broche",
-                ", ".join(sorted(manquants_du_palier)) or "-")
-        if res.routed_percent >= 100 and not res.skipped and erreurs == 0:
-            return res
+                "route_auto: %d couches — il manque %s ; le palier suivant sera "
+                "tente", couches_final or palier,
+                ", ".join(sorted(manquants_du_palier)[:8]))
+        if (res.routed_percent >= 100 and not res.skipped and erreurs == 0
+                and not manquants_du_palier):
+            return _livrer_sans_pendants(res)
         meilleur_du_palier = max(meilleur_du_palier, res.routed_percent)
         # ⚠️ UNE PANNE NE PEUT PAS ETRE « LE MEILLEUR ». Sans ce filtre, le
         # premier resultat venu prend la place — meme un « 0 % (aucun moteur) »
@@ -6598,14 +7487,10 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 "route_auto: tirage ECARTE comme panne — %d%%, skipped=%s, "
                 "board=%s, moteur=%s", res.routed_percent, res.skipped,
                 "oui" if res.kicad_pcb_b64 else "NON", res.engine or "-")
-            sans_gain += 1
             continue
         if meilleur is None or _palier_meilleur(
                 (res.routed_percent, erreurs), meilleur_note):
             meilleur, meilleur_note = res, (res.routed_percent, erreurs)
-            sans_gain = 0
-        else:
-            sans_gain += 1
 
     # Aucun palier n'a atteint 100 % : on rend le MEILLEUR, jamais le dernier.
     # Un palier superieur peut faire moins bien (plus de vias, plus de conflits),
@@ -6670,6 +7555,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                     routed_percent=_percent_verifie(partiel, pct, nets_routables),
                     layers=_count_copper_layers(partiel),
                     engine="freerouting-cli-partiel",
+                    layers_tried=palier_max_essaye or None,
                     via_count=_count_vias(partiel),
                     track_length_mm=_track_length_mm(partiel),
                     warning="tous les tirages ont stagne — board PARTIEL rejoue en "
@@ -6683,6 +7569,7 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
                 routed_percent=_percent_verifie(recupere, pct, nets_routables),
                 layers=_count_copper_layers(recupere),
                 engine="freerouting-recupere",
+                layers_tried=palier_max_essaye or None,
                 via_count=_count_vias(recupere),
                 track_length_mm=_track_length_mm(recupere),
                 warning="tous les tirages ont stagne — board recupere d un job "
@@ -6693,12 +7580,50 @@ def route_auto(req: RouteAutoRequest) -> RouteAutoResponse:
         # tirage fige (aucun moteur), il reste 0 et `verdict` None.
         return RouteAutoResponse(
             routed_percent=(fige_max if meilleur_fige is not None else 0),
-            layers=req.layers, skipped=True,
+            layers=req.layers, skipped=True, layers_tried=palier_max_essaye or None,
             verdict="tirages_figes" if meilleur_fige is not None else None,
             warning=("tous les tirages ont fige — ce placement ne se route pas, "
                      "en re-tirer un autre" if meilleur_fige is not None
                      else "tous les tirages ont stagne ou echoue — aucun routage"))
+    meilleur = _livrer_sans_pendants(
+        meilleur.model_copy(update={"layers_tried": palier_max_essaye or None}))
     return meilleur
+
+
+def _reparations_locales_gnd(final: bytes) -> bytes:
+    """Les reparations GND locales et deterministes, dans leur ordre contraint.
+
+    Appelees AVANT les replis Freerouting (2026-09-29 : 1167 s de replis sur
+    carte-09 pour 1 ou 2 broches), et de nouveau apres si un repli a change le
+    board. Chacune ne peut qu ameliorer (comparaison DRC interne).
+    Garde : tests/test_reparations_locales_avant_les_replis.py.
+    """
+    # ⚠️ D ABORD la promotion des reliefs affames : elle recoule les zones, et
+    # se mesure donc sur le remplissage de la couture et des replis.
+    final = _reparer_reliefs_affames(final)
+
+    # ⚠️ PUIS le retrait, APRES le dernier remplissage. Place avant
+    # `_reparer_reliefs_affames`, le retrait etait ANNULE : cette etape recoule
+    # les zones, et le remplissage regenere les ilots qu on venait d enlever.
+    # Mesure du 2026-09-02 : « 0 ilot flottant retire » alors que `stm32-60` en
+    # portait un de 4,9 mm2, mesure a 1 via et 0 reliant.
+    #
+    # Meme faute que le clamp contre le centrage des dominants (2026-08-27) et
+    # le snap contre le Geometre (2026-08-29) : deux correctifs justes qui
+    # s annulent. L ordre fait partie du correctif, pas de son emballage.
+    # ⚠️ RELIER AVANT DE RETIRER : un amas a pastille ne se retire pas.
+    final = _relier_les_amas_orphelins(final)
+    # Puis la broche orpheline SEULE, que le raccord des amas ne vise pas
+    # (2026-09-30) — avant le retrait, qui ne toucherait pas le plan principal.
+    final = _relier_les_pastilles_orphelines(final)
+    final = _retirer_ilots_flottants(final)
+    # ⚠️ LE FANOUT REPASSE APRES LE RETRAIT DES ILOTS. Mesure du 2026-09-12
+    # (carte-08/10, stm32-100, tirages a 96-98 %) : le retrait emportait le
+    # via d echappement d une broche GND pose dans un ilot B.Cu de 1 mm2 — la
+    # broche n etait orpheline QU APRES, et plus rien ne la sortait. Le fanout
+    # prefere desormais un via qui touche le plan principal d en face.
+    final = _fanout_pads_isolees(final)
+    return final
 
 
 class RouteProgressResponse(BaseModel):

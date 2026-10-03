@@ -463,6 +463,80 @@ de 120 s — quatre fois le point d'échec mesuré. **Et une expiration ne tue p
 le run** : kicad-tools a déjà rendu un verdict réel, il est conservé, et le fait
 que l'ERC d'autorité n'ait pas tourné est DIT.
 
+### BANC DE PREUVE du 2026-09-24 — vingt-deux cartes, placement gelé, juge corrigé
+
+Objectif de l'utilisateur : « une solution générale — 100 % routé, 100 %
+fabricable ; si on n'atteint pas 100 %, on escalade le nombre de couches, et on
+doit l'atteindre ». Cinq règles générales livrées le jour même (D-2026-09-24-a,
+b, c et deux correctifs de mesure), puis ce banc pour les prouver.
+
+**Méthode.** Chaque carte part de son placement VERSIONNÉ, gelé : seuls le code
+de routage et le juge changent, donc un résultat ne peut pas venir du hasard du
+placement. Routage par la voie HTTP de production, service redémarré pour
+charger le nouveau code, `/tmp/cirqix-reglages.json` supprimé et VÉRIFIÉ absent.
+Juge : `tools.drc.est_bloquante` — un perçage trop proche bloque, même classé
+avertissement par KiCad.
+
+| carte | couches | routé | bloquantes | manquantes | perçages | durée |
+|---|---|---|---|---|---|---|
+| `carte-01-diviseur` | 2 | 100 % | 0 | 0 | 0 | 86 s |
+| `carte-02-alimentation` | 2 | 100 % | 0 | 0 | 0 | 103 s |
+| `carte-03-oscillateur` | 2 | 100 % | 0 | 0 | 0 | 110 s |
+| `carte-04-mcu-minimal` | 2 | 100 % | 0 | 0 | 0 | 155 s |
+| `carte-05-capteur-i2c` | 2 | 100 % | 0 | 0 | 0 | 111 s |
+| `carte-06-io-etendu` | 2 | 100 % | 0 | 0 | 0 | 113 s |
+| `carte-07-multi-io` | 2 | 100 % | 0 | 0 | 0 | 113 s |
+| `carte-08-dense` | 2 | 100 % | 0 | 0 | 0 | 118 s |
+| `carte-09-tres-dense` | 2 | 100 % | 0 | 0 | 0 | 132 s |
+| `carte-10-maximale` | **4** | 100 % | 0 | 0 | 0 | 836 s |
+| `carte-11-croisements` | **4** | 100 % | 0 | 0 | 0 | 493 s |
+| `driver-clignotant-ne555` | 2 | 100 % | 0 | 0 | 0 | 118 s |
+| `driver-stm32-minimal` | 2 | 100 % | 0 | 0 | 0 | 116 s |
+| `driver-thermometre-i2c` | 2 | 100 % | 0 | 0 | 0 | 98 s |
+| `arduino-uno` | 2 | 100 % | 0 | 0 | 0 | 104 s |
+| `esp32-baseline` | 2 | 100 % | 0 | 0 | 0 | 99 s |
+| `led-blinker-full-pipeline` | 2 | 100 % | 0 | 0 | 0 | 81 s |
+| `nucleo-f401` | **4** | 100 % | 0 | 0 | 0 | 1003 s |
+| `stm32-baseline` | 2 | 100 % | 0 | 0 | 0 | 100 s |
+| `stm32-30` | 2 | 100 % | 0 | 0 | 0 | 117 s |
+| `stm32-60` | 2 | 100 % | 0 | 0 | 0 | 116 s |
+| `stm32-100` | 2 | 100 % | 0 | 0 | 0 | 159 s |
+
+**22 sur 22 : 100 % routées, 0 violation bloquante, 0 connexion manquante,
+0 perçage fautif.** 4481 s au total. `stm32-validation` et `STM32-Test` ne sont
+pas au banc, à la demande de l'utilisateur.
+
+**L'escalade atteint 100 %, et le journal dit POURQUOI.** Trois cartes ont
+escaladé ; sur deux d'entre elles, c'est le tirage LIBRE qui a fait le travail :
+
+    nucleo-f401   palier 4 : tirage PROTÉGÉ ->   0 %    tirage LIBRE -> 100 %
+    carte-10      palier 4 : tirage PROTÉGÉ ->  95 %    tirage LIBRE -> 100 %
+
+Avant le correctif, les trois tirages d'un palier étaient protégés : la
+campagne de la veille avait donné à `nucleo-f401` 98, 98, figé, figé, 96 — et
+jamais 100. Sur `carte-11`, le palier 2 a figé sans rendre de board : il n'y
+avait rien à protéger, et c'est l'escalade seule qui a suffi.
+
+**Un seul board versionné remplacé : `carte-11-croisements`.** Rejugé avec le
+juge corrigé, le board du 2026-09-23 portait **4 violations `hole_to_hole`
+bloquantes** — deux vias dans le perçage de J1.33 et J2.33, à −0,050 mm — et
+son `mesures.json` disait `"fabricable": true`. Le nouveau board est propre, sur
+4 couches au lieu de 2. Les 21 autres boards versionnés passent le juge corrigé
+et restent tels quels : les remplacer par un board de qualité égale ferait du
+bruit sans rien apporter.
+
+⚠️ **Ce que ce banc NE prouve PAS : un placement « pro ».** Le rendu de
+`carte-11` le montre sans détour — six composants sur 110 × 77 mm, les deux
+connecteurs serrés dans un coin, les quatre condensateurs isolés à l'autre
+bout, et une carte presque vide entre les deux. Le routage y est propre ; le
+placement ne l'est pas. Ce banc mesure le routage et la fabricabilité, à
+placement gelé, précisément pour les isoler : il ne dit rien du placement.
+
+⚠️ **Un seul tirage par carte.** Freerouting est stochastique ; vingt-deux
+réussites sur vingt-deux ne garantissent pas vingt-deux sur vingt-deux au tirage
+suivant. Elles établissent que chaque carte y arrive par le chemin de
+production, et que l'escalade ne plafonne plus sous 100 %.
+
 ### BANC DE RÉFÉRENCE du 2026-09-23 (4e passage) — service corrigé, dix sur dix
 
 | carte | demandée | livrée | erreurs | manquantes |

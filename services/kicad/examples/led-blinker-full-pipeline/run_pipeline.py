@@ -47,6 +47,10 @@ _DEFAULT_OUT = _HERE / "output"
 # la main des 100 % atteint. La relever ne coute rien sur une carte simple —
 # `carte-01` finit en 50 s.
 _TIMEOUT_S = 3600
+# D-2026-09-29-a : a partir de ce pourcentage route (sans erreur), le placement
+# n est plus jamais refait. Meme valeur que `SEUIL_SANS_REPLACEMENT_PCT` de
+# l orchestrateur (packages/agents/src/orchestrator.ts).
+SEUIL_SANS_REPLACEMENT_PCT = 95
 
 
 def _service() -> tuple[str, str]:
@@ -196,12 +200,22 @@ def main() -> int:
     # n a rien a gagner d un tirage de plus, et chaque tirage coute 5 a 40
     # minutes sur les cartes denses.
     tentatives = int(schema.get("tentatives", 4))
-    plafond = int(schema.get("max_layers", 2))
-    budget = int(schema.get("route_budget_s", 1800))
+    # ⚠️ LE BANC APPELLE LE ROUTAGE COMME LA PRODUCTION (D-2026-09-24-f). Le
+    # defaut valait 2 couches et 1800 s : dix cartes sur quinze ne pouvaient
+    # JAMAIS escalader, et `carte-07` restait a 97 % (masse seule) en annoncant
+    # « le palier suivant sera tente ». Le plafond n est pas une consigne : le
+    # routeur part de 2 et ne monte que sur preuve d echec. Le banc joue un
+    # client Pro Max ; le budget suit `routingSearchBudgetS` du client TS.
+    plafond = int(schema.get("max_layers", 8))
+    budget = int(schema.get("route_budget_s", min(600 + 300 * plafond, 3600)))
 
     meilleur = None          # (routé, -violations, place_b64, route_b64, res)
     echecs = []
     agrandissements = 0      # D-2026-09-11-b : voir `taille_suivante`
+    # Placement verrouille (regle du 2026-10-01) : des qu un vrai board atteint
+    # SEUIL_SANS_REPLACEMENT_PCT, les essais suivants re-routent CE placement.
+    place_garde = None
+    palier_garde = None      # couches du board qui a verrouille le placement
     for essai in range(1, max(1, tentatives) + 1):
       # ⚠️ UN ESSAI QUI PLANTE NE DOIT PAS EMPORTER LES SUIVANTS.
       #
@@ -227,22 +241,38 @@ def main() -> int:
       # regle. En attendant, on rend la BOUCLE resiliente : un essai perdu coute
       # un essai, pas la carte.
       try:
-          t = _step(5, "call_agent_placement → POST /place/auto (essai %d/%d)"
-                    % (essai, tentatives))
-          res_p = _post("/place/auto", {
-              "kicad_pcb_b64": _b64(pcb_gen),
-              "board_width_mm": board_w,
-              "board_height_mm": board_h,
-              "auto_size_board": not taille_imposee,
-          })
-          place = _unb64(res_p["kicad_pcb_b64"])
-          _done(t, placés=res_p.get("placed_count"), status=res_p.get("status"))
+          if place_garde is not None:
+              # Le placement est deja verifie au DRC : une erreur DRC apres
+              # routage vient du routage. On re-route le MEME placement.
+              place = place_garde
+              print("   essai %d : placement GARDE (>= %d %% deja atteint) — re-routage seul"
+                    % (essai, SEUIL_SANS_REPLACEMENT_PCT))
+          else:
+              t = _step(5, "call_agent_placement → POST /place/auto (essai %d/%d)"
+                        % (essai, tentatives))
+              res_p = _post("/place/auto", {
+                  "kicad_pcb_b64": _b64(pcb_gen),
+                  "board_width_mm": board_w,
+                  "board_height_mm": board_h,
+                  "auto_size_board": not taille_imposee,
+              })
+              place = _unb64(res_p["kicad_pcb_b64"])
+              _done(t, placés=res_p.get("placed_count"), status=res_p.get("status"))
 
           t = _step(6, "call_agent_routing → POST /route/auto (essai %d/%d)"
                     % (essai, tentatives))
-          res_r = _post("/route/auto", {"kicad_pcb_b64": _b64(place),
-                                        "layers": plafond, "timeout_s": budget})
+          requete = {"kicad_pcb_b64": _b64(place), "layers": plafond, "timeout_s": budget}
+          # Placement garde : on reprend au palier ou il avait atteint 95 %
+          # (decision validee le 2026-10-02), au lieu de refaire 2 -> 4 -> 6.
+          if place_garde is not None and palier_garde:
+              requete["palier_depart"] = palier_garde
+          res_r = _post("/route/auto", requete)
           routed = res_r.get("routed_percent", 0) or 0
+          # ⚠️ Mesure du 2026-10-01 (carte-10) : tirages tous figes -> « 98 % »
+          # SANS board ; le DRC du board place donnait 280 erreurs, 0 via. Un
+          # pourcentage sans board ne compte pas : comme `pourcentageMesure` (TS).
+          if res_r.get("skipped") or not res_r.get("kicad_pcb_b64"):
+              routed = 0
           route = _unb64(res_r["kicad_pcb_b64"]) if res_r.get("kicad_pcb_b64") else place
           manquantes = int(res_r.get("unrouted_count") or 0)
           _done(t, routé="%s%%" % routed, couches=res_r.get("layers"),
@@ -280,16 +310,34 @@ def main() -> int:
           if routed >= 100 and erreurs == 0:
               print("   100 % atteint — on arrete les essais")
               break
+          # D-2026-09-29-a (validee) : a partir de 95 % sans erreur, on ne
+          # refait JAMAIS le placement — `route_auto` a deja fait ses tirages et
+          # son escalade. Meme regle que `shouldRetryPlacement` (orchestrateur) ;
+          # une erreur DRC re-tire toujours, comme `shouldRetryForDrc`.
+          if routed >= SEUIL_SANS_REPLACEMENT_PCT and erreurs == 0:
+              print("   %s%% atteint (seuil %d %%) — on ne refait pas le placement"
+                    % (routed, SEUIL_SANS_REPLACEMENT_PCT))
+              break
+          # Regle du 2026-10-01 : a >= 95 % AVEC erreurs DRC, on garde aussi le
+          # placement — l essai suivant re-route seulement, sans agrandir.
+          if routed >= SEUIL_SANS_REPLACEMENT_PCT and place_garde is None:
+              place_garde = place
+              couches = res_r.get("layers")
+              palier_garde = couches if isinstance(couches, int) and couches >= 2 else None
           # D-2026-09-11-b : au plafond de couches sans 100 % / 0 erreur, on
           # AGRANDIT la carte pour l essai suivant plutot que de re-tirer le
           # meme espace. Le service rend le contour a la taille demandee.
-          nw, nh, agrandissements_apres = taille_suivante(
-              board_w, board_h, routed, erreurs, res_r.get("layers"), plafond, agrandissements)
-          if agrandissements_apres > agrandissements:
-              print("   carte AGRANDIE pour l essai suivant : %sx%s -> %sx%s mm "
-                    "(routee a %s%% au plafond de %d couches, %d erreur(s))"
-                    % (board_w, board_h, nw, nh, routed, plafond, erreurs))
-              board_w, board_h, agrandissements = nw, nh, agrandissements_apres
+          # Jamais pour un placement garde : il ne change plus.
+          if place_garde is None:
+              nw, nh, agrandissements_apres = taille_suivante(
+                  board_w, board_h, routed, erreurs,
+                  # D-2026-09-25-e : le palier ESSAYE, pas les couches du board livre.
+                  res_r.get("layers_tried") or res_r.get("layers"), plafond, agrandissements)
+              if agrandissements_apres > agrandissements:
+                  print("   carte AGRANDIE pour l essai suivant : %sx%s -> %sx%s mm "
+                        "(routee a %s%% au plafond de %d couches, %d erreur(s))"
+                        % (board_w, board_h, nw, nh, routed, plafond, erreurs))
+                  board_w, board_h, agrandissements = nw, nh, agrandissements_apres
       except SystemExit as e:
           # ⚠️ Un HTTP 500 sur un RE-TIRAGE ne jette pas le board deja retenu.
           # carte-09 (2026-09-12) : essai 3 retenu a 100 %, essai 4 en 500 sur

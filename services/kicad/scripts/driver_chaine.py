@@ -94,7 +94,10 @@ def main(argv: list[str]) -> int:
     board = pcb.kicad_pcb_content.encode()
 
     t = time.time()
-    place = place_auto(AutoPlacementRequest(kicad_pcb_b64=_b64(board)))
+    # Comme `handlePlacement` : contour resserré si la taille n'est pas imposée.
+    place = place_auto(AutoPlacementRequest(
+        kicad_pcb_b64=_b64(board),
+        auto_size_board=not bool(circuit.get("board_size_imposed", False))))
     _etape("placement", t)
     board = base64.b64decode(place.kicad_pcb_b64)
 

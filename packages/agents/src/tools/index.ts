@@ -34,7 +34,7 @@ export async function executeToolStub(
     case 'call_agent_placement':
       return handlePlacement(input, projectId);
     case 'call_agent_routing':
-      return handleRouting(projectId);
+      return handleRouting(projectId, input);
     case 'call_agent_reason':
       return handleReason(projectId);
     case 'call_agent_drc':

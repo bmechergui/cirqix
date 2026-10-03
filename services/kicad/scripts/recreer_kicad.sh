@@ -42,6 +42,7 @@ demarrer() {
   docker run -d --name "$1" --restart unless-stopped --env-file "$ENVF" \
     -p 127.0.0.1:8766:8766 --network kicad_default --network-alias kicad \
     -v kicad_kicad-jobs:/tmp/kicad-jobs \
+    -v cirqix-3dmodels:/usr/share/kicad/3dmodels:ro \
     -v "$R/main.py:/app/main.py:ro" \
     -v "$R/routers:/app/routers:ro" \
     -v "$R/tools:/app/tools:ro" \

@@ -324,15 +324,15 @@ const INLINE_LIB_SYMBOLS = `
     (property "Reference" "D" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
     (property "Value" "LED" (at 0 2.5 0) (effects (font (size 1.27 1.27))))
     (symbol "LED_0_1"
-      (polyline (pts (xy -1.778 -1.778) (xy -1.778 1.778) (xy 1.778 0) (xy -1.778 -1.778))
+      (polyline (pts (xy 1.778 -1.778) (xy 1.778 1.778) (xy -1.778 0) (xy 1.778 -1.778))
         (stroke (width 0.254) (type default)) (fill (type none)))
-      (polyline (pts (xy 1.778 -1.778) (xy 1.778 1.778))
+      (polyline (pts (xy -1.778 -1.778) (xy -1.778 1.778))
         (stroke (width 0.254) (type default)) (fill (type none))))
     (symbol "LED_1_1"
       (pin passive line (at -3.81 0 0) (length 2.032)
-        (name "A" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
+        (name "K" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))
       (pin passive line (at 3.81 0 180) (length 2.032)
-        (name "K" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
+        (name "A" (effects (font (size 1.27 1.27)))) (number "2" (effects (font (size 1.27 1.27)))))))
   (symbol "Connector_Generic:Conn_01x02"
     (pin_numbers hide) (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
     (property "Reference" "J" (at 0 -2.5 0) (effects (font (size 1.27 1.27))))
@@ -515,8 +515,9 @@ function resolvePinIndex(pinVal: number | string | undefined, libId?: string): n
     if (s === 'K' || s === 'CATHODE') return 2;
   }
   if (libId === 'Device:LED') {
-    if (s === 'A' || s === 'ANODE' || s === '+') return 0;
-    if (s === 'K' || s === 'CATHODE' || s === '-') return 1;
+    // KiCad Device:LED : broche 1 = K (cathode), broche 2 = A (anode).
+    if (s === 'K' || s === 'CATHODE' || s === '-') return 0;
+    if (s === 'A' || s === 'ANODE' || s === '+') return 1;
   }
 
   // NON RÉSOLU — on ne fabrique pas une broche.

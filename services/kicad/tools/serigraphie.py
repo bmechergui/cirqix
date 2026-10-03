@@ -234,7 +234,7 @@ def boites_des_references(pcb: Any) -> dict[str, tuple]:
         dx, dy = getattr(t, "position", (0.0, 0.0))
         cx, cy = _absolu(fp, dx, dy)
         out[fp.reference] = _boite_texte(cx, cy, fp.reference, _hauteur(t),
-                                         _angle_texte(t))
+                                         _angle(pcb, fp, t))
     return out
 
 
@@ -286,7 +286,7 @@ def degager_references(pcb: Any) -> int:
             continue
 
         haut = _hauteur(t)
-        rot = _angle_texte(t)
+        rot = _angle(pcb, fp, t)
         dx0, dy0 = getattr(t, "position", (0.0, 0.0))
         trouve = None
         for rayon in _RAYONS_MM:
@@ -315,3 +315,290 @@ def degager_references(pcb: Any) -> int:
     if deplaces:
         logger.info("serigraphie: %d reference(s) degagee(s)", deplaces)
     return deplaces
+
+
+# ── D-2026-09-26-a, phase B : repère TOURNÉ dans l axe du boîtier, posé AUTOUR
+# de son corps. Campagne du 2026-09-26, carte-07 : 9 repères en conflit, et la
+# recherche ci-dessus (texte à plat, 4 mm autour de sa position d origine) n en
+# plaçait AUCUN — « aucune place libre » pour les 9. Les deux leviers
+# manquants : tourner le texte (une 0603 verticale porte un repère vertical,
+# 1 mm de large au lieu de 3), et chercher contre les quatre côtés et les quatre
+# coins du CORPS plutôt qu autour d une origine posée sur une pastille.
+#
+# ⚠️ Rien de natif : `kct fix-silkscreen` ne corrige que les épaisseurs et les
+# hauteurs, `SilkscreenGenerator` rend visibles des repères cachés. Et le
+# modèle `FootprintText` ne lit pas l angle du texte : on le lit et on
+# l écrit dans l arbre S-expr, troisième terme de `(at x y a)`, ABSOLU.
+#
+# ⚠️ Ni réduction, ni masquage ICI : seulement en dernier recours, plus bas
+# (`dernier_recours`, D-2026-10-03-a), quand aucune place n existe.
+
+# Écarts au corps, du plus serré au plus lâche : au-delà de 1,4 mm un repère
+# ne désigne plus clairement son composant dans un amas.
+_ECARTS_CORPS_MM = (0.2, 0.7, 1.4)
+# Passes : placer un repère libère parfois la place d un autre.
+_PASSES = 3
+_GLISSEMENTS_MM = (0.0, 0.6, -0.6, 1.2, -1.2, 2.0, -2.0)
+
+
+def _noeud_reference(pcb: Any, ref: str):
+    """Le nœud `at` du repère de `ref` dans l arbre, ou None."""
+    arbre = getattr(pcb, "_sexp", None)
+    if arbre is None:
+        return None
+    for fp in arbre.iter_children():
+        if fp.tag != "footprint" or pcb._get_footprint_reference(fp) != ref:
+            continue
+        for tag, cle in (("property", "Reference"), ("fp_text", "reference")):
+            for t in fp.find_all(tag):
+                if t.get_string(0) == cle:
+                    return t.find("at")
+    return None
+
+
+def _angle(pcb: Any, fp: Any, t: Any) -> float:
+    """L angle du repère tel qu il est ÉCRIT dans le fichier, seul lecteur.
+
+    ⚠️ Revue du 2026-09-26 : `_angle_texte` lit le modèle `FootprintText`, qui
+    ne parse aucun angle — il rend 0 pour un texte que `reorienter_et_degager`
+    vient de tourner. Rejouée après le resserrage du contour, la recherche
+    à plat calculait alors des boîtes horizontales pour des textes verticaux.
+    """
+    if _noeud_reference(pcb, fp.reference) is not None:
+        return _angle_reference(pcb, fp.reference)
+    return _angle_texte(t)
+
+
+def _angle_reference(pcb: Any, ref: str) -> float:
+    at = _noeud_reference(pcb, ref)
+    if at is None:
+        return 0.0
+    try:
+        return float(at.get_float(2) or 0.0)
+    except (IndexError, TypeError, ValueError):
+        return 0.0
+
+
+def _poser_reference(pcb: Any, ref: str, local: tuple, angle: float) -> bool:
+    if not pcb.move_reference(ref, absolute=local):
+        return False
+    at = _noeud_reference(pcb, ref)
+    if at is not None:
+        at.set_value(2, angle)
+    return True
+
+
+def _vers_local(fp: Any, x: float, y: float) -> tuple[float, float]:
+    """Inverse de `_tourne` : absolu -> offset local du boîtier."""
+    a = math.radians(getattr(fp, "rotation", 0.0) or 0.0)
+    ox, oy = fp.position
+    u, v = x - ox, y - oy
+    return (u * math.cos(a) - v * math.sin(a), u * math.sin(a) + v * math.cos(a))
+
+
+def _corps(fp: Any) -> tuple:
+    from tools.placement import _boite_orientee_fp
+    b = _boite_orientee_fp(fp)
+    x, y = fp.position
+    return (x + b[0], y + b[1], x + b[2], y + b[3])
+
+
+def _candidats(corps: tuple, texte: str, hauteur: float, angle_actuel: float):
+    """(angle, boîte) à essayer, du meilleur au pire : texte dans l axe du
+    corps d abord, contre ses grands côtés, puis ses petits côtés, puis ses
+    coins ; chaque place glisse ensuite le long de son côté."""
+    x0, y0, x1, y1 = corps
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    horizontal = (x1 - x0) >= (y1 - y0)
+    axe = 0.0 if horizontal else 90.0
+    # Les boîtes ne savent traiter que 0 et 90 : un angle quelconque est
+    # ramené au cardinal le plus proche.
+    actuel = (round(angle_actuel / 90.0) * 90.0) % 180.0
+    angles = [axe] + [a for a in (actuel, 90.0 - axe) if a != axe]
+    vus = set()
+    for g, angle in ((g, a) for g in _ECARTS_CORPS_MM for a in dict.fromkeys(angles)):
+        l0, h0, l1, h1 = _boite_texte(0.0, 0.0, texte, hauteur, angle)
+        w, h = l1 - l0, h1 - h0
+        haut, bas = (cx, y0 - g - h / 2), (cx, y1 + g + h / 2)
+        gauche, droite = (x0 - g - w / 2, cy), (x1 + g + w / 2, cy)
+        cotes_x = [(haut, True), (bas, True)]          # glisse le long de x
+        cotes_y = [(gauche, False), (droite, False)]   # glisse le long de y
+        coins = [((x0 - g - w / 2, y0 - g - h / 2), True), ((x1 + g + w / 2, y0 - g - h / 2), True),
+                 ((x0 - g - w / 2, y1 + g + h / 2), True), ((x1 + g + w / 2, y1 + g + h / 2), True)]
+        places = (cotes_x + cotes_y if horizontal else cotes_y + cotes_x) + coins
+        for (px, py), le_long_de_x in places:
+            for d in _GLISSEMENTS_MM:
+                qx, qy = (px + d, py) if le_long_de_x else (px, py + d)
+                cle = (angle, round(qx, 3), round(qy, 3))
+                if cle in vus:
+                    continue
+                vus.add(cle)
+                yield angle, (qx, qy), _boite_texte(qx, qy, texte, hauteur, angle)
+
+
+def reorienter_et_degager(pcb: Any) -> int:
+    """Seconde chance pour les repères que `degager_references` n a pas su
+    placer : texte tourné dans l axe du boîtier, posé contre son corps.
+
+    Mêmes règles : on ne touche QUE ce qui chevauche encore, et seulement si
+    une place libre existe ; sinon le repère reste où il est.
+    """
+    cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
+    par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    contour = _contour(pcb)
+    boites = {}
+    for ref, fp in par_ref.items():
+        t = _reference_visible(fp)
+        if t is None:
+            continue
+        dx, dy = getattr(t, "position", (0.0, 0.0))
+        cx, cy = _absolu(fp, dx, dy)
+        boites[ref] = _boite_texte(cx, cy, ref, _hauteur(t), _angle(pcb, fp, t))
+    deplaces = 0
+    for ref in sorted(boites) * _PASSES:
+        fp = par_ref[ref]
+        genes = cuivre + [b for r, b in boites.items() if r != ref]
+        if not any(_chevauche(boites[ref], o) for o in genes) and not _deborde(boites[ref], contour):
+            continue
+        t = _reference_visible(fp)
+        trouve = None
+        for angle, (qx, qy), b in _candidats(_corps(fp), ref, _hauteur(t), _angle_reference(pcb, ref)):
+            if not any(_chevauche(b, o) for o in genes) and not _deborde(b, contour):
+                trouve = (angle, (qx, qy), b)
+                break
+        if trouve is None:
+            logger.debug("serigraphie: %s — aucune place autour du corps", ref)
+            continue
+        angle, (qx, qy), b = trouve
+        if _poser_reference(pcb, ref, _vers_local(fp, qx, qy), angle):
+            boites[ref] = b
+            deplaces += 1
+    if deplaces:
+        logger.info("serigraphie: %d reference(s) reorientee(s) contre leur corps", deplaces)
+    return deplaces
+
+
+# ── D-2026-10-03-a (validée) : DERNIER RECOURS, seulement quand les deux
+# recherches ci-dessus n ont trouvé AUCUNE place. Banc du 2026-10-02 : 26
+# avertissements venaient de repères sans la moindre place libre à 1 mm de haut
+# (C33, C66, C71, R10…). On essaie à 0,8 mm — le minimum de JLCPCB —, et on
+# ne masque que si même 0,8 mm ne trouve pas de place. Un repère masqué ne
+# manque pas à l assemblage : le fichier de placement (CPL) porte les positions.
+_HAUTEUR_MIN_MM = 0.8
+_EPAISSEUR_MIN_MM = 0.15
+
+
+def _propriete_reference(pcb: Any, ref: str):
+    """Le nœud `property "Reference"` (ou `fp_text reference`) de `ref`."""
+    at = _noeud_reference(pcb, ref)
+    arbre = getattr(pcb, "_sexp", None)
+    if at is None or arbre is None:
+        return None
+    for fp in arbre.iter_children():
+        if fp.tag != "footprint" or pcb._get_footprint_reference(fp) != ref:
+            continue
+        for tag, cle in (("property", "Reference"), ("fp_text", "reference")):
+            for t in fp.find_all(tag):
+                if t.get_string(0) == cle:
+                    return t
+    return None
+
+
+def _reduire_reference(pcb: Any, ref: str, hauteur: float) -> bool:
+    noeud = _propriete_reference(pcb, ref)
+    effets = noeud.find("effects") if noeud is not None else None
+    police = effets.find("font") if effets is not None else None
+    if police is None:
+        return False
+    taille, epaisseur = police.find("size"), police.find("thickness")
+    if taille is None:
+        return False
+    taille.set_value(0, hauteur)
+    taille.set_value(1, hauteur)
+    if epaisseur is not None:
+        epaisseur.set_value(0, _EPAISSEUR_MIN_MM)
+    return True
+
+
+def _masquer_reference(pcb: Any, ref: str) -> bool:
+    from kicad_tools.sexp.parser import SExp
+
+    noeud = _propriete_reference(pcb, ref)
+    if noeud is None:
+        return False
+    if noeud.find("hide") is not None or "hide" in noeud.get_atoms():
+        return True
+    # KiCad 8+ : `(hide yes)` dans la property ; ancien `fp_text` : l atome nu.
+    marque = SExp.list("hide", "yes") if noeud.tag == "property" else SExp.atom("hide")
+    try:
+        noeud.insert_after("layer", marque)
+    except KeyError:
+        noeud.append(marque)
+    return True
+
+
+def reperes_signales(rapport: dict) -> set[str]:
+    """Les repères que le DRC désigne dans un avertissement de sérigraphie."""
+    out = set()
+    for v in (rapport or {}).get("violations") or []:
+        if not str(v.get("type", "")).startswith("silk"):
+            continue
+        for i in v.get("items") or []:
+            d = str(i.get("description") or "")
+            if d.startswith("Reference field of "):
+                out.add(d.split()[3])
+    return out
+
+
+def dernier_recours(pcb: Any, seulement=None) -> tuple[int, int]:
+    """Pour chaque repère qui chevauche ENCORE : 0,8 mm s il trouve une place
+    autour de son corps, masqué sinon. Rend (réduits, masqués).
+
+    À appeler après `degager_references` et `reorienter_et_degager` : un repère
+    qui a trouvé sa place à 1 mm n est jamais réduit. `seulement` : les
+    repères que le DRC signale. Les boîtes d ici sont plus larges que les
+    glyphes : sans ce filtre, on touchait des repères que le DRC acceptait
+    (carte-07 du 2026-10-02 : 1 signalé, 3 touchés).
+    """
+    cuivre = _obstacles_cuivre(pcb) + _obstacles_serigraphie(pcb)
+    par_ref = {fp.reference: fp for fp in pcb.footprints if fp.reference}
+    contour = _contour(pcb)
+    boites = {}
+    for ref, fp in par_ref.items():
+        t = _reference_visible(fp)
+        if t is None:
+            continue
+        dx, dy = getattr(t, "position", (0.0, 0.0))
+        cx, cy = _absolu(fp, dx, dy)
+        boites[ref] = _boite_texte(cx, cy, ref, _hauteur(t), _angle(pcb, fp, t))
+    reduits, masques = [], []
+    for ref in sorted(boites):
+        if seulement is not None and ref not in seulement:
+            continue
+        fp = par_ref[ref]
+        genes = cuivre + [b for r, b in boites.items() if r != ref]
+        if not any(_chevauche(boites[ref], o) for o in genes) and not _deborde(boites[ref], contour):
+            continue
+        trouve = None
+        for angle, (qx, qy), b in _candidats(_corps(fp), ref, _HAUTEUR_MIN_MM,
+                                             _angle_reference(pcb, ref)):
+            if not any(_chevauche(b, o) for o in genes) and not _deborde(b, contour):
+                trouve = (angle, (qx, qy), b)
+                break
+        if trouve is not None:
+            angle, (qx, qy), b = trouve
+            # Poser d abord : un repere reduit mais reste sur place serait le
+            # pire des deux.
+            if (_poser_reference(pcb, ref, _vers_local(fp, qx, qy), angle)
+                    and _reduire_reference(pcb, ref, _HAUTEUR_MIN_MM)):
+                boites[ref] = b
+                reduits.append(ref)
+                continue
+        if _masquer_reference(pcb, ref):
+            del boites[ref]
+            masques.append(ref)
+    if reduits or masques:
+        logger.info("serigraphie: dernier recours — %d repere(s) a %.1f mm (%s), "
+                    "%d masque(s) (%s)", len(reduits), _HAUTEUR_MIN_MM,
+                    ", ".join(reduits) or "-", len(masques), ", ".join(masques) or "-")
+    return len(reduits), len(masques)
